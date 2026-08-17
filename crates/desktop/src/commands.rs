@@ -589,3 +589,252 @@ pub fn read_card(path: String, state: State<'_, AppState>) -> CommandResult<Card
             .collect(),
     })
 }
+
+// ---------------------------------------------------------------------------
+// Validation and remediation — F12, F13
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct CheckRow {
+    pub rule: String,
+    pub status: String,
+    pub failure: Option<String>,
+    pub detail: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ShotValidationRow {
+    pub stem: String,
+    pub status: String,
+    pub checks: Vec<CheckRow>,
+}
+
+/// One failure class, with what F13 offers for it and how many shots share it.
+///
+/// This is what the bulk action bar renders (Phase 13): a card of four hundred
+/// frames becomes a handful of rows, not four hundred prompts.
+#[derive(Debug, Serialize)]
+pub struct FailureGroup {
+    pub failure: String,
+    pub count: usize,
+    pub actions: Vec<String>,
+    pub default_action: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClockOffsetRow {
+    pub median: String,
+    pub spread_days: i64,
+    pub median_age_days: i64,
+    pub shift: String,
+    pub affected: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ValidationResult {
+    pub shots: Vec<ShotValidationRow>,
+    pub groups: Vec<FailureGroup>,
+    pub clock_offset: Option<ClockOffsetRow>,
+    pub passing: usize,
+    pub failing: usize,
+}
+
+/// Validate a card's shots against the three rules (F12).
+#[tauri::command]
+pub fn validate_card(path: String, state: State<'_, AppState>) -> CommandResult<ValidationResult> {
+    let config = state.config();
+    let root = resolve_input(&config, &path)?;
+    let card = Card::at(&root).map_err(describe)?;
+
+    let scan = ingest::scan_card(&card, &InMemoryProgress::new()).map_err(describe)?;
+    let validation = ingest::validate(
+        &scan.shots,
+        chrono::Utc::now().naive_utc(),
+        &config.thresholds,
+    );
+
+    let groups = validation
+        .by_failure()
+        .into_iter()
+        .map(|(failure, indices)| FailureGroup {
+            failure: failure.as_str().to_string(),
+            count: indices.len(),
+            actions: ingest::actions_for(failure)
+                .into_iter()
+                .map(|a| a.as_str().to_string())
+                .collect(),
+            default_action: ingest::default_action(failure).map(|a| a.as_str().to_string()),
+        })
+        .collect();
+
+    Ok(ValidationResult {
+        passing: validation.passing(),
+        failing: validation.failing(),
+        clock_offset: validation.clock_offset.as_ref().map(|o| ClockOffsetRow {
+            median: o.median.to_string(),
+            spread_days: o.spread_days,
+            median_age_days: o.median_age_days,
+            shift: o.shift.clone(),
+            affected: o.affected,
+        }),
+        groups,
+        shots: validation
+            .shots
+            .iter()
+            .map(|shot| ShotValidationRow {
+                stem: shot.stem.clone(),
+                status: shot.status().as_str().to_string(),
+                checks: shot
+                    .checks
+                    .iter()
+                    .map(|c| CheckRow {
+                        rule: format!("{:?}", c.rule).to_lowercase(),
+                        status: c.status.as_str().to_string(),
+                        failure: c.failure.map(|f| f.as_str().to_string()),
+                        detail: c.detail.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemediateArgs {
+    pub path: String,
+    pub failure: String,
+    pub action: String,
+    /// `YYYY-MM-DDTHH:MM:SS`, for the manual date actions.
+    pub date: Option<String>,
+    pub out_dir: String,
+    /// When true, plan only and write nothing (§9.2 rule 3).
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemediationPreview {
+    pub stem: String,
+    pub action: String,
+    pub target_dimensions: Option<(u32, u32)>,
+    pub new_date: Option<String>,
+    pub destination: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemediationPlanResult {
+    pub actions: Vec<RemediationPreview>,
+    pub skipped: Vec<SkipRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SkipRow {
+    pub file: String,
+    pub reason: String,
+}
+
+/// Apply one action to every shot sharing one failure (F13).
+///
+/// With `dry_run` the plan is returned and **nothing is written**, which is how
+/// the review screen shows what a bulk action would do before it does it.
+#[tauri::command]
+pub fn remediate(
+    args: RemediateArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<RemediationPlanResult> {
+    let config = state.config();
+    let root = resolve_input(&config, &args.path)?;
+    let out_dir = resolve_output(&config, &args.out_dir)?;
+    let card = Card::at(&root).map_err(describe)?;
+
+    let failure = parse_failure(&args.failure)?;
+    let action = parse_action(&args.action)?;
+    let date = match &args.date {
+        Some(raw) => Some(
+            chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S")
+                .map_err(|_| format!("{raw} is not a date of the form YYYY-MM-DDTHH:MM:SS"))?,
+        ),
+        None => None,
+    };
+
+    let scan = ingest::scan_card(&card, &InMemoryProgress::new()).map_err(describe)?;
+    let validation = ingest::validate(
+        &scan.shots,
+        chrono::Utc::now().naive_utc(),
+        &config.thresholds,
+    );
+
+    let params = ingest::RemediationParams {
+        shots: &scan.shots,
+        validation: &validation,
+        thresholds: config.thresholds.clone(),
+        request: ingest::BulkRequest {
+            failure,
+            action,
+            date,
+            output_dir: out_dir,
+        },
+    };
+
+    let plan = ingest::plan_bulk(&params).map_err(describe)?.data;
+
+    let preview = RemediationPlanResult {
+        actions: plan
+            .actions
+            .iter()
+            .map(|a| RemediationPreview {
+                stem: a.stem.clone(),
+                action: a.action.as_str().to_string(),
+                target_dimensions: a.target_dimensions,
+                new_date: a.new_date.map(|d| d.to_string()),
+                destination: a
+                    .destination
+                    .as_ref()
+                    .map(|d| d.to_string_lossy().to_string()),
+            })
+            .collect(),
+        skipped: plan
+            .skipped
+            .iter()
+            .map(|s| SkipRow {
+                file: s.file.clone(),
+                reason: s.reason.clone(),
+            })
+            .collect(),
+    };
+
+    if args.dry_run {
+        return Ok(preview);
+    }
+
+    ingest::apply_bulk(plan, &InMemoryProgress::new()).map_err(describe)?;
+    Ok(preview)
+}
+
+fn parse_failure(raw: &str) -> CommandResult<ingest::FailureClass> {
+    use ingest::FailureClass::*;
+    match raw {
+        "no_date" => Ok(NoDate),
+        "date_out_of_range" => Ok(DateOutOfRangeIsolated),
+        "date_out_of_range_batch" => Ok(DateOutOfRangeBatch),
+        "too_many_pixels" => Ok(TooManyPixels),
+        "too_large" => Ok(TooLarge),
+        other => Err(format!("{other} is not a failure class")),
+    }
+}
+
+fn parse_action(raw: &str) -> CommandResult<ingest::ActionKind> {
+    use ingest::ActionKind::*;
+    match raw {
+        "enter_date_manually" => Ok(EnterDateManually),
+        "derive_from_batch_median" => Ok(DeriveFromBatchMedian),
+        "use_file_modification_time" => Ok(UseFileModificationTime),
+        "redate_manually" => Ok(RedateManually),
+        "bulk_shift" => Ok(BulkShift),
+        "publish_anyway" => Ok(PublishAnyway),
+        "resize" => Ok(Resize),
+        "reencode_lower" => Ok(ReencodeLower),
+        "skip" => Ok(Skip),
+        other => Err(format!("{other} is not a remediation action")),
+    }
+}

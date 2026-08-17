@@ -100,6 +100,25 @@ attached.
   and is not the real figure — see the phase report's Measurements section, which explains why a
   real card is expected to take several seconds and may exceed the §9.1 budget on a slow reader.
 
+## Phase 9
+
+The rules, the boundaries and the EXIF round trip are all tested against real files, so what is left
+is judgement rather than correctness.
+
+- **Look at a resized frame next to its original.** The tests prove the capture date survives and the
+  dimensions land under the ceiling; they say nothing about whether a 24 MP frame reduced to 10 MP
+  still looks right. Check a few with fine detail — foliage, fabric, text.
+- **Confirm the 30-day batch spread suits how you actually shoot.** F12 gives 30 days for the
+  camera-clock check, and `BATCH_SPREAD_DAYS` reuses it to decide when a frame is "far from the batch
+  median", which the specification does not give a figure for. If you routinely leave a card in the
+  camera for six weeks, frames from the start of it will be flagged as warnings.
+- **Confirm the clock-offset suggestion is right before applying it in anger.** The shift comes from
+  the median, so a card holding two shoots with different clock errors will get one correction that
+  suits neither. The dry run shows the resulting date per frame; read it before applying.
+- **Judge whether the quality ladder's bottom rung is acceptable.** A frame that cannot meet the byte
+  cap at quality 75 is written anyway and reported in `still_too_large`. Whether 75 is low enough to
+  publish, or whether such a frame should be resized further instead, is a taste question.
+
 ## Phase 10
 - macOS ImageIO RAW decode path requires a macOS machine.
 - Needs a human to judge colour quality on real RAW files from each camera body.

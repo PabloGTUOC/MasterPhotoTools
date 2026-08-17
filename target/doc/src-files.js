@@ -1,2 +1,0 @@
-createSrcSidebar('[["phototools_core",["",[["media",[],["image_ops.rs","meta.rs","mod.rs","slices.rs"]]],["config.rs","error.rs","ingest.rs","jobs.rs","ledger.rs","lib.rs","publish.rs","tools.rs"]]]]');
-//{"start":19,"fragment_lengths":[179]}

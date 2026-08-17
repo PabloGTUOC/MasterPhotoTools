@@ -1,1 +1,0 @@
-rd_("ophototools_core")

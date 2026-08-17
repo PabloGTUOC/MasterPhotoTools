@@ -1,0 +1,14 @@
+# Rust build artifacts
+/target/
+**/target/
+
+# Node
+node_modules/
+frontend/*/dist/
+
+# Environment — .env.example is committed, .env is not
+.env
+.env.local
+
+# OS
+.DS_Store

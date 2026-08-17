@@ -21,6 +21,9 @@ regex = "1.13.1"
 tiff = "0.11.3"
 dirs = "6.0.0"
 mozjpeg = "0.10.13"
+# F14 rung 3: the pure-Rust RAW fallback, and the only option on Linux.
+# Named in specification §2.6.
+rawler = "0.7.2"
 
 [dev-dependencies]
 tempfile = "3.10"

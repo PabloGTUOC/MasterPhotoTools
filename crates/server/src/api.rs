@@ -41,6 +41,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/ingest/scan", post(ingest_scan))
         .route("/api/ingest/validate", post(ingest_validate))
         .route("/api/ingest/remediate", post(ingest_remediate))
+        .route("/api/ingest/derive", post(ingest_derive))
         // Jobs.
         .route("/api/jobs/:id", get(job_state))
         .route("/api/jobs/:id/events", get(job_events))
@@ -756,6 +757,45 @@ fn parse_action(raw: &str) -> Result<ingest::ActionKind, ApiError> {
             "{other} is not a remediation action"
         ))),
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeriveRequest {
+    pub path: String,
+    pub out_dir: String,
+}
+
+/// Derive JPEGs for the card's RAW-only shots (F14).
+///
+/// A job: the ladder decodes, and on a card of RAW-only frames that is real
+/// work. Nothing blocks (F17).
+async fn ingest_derive(
+    auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<DeriveRequest>,
+) -> Result<Response, ApiError> {
+    let root = resolve_input(&state.config, &request.path)?;
+    let out_dir = resolve_output(&state.config, &request.out_dir)?;
+    let card = Card::at(&root)?;
+    let thresholds = state.config.thresholds.clone();
+
+    accept(&state, &auth, "raw_derive", 0, move |progress| {
+        let scan = ingest::scan_card(&card, progress)?;
+        let requests = ingest::derivation::requests_for(&scan.shots);
+
+        if requests.is_empty() {
+            return Ok("nothing to derive: every shot has a JPEG".to_string());
+        }
+
+        let summary = ingest::derivation::derive_batch(&requests, &out_dir, &thresholds, progress)?;
+
+        Ok(format!(
+            "{} derived ({} from embedded previews), {} failed",
+            summary.derived.len(),
+            summary.by_rung(phototools_core::media::RawSource::EmbeddedPreview),
+            summary.failures.len()
+        ))
+    })
 }
 
 // ---------------------------------------------------------------------------

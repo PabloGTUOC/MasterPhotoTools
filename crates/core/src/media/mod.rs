@@ -4,6 +4,7 @@ pub mod exif_jpeg;
 pub mod image_ops;
 pub mod jpeg;
 pub mod meta;
+pub mod raw;
 pub mod slices;
 pub mod text;
 
@@ -15,3 +16,4 @@ pub use meta::{
     best_date, is_video, normalise_datetime, read_meta, DateSet, ExifWriter, MediaMeta,
     Orientation, TagSource,
 };
+pub use raw::{is_raw, raw_to_jpeg, DerivedJpeg, RawSource};

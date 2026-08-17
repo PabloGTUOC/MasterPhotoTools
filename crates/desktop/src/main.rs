@@ -115,6 +115,7 @@ fn main() {
             commands::read_card,
             commands::validate_card,
             commands::remediate,
+            commands::derive_raw,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the PhotoTools desktop application");

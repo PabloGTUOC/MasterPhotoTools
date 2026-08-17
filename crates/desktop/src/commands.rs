@@ -838,3 +838,38 @@ fn parse_action(raw: &str) -> CommandResult<ingest::ActionKind> {
         other => Err(format!("{other} is not a remediation action")),
     }
 }
+
+/// Derive JPEGs for the card's RAW-only shots (F14).
+#[tauri::command]
+pub fn derive_raw(
+    path: String,
+    out_dir: String,
+    state: State<'_, AppState>,
+) -> CommandResult<String> {
+    let config = state.config();
+    let root = resolve_input(&config, &path)?;
+    let out_dir = resolve_output(&config, &out_dir)?;
+    let card = Card::at(&root).map_err(describe)?;
+    let thresholds = config.thresholds.clone();
+
+    state
+        .jobs
+        .spawn("raw_derive", 0, move |progress| {
+            let scan = ingest::scan_card(&card, progress)?;
+            let requests = ingest::derivation::requests_for(&scan.shots);
+
+            if requests.is_empty() {
+                return Ok("nothing to derive: every shot has a JPEG".to_string());
+            }
+
+            let summary =
+                ingest::derivation::derive_batch(&requests, &out_dir, &thresholds, progress)?;
+
+            Ok(format!(
+                "{} derived, {} failed",
+                summary.derived.len(),
+                summary.failures.len()
+            ))
+        })
+        .map_err(describe)
+}

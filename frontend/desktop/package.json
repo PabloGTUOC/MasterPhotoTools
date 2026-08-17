@@ -1,0 +1,26 @@
+{
+  "name": "@phototools/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5174 --strictPort",
+    "build": "vue-tsc --build && vite build",
+    "typecheck": "vue-tsc --build --force",
+    "check:transport": "node scripts/check-transport.mjs"
+  },
+  "dependencies": {
+    "@phototools/shared": "file:../shared",
+    "@tauri-apps/api": "^2.1.1",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/tsconfig": "^0.7.0",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.3",
+    "vue-tsc": "^2.1.10"
+  }
+}

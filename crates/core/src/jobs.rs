@@ -1,7 +1,9 @@
 //! Long-running work and progress reporting (F17)
 
 use crate::error::Error;
+use crate::ledger::Ledger;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 
 /// Reported by every long-running operation as it works.
 pub trait Progress: Send + Sync {
@@ -138,6 +140,194 @@ impl Progress for InMemoryProgress {
 
     fn cancelled(&self) -> bool {
         self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// One frame of a job's progress, as delivered to a watcher.
+///
+/// Transport-free on purpose: the server turns these into Server-Sent Events
+/// and the desktop into Tauri events (F17), and neither shape belongs here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JobUpdate {
+    pub id: String,
+    pub kind: String,
+    pub state: JobStatus,
+    pub progress: u64,
+    pub total: u64,
+    pub message: String,
+    /// True for the last update a watcher will receive.
+    pub terminal: bool,
+}
+
+/// Where a running job's updates go.
+pub trait JobEventSink: Send + Sync + 'static {
+    fn emit(&self, update: &JobUpdate);
+}
+
+/// A sink that drops everything, for callers that only want persistence.
+pub struct NoEvents;
+
+impl JobEventSink for NoEvents {
+    fn emit(&self, _update: &JobUpdate) {}
+}
+
+/// Runs long operations as persisted, observable jobs (F17).
+///
+/// Both binaries need this, so it lives here rather than being written twice
+/// (G1). The runner owns persistence and threading; each binary supplies a sink
+/// that turns updates into its own transport.
+pub struct JobRunner {
+    /// `rusqlite::Connection` is not `Sync`, so the ledger sits behind a mutex.
+    /// Job writes are small and rare next to the work itself.
+    ledger: Arc<Mutex<Ledger>>,
+    sink: Arc<dyn JobEventSink>,
+}
+
+impl JobRunner {
+    pub fn new(ledger: Ledger, sink: Arc<dyn JobEventSink>) -> Self {
+        Self {
+            ledger: Arc::new(Mutex::new(ledger)),
+            sink,
+        }
+    }
+
+    /// Mark jobs orphaned by a previous process. Call once at startup.
+    pub fn recover(&self) -> Result<Vec<Job>, Error> {
+        self.with_ledger(|l| l.recover_interrupted_jobs())
+    }
+
+    pub fn get(&self, id: &str) -> Result<Option<Job>, Error> {
+        self.with_ledger(|l| l.get_job(id))
+    }
+
+    fn with_ledger<T, F>(&self, f: F) -> Result<T, Error>
+    where
+        F: FnOnce(&Ledger) -> rusqlite::Result<T>,
+    {
+        let guard = self
+            .ledger
+            .lock()
+            .map_err(|_| Error::Job("ledger lock poisoned".into()))?;
+        f(&guard).map_err(|e| Error::Internal(e.to_string()))
+    }
+
+    /// Start `work` on its own thread and return the job id immediately.
+    ///
+    /// **No caller blocks until the operation completes** (F17). The row is
+    /// written before the thread starts, so a crash mid-operation still leaves a
+    /// recoverable record.
+    pub fn spawn<F>(&self, kind: &str, total: u64, work: F) -> Result<String, Error>
+    where
+        F: FnOnce(&dyn Progress) -> Result<String, Error> + Send + 'static,
+    {
+        self.spawn_with_id(next_job_id(), kind, total, work)
+    }
+
+    /// As [`spawn`](Self::spawn), with an id the caller chose.
+    ///
+    /// A caller that must register a listener *before* the job can emit needs to
+    /// know the id first; generating it here would leave a window in which
+    /// updates have nowhere to go.
+    pub fn spawn_with_id<F>(
+        &self,
+        id: impl Into<String>,
+        kind: &str,
+        total: u64,
+        work: F,
+    ) -> Result<String, Error>
+    where
+        F: FnOnce(&dyn Progress) -> Result<String, Error> + Send + 'static,
+    {
+        let job = Job::new(id, kind, total);
+        let id = job.id.clone();
+        self.with_ledger(|l| l.insert_job(&job))?;
+
+        let reporter = SinkProgress {
+            id: id.clone(),
+            kind: kind.to_string(),
+            total,
+            ledger: Arc::clone(&self.ledger),
+            sink: Arc::clone(&self.sink),
+        };
+
+        let ledger = Arc::clone(&self.ledger);
+        let sink = Arc::clone(&self.sink);
+        let finished_id = id.clone();
+        let finished_kind = kind.to_string();
+
+        std::thread::Builder::new()
+            .name(format!("job-{kind}"))
+            .spawn(move || {
+                let (status, error, message) = match work(&reporter) {
+                    Ok(summary) => (JobStatus::Completed, None, summary),
+                    Err(e) => (JobStatus::Failed, Some(e.to_string()), e.to_string()),
+                };
+
+                if let Ok(guard) = ledger.lock() {
+                    let _ = guard.finish_job(&finished_id, status, error.as_deref());
+                }
+
+                // A terminal update, so a watcher knows the stream has ended
+                // rather than waiting on something that will never speak again.
+                sink.emit(&JobUpdate {
+                    id: finished_id,
+                    kind: finished_kind,
+                    state: status,
+                    progress: total,
+                    total,
+                    message,
+                    terminal: true,
+                });
+            })
+            .map_err(|e| Error::Job(format!("could not start job thread: {e}")))?;
+
+        Ok(id)
+    }
+}
+
+/// Monotonic-enough job identifier without pulling in a UUID dependency.
+fn next_job_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{nanos:016x}{seq:08x}")
+}
+
+/// A [`Progress`] that persists to the ledger and forwards to a sink.
+struct SinkProgress {
+    id: String,
+    kind: String,
+    total: u64,
+    ledger: Arc<Mutex<Ledger>>,
+    sink: Arc<dyn JobEventSink>,
+}
+
+impl Progress for SinkProgress {
+    fn report(&self, done: u64, total: u64, message: &str) {
+        let total = if total == 0 { self.total } else { total };
+
+        if let Ok(guard) = self.ledger.lock() {
+            let _ = guard.update_job_progress(&self.id, done, total);
+        }
+
+        self.sink.emit(&JobUpdate {
+            id: self.id.clone(),
+            kind: self.kind.clone(),
+            state: JobStatus::Running,
+            progress: done,
+            total,
+            message: message.to_string(),
+            terminal: false,
+        });
+    }
+
+    fn cancelled(&self) -> bool {
+        false
     }
 }
 

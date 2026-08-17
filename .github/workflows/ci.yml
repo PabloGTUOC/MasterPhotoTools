@@ -99,6 +99,15 @@ jobs:
       - name: Transport boundary
         run: npm --prefix frontend/web run check:transport
 
+      # The desktop front end reuses the same views over a Tauri transport, so
+      # it gets the same three checks.
+      - name: Desktop front end
+        run: |
+          npm --prefix frontend/desktop ci
+          npm --prefix frontend/desktop run typecheck
+          npm --prefix frontend/desktop run build
+          npm --prefix frontend/desktop run check:transport
+
       # Phase 6 acceptance: layout at 390 px. Needs a browser, so it installs
       # one here rather than assuming the runner has it.
       - name: Install Chromium

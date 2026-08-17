@@ -1,7 +1,7 @@
 mod fixtures;
 
 use phototools_core::ingest::derivation::{DeriveJob, WorkerPool};
-use phototools_core::ingest::{CandidateAsset, CandidateShot};
+use phototools_core::ingest::{AssetKind, ScannedAsset, Shot};
 use phototools_core::ledger::Ledger;
 use phototools_core::media::meta::read_meta;
 
@@ -14,16 +14,22 @@ fn test_derivation_pipeline() {
     // Setup a 4000x3000 image, which will be downscaled to 2000x1500
     let img_path = f.jpeg_with_exif("original.jpg", 4000, 3000, capture_date, camera);
 
-    // Mock asset
-    let asset = CandidateAsset {
+    let asset = ScannedAsset {
         path: img_path.clone(),
-        sha256: "fake_hash".to_string(),
+        rel_path: "original.jpg".to_string(),
+        kind: AssetKind::Jpeg,
         bytes: 1000,
+        sha256: "fake_hash".to_string(),
+        width: 4000,
+        height: 3000,
+        capture: None,
+        camera: Some(camera.to_string()),
     };
 
-    let shot = CandidateShot {
-        id: "original".to_string(),
+    let shot = Shot {
+        stem: "original".to_string(),
         assets: vec![asset.clone()],
+        needs_derivation: false,
     };
 
     let staging_dir = f.temp.path().join("staging");

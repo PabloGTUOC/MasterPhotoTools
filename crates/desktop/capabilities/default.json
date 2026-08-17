@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the PhotoTools webview is allowed to do. Every operation reaches core through an invoke command; the webview itself needs nothing beyond the core defaults, because specification §8 keeps HTTP on the Rust side.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "notification:default"
+  ]
+}

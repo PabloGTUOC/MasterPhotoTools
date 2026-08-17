@@ -72,7 +72,33 @@ Tauri front end all build and are tested on Linux; the parts that cannot be are:
   vanishing (F17).
 
 ## Phase 8
-- Requires a physical SD card for end-to-end ingest validation.
+
+The scan, pairing, fingerprinting and staging are all tested headlessly against simulated cards
+(build plan §6.3), so what needs a human is the part that only exists on macOS with hardware
+attached.
+
+- **Insert a real card and confirm the notification appears**, reading
+  `EOS_DIGITAL — 412 new shots. Review?` with the card's actual label and a plausible count. The
+  text and the count are tested; that macOS raises the notification at all is not, and
+  `tauri-plugin-notification` needs the user to have granted notification permission to the app.
+- **Confirm the debounce is long enough for a real card reader.** It is set to 1.5 s, chosen from
+  the shape of the problem rather than from measurement: a mount is several events, and looking too
+  early finds an empty directory and concludes there is no `DCIM`. If a real reader is slower than
+  that, detection will silently miss cards — so watch for a card that mounts but raises nothing, and
+  raise `DEBOUNCE` in `crates/desktop/src/detection.rs` if it happens.
+- **Confirm `/Volumes` is watchable.** `notify` uses FSEvents on macOS; the watcher is exercised
+  against a stand-in directory in tests, and `/Volumes` specifically is not.
+- **Confirm a non-card volume raises nothing.** Mount a backup drive or a USB stick with no `DCIM`
+  and confirm no notification appears.
+- **Confirm a reinserted card with nothing new on it raises nothing**, and that after shooting more
+  frames it announces only the new ones. This is tested against simulated cards, but the volume
+  label it keys on comes from the real mount point.
+- **Scan a real card and confirm it is byte-identical afterwards** (G5). The test proves this
+  against a read-only fixture; a real card is the case that matters. Compare with
+  `find /Volumes/CARD -type f -exec shasum {} +` before and after.
+- **Record how long a real 400-shot card takes to scan.** The measured 44 ms is on 64x48 fixtures
+  and is not the real figure — see the phase report's Measurements section, which explains why a
+  real card is expected to take several seconds and may exceed the §9.1 budget on a slow reader.
 
 ## Phase 10
 - macOS ImageIO RAW decode path requires a macOS machine.

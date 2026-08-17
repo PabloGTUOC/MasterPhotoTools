@@ -7,7 +7,8 @@ use crate::server::{ServerSettings, ServerStatus};
 use crate::AppState;
 use phototools_core::config::Config;
 use phototools_core::error::Error;
-use phototools_core::jobs::Job;
+use phototools_core::ingest::{self, Card, ScanProblem};
+use phototools_core::jobs::{InMemoryProgress, Job};
 use phototools_core::tools::f1_dates::{DateRepairParams, DateRepairTool, RepairMode, ScanResult};
 use phototools_core::tools::f3_rename::{
     BatchRenameAction, BatchRenameParams, BatchRenamerTool, RenameOrder,
@@ -415,4 +416,176 @@ pub fn bootstrap(state: State<'_, AppState>) -> Bootstrap {
             .collect(),
         server: state.server.settings(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Ingest — F10, F11
+// ---------------------------------------------------------------------------
+
+/// What the review screen needs about one photograph.
+#[derive(Debug, Serialize)]
+pub struct ShotRow {
+    pub stem: String,
+    pub candidate_kind: String,
+    pub candidate_path: String,
+    pub bytes: u64,
+    pub width: u32,
+    pub height: u32,
+    pub megapixels: f64,
+    pub capture: Option<String>,
+    pub camera: Option<String>,
+    pub asset_count: usize,
+    pub needs_derivation: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CardScanResult {
+    pub card_id: String,
+    pub label: Option<String>,
+    pub shots: Vec<ShotRow>,
+    pub awaiting_derivation: usize,
+    pub problems: Vec<ScanProblem>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CardSummaryResult {
+    pub path: String,
+    pub card_id: String,
+    pub label: Option<String>,
+    pub shots: usize,
+    pub new_shots: usize,
+    pub seen_before: bool,
+    pub looks_like_a_card: bool,
+}
+
+/// A quick look at a directory being offered as a card (F10).
+///
+/// Cheap by construction — directory entries and the ledger, no photographs —
+/// so the UI can offer it the moment someone picks a folder.
+#[tauri::command]
+pub fn summarise_card(
+    path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<CardSummaryResult> {
+    let config = state.config();
+    let root = resolve_input(&config, &path)?;
+    let card = Card::at(&root).map_err(describe)?;
+
+    let ledger = state.jobs.ledger();
+    let guard = ledger
+        .lock()
+        .map_err(|_| "The ledger is unavailable.".to_string())?;
+    let summary = ingest::summarise_card(&card, &guard).map_err(describe)?;
+
+    Ok(CardSummaryResult {
+        path: card.root().to_string_lossy().to_string(),
+        card_id: summary.card_id,
+        label: summary.label,
+        shots: summary.shots,
+        new_shots: summary.new_shots,
+        seen_before: summary.seen_before,
+        looks_like_a_card: card.looks_like_a_card(),
+    })
+}
+
+/// Scan a card and record it (F11).
+///
+/// Any directory is accepted, which is build plan §6.3's simulated card mode:
+/// the command resolves a path against the configured roots (G6) and hands it
+/// to `core`, which cannot tell whether a card was mounted.
+#[tauri::command]
+pub fn scan_card(path: String, state: State<'_, AppState>) -> CommandResult<String> {
+    let config = state.config();
+    let root = resolve_input(&config, &path)?;
+    let card = Card::at(&root).map_err(describe)?;
+    let ledger = state.jobs.ledger();
+
+    state
+        .jobs
+        .spawn("card_scan", 0, move |progress| {
+            let scan = ingest::scan_card(&card, progress)?;
+            {
+                let guard = ledger
+                    .lock()
+                    .map_err(|_| Error::Internal("ledger lock poisoned".into()))?;
+                ingest::record_scan(&scan, &guard)?;
+            }
+            Ok(format!(
+                "{} shots, {} awaiting derivation, {} unreadable",
+                scan.shot_count(),
+                scan.awaiting_derivation(),
+                scan.problems.len()
+            ))
+        })
+        .map_err(describe)
+}
+
+/// Copy a card's candidates into the staging directory, verified by hash.
+///
+/// **Never writes to the card** (G5); the staging directory is the only
+/// destination.
+#[tauri::command]
+pub fn stage_card(path: String, state: State<'_, AppState>) -> CommandResult<String> {
+    let config = state.config();
+    let root = resolve_input(&config, &path)?;
+    let card = Card::at(&root).map_err(describe)?;
+    let staging = config.staging_dir.clone();
+
+    state
+        .jobs
+        .spawn("card_stage", 0, move |progress| {
+            let scan = ingest::scan_card(&card, progress)?;
+            let candidates: Vec<_> = scan.candidates().cloned().collect();
+            let result = ingest::stage_all(&candidates, &staging, progress);
+
+            if result.all_verified() {
+                Ok(format!("{} copied and verified", result.staged.len()))
+            } else {
+                Ok(format!(
+                    "{} copied, {} could not be verified",
+                    result.staged.len(),
+                    result.failed.len()
+                ))
+            }
+        })
+        .map_err(describe)
+}
+
+/// A scan the UI can render immediately, without waiting for a job.
+///
+/// Used by the review screen once a scan job has finished.
+#[tauri::command]
+pub fn read_card(path: String, state: State<'_, AppState>) -> CommandResult<CardScanResult> {
+    let config = state.config();
+    let root = resolve_input(&config, &path)?;
+    let card = Card::at(&root).map_err(describe)?;
+
+    let scan = ingest::scan_card(&card, &InMemoryProgress::new()).map_err(describe)?;
+
+    Ok(CardScanResult {
+        card_id: scan.card_id.clone(),
+        label: scan.label.clone(),
+        awaiting_derivation: scan.awaiting_derivation(),
+        problems: scan.problems.clone(),
+        shots: scan
+            .shots
+            .iter()
+            .map(|shot| {
+                let candidate = shot.candidate();
+                ShotRow {
+                    stem: shot.stem.clone(),
+                    candidate_kind: candidate.kind.as_str().to_string(),
+                    candidate_path: candidate.rel_path.clone(),
+                    bytes: candidate.bytes,
+                    width: candidate.width,
+                    height: candidate.height,
+                    megapixels: candidate.megapixels(),
+                    capture: candidate.capture.map(|c| c.to_string()),
+                    camera: candidate.camera.clone(),
+                    asset_count: shot.assets.len(),
+                    needs_derivation: shot.needs_derivation,
+                }
+            })
+            .collect(),
+    })
 }

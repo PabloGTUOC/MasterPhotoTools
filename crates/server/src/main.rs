@@ -1,12 +1,7 @@
 mod api;
 mod auth;
 
-use axum::{
-    routing::get,
-    Router,
-    response::IntoResponse,
-    Json,
-};
+use axum::{response::IntoResponse, routing::get, Json, Router};
 use phototools_core::config::Config;
 use serde::Serialize;
 use std::net::SocketAddr;
@@ -56,9 +51,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
-    
+
     tracing::info!("Listening on {}", addr);
-    
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

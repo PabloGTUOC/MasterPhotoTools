@@ -1,3 +1,5 @@
+//! The archive operations (F1–F9)
+
 pub mod f1_dates;
 pub mod f2_takeout;
 pub mod f3_rename;
@@ -10,7 +12,7 @@ pub mod f9_browser;
 
 use crate::jobs::{Progress, ToolResult};
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Skip {

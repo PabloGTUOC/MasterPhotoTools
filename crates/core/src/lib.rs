@@ -1,5 +1,9 @@
+//! `phototools-core` — all PhotoTools functionality.
+//!
+//! No web framework, no UI, no platform assumptions. Compiled into both
+//! `phototools-server` and `phototools-desktop`; see specification §2.2.
+
 pub mod config;
-pub mod derivation;
 pub mod error;
 pub mod ingest;
 pub mod jobs;

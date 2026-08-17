@@ -1,3 +1,6 @@
+//! Card scanning, pairing, validation, remediation (F10–F14, F16)
+
+pub mod derivation;
 pub mod fingerprint;
 pub mod grouping;
 pub mod scanner;

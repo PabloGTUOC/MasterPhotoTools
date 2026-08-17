@@ -1,1 +1,2 @@
-# Placeholder for custom clippy configuration if needed
+# Minimum supported Rust version — build plan §3 requires stable >= 1.80.
+msrv = "1.80.0"

@@ -1,6 +1,6 @@
 mod fixtures;
 
-use phototools_core::derivation::{DeriveJob, WorkerPool};
+use phototools_core::ingest::derivation::{DeriveJob, WorkerPool};
 use phototools_core::ingest::{CandidateAsset, CandidateShot};
 use phototools_core::ledger::Ledger;
 use phototools_core::media::meta::read_meta;

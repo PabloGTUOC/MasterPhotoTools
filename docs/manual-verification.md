@@ -40,6 +40,17 @@ This document tracks verification steps that require human intervention, physica
 - **F5 captions use a built-in 5×7 bitmap font**, not a real typeface. Check that captions are
   legible at the intended cell sizes and print scale.
 
+## Phase 6
+
+- **The 390 px check proves geometry, not feel.** `npm --prefix frontend/web run check:layout`
+  asserts that no route scrolls sideways and that every control is at least 40 px tall, and writes
+  screenshots to `frontend/web/layout-proof/`. Whether the tool views are actually pleasant to drive
+  one-handed — reachable thumb targets, sensible keyboard behaviour on iOS and Android, readable
+  contrast in sunlight — needs a person with a real phone.
+- **Sign-in cannot be exercised until a Firebase project exists.** Set the four `VITE_FIREBASE_*`
+  variables and confirm: Google sign-in completes, the ID token reaches the server, and an expired
+  token triggers a silent refresh and retry rather than a login screen (§5.3).
+
 ## Phase 7
 - Requires macOS machine to build and run the Tauri application.
 

@@ -1,25 +1,13 @@
 <script setup lang="ts">
-/**
- * F4, F7 and F8 — the tools that take files and an output directory.
- *
- * §8 exposes no dry-run for these, so the gate is an explicit confirmation
- * naming exactly what will be written and where.
- */
+/** F5 — contact sheet. Writes one file, so it takes a path rather than a folder. */
 import { computed, ref, useTemplateRef } from 'vue';
-import { api } from '../api';
+import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
-
-const props = defineProps<{
-  operation: 'split' | 'border' | 'tiffToJpeg';
-  title: string;
-  blurb: string;
-  applyLabel: string;
-}>();
 
 const page = useTemplateRef<InstanceType<typeof ToolPage>>('page');
 
 const inputs = ref('');
-const outDir = ref('');
+const outPath = ref('');
 const recursive = ref(false);
 const confirmed = ref(false);
 const busy = ref(false);
@@ -29,53 +17,37 @@ const inputList = computed(() =>
 );
 
 async function apply() {
-  if (!inputList.value.length) {
-    page.value?.setFailure('Add at least one input.');
+  if (!inputList.value.length || !outPath.value.trim()) {
+    page.value?.setFailure('Add inputs and an output file path.');
     return;
   }
-  if (!outDir.value.trim()) {
-    page.value?.setFailure('Choose an output directory.');
-    return;
-  }
-
   busy.value = true;
   page.value?.setFailure(null);
-  const body = {
-    inputs: inputList.value,
-    recursive: recursive.value,
-    out_dir: outDir.value.trim(),
-  };
-
   try {
-    const start =
-      props.operation === 'split'
-        ? api.split(body)
-        : props.operation === 'border'
-          ? api.border(body)
-          : api.tiffToJpeg(body);
-    page.value?.setJob(await start);
+    page.value?.setJob(
+      await api.contactSheet({
+        inputs: inputList.value,
+        recursive: recursive.value,
+        out_path: outPath.value.trim(),
+      }),
+    );
   } catch (e) {
     page.value?.setFailure(e instanceof Error ? e.message : String(e));
   } finally {
     busy.value = false;
   }
 }
-
-function confirm() {
-  confirmed.value = true;
-  page.value?.setReviewed(true);
-}
 </script>
 
 <template>
   <ToolPage
     ref="page"
-    :title="props.title"
-    :blurb="props.blurb"
+    title="Contact sheet"
+    blurb="A grid of thumbnails from a folder. A file that cannot be read gets a crossed box rather than aborting the sheet."
     has-preview
-    :apply-label="props.applyLabel"
+    apply-label="Build sheet"
     :busy="busy"
-    @preview="confirm"
+    @preview="() => { confirmed = true; page?.setReviewed(true); }"
     @apply="apply"
   >
     <template #form>
@@ -83,20 +55,17 @@ function confirm() {
         <span>Inputs — files or folders, one per line</span>
         <textarea v-model="inputs" rows="4" spellcheck="false"></textarea>
       </label>
-
       <label class="field">
-        <span>Output directory</span>
-        <input v-model="outDir" type="text" placeholder="/mnt/photos/out" />
+        <span>Output file</span>
+        <input v-model="outPath" type="text" placeholder="/mnt/photos/contact.jpg" />
       </label>
-
       <label class="checkbox"><input v-model="recursive" type="checkbox" /> Include subfolders</label>
     </template>
 
     <template #preview>
       <p v-if="confirmed && inputList.length" class="confirmed">
-        Will write output from <strong>{{ inputList.length }}</strong>
-        input{{ inputList.length === 1 ? '' : 's' }} into
-        <code>{{ outDir }}</code>. Originals are never modified.
+        Will build one sheet from <strong>{{ inputList.length }}</strong> input(s) at
+        <code>{{ outPath }}</code>.
       </p>
     </template>
   </ToolPage>

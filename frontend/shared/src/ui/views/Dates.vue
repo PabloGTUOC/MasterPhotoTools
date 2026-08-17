@@ -2,7 +2,7 @@
 /** F1 and F2 — scan and repair capture dates. */
 import { ref, useTemplateRef } from 'vue';
 import type { RepairMode } from '@phototools/shared';
-import { api } from '../api';
+import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
 
 const page = useTemplateRef<InstanceType<typeof ToolPage>>('page');

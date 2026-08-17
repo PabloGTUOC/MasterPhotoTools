@@ -1,12 +1,26 @@
 {
   "extends": "@vue/tsconfig/tsconfig.dom.json",
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue"],
+  // The shared views are compiled as part of this application, which is what
+  // lets them resolve `@host/api` to this build's transport. `composite`
+  // requires every input file to be listed, so they are included explicitly
+  // rather than picked up through the import graph.
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.vue",
+    "../shared/src/ui/**/*.ts",
+    "../shared/src/ui/**/*.vue"
+  ],
   "compilerOptions": {
     "composite": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "paths": {
+      "@ui/*": ["../shared/src/ui/*"],
+      "@host/*": ["./src/*"]
+    }
   }
 }

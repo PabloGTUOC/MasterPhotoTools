@@ -10,9 +10,10 @@ build, launch and Keychain round trip are human steps, recorded in
   did not exist. It does now, and `crates/desktop/tauri.conf.json` pointed `frontendDist` at
   `../desktop/ui/dist`, a path that existed in neither layout; it now points at the real build.
 
-  The desktop reuses `frontend/shared` and **the web views verbatim** — `Library`, `Dates`,
-  `Rename`, `ImageTool`, `ContactSheet`, `Transform` are the same files. That is the point of the
-  shared interface: views are written once.
+  The desktop reuses `frontend/shared` and **the same view files as the web build** — `Library`,
+  `Dates`, `Rename`, `ImageTool`, `ContactSheet`, `Transform`. That is the point of the shared
+  interface: views are written once. (They were copies when this phase landed; `phase-07a` moved
+  them into `frontend/shared/src/ui`, so they are now literally the same files.)
 
 - **Task 2 — the command layer.** Seventeen commands, each of which parses, resolves paths against
   the configured roots, and delegates. No functionality lives in the binary (G1). **G6 holds on the
@@ -95,11 +96,9 @@ desktop needs no Firebase web SDK and no HTTP client in the webview.
    dependency arriving rather than drifting.
 4. **The desktop router uses hash history**, not path history: the app is served from a file URL
    with no server to fall back on.
-5. **The views were copied, not shared through a package.** Both front ends now hold identical copies
-   of six view files. A shared component package would be better and is what §2.7 describes
-   ("components + API client used by both UIs"); copying was the smaller change and keeps the two
-   builds independent while the desktop is still moving. **Worth resolving before either front end
-   changes much**, or the copies will drift.
+5. ~~**The views were copied, not shared through a package.**~~ **Resolved** — see
+   `phase-07a-view-dedup.md`. The ten shared files now live in `frontend/shared/src/ui` and both
+   front ends compile them from there, which is what §2.7 describes.
 
 ### Added to manual-verification.md
 
@@ -114,5 +113,5 @@ Five Phase 7 entries, replacing the single line that said only "requires macOS".
   it early, since Phases 8–13 are otherwise untestable without hardware.
 - **`Fingerprint::generate` still ignores its path and returns a constant**, so every card collapses
   to one `cards` row. That is Phase 8 task 2.
-- **The view duplication in deviation 5 should be resolved before Phase 13**, which adds ingest views
-  to the desktop only. Doing it then means moving six files that have both drifted and grown.
+- **The view duplication in deviation 5 is resolved** (`phase-07a`), so Phase 13 can add ingest views
+  to `frontend/shared/src/ui` and have them typechecked against both transports for free.

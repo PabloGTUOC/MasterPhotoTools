@@ -6,7 +6,7 @@
  * naming exactly what will be written and where.
  */
 import { computed, ref, useTemplateRef } from 'vue';
-import { api } from '../api';
+import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
 
 const props = defineProps<{

@@ -2,7 +2,7 @@
 /** F9 — library browser, with breadcrumbs, usable one-handed. */
 import { onMounted, ref } from 'vue';
 import type { BrowserEntry } from '@phototools/shared';
-import { api } from '../api';
+import { api } from '@host/api';
 
 const path = ref(import.meta.env.VITE_API_BASE_URL ? '' : '');
 const entries = ref<BrowserEntry[]>([]);

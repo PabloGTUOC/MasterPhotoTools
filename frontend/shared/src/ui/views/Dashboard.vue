@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { api } from '../api';
+import { api } from '@host/api';
 
 const version = ref<string | null>(null);
 const reachable = ref<boolean | null>(null);

@@ -65,3 +65,52 @@ jobs:
 
       - name: Isolated core tests
         run: cargo test -p phototools-core
+
+  frontend:
+    name: Front end
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/web/package-lock.json
+
+      # The web build consumes the shared client's compiled output, so the
+      # shared package is built first.
+      - name: Build the shared API client
+        run: |
+          npm --prefix frontend/shared ci
+          npm --prefix frontend/shared run build
+
+      - name: Install web dependencies
+        run: npm --prefix frontend/web ci
+
+      - name: Typecheck
+        run: npm --prefix frontend/web run typecheck
+
+      - name: Build
+        run: npm --prefix frontend/web run build
+
+      # Phase 6 acceptance: no view may reach the network directly.
+      - name: Transport boundary
+        run: npm --prefix frontend/web run check:transport
+
+      # Phase 6 acceptance: layout at 390 px. Needs a browser, so it installs
+      # one here rather than assuming the runner has it.
+      - name: Install Chromium
+        run: npx --prefix frontend/web playwright install --with-deps chromium
+
+      - name: Layout at 390px
+        run: npm --prefix frontend/web run check:layout
+
+      - name: Upload layout screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: layout-390px
+          path: frontend/web/layout-proof/
+          if-no-files-found: ignore

@@ -1,157 +1,118 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { LayoutDashboard, Library, Wrench, Settings as SettingsIcon } from 'lucide-vue-next'
+import { onMounted } from 'vue';
+import { authReady, initAuth, isConfigured, signIn, signOutOfPhotoTools, user } from './auth';
 
-const router = useRouter()
-const activePath = ref('/')
+const links = [
+  { to: '/', label: 'Home' },
+  { to: '/library', label: 'Library' },
+  { to: '/dates', label: 'Dates' },
+  { to: '/rename', label: 'Rename' },
+  { to: '/split', label: 'Split' },
+  { to: '/contact-sheet', label: 'Sheet' },
+  { to: '/transform', label: 'Transform' },
+  { to: '/border', label: 'Border' },
+  { to: '/tiff-to-jpeg', label: 'TIFF' },
+];
 
-const navItems = [
-  { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/library', label: 'Library', icon: Library },
-  { path: '/f1', label: 'Date Repair', icon: Wrench },
-]
-
-router.afterEach((to) => {
-  activePath.value = to.path
-})
-
-const navigate = (path: string) => {
-  router.push(path)
-}
+onMounted(initAuth);
 </script>
 
 <template>
-  <div class="app-layout">
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <h2>PhotoTools</h2>
+  <div class="shell">
+    <header class="topbar">
+      <RouterLink to="/" class="brand">PhotoTools</RouterLink>
+      <div class="session">
+        <template v-if="!authReady">…</template>
+        <template v-else-if="!isConfigured">
+          <span class="muted small">Sign-in unconfigured</span>
+        </template>
+        <template v-else-if="user">
+          <span class="muted small">{{ user.email }}</span>
+          <button type="button" class="ghost" @click="signOutOfPhotoTools">Sign out</button>
+        </template>
+        <button v-else type="button" class="primary" @click="signIn">Sign in</button>
       </div>
-      <nav class="sidebar-nav">
-        <button 
-          v-for="item in navItems" 
-          :key="item.path"
-          :class="['nav-item', activePath === item.path ? 'active' : '']"
-          @click="navigate(item.path)"
-        >
-          <component :is="item.icon" :size="18" />
-          {{ item.label }}
-        </button>
-        <div class="spacer"></div>
-      </nav>
-    </aside>
-    
-    <main class="main-content">
-      <router-view></router-view>
+    </header>
+
+    <nav class="tabs" aria-label="Tools">
+      <RouterLink v-for="link in links" :key="link.to" :to="link.to" class="tab">
+        {{ link.label }}
+      </RouterLink>
+    </nav>
+
+    <main class="content">
+      <p v-if="authReady && !isConfigured" class="notice">
+        This build has no Firebase configuration, so it cannot sign in. Set
+        <code>VITE_FIREBASE_API_KEY</code>, <code>VITE_FIREBASE_AUTH_DOMAIN</code>,
+        <code>VITE_FIREBASE_PROJECT_ID</code> and <code>VITE_FIREBASE_APP_ID</code>
+        and rebuild. Requests will be refused until then.
+      </p>
+      <RouterView />
     </main>
-    
-    <footer class="status-bar">
-      <span>Ready</span>
-      <span>Version 0.1.0</span>
-    </footer>
   </div>
 </template>
 
 <style scoped>
-.app-layout {
-  display: flex;
-  flex-direction: row;
-  height: 100vh;
-  width: 100vw;
-  position: relative;
+.shell {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
 }
-
-.sidebar {
-  width: 260px;
-  background-color: #1a1a1a;
-  border-right: 1px solid #333;
-  display: flex;
-  flex-direction: column;
-}
-
-.sidebar-header {
-  padding: 24px;
-  color: #fff;
-  border-bottom: 1px solid #333;
-}
-
-.sidebar-nav {
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1;
-}
-
-.spacer {
-  flex: 1;
-}
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 6px;
-  color: #a0a0a0;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  font-size: 0.9rem;
-  font-weight: 500;
-  transition: all 0.2s ease;
-}
-
-.nav-item:hover {
-  background-color: #2a2a2a;
-  color: #fff;
-}
-
-.nav-item.active {
-  background-color: #3b82f6;
-  color: #fff;
-}
-
-.main-content {
-  flex: 1;
-  background-color: #121212;
-  overflow-y: auto;
-  padding: 24px;
-  padding-bottom: 50px;
-}
-
-.status-bar {
-  position: absolute;
-  bottom: 0;
-  left: 260px;
-  right: 0;
-  height: 32px;
-  background-color: #1a1a1a;
-  border-top: 1px solid #333;
+.topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
-  font-size: 0.75rem;
-  color: #a0a0a0;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
 }
+.brand {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  color: inherit;
+  /* A tappable link needs a tappable height, not just its text box. */
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+.session { display: flex; align-items: center; gap: 10px; }
+.small { font-size: 0.8rem; }
 
-/* Mobile responsive (for "mobile-first" approach requested in Phase 6) */
-@media (max-width: 768px) {
-  .app-layout {
-    flex-direction: column;
-  }
-  
-  .sidebar {
-    width: 100%;
-    height: auto;
-    border-right: none;
-    border-bottom: 1px solid #333;
-  }
-  
-  .status-bar {
-    left: 0;
-  }
+/* Horizontally scrollable tab strip: on a 390px phone the labels do not fit,
+   and wrapping them would push the content below the fold. */
+.tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+  scrollbar-width: thin;
 }
+.tab {
+  flex: 0 0 auto;
+  padding: 9px 12px;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.tab:hover { background: var(--surface-2); color: var(--ink); }
+.tab.router-link-exact-active { background: var(--accent); color: var(--on-accent); }
+.content { padding: 18px 16px 48px; }
+.notice {
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 18px;
+  font-size: 0.88rem;
+}
+.notice code { font-family: var(--mono); font-size: 0.85em; }
 </style>

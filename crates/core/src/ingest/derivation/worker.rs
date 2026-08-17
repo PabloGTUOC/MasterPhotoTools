@@ -2,12 +2,14 @@ use crate::error::Error;
 use crate::ingest::scanner::hash_file;
 use crate::ingest::{CandidateAsset, CandidateShot};
 use crate::ledger::Ledger;
-use crate::media::image_ops::{decode, resize};
+use crate::media::image_ops;
 use crate::media::meta::ExifWriter;
-use image::ImageFormat;
 use rayon::prelude::*;
 use std::fs;
 use std::path::PathBuf;
+
+/// Long edge of a staged derivative, in pixels.
+const DERIVATIVE_LONG_EDGE: u32 = 2000;
 
 #[derive(Debug, Clone)]
 pub struct DeriveJob {
@@ -15,6 +17,17 @@ pub struct DeriveJob {
     pub shot: CandidateShot,
     pub primary_asset: CandidateAsset,
     pub staging_dir: PathBuf,
+}
+
+/// One finished derivative.
+#[derive(Debug, Clone)]
+pub struct Derived {
+    pub shot_id: String,
+    pub staged_path: PathBuf,
+    pub sha256: String,
+    pub bytes: u64,
+    pub width: u32,
+    pub height: u32,
 }
 
 pub struct WorkerPool {
@@ -30,72 +43,82 @@ impl WorkerPool {
         Ok(Self { pool })
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn process(
-        &self,
-        jobs: Vec<DeriveJob>,
-    ) -> Result<Vec<(String, PathBuf, String, u64, u32, u32)>, Error> {
-        let results: Vec<Result<(String, PathBuf, String, u64, u32, u32), Error>> = self
+    /// Derive staged copies for a batch of shots.
+    ///
+    /// Two passes, and the split is deliberate (G4). Decode, resize and encode
+    /// are CPU-bound and run in parallel across the pool. Metadata is then
+    /// carried across serially through **one** `exiftool` process for the whole
+    /// batch — starting one per file costs 150–250 ms each regardless of file
+    /// size, which on a 400-frame card is over a minute of pure process overhead
+    /// (specification §2.6).
+    pub fn process(&self, jobs: Vec<DeriveJob>) -> Result<Vec<Derived>, Error> {
+        let staged: Vec<(DeriveJob, PathBuf, u32, u32)> = self
             .pool
-            .install(|| jobs.into_par_iter().map(Self::process_single).collect());
+            .install(|| {
+                jobs.into_par_iter()
+                    .map(Self::derive_pixels)
+                    .collect::<Vec<_>>()
+            })
+            .into_iter()
+            .collect::<Result<Vec<_>, Error>>()?;
 
-        results.into_iter().collect()
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub fn process_batch(&self, jobs: Vec<DeriveJob>, ledger: &Ledger) -> Result<(), Error> {
-        let results: Vec<Result<(String, PathBuf, String, u64, u32, u32), Error>> = self
-            .pool
-            .install(|| jobs.into_par_iter().map(Self::process_single).collect());
-
-        for res in results {
-            match res {
-                Ok((shot_id, staged_path, sha256, bytes, width, height)) => {
-                    let path_str = staged_path.to_string_lossy().to_string();
-                    ledger
-                        .add_derived(&shot_id, &path_str, &sha256, bytes, width, height)
-                        .unwrap_or_else(|e| {
-                            eprintln!(
-                                "Failed to persist derived asset for shot {}: {}",
-                                shot_id, e
-                            );
-                        });
-                }
-                Err(e) => {
-                    eprintln!("Job failed: {}", e);
-                }
-            }
+        if staged.is_empty() {
+            return Ok(Vec::new());
         }
 
+        let mut writer = ExifWriter::start()?;
+        let mut out = Vec::with_capacity(staged.len());
+
+        for (job, path, width, height) in staged {
+            writer.copy_metadata(&job.primary_asset.path, &path)?;
+
+            // Hash and size are measured after the metadata pass, because that
+            // pass rewrites the file.
+            let bytes = fs::metadata(&path)?.len();
+            let sha256 = hash_file(&path)?;
+
+            out.push(Derived {
+                shot_id: job.shot_id,
+                staged_path: path,
+                sha256,
+                bytes,
+                width,
+                height,
+            });
+        }
+
+        writer.close()?;
+        Ok(out)
+    }
+
+    /// Derive and record a batch, persisting each result to the ledger.
+    pub fn process_batch(&self, jobs: Vec<DeriveJob>, ledger: &Ledger) -> Result<(), Error> {
+        for derived in self.process(jobs)? {
+            ledger
+                .add_derived(
+                    &derived.shot_id,
+                    &derived.staged_path.to_string_lossy(),
+                    &derived.sha256,
+                    derived.bytes,
+                    derived.width,
+                    derived.height,
+                )
+                .map_err(|e| Error::Internal(e.to_string()))?;
+        }
         Ok(())
     }
 
-    fn process_single(job: DeriveJob) -> Result<(String, PathBuf, String, u64, u32, u32), Error> {
+    /// The parallel half: everything that touches pixels, and nothing that
+    /// touches `exiftool`.
+    fn derive_pixels(job: DeriveJob) -> Result<(DeriveJob, PathBuf, u32, u32), Error> {
         fs::create_dir_all(&job.staging_dir)?;
 
-        let out_name = format!("{}_proxy.jpg", job.shot.id);
-        let out_path = job.staging_dir.join(&out_name);
+        let out_path = job.staging_dir.join(format!("{}_proxy.jpg", job.shot.id));
+        let img = image_ops::decode_oriented(&job.primary_asset.path)?;
+        let resized = image_ops::downscale_to_max_edge(&img, DERIVATIVE_LONG_EDGE)?;
+        let (width, height) = (resized.width(), resized.height());
 
-        let img = decode(&job.primary_asset.path)?;
-
-        // Resize to 2000px
-        let (w, h) = (img.width(), img.height());
-        let ratio = 2000.0 / (w.max(h) as f64);
-        let new_w = ((w as f64 * ratio).round() as u32).min(w);
-        let new_h = ((h as f64 * ratio).round() as u32).min(h);
-
-        let resized = resize(&img, new_w, new_h)?;
-
-        resized
-            .save_with_format(&out_path, ImageFormat::Jpeg)
-            .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
-
-        let mut exif_writer = ExifWriter::start()?;
-        exif_writer.copy_metadata(&job.primary_asset.path, &out_path)?;
-
-        let bytes = fs::metadata(&out_path)?.len();
-        let sha256 = hash_file(&out_path)?;
-
-        Ok((job.shot_id, out_path, sha256, bytes, new_w, new_h))
+        image_ops::encode_jpeg(&resized, 95, &out_path)?;
+        Ok((job, out_path, width, height))
     }
 }

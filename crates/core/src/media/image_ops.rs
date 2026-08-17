@@ -148,6 +148,108 @@ pub fn dimensions_for_megapixels(w: u32, h: u32, max_megapixels: u32) -> Option<
     ))
 }
 
+/// Rotate by an arbitrary angle, expanding the canvas so nothing is clipped (F6).
+///
+/// Right angles use the exact rotations; other angles are resampled bilinearly
+/// with the uncovered corners left transparent, so a later flatten decides the
+/// background rather than this function guessing one.
+pub fn rotate_expanding(img: &DynamicImage, degrees: f32) -> DynamicImage {
+    let normalised = degrees.rem_euclid(360.0);
+
+    if (normalised - 0.0).abs() < f32::EPSILON {
+        return img.clone();
+    }
+    if (normalised - 90.0).abs() < 0.01 {
+        return img.rotate90();
+    }
+    if (normalised - 180.0).abs() < 0.01 {
+        return img.rotate180();
+    }
+    if (normalised - 270.0).abs() < 0.01 {
+        return img.rotate270();
+    }
+
+    let src = img.to_rgba8();
+    let (w, h) = (src.width() as f32, src.height() as f32);
+    let radians = normalised.to_radians();
+    let (sin, cos) = radians.sin_cos();
+
+    // The bounding box of the rotated corners.
+    let new_w = (w * cos.abs() + h * sin.abs()).ceil().max(1.0);
+    let new_h = (w * sin.abs() + h * cos.abs()).ceil().max(1.0);
+
+    let mut out: RgbaImage =
+        image::ImageBuffer::from_pixel(new_w as u32, new_h as u32, image::Rgba([0, 0, 0, 0]));
+
+    let (src_cx, src_cy) = (w / 2.0, h / 2.0);
+    let (dst_cx, dst_cy) = (new_w / 2.0, new_h / 2.0);
+
+    for y in 0..out.height() {
+        for x in 0..out.width() {
+            // Inverse map: where in the source does this destination pixel come from?
+            let dx = x as f32 + 0.5 - dst_cx;
+            let dy = y as f32 + 0.5 - dst_cy;
+            let sx = dx * cos + dy * sin + src_cx - 0.5;
+            let sy = -dx * sin + dy * cos + src_cy - 0.5;
+
+            if sx < -0.5 || sy < -0.5 || sx > w - 0.5 || sy > h - 0.5 {
+                continue;
+            }
+            out.put_pixel(x, y, sample_bilinear(&src, sx, sy));
+        }
+    }
+
+    DynamicImage::ImageRgba8(out)
+}
+
+fn sample_bilinear(src: &RgbaImage, x: f32, y: f32) -> image::Rgba<u8> {
+    let x0 = x.floor().max(0.0) as u32;
+    let y0 = y.floor().max(0.0) as u32;
+    let x1 = (x0 + 1).min(src.width() - 1);
+    let y1 = (y0 + 1).min(src.height() - 1);
+    let fx = (x - x0 as f32).clamp(0.0, 1.0);
+    let fy = (y - y0 as f32).clamp(0.0, 1.0);
+
+    let mut channels = [0u8; 4];
+    for (c, out) in channels.iter_mut().enumerate() {
+        let p00 = src.get_pixel(x0, y0)[c] as f32;
+        let p10 = src.get_pixel(x1, y0)[c] as f32;
+        let p01 = src.get_pixel(x0, y1)[c] as f32;
+        let p11 = src.get_pixel(x1, y1)[c] as f32;
+        let top = p00 + (p10 - p00) * fx;
+        let bottom = p01 + (p11 - p01) * fx;
+        *out = (top + (bottom - top) * fy).round().clamp(0.0, 255.0) as u8;
+    }
+    image::Rgba(channels)
+}
+
+/// Flatten any alpha onto an opaque background colour.
+pub fn flatten_onto(img: &DynamicImage, background: [u8; 3]) -> DynamicImage {
+    if !img.color().has_alpha() {
+        return DynamicImage::ImageRgb8(img.to_rgb8());
+    }
+    let src = img.to_rgba8();
+    let mut out = RgbImage::new(src.width(), src.height());
+    for (x, y, pixel) in src.enumerate_pixels() {
+        let a = pixel[3] as f32 / 255.0;
+        let blended = [
+            ((1.0 - a) * background[0] as f32 + a * pixel[0] as f32).round() as u8,
+            ((1.0 - a) * background[1] as f32 + a * pixel[1] as f32).round() as u8,
+            ((1.0 - a) * background[2] as f32 + a * pixel[2] as f32).round() as u8,
+        ];
+        out.put_pixel(x, y, image::Rgb(blended));
+    }
+    DynamicImage::ImageRgb8(out)
+}
+
+/// Chroma subsampling the JPEG encoder actually applies.
+///
+/// The `image` crate's encoder is fixed at 4:2:2 and offers no progressive mode.
+/// F4 and F7 specify "no chroma subsampling" and F8 specifies "4:2:0,
+/// progressive" — none of which this encoder can express. Recorded here so the
+/// gap is visible at the point of use rather than only in a report.
+pub const ENCODER_CHROMA_SUBSAMPLING: &str = "4:2:2";
+
 /// Encode to JPEG bytes at a given quality.
 pub fn encode_jpeg_bytes(img: &DynamicImage, quality: u8) -> Result<Vec<u8>, Error> {
     let rgb = DynamicImage::ImageRgb8(img.to_rgb8());

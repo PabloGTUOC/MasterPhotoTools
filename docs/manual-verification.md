@@ -52,7 +52,24 @@ This document tracks verification steps that require human intervention, physica
   token triggers a silent refresh and retry rather than a login screen (§5.3).
 
 ## Phase 7
-- Requires macOS machine to build and run the Tauri application.
+
+Everything below needs a Mac. The Rust command layer, the server connection and the
+Tauri front end all build and are tested on Linux; the parts that cannot be are:
+
+- **Confirm the app builds and launches on macOS.** `cargo tauri dev` from `crates/desktop`, or
+  `npm --prefix frontend/desktop run build` then `cargo tauri build`.
+- **Run an F1 date scan on a local folder from the running app** and confirm the table appears.
+  The scan itself is tested headlessly; what is unverified is the `invoke` round trip and rendering.
+- **Stop `phototools-server` and confirm the app still starts**, shows "Server offline" with a
+  reason, and that the local tools still run. The underlying behaviour is tested; the indicator is
+  not.
+- **Confirm the refresh token round-trips through the macOS Keychain.** `keyring` has no usable
+  backend in a headless Linux container, so `credentials.rs` is only tested for the shape of its
+  failure. Sign in, quit, relaunch, and confirm the session survives — and that the token appears in
+  Keychain Access under `com.phototools.master`, not in a file.
+- **Confirm job progress arrives as Tauri events.** Start a long rename and watch the progress bar
+  move, then quit mid-job and relaunch to confirm the job is reported interrupted rather than
+  vanishing (F17).
 
 ## Phase 8
 - Requires a physical SD card for end-to-end ingest validation.

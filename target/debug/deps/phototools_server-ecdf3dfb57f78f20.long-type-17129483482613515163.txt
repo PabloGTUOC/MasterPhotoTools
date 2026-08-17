@@ -1,0 +1,2 @@
+fn(ClaimsExtracted, State<AppState>, axum::Json<Plan<DateRepairAction>>) -> impl futures::Future<Output = impl IntoResponse> {f1_apply}
+fn(ClaimsExtracted, State<AppState>, axum::Json<Plan<DateRepairAction>>) -> impl futures::Future<Output = impl IntoResponse> {f1_apply}: Handler<_, _>

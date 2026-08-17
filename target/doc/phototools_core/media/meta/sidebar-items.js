@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Orientation","TagSource"],"fn":["read_meta"],"struct":["DateSet","ExifWriter","MediaMeta"]};

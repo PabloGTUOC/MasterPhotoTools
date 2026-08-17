@@ -1,0 +1,14 @@
+/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/target/debug/deps/serde-578a85c26dbc3f99.d: /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/pablogtorres/Desktop/Projects/MasterPhotoTools/target/debug/build/serde-7525c7b3d2d04bc4/out/private.rs
+
+/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/target/debug/deps/libserde-578a85c26dbc3f99.rlib: /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/pablogtorres/Desktop/Projects/MasterPhotoTools/target/debug/build/serde-7525c7b3d2d04bc4/out/private.rs
+
+/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/target/debug/deps/libserde-578a85c26dbc3f99.rmeta: /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/pablogtorres/Desktop/Projects/MasterPhotoTools/target/debug/build/serde-7525c7b3d2d04bc4/out/private.rs
+
+/Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs:
+/Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs:
+/Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs:
+/Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs:
+/Users/pablogtorres/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs:
+/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/target/debug/build/serde-7525c7b3d2d04bc4/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/target/debug/build/serde-7525c7b3d2d04bc4/out

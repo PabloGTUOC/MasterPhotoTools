@@ -1,0 +1,29 @@
+{
+  "productName": "MasterPhotoTools",
+  "version": "0.1.0",
+  "identifier": "com.phototools.master",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../desktop/ui/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Master Photo Tools",
+        "width": 1024,
+        "height": 768,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all"
+  }
+}

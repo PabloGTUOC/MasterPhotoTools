@@ -1,11 +1,10 @@
 //! Decode, encode, orientation and resize. The only place image bytes are touched.
 
 use crate::error::Error;
-use crate::media::exif_jpeg;
 use crate::media::meta::{read_meta, Orientation};
+use crate::media::{exif_jpeg, jpeg};
 use fast_image_resize as fr;
 use image::{DynamicImage, ImageFormat, ImageReader, RgbImage, RgbaImage};
-use std::io::Cursor;
 use std::path::Path;
 
 /// The quality ladder F13 steps down until a byte cap is satisfied.
@@ -242,25 +241,27 @@ pub fn flatten_onto(img: &DynamicImage, background: [u8; 3]) -> DynamicImage {
     DynamicImage::ImageRgb8(out)
 }
 
-/// Chroma subsampling the JPEG encoder actually applies.
+/// Encode to JPEG bytes at a given quality, with full chroma resolution.
 ///
-/// The `image` crate's encoder is fixed at 4:2:2 and offers no progressive mode.
-/// F4 and F7 specify "no chroma subsampling" and F8 specifies "4:2:0,
-/// progressive" — none of which this encoder can express. Recorded here so the
-/// gap is visible at the point of use rather than only in a report.
-pub const ENCODER_CHROMA_SUBSAMPLING: &str = "4:2:2";
-
-/// Encode to JPEG bytes at a given quality.
+/// See [`crate::media::jpeg`] for the subsampling and progressive controls the
+/// specification's per-tool output rules need.
 pub fn encode_jpeg_bytes(img: &DynamicImage, quality: u8) -> Result<Vec<u8>, Error> {
-    let rgb = DynamicImage::ImageRgb8(img.to_rgb8());
-    let mut buf = Vec::new();
-    {
-        let mut cursor = Cursor::new(&mut buf);
-        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality);
-        enc.encode_image(&rgb)
-            .map_err(|e| Error::Internal(format!("JPEG encode failed: {e}")))?;
-    }
-    Ok(buf)
+    jpeg::encode(img, &jpeg::JpegOptions::fast(quality))
+}
+
+/// Encode to JPEG bytes with explicit options.
+pub fn encode_jpeg_with(img: &DynamicImage, options: &jpeg::JpegOptions) -> Result<Vec<u8>, Error> {
+    jpeg::encode(img, options)
+}
+
+/// Write a JPEG file with explicit options.
+pub fn write_jpeg_with(
+    img: &DynamicImage,
+    path: &Path,
+    options: &jpeg::JpegOptions,
+) -> Result<(), Error> {
+    std::fs::write(path, jpeg::encode(img, options)?)?;
+    Ok(())
 }
 
 /// Encode stepping quality down `95 → 88 → 82 → 75` until the result fits

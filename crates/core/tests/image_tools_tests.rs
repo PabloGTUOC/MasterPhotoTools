@@ -545,3 +545,85 @@ fn planning_an_image_tool_never_touches_the_filesystem() {
     );
     assert_eq!(hash_tree(f.path()), root_before, "a plan modified the tree");
 }
+
+// ---------------------------------------------------------------------------
+// Encoder output properties
+// ---------------------------------------------------------------------------
+
+/// Read a JPEG's encoding properties back out of the file itself.
+fn jpeg_properties(path: &Path) -> String {
+    let out = std::process::Command::new("exiftool")
+        .args(["-s", "-EncodingProcess", "-YCbCrSubSampling"])
+        .arg(path)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+/// F4 step 5 — "quality 95 with no chroma subsampling", asserted from the file.
+#[test]
+fn f4_writes_full_chroma_resolution() {
+    let f = Fixtures::new();
+    let out = f.path().join("out");
+    let (source, _) = f.half_frame_scan("chroma.jpg", 340, 480, 60, 12);
+
+    let plan = SplitTool
+        .plan(&SplitParams::new(vec![source], out.clone()))
+        .unwrap()
+        .data;
+    SplitTool.apply(plan, &InMemoryProgress::new()).unwrap();
+
+    let props = jpeg_properties(&out.join("chroma_A.jpg"));
+    assert!(
+        props.contains("4:4:4"),
+        "F4 specifies no chroma subsampling; got:\n{props}"
+    );
+}
+
+/// F7 step 5 — same requirement, asserted from the file.
+#[test]
+fn f7_writes_full_chroma_resolution() {
+    let f = Fixtures::new();
+    let out = f.path().join("out");
+    let src = f.jpeg_without_exif("border.jpg", 400, 600);
+
+    let mut params = PrintBorderParams::new(vec![src], out.clone());
+    params.trim_dark_edges = false;
+    let plan = PrintBorderTool.plan(&params).unwrap().data;
+    PrintBorderTool
+        .apply(plan, &InMemoryProgress::new())
+        .unwrap();
+
+    let props = jpeg_properties(&out.join("border.jpg"));
+    assert!(
+        props.contains("4:4:4"),
+        "F7 specifies no chroma subsampling; got:\n{props}"
+    );
+}
+
+/// F8 — "quality 90, 4:2:0 chroma subsampling, progressive, optimised",
+/// asserted from the file.
+#[test]
+fn f8_writes_progressive_four_two_zero() {
+    let f = Fixtures::new();
+    let out = f.path().join("out");
+    let src = f.multipage_tiff("dist.tif", 1, 300, 200);
+
+    let plan = TiffToJpegTool
+        .plan(&TiffToJpegParams::new(vec![src], out.clone()))
+        .unwrap()
+        .data;
+    TiffToJpegTool
+        .apply(plan, &InMemoryProgress::new())
+        .unwrap();
+
+    let props = jpeg_properties(&out.join("dist.jpg"));
+    assert!(
+        props.contains("4:2:0"),
+        "F8 specifies 4:2:0 chroma subsampling; got:\n{props}"
+    );
+    assert!(
+        props.contains("Progressive"),
+        "F8 specifies progressive encoding; got:\n{props}"
+    );
+}

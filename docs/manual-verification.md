@@ -32,10 +32,11 @@ This document tracks verification steps that require human intervention, physica
   a band, 40 px maximum) are the specification's numbers but have only been exercised against
   synthetic edges. Check that a genuinely dark photograph is not mistaken for a scan border, and
   judge whether the 2%-of-short-side corner radius looks right at print size.
-- **Chroma subsampling and progressive encoding cannot currently be honoured.** The `image` crate's
-  JPEG encoder is fixed at 4:2:2 with no progressive mode, so F4's and F7's "no chroma subsampling"
-  and F8's "4:2:0, progressive, optimised" are not met. Judge whether the difference is visible in
-  print and social output; this is the same encoder decision raised by the Phase 2 benchmark.
+- **Encoder output is now to specification but needs a visual check.** F4 and F7 write 4:4:4 and F8
+  writes progressive 4:2:0, verified from the files. mozjpeg's quantisation tables differ from the
+  previous encoder's, so the same nominal quality number produces a different-looking file. Compare
+  a print-size F7 output and an F8 scan conversion against the old output and confirm the change is
+  an improvement, not just a difference.
 - **F5 captions use a built-in 5×7 bitmap font**, not a real typeface. Check that captions are
   legible at the intended cell sizes and print scale.
 

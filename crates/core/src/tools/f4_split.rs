@@ -6,6 +6,7 @@
 
 use crate::error::Error;
 use crate::jobs::{Outcome, Progress, ToolResult};
+use crate::media::jpeg::JpegOptions;
 use crate::media::{image_ops, slices};
 use crate::tools::{expand_inputs, Plan, Tool};
 use image::DynamicImage;
@@ -277,8 +278,11 @@ fn split_one(action: &SplitAction) -> Result<(), Error> {
     }
 
     let result = preview(&action.source, &action.settings)?;
-    image_ops::encode_jpeg(&result.a, QUALITY, &action.target_a)?;
-    image_ops::encode_jpeg(&result.b, QUALITY, &action.target_b)?;
+
+    // Step 5: quality 95 with no chroma subsampling.
+    let options = JpegOptions::deliverable(QUALITY);
+    image_ops::write_jpeg_with(&result.a, &action.target_a, &options)?;
+    image_ops::write_jpeg_with(&result.b, &action.target_b, &options)?;
     Ok(())
 }
 

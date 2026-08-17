@@ -3,6 +3,7 @@
 use crate::error::Error;
 use crate::jobs::{Outcome, Progress, ToolResult};
 use crate::media::image_ops;
+use crate::media::jpeg::JpegOptions;
 use crate::tools::{expand_inputs, Plan, Tool};
 use image::{DynamicImage, ImageBuffer};
 use serde::{Deserialize, Serialize};
@@ -211,7 +212,12 @@ fn convert_one(action: &TiffToJpegAction) -> Result<Vec<PathBuf>, Error> {
         let capped = image_ops::downscale_to_max_edge(&flattened, action.max_long_edge)?;
 
         let target = page_name(&action.target_base, index, count);
-        image_ops::encode_jpeg(&capped, action.quality, &target)?;
+        // Quality 90, 4:2:0 chroma subsampling, progressive, optimised.
+        image_ops::write_jpeg_with(
+            &capped,
+            &target,
+            &JpegOptions::distributable(action.quality),
+        )?;
         written.push(target);
     }
 

@@ -1,17 +1,25 @@
+//! F3 — batch rename to a consistent, sortable scheme.
+
 use crate::error::Error;
 use crate::jobs::{Outcome, Progress, ToolResult};
+use crate::media::read_meta;
 use crate::tools::{Plan, Skip, Tool};
-use regex::Regex;
+use chrono::NaiveDateTime;
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RenameOrder {
+    /// By best metadata datetime, falling back to modification time, then name.
     Capture,
+    /// By the first integer found in the filename, then name.
     Numeric,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchRenameParams {
     pub paths: Vec<PathBuf>,
     pub date: Option<String>,
@@ -21,94 +29,123 @@ pub struct BatchRenameParams {
     pub order: RenameOrder,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BatchRenameAction {
     pub source: PathBuf,
     pub target: PathBuf,
 }
 
-pub struct BatchRenamerTool;
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BatchRenameSummary {
+    pub renamed: Vec<BatchRenameAction>,
+    pub failures: Vec<(PathBuf, String)>,
+}
 
-fn sanitize_date(val: &str) -> Option<String> {
-    let re = Regex::new(r"[^\d-]").unwrap();
-    let sanitized = re.replace_all(val, "").to_string();
-    if sanitized.len() >= 6 {
-        Some(sanitized)
+/// The minimum length a sanitised date block must reach to be used.
+const MIN_DATE_LENGTH: usize = 6;
+
+/// Sanitise the date block: keep only digits and `-`, and require six characters.
+///
+/// Accepts `YYYYMM`, `YYYYMMDD` and `YYYY-MM-DD`.
+pub fn sanitise_date(raw: &str) -> Option<String> {
+    let kept: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '-')
+        .collect();
+    if kept.len() >= MIN_DATE_LENGTH {
+        Some(kept)
     } else {
         None
     }
 }
 
-fn sanitize_block(val: &str) -> String {
-    let s = val.replace(" ", "").replace("_", "-");
-    let re = Regex::new(r"[^A-Za-z0-9-]").unwrap();
-    re.replace_all(&s, "").to_string()
+/// Sanitise a non-date block: drop spaces, turn `_` into `-`, then strip
+/// anything outside `[A-Za-z0-9-]`.
+pub fn sanitise_block(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| if c == '_' { '-' } else { c })
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect()
 }
 
-fn get_numeric_sort_key(name: &str) -> (i64, String) {
-    let re = Regex::new(r"\d+").unwrap();
-    if let Some(mat) = re.find(name) {
-        if let Ok(num) = mat.as_str().parse::<i64>() {
-            return (num, name.to_string());
+/// Assemble `<date>-<subject>-<camera>-<film>`, omitting empty blocks.
+pub fn build_prefix(
+    date: Option<&str>,
+    subject: Option<&str>,
+    camera: Option<&str>,
+    film: Option<&str>,
+) -> String {
+    let mut blocks = Vec::new();
+    if let Some(d) = date.and_then(sanitise_date) {
+        blocks.push(d);
+    }
+    for raw in [subject, camera, film].into_iter().flatten() {
+        let block = sanitise_block(raw);
+        if !block.is_empty() {
+            blocks.push(block);
         }
     }
-    (i64::MAX, name.to_string())
+    blocks.join("-")
 }
+
+/// The first integer in a filename, for `numeric` ordering.
+fn leading_number(name: &str) -> Option<u64> {
+    let mut digits = String::new();
+    for c in name.chars() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+        } else if !digits.is_empty() {
+            break;
+        }
+    }
+    digits.parse().ok()
+}
+
+/// The sort key for one file under a given ordering.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum SortKey {
+    Capture(Option<NaiveDateTime>, String),
+    Numeric(Option<u64>, String),
+}
+
+fn sort_key(path: &std::path::Path, order: RenameOrder) -> SortKey {
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    match order {
+        RenameOrder::Numeric => SortKey::Numeric(leading_number(&name), name),
+        RenameOrder::Capture => {
+            // Best metadata datetime, then modification time, then filename.
+            let at = read_meta(path)
+                .ok()
+                .and_then(|m| m.capture)
+                .or_else(|| crate::tools::f1_dates::modified_time(path));
+            SortKey::Capture(at, name)
+        }
+    }
+}
+
+pub struct BatchRenamerTool;
 
 impl Tool for BatchRenamerTool {
     type Params = BatchRenameParams;
     type Action = BatchRenameAction;
-    type Summary = ();
+    type Summary = BatchRenameSummary;
 
+    /// Produce the `(source, new name)` plan. Touches no file.
     fn plan(&self, p: &Self::Params) -> ToolResult<Plan<Self::Action>> {
-        let mut actions = Vec::new();
         let mut skipped = Vec::new();
 
-        let mut blocks = Vec::new();
-        if let Some(d) = &p.date {
-            if let Some(sd) = sanitize_date(d) {
-                blocks.push(sd);
-            }
-        }
-        if let Some(s) = &p.subject {
-            blocks.push(sanitize_block(s));
-        }
-        if let Some(c) = &p.camera {
-            blocks.push(sanitize_block(c));
-        }
-        if let Some(f) = &p.film {
-            blocks.push(sanitize_block(f));
-        }
-
-        let prefix = blocks.join("-");
-
-        // Sort the paths based on order
-        let mut sorted_paths = p.paths.clone();
-        match p.order {
-            RenameOrder::Capture => {
-                sorted_paths.sort_by(|a, b| {
-                    // For full accuracy, fallback to fs_date then name
-                    let date_a = crate::tools::f1_dates::get_fs_time(a);
-                    let date_b = crate::tools::f1_dates::get_fs_time(b);
-                    match date_a.cmp(&date_b) {
-                        std::cmp::Ordering::Equal => a.file_name().cmp(&b.file_name()),
-                        other => other,
-                    }
-                });
-            }
-            RenameOrder::Numeric => {
-                sorted_paths.sort_by(|a, b| {
-                    let name_a = a.file_name().unwrap_or_default().to_string_lossy();
-                    let name_b = b.file_name().unwrap_or_default().to_string_lossy();
-                    get_numeric_sort_key(&name_a).cmp(&get_numeric_sort_key(&name_b))
-                });
-            }
-        }
-
-        let digits = std::cmp::max(2, sorted_paths.len().to_string().len());
-        let mut target_set = HashSet::new();
-
-        for (i, path) in sorted_paths.iter().enumerate() {
+        // Missing inputs are reported but must not consume a sequence number.
+        // Nor may a file listed twice: it would be given two sequence numbers,
+        // and the second rename would fail with its source already moved.
+        let mut present: Vec<PathBuf> = Vec::new();
+        let mut seen: HashSet<PathBuf> = HashSet::new();
+        for path in &p.paths {
             if !path.exists() {
                 skipped.push(Skip {
                     file: path.to_string_lossy().to_string(),
@@ -116,52 +153,78 @@ impl Tool for BatchRenamerTool {
                 });
                 continue;
             }
+            let identity = path.canonicalize().unwrap_or_else(|_| path.clone());
+            if !seen.insert(identity) {
+                skipped.push(Skip {
+                    file: path.to_string_lossy().to_string(),
+                    reason: "Listed more than once in this batch".into(),
+                });
+                continue;
+            }
+            present.push(path.clone());
+        }
 
-            let ext = path
+        // Sort keys are computed in parallel: `capture` ordering reads metadata
+        // for every file, which is the expensive part of a large batch.
+        let mut keyed: Vec<(SortKey, PathBuf)> = present
+            .into_par_iter()
+            .map(|path| (sort_key(&path, p.order), path))
+            .collect();
+        keyed.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let prefix = build_prefix(
+            p.date.as_deref(),
+            p.subject.as_deref(),
+            p.camera.as_deref(),
+            p.film.as_deref(),
+        );
+
+        let width = std::cmp::max(2, keyed.len().to_string().len());
+        let mut claimed: HashSet<PathBuf> = HashSet::new();
+        let mut actions = Vec::new();
+
+        for (index, (_, source)) in keyed.iter().enumerate() {
+            let extension = source
                 .extension()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_lowercase();
-            let parent = path.parent().unwrap();
+            let sequence = format!("{:0width$}", index + 1, width = width);
 
-            let seq = format!("{:0width$}", i + 1, width = digits);
-
-            let target_name = if prefix.is_empty() {
-                if ext.is_empty() {
-                    seq.clone()
-                } else {
-                    format!("{}.{}", seq, ext)
-                }
+            let stem = if prefix.is_empty() {
+                sequence
             } else {
-                if ext.is_empty() {
-                    format!("{}-{}", prefix, seq)
-                } else {
-                    format!("{}-{}.{}", prefix, seq, ext)
-                }
+                format!("{prefix}-{sequence}")
+            };
+            let file_name = if extension.is_empty() {
+                stem
+            } else {
+                format!("{stem}.{extension}")
             };
 
-            let target_path = parent.join(&target_name);
+            let parent = source.parent().unwrap_or(std::path::Path::new("."));
+            let target = parent.join(&file_name);
 
-            if target_path.exists() && target_path != *path {
+            // A file already at the target name is never overwritten — unless it
+            // is this very file, which is a no-op rename.
+            if target != *source && target.exists() {
                 skipped.push(Skip {
-                    file: path.to_string_lossy().to_string(),
-                    reason: format!("Collision with existing file: {}", target_name),
+                    file: source.to_string_lossy().to_string(),
+                    reason: format!("Would overwrite an existing file: {file_name}"),
+                });
+                continue;
+            }
+            if !claimed.insert(target.clone()) {
+                skipped.push(Skip {
+                    file: source.to_string_lossy().to_string(),
+                    reason: format!("Duplicate target within this batch: {file_name}"),
                 });
                 continue;
             }
 
-            if target_set.contains(&target_path) {
-                skipped.push(Skip {
-                    file: path.to_string_lossy().to_string(),
-                    reason: format!("Duplicate target within batch: {}", target_name),
-                });
-                continue;
-            }
-
-            target_set.insert(target_path.clone());
             actions.push(BatchRenameAction {
-                source: path.clone(),
-                target: target_path,
+                source: source.clone(),
+                target,
             });
         }
 
@@ -173,18 +236,131 @@ impl Tool for BatchRenamerTool {
     fn apply(
         &self,
         plan: Plan<Self::Action>,
-        _progress: &dyn Progress,
+        progress: &dyn Progress,
     ) -> ToolResult<Self::Summary> {
-        for action in plan.actions {
-            if action.source != action.target {
-                if let Err(e) = fs::rename(&action.source, &action.target) {
-                    return Err(Error::Internal(format!(
-                        "Failed to rename {:?}: {}",
-                        action.source, e
-                    )));
-                }
+        let total = plan.actions.len() as u64;
+        let mut summary = BatchRenameSummary::default();
+
+        for (done, action) in plan.actions.into_iter().enumerate() {
+            if progress.cancelled() {
+                break;
+            }
+            progress.report(done as u64, total, &action.source.to_string_lossy());
+
+            if action.source == action.target {
+                continue;
+            }
+
+            // Re-check immediately before the write: `fs::rename` replaces its
+            // target silently on Unix, and the plan may be minutes old.
+            if action.target.exists() {
+                summary.failures.push((
+                    action.source.clone(),
+                    format!(
+                        "Target appeared since the plan was made: {}",
+                        action.target.display()
+                    ),
+                ));
+                continue;
+            }
+
+            match fs::rename(&action.source, &action.target) {
+                Ok(()) => summary.renamed.push(action),
+                Err(e) => summary
+                    .failures
+                    .push((action.source.clone(), format!("Rename failed: {e}"))),
             }
         }
-        Ok(Outcome { data: () })
+
+        progress.report(total, total, "done");
+        Ok(Outcome { data: summary })
+    }
+}
+
+/// Convenience for callers that only want the plan's names.
+pub fn plan_names(plan: &Plan<BatchRenameAction>) -> Vec<String> {
+    plan.actions
+        .iter()
+        .map(|a| {
+            a.target
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect()
+}
+
+impl BatchRenamerTool {
+    /// Surface a plan error as an [`Error`] for callers that want one.
+    pub fn check(plan: &Plan<BatchRenameAction>) -> Result<(), Error> {
+        if plan.actions.is_empty() && !plan.skipped.is_empty() {
+            return Err(Error::Config(
+                "Every file in the batch was skipped; nothing to rename".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_date_block_accepts_the_documented_forms() {
+        assert_eq!(sanitise_date("202405").as_deref(), Some("202405"));
+        assert_eq!(sanitise_date("20240501").as_deref(), Some("20240501"));
+        assert_eq!(sanitise_date("2024-05-01").as_deref(), Some("2024-05-01"));
+        // Non-digit, non-hyphen characters are stripped.
+        assert_eq!(sanitise_date("2024/05/01").as_deref(), Some("20240501"));
+    }
+
+    #[test]
+    fn a_date_block_shorter_than_six_characters_is_dropped() {
+        assert_eq!(sanitise_date("2024"), None);
+        assert_eq!(sanitise_date("May"), None);
+        assert_eq!(sanitise_date(""), None);
+    }
+
+    #[test]
+    fn other_blocks_lose_spaces_and_convert_underscores() {
+        assert_eq!(sanitise_block("Lisboa"), "Lisboa");
+        assert_eq!(sanitise_block("San Sebastian"), "SanSebastian");
+        assert_eq!(sanitise_block("PORTRA_400"), "PORTRA-400");
+        assert_eq!(sanitise_block("Kodak/Gold!"), "KodakGold");
+        assert_eq!(sanitise_block("café"), "caf");
+    }
+
+    #[test]
+    fn the_prefix_matches_the_specification_example() {
+        let prefix = build_prefix(
+            Some("2024-05-01"),
+            Some("Lisboa"),
+            Some("PENTAX17"),
+            Some("PORTRA400"),
+        );
+        assert_eq!(prefix, "2024-05-01-Lisboa-PENTAX17-PORTRA400");
+    }
+
+    #[test]
+    fn empty_blocks_are_omitted_rather_than_leaving_double_hyphens() {
+        assert_eq!(
+            build_prefix(Some("202405"), None, Some("PENTAX17"), None),
+            "202405-PENTAX17"
+        );
+        assert_eq!(build_prefix(None, Some("Lisboa"), None, None), "Lisboa");
+        assert_eq!(build_prefix(None, None, None, None), "");
+        // A block that sanitises to nothing is also omitted.
+        assert_eq!(build_prefix(None, Some("!!!"), Some("CAM"), None), "CAM");
+    }
+
+    #[test]
+    fn numeric_ordering_reads_the_first_integer() {
+        assert_eq!(leading_number("IMG_1234.JPG"), Some(1234));
+        assert_eq!(leading_number("scan-007-b.tif"), Some(7));
+        assert_eq!(leading_number("no-digits.jpg"), None);
+        // The *first* run of digits, not the last.
+        assert_eq!(leading_number("12_of_34.jpg"), Some(12));
     }
 }

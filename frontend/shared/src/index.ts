@@ -16,7 +16,7 @@ export interface DateRepairParams {
   mode: {
     Auto?: any;
     Manual?: string;
-    Shift?: number;
+    Shift?: string;
     Sidecar?: any;
   };
 }

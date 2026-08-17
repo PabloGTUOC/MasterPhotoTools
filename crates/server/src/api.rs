@@ -14,7 +14,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use phototools_core::config::Config;
 use phototools_core::error::Error;
-use phototools_core::jobs::Progress;
+use phototools_core::ingest::{self, Card};
+use phototools_core::jobs::{InMemoryProgress, Progress};
 use phototools_core::tools::{f1_dates, f3_rename, f4_split, f5_contact, f6_transform};
 use phototools_core::tools::{f7_border, f8_tiff, f9_browser, Tool};
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/tools/border", post(border))
         .route("/api/tools/tiff-to-jpeg", post(tiff_to_jpeg))
         .route("/api/storage/ls", get(storage_ls))
+        // Ingest — F11, F12, F13. A card is any directory (build plan §6.3).
+        .route("/api/ingest/scan", post(ingest_scan))
+        .route("/api/ingest/validate", post(ingest_validate))
+        .route("/api/ingest/remediate", post(ingest_remediate))
         // Jobs.
         .route("/api/jobs/:id", get(job_state))
         .route("/api/jobs/:id/events", get(job_events))
@@ -463,6 +468,294 @@ async fn storage_ls(
     // f9_browser resolves internally; the listing is cheap and synchronous.
     let entries = f9_browser::list_directory(&state.config, std::path::Path::new(&query.path))?;
     Ok(Json(entries).into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Ingest — F11, F12, F13
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct CardRequest {
+    pub path: String,
+}
+
+/// Scan a card (F11). Any directory is accepted — build plan §6.3.
+async fn ingest_scan(
+    auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<CardRequest>,
+) -> Result<Response, ApiError> {
+    let root = resolve_input(&state.config, &request.path)?;
+    let card = Card::at(&root)?;
+    let ledger_path = state.config.database.clone();
+
+    accept(&state, &auth, "card_scan", 0, move |progress| {
+        let scan = ingest::scan_card(&card, progress)?;
+        let ledger = phototools_core::ledger::Ledger::open(&ledger_path)
+            .map_err(|e| Error::Internal(e.to_string()))?;
+        ingest::record_scan(&scan, &ledger)?;
+        Ok(format!(
+            "{} shots, {} awaiting derivation",
+            scan.shot_count(),
+            scan.awaiting_derivation()
+        ))
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct ValidationResponse {
+    pub shots: Vec<ShotVerdict>,
+    pub groups: Vec<FailureGroup>,
+    pub clock_offset: Option<ClockOffsetResponse>,
+    pub passing: usize,
+    pub failing: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ShotVerdict {
+    pub stem: String,
+    pub status: String,
+    pub checks: Vec<CheckResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CheckResponse {
+    pub rule: String,
+    pub status: String,
+    pub failure: Option<String>,
+    pub detail: String,
+}
+
+/// One failure class and what F13 offers for it.
+#[derive(Debug, Serialize)]
+pub struct FailureGroup {
+    pub failure: String,
+    pub count: usize,
+    pub actions: Vec<String>,
+    pub default_action: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClockOffsetResponse {
+    pub median: String,
+    pub spread_days: i64,
+    pub median_age_days: i64,
+    pub shift: String,
+    pub affected: usize,
+}
+
+/// Validate a card against the three rules (F12).
+///
+/// Synchronous: validation reads no pixels, so it is fast even on a full card.
+async fn ingest_validate(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<CardRequest>,
+) -> Result<Response, ApiError> {
+    let root = resolve_input(&state.config, &request.path)?;
+    let card = Card::at(&root)?;
+
+    let scan = ingest::scan_card(&card, &InMemoryProgress::new())?;
+    let validation = ingest::validate(
+        &scan.shots,
+        chrono::Utc::now().naive_utc(),
+        &state.config.thresholds,
+    );
+
+    let groups = validation
+        .by_failure()
+        .into_iter()
+        .map(|(failure, indices)| FailureGroup {
+            failure: failure.as_str().to_string(),
+            count: indices.len(),
+            actions: ingest::actions_for(failure)
+                .into_iter()
+                .map(|a| a.as_str().to_string())
+                .collect(),
+            default_action: ingest::default_action(failure).map(|a| a.as_str().to_string()),
+        })
+        .collect();
+
+    let body = ValidationResponse {
+        passing: validation.passing(),
+        failing: validation.failing(),
+        clock_offset: validation
+            .clock_offset
+            .as_ref()
+            .map(|o| ClockOffsetResponse {
+                median: o.median.to_string(),
+                spread_days: o.spread_days,
+                median_age_days: o.median_age_days,
+                shift: o.shift.clone(),
+                affected: o.affected,
+            }),
+        groups,
+        shots: validation
+            .shots
+            .iter()
+            .map(|shot| ShotVerdict {
+                stem: shot.stem.clone(),
+                status: shot.status().as_str().to_string(),
+                checks: shot
+                    .checks
+                    .iter()
+                    .map(|c| CheckResponse {
+                        rule: format!("{:?}", c.rule).to_lowercase(),
+                        status: c.status.as_str().to_string(),
+                        failure: c.failure.map(|f| f.as_str().to_string()),
+                        detail: c.detail.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    };
+
+    Ok(Json(body).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemediateRequest {
+    pub path: String,
+    pub failure: String,
+    pub action: String,
+    pub date: Option<String>,
+    pub out_dir: String,
+    /// Specification §9.2 rule 3: every destructive operation supports a dry run.
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemediationPreview {
+    pub stem: String,
+    pub action: String,
+    pub target_dimensions: Option<(u32, u32)>,
+    pub new_date: Option<String>,
+    pub destination: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemediationPlanResponse {
+    pub actions: Vec<RemediationPreview>,
+    pub skipped: Vec<SkipResponse>,
+    pub applied: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SkipResponse {
+    pub file: String,
+    pub reason: String,
+}
+
+/// Apply one action to every shot sharing one failure (F13).
+///
+/// With `dry_run` the plan comes back and nothing is written.
+async fn ingest_remediate(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<RemediateRequest>,
+) -> Result<Response, ApiError> {
+    let root = resolve_input(&state.config, &request.path)?;
+    let out_dir = resolve_output(&state.config, &request.out_dir)?;
+    let card = Card::at(&root)?;
+
+    let failure = parse_failure(&request.failure)?;
+    let action = parse_action(&request.action)?;
+    let date = match &request.date {
+        Some(raw) => Some(
+            chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S").map_err(|_| {
+                ApiError::bad_request(format!(
+                    "{raw} is not a date of the form YYYY-MM-DDTHH:MM:SS"
+                ))
+            })?,
+        ),
+        None => None,
+    };
+
+    let scan = ingest::scan_card(&card, &InMemoryProgress::new())?;
+    let validation = ingest::validate(
+        &scan.shots,
+        chrono::Utc::now().naive_utc(),
+        &state.config.thresholds,
+    );
+
+    let params = ingest::RemediationParams {
+        shots: &scan.shots,
+        validation: &validation,
+        thresholds: state.config.thresholds.clone(),
+        request: ingest::BulkRequest {
+            failure,
+            action,
+            date,
+            output_dir: out_dir,
+        },
+    };
+
+    let plan = ingest::plan_bulk(&params)?.data;
+
+    let body = RemediationPlanResponse {
+        applied: !request.dry_run,
+        actions: plan
+            .actions
+            .iter()
+            .map(|a| RemediationPreview {
+                stem: a.stem.clone(),
+                action: a.action.as_str().to_string(),
+                target_dimensions: a.target_dimensions,
+                new_date: a.new_date.map(|d| d.to_string()),
+                destination: a
+                    .destination
+                    .as_ref()
+                    .map(|d| d.to_string_lossy().to_string()),
+            })
+            .collect(),
+        skipped: plan
+            .skipped
+            .iter()
+            .map(|s| SkipResponse {
+                file: s.file.clone(),
+                reason: s.reason.clone(),
+            })
+            .collect(),
+    };
+
+    if !request.dry_run {
+        ingest::apply_bulk(plan, &InMemoryProgress::new())?;
+    }
+
+    Ok(Json(body).into_response())
+}
+
+fn parse_failure(raw: &str) -> Result<ingest::FailureClass, ApiError> {
+    use ingest::FailureClass::*;
+    match raw {
+        "no_date" => Ok(NoDate),
+        "date_out_of_range" => Ok(DateOutOfRangeIsolated),
+        "date_out_of_range_batch" => Ok(DateOutOfRangeBatch),
+        "too_many_pixels" => Ok(TooManyPixels),
+        "too_large" => Ok(TooLarge),
+        other => Err(ApiError::bad_request(format!(
+            "{other} is not a failure class"
+        ))),
+    }
+}
+
+fn parse_action(raw: &str) -> Result<ingest::ActionKind, ApiError> {
+    use ingest::ActionKind::*;
+    match raw {
+        "enter_date_manually" => Ok(EnterDateManually),
+        "derive_from_batch_median" => Ok(DeriveFromBatchMedian),
+        "use_file_modification_time" => Ok(UseFileModificationTime),
+        "redate_manually" => Ok(RedateManually),
+        "bulk_shift" => Ok(BulkShift),
+        "publish_anyway" => Ok(PublishAnyway),
+        "resize" => Ok(Resize),
+        "reencode_lower" => Ok(ReencodeLower),
+        "skip" => Ok(Skip),
+        other => Err(ApiError::bad_request(format!(
+            "{other} is not a remediation action"
+        ))),
+    }
 }
 
 // ---------------------------------------------------------------------------

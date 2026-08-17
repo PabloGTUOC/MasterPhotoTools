@@ -9,15 +9,24 @@ pub mod card;
 pub mod derivation;
 pub mod fingerprint;
 pub mod grouping;
+pub mod remediation;
 pub mod scanner;
 pub mod staging;
+pub mod validation;
 pub mod walk;
 
 pub use card::{Card, Origin};
 pub use fingerprint::Fingerprint;
 pub use grouping::{group_into_shots, Shot};
+pub use remediation::{
+    actions_for, apply_bulk, default_action, plan_bulk, ActionKind, BulkRequest, PlannedAction,
+    RemediationParams, RemediationSummary, RemediationTool,
+};
 pub use scanner::{classify_path, scan_files, AssetKind, ScanProblem, ScannedAsset, ScannedFiles};
 pub use staging::{stage_all, stage_asset, StagedFile, StagingFailure, StagingResult};
+pub use validation::{
+    validate, CardValidation, Check, CheckStatus, ClockOffset, FailureClass, Rule, ShotValidation,
+};
 
 use crate::error::Error;
 use crate::jobs::Progress;

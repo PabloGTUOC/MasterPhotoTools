@@ -1,0 +1,480 @@
+//! Phase 5 acceptance tests.
+//!
+//! These run a real server on an ephemeral port and talk to it over HTTP, so the
+//! extractors, routing, status codes and the SSE stream are all exercised as a
+//! client would meet them. No test reaches the network.
+
+use jsonwebtoken::{encode, Algorithm, DecodingKey, EncodingKey, Header};
+use phototools_core::config::{Config, Thresholds};
+use serde_json::{json, Value};
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use phototools_server::{auth, build_router, jobs, AppState};
+
+const TEST_PRIVATE_KEY: &[u8] = b"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDDgTuaUUsi1A/7\ntJHnfp9wBMSVaGpMgGXS11jXPwQaqSPJ+7DYb73Lf6XK7a2PkNtmQOk8vJpp99dZ\nnrmamdEJmS/U/rfFJRjMIFXSOx9pIwbteL+3TPwt48kmKSO/TVdGa+JXZT+utZMQ\natbi7Ta3cVBuy7iRRPqav/xD8gbubCARCxtjymVoUTNTkyYEpYOjMLniX3AQuejC\n1x6e/qCUVVWfE+/CUS2vehYTPtsenQ8XOmbXq0CfURuIIapqGJwjXYV67dWuY1jK\nfYd2Z6s3ZoTAu8EzBP9zflK+vAB3ZyLsg7gthBtdhrmGIH6YqmuiYERjA5SlXZ1J\nzoeWoZnFAgMBAAECggEACBpuEaO6CkD4n+VxL3IQ2bGTFFWHmDQl1bxy51BNVie8\njXe9iRgeY5MTO2PReLWDP5Sm/uhg3hOJ5dxQhRcw1/RGkitLIqdGPx49zXsYxGCi\n7IHuMFQ7c/QzlFT462zyrXlG5jQSrAMh6PinlrvrYh8WxxggXY3JRsgEJ6Ep7L8g\nWrHNTUxJab1UR2T9sld2joFvjuJ31qE9ohzCMflA7VLEI26Ki68guvsGGY1kc5WE\nm46JBQlTwo+CutczZGoCk+hBiNMaMjDyQ66KHZtAfhVGZKJ0O3WbDNFFr5XZ8XHt\nI5xFJRP8KYYaejYW8Y0dEkLidWUfI8AfXCIbwVuT4QKBgQDoCfCPlLOMFeRWGjVb\n9qRt2NaUs9HWmi24vT+Y6jfyUjqdtdaJeSo5b+OM8s96ruM/pTcLIPdoUcRTsPee\n9TAe/T+uZ/Hf6yooka0VzqnA3MT+N+tmIArpRIPUJkOGUgFSSbf4FVYJg0sF1vs4\n6o/ucIDeRaECD7pMwk5fikTrqwKBgQDXsX+k6UJbUwYItq0o101a3YtVnCohRqxG\nL+4pxnownrKarUnKWeyNca4mIjsQA7m5Rh/8/xDqt3rfZw4cC6sr2aHRE+sFGL2I\nNBPj3WIc4T/7N3HTJhBMGjbqzyzwK9GOueX/tdq+iTXF4ui12MPHEnwvzdlE6gNA\ntN+TZjagTwKBgBja17XJi+H5hlfivsx3Au3xSCrtiBCguz0KqIFMtWlzfWvfSne3\nTtqQLaOvbqIJkbYDkH3UriuydoEwd5XDVcA8CFI6OCJwIjfuQsgPNwe9nixM+R4b\nWI/cEvLqllkQ96tE0jv0rR6fva2GdaqHFZvI2UT12GVMIfyO465ANVm5AoGAc6N2\nC7QDH3MjiQhnTb4getbMHNncvHpnYjnQNhVy7R4oI0VEingrmqmX9Fnl0HAu4mX2\nQG1/ZFd6SMu3hNG8s4W6e51yIwlgk+VXxJKsR098PfM70zhVBHgJeVoZfaoAb8S6\nyp106TIm4jEFEnlkfRYr/nUeRxQvKkHOm/fw0YECgYEAiYsibzGcZxVzVOwpG7P5\neBNEEDtnUfydzOfyWDh8F2eCpmZCCgw2C+SOK00rvb9Z74G98I8U4lgF9oSvNljc\nBKpLBdGmIi3Co7F4eoTjEHw6Cvhjy4MHFTRlzMcGwCdhk8buODCoQR2P5lJqF6rk\n3KYEVrmjZQOnYuH0vGQVYtk=\n-----END PRIVATE KEY-----";
+const TEST_PUBLIC_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAw4E7mlFLItQP+7SR536f\ncATElWhqTIBl0tdY1z8EGqkjyfuw2G+9y3+lyu2tj5DbZkDpPLyaaffXWZ65mpnR\nCZkv1P63xSUYzCBV0jsfaSMG7Xi/t0z8LePJJikjv01XRmviV2U/rrWTEGrW4u02\nt3FQbsu4kUT6mr/8Q/IG7mwgEQsbY8plaFEzU5MmBKWDozC54l9wELnowtcenv6g\nlFVVnxPvwlEtr3oWEz7bHp0PFzpm16tAn1EbiCGqahicI12Feu3VrmNYyn2Hdmer\nN2aEwLvBMwT/c35SvrwAd2ci7IO4LYQbXYa5hiB+mKpromBEYwOUpV2dSc6HlqGZ\nxQIDAQAB\n-----END PUBLIC KEY-----";
+
+const KID: &str = "test-kid";
+const PROJECT: &str = "phototools-test";
+const ALLOWED_UID: &str = "photographer-1";
+
+/// A running server, its base URL, and the library root it is confined to.
+struct TestServer {
+    base: String,
+    root: PathBuf,
+    _temp: tempfile::TempDir,
+}
+
+async fn start() -> TestServer {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("library");
+    std::fs::create_dir(&root).unwrap();
+
+    let config = Config {
+        roots: vec![root.canonicalize().unwrap()],
+        staging_dir: temp.path().join("staging"),
+        thresholds: Thresholds::default(),
+        database: temp.path().join("ledger.sqlite3"),
+    };
+
+    let auth_config = auth::AuthConfig {
+        project_id: PROJECT.into(),
+        allowed_uids: vec![ALLOWED_UID.into()],
+        admin_token: None,
+        keys: auth::KeyStore::offline(),
+    };
+    auth_config
+        .keys
+        .insert(KID, DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY).unwrap())
+        .await;
+
+    let ledger = phototools_core::ledger::Ledger::open(&config.database).unwrap();
+    let manager = jobs::JobManager::new(ledger);
+
+    let state = AppState {
+        config: std::sync::Arc::new(config),
+        auth: std::sync::Arc::new(auth_config),
+        jobs: std::sync::Arc::new(manager),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        axum::serve(listener, build_router(state)).await.unwrap();
+    });
+
+    // Give the accept loop a moment to come up.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    TestServer {
+        base: format!("http://127.0.0.1:{port}"),
+        root: root.canonicalize().unwrap(),
+        _temp: temp,
+    }
+}
+
+fn now() -> usize {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize
+}
+
+fn token_for(sub: &str, exp: usize) -> String {
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some(KID.into());
+    encode(
+        &header,
+        &auth::Claims {
+            iss: format!("https://securetoken.google.com/{PROJECT}"),
+            aud: PROJECT.into(),
+            exp,
+            sub: sub.into(),
+        },
+        &EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY).unwrap(),
+    )
+    .unwrap()
+}
+
+fn good_token() -> String {
+    token_for(ALLOWED_UID, now() + 3600)
+}
+
+// ---------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn health_is_reachable_without_a_token() {
+    let s = start().await;
+    let response = reqwest::get(format!("{}/api/health", s.base))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+    assert!(body["version"].is_string());
+}
+
+// ---------------------------------------------------------------------------
+// Authentication
+// ---------------------------------------------------------------------------
+
+/// **Phase 5 acceptance.** Every `/api/tools/*` route returns 401 without a token.
+#[tokio::test]
+async fn every_tool_route_refuses_an_anonymous_request() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    let posts = [
+        "/api/tools/dates/scan",
+        "/api/tools/dates/fix",
+        "/api/tools/rename/plan",
+        "/api/tools/rename/apply",
+        "/api/tools/split",
+        "/api/tools/contact-sheet",
+        "/api/tools/transform",
+        "/api/tools/border",
+        "/api/tools/tiff-to-jpeg",
+    ];
+
+    for route in posts {
+        let response = client
+            .post(format!("{}{route}", s.base))
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 401, "{route} should require a token");
+    }
+
+    for route in [
+        "/api/storage/ls?path=/tmp",
+        "/api/jobs/anything",
+        "/api/jobs/anything/events",
+    ] {
+        let response = client
+            .get(format!("{}{route}", s.base))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 401, "{route} should require a token");
+    }
+}
+
+#[tokio::test]
+async fn an_expired_token_is_distinguishable_from_a_forbidden_one() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    // Comfortably past expiry, and past any clock-skew leeway.
+    let expired = token_for(ALLOWED_UID, now() - 3600);
+    let response = client
+        .get(format!(
+            "{}/api/storage/ls?path={}",
+            s.base,
+            s.root.display()
+        ))
+        .bearer_auth(&expired)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(
+        body["code"], "token_expired",
+        "a client must know to refresh and retry rather than drop to login"
+    );
+
+    // A valid token from an account that is simply not invited.
+    let stranger = token_for("not-invited", now() + 3600);
+    let response = client
+        .get(format!(
+            "{}/api/storage/ls?path={}",
+            s.base,
+            s.root.display()
+        ))
+        .bearer_auth(&stranger)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["code"], "not_authorized");
+}
+
+#[tokio::test]
+async fn a_malformed_authorization_header_is_refused() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    for header in ["Basic abc", "Bearer", "nonsense"] {
+        let response = client
+            .get(format!("{}/api/storage/ls?path=/tmp", s.base))
+            .header("Authorization", header)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 401, "header {header:?}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// G6 — path confinement, end to end through the API
+// ---------------------------------------------------------------------------
+
+/// **Phase 5 acceptance.** A path-traversal attempt through the API is rejected.
+#[tokio::test]
+async fn path_traversal_through_the_api_is_rejected() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    // Something real and readable, safely outside the root.
+    let outside = s.root.parent().unwrap().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.jpg"), b"private").unwrap();
+
+    let attempts = [
+        format!("{}/../outside", s.root.display()),
+        outside.display().to_string(),
+        "/etc".to_string(),
+        format!("{}/../../..", s.root.display()),
+    ];
+
+    for path in attempts {
+        let response = client
+            .get(format!("{}/api/storage/ls", s.base))
+            .query(&[("path", &path)])
+            .bearer_auth(good_token())
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            403,
+            "listing {path} should be refused, not served"
+        );
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["code"], "path_not_allowed");
+    }
+
+    // The root itself is fine, which proves the refusals are not blanket.
+    let response = client
+        .get(format!("{}/api/storage/ls", s.base))
+        .query(&[("path", s.root.display().to_string())])
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn a_tool_refuses_an_output_directory_outside_the_roots() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+    std::fs::write(s.root.join("a.jpg"), b"x").unwrap();
+
+    let response = client
+        .post(format!("{}/api/tools/border", s.base))
+        .bearer_auth(good_token())
+        .json(&json!({
+            "inputs": [s.root.join("a.jpg").display().to_string()],
+            "out_dir": "/tmp/escape-hatch",
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["code"], "path_not_allowed");
+}
+
+// ---------------------------------------------------------------------------
+// Jobs and SSE
+// ---------------------------------------------------------------------------
+
+/// **Phase 5 acceptance.** An SSE client receives progress events and a terminal
+/// event.
+#[tokio::test]
+async fn a_job_streams_progress_and_ends_with_a_terminal_event() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    // Enough files that the scan reports progress.
+    for i in 0..8 {
+        std::fs::write(s.root.join(format!("frame{i}.jpg")), b"x").unwrap();
+    }
+
+    let response = client
+        .post(format!("{}/api/tools/dates/scan", s.base))
+        .bearer_auth(good_token())
+        .json(&json!({ "path": s.root.display().to_string(), "recursive": false }))
+        .send()
+        .await
+        .unwrap();
+
+    // F17: the request returns immediately with an id, not a result.
+    assert_eq!(response.status(), 202);
+    let body: Value = response.json().await.unwrap();
+    let job_id = body["job_id"].as_str().unwrap().to_string();
+
+    // The job row exists straight away.
+    let state = client
+        .get(format!("{}/api/jobs/{job_id}", s.base))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(state.status(), 200);
+    let job: Value = state.json().await.unwrap();
+    assert_eq!(job["kind"], "dates_scan");
+
+    // Read the event stream to its end.
+    let stream = client
+        .get(format!("{}/api/jobs/{job_id}/events", s.base))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stream.status(), 200);
+    assert!(stream
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("text/event-stream"));
+
+    let text = tokio::time::timeout(Duration::from_secs(20), stream.text())
+        .await
+        .expect("the stream should terminate rather than hang")
+        .unwrap();
+
+    assert!(
+        text.contains("event: terminal"),
+        "the stream must end with a terminal event; got:\n{text}"
+    );
+    assert!(text.contains("completed"), "got:\n{text}");
+
+    // And the persisted job agrees.
+    let job: Value = client
+        .get(format!("{}/api/jobs/{job_id}", s.base))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(job["status"], "completed");
+}
+
+#[tokio::test]
+async fn an_unknown_job_is_a_404_not_an_empty_stream() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    for route in ["/api/jobs/no-such-job", "/api/jobs/no-such-job/events"] {
+        let response = client
+            .get(format!("{}{route}", s.base))
+            .bearer_auth(good_token())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 404, "{route}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tool wiring
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_rename_dry_run_returns_a_plan_and_changes_nothing() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    for name in ["b.jpg", "a.jpg"] {
+        std::fs::write(s.root.join(name), b"x").unwrap();
+    }
+
+    let response = client
+        .post(format!("{}/api/tools/rename/plan", s.base))
+        .bearer_auth(good_token())
+        .json(&json!({
+            "paths": [
+                s.root.join("a.jpg").display().to_string(),
+                s.root.join("b.jpg").display().to_string(),
+            ],
+            "date": "20240501",
+            "subject": "Lisboa",
+            "order": "Numeric",
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let plan: Value = response.json().await.unwrap();
+    let actions = plan["actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 2);
+    assert!(actions[0]["target"]
+        .as_str()
+        .unwrap()
+        .ends_with("20240501-Lisboa-01.jpg"));
+
+    // The dry run wrote nothing.
+    assert!(s.root.join("a.jpg").exists());
+    assert!(!s.root.join("20240501-Lisboa-01.jpg").exists());
+}
+
+#[tokio::test]
+async fn storage_listing_returns_entries_for_an_allowed_path() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    std::fs::create_dir(s.root.join("2024")).unwrap();
+    std::fs::write(s.root.join("note.jpg"), b"xyz").unwrap();
+
+    let response = client
+        .get(format!("{}/api/storage/ls", s.base))
+        .query(&[("path", s.root.display().to_string())])
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let entries: Value = response.json().await.unwrap();
+    let entries = entries.as_array().unwrap();
+
+    // Directories sort first.
+    assert_eq!(entries[0]["name"], "2024");
+    assert_eq!(entries[0]["is_dir"], true);
+    assert_eq!(entries[1]["name"], "note.jpg");
+    assert_eq!(entries[1]["size"], 3);
+}
+
+#[tokio::test]
+async fn a_request_with_no_paths_is_a_bad_request_not_a_job() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("{}/api/tools/rename/apply", s.base))
+        .bearer_auth(good_token())
+        .json(&json!({ "paths": [], "order": "Numeric" }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["code"], "bad_request");
+}

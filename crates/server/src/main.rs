@@ -1,31 +1,10 @@
-mod api;
-mod auth;
-
-use axum::{response::IntoResponse, routing::get, Json, Router};
 use phototools_core::config::Config;
-use serde::Serialize;
+use phototools_core::ledger::Ledger;
+use phototools_server::{auth, build_router, jobs, AppState};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::signal;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-#[derive(Clone)]
-pub struct AppState {
-    pub config: Arc<Config>,
-}
-
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    version: &'static str,
-}
-
-async fn health_handler() -> impl IntoResponse {
-    Json(HealthResponse {
-        status: "ok",
-        version: env!("CARGO_PKG_VERSION"),
-    })
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,25 +16,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tracing::info!("Starting MasterPhotoTools server...");
-
     let config = Config::load().unwrap_or_else(|_| Config::default());
+    if config.roots.is_empty() {
+        tracing::warn!(
+            "ROOTS is empty, so every filesystem request will be refused. \
+             Set ROOTS to the directories this server may touch."
+        );
+    }
+
+    let auth_config = auth::AuthConfig::from_env();
+    if auth_config.allowed_uids.is_empty() {
+        tracing::warn!(
+            "ALLOWED_UIDS is empty, so no Firebase account can use this server. \
+             The allow-list is the only thing restricting access to the library."
+        );
+    }
+
+    let ledger = Ledger::open(&config.database)?;
+    let manager = jobs::JobManager::new(ledger);
+
+    // F17: a job interrupted by a previous process must not silently disappear.
+    match manager.recover() {
+        Ok(recovered) if !recovered.is_empty() => {
+            tracing::warn!(
+                count = recovered.len(),
+                "marked jobs interrupted after an unclean shutdown"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => tracing::error!(error = %e, "could not recover interrupted jobs"),
+    }
+
     let state = AppState {
         config: Arc::new(config),
+        auth: Arc::new(auth_config),
+        jobs: Arc::new(manager),
     };
 
-    let app = Router::new()
-        .route("/api/health", get(health_handler))
-        .merge(api::router())
-        .with_state(state);
-
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
-    let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
-
-    tracing::info!("Listening on {}", addr);
+    let addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
+    tracing::info!("listening on {addr}");
+
+    axum::serve(listener, build_router(state))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
@@ -85,5 +89,5 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
 
-    tracing::info!("Shutdown signal received, starting graceful shutdown");
+    tracing::info!("shutdown signal received, draining");
 }

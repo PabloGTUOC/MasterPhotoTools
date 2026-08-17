@@ -5,9 +5,11 @@
 **Method:** every source file read; `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt` run locally; CI history checked on GitHub.
 
 > **Status update.** This document records the state at `82533b7` and is kept as the baseline.
-> Phase 0 has since been closed — all five §4.2 acceptance commands now pass, and the §1 table
-> below no longer reflects the toolchain state. See [`phase-reports/phase-00.md`](phase-reports/phase-00.md).
-> Every functional gap in §4 onward is still open.
+> Phases 0–5 have since been closed; see [`phase-reports/`](phase-reports/). In particular the two
+> findings this document called out as most severe are fixed: **G6 is now wired at the API boundary**
+> (Phase 5) and **the G4 violation in the derivation worker is gone** (Phase 2). F1–F9 are
+> implemented and the server exposes §8's routes. Everything from F10 onward — ingest, validation,
+> remediation, RAW, publish, dedup — is still open, as are both front ends.
 
 ---
 

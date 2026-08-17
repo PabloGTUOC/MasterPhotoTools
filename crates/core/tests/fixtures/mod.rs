@@ -89,6 +89,7 @@ impl TiffValue {
 pub mod tag {
     pub const IMAGE_WIDTH: u16 = 0x0100;
     pub const IMAGE_HEIGHT: u16 = 0x0101;
+    pub const MAKE: u16 = 0x010F;
     pub const MODEL: u16 = 0x0110;
     pub const ORIENTATION: u16 = 0x0112;
     pub const JPEG_INTERCHANGE_FORMAT: u16 = 0x0201;
@@ -97,6 +98,7 @@ pub mod tag {
     pub const EXIF_OFFSET: u16 = 0x8769;
     pub const DATE_TIME_ORIGINAL: u16 = 0x9003;
     pub const CREATE_DATE: u16 = 0x9004;
+    pub const LENS_MODEL: u16 = 0xA434;
     pub const PIXEL_X_DIMENSION: u16 = 0xA002;
     pub const PIXEL_Y_DIMENSION: u16 = 0xA003;
 }
@@ -480,6 +482,117 @@ impl Fixtures {
     ///
     /// Returns the path and the exact preview bytes, so a test can assert the
     /// extracted preview is byte-identical.
+    /// A TIFF-based RAW stub carrying an embedded preview and full metadata.
+    ///
+    /// For F14: the ladder extracts the preview, and the capture date, camera
+    /// and lens must survive from the RAW into the derived JPEG. The preview
+    /// itself deliberately carries **no** metadata, so a test that finds a date
+    /// in the output can only have got it from the copy step.
+    pub fn raw_with_metadata(
+        &self,
+        name: &str,
+        w: u32,
+        h: u32,
+        capture: &str,
+        camera: &str,
+        lens: &str,
+    ) -> PathBuf {
+        let preview = encode_jpeg(&patterned(w, h, Rgb([200, 160, 40])), 90);
+        let tiff = build_tiff(
+            &[
+                (tag::IMAGE_WIDTH, TiffValue::Long(w)),
+                (tag::IMAGE_HEIGHT, TiffValue::Long(h)),
+                (tag::MAKE, TiffValue::Ascii("STUBMAKER".into())),
+                (tag::MODEL, TiffValue::Ascii(camera.to_string())),
+                (
+                    tag::JPEG_INTERCHANGE_FORMAT_LENGTH,
+                    TiffValue::Long(preview.len() as u32),
+                ),
+            ],
+            &[
+                (
+                    tag::DATE_TIME_ORIGINAL,
+                    TiffValue::Ascii(capture.to_string()),
+                ),
+                (tag::CREATE_DATE, TiffValue::Ascii(capture.to_string())),
+                (tag::LENS_MODEL, TiffValue::Ascii(lens.to_string())),
+            ],
+            Some(&preview),
+            Some(tag::JPEG_INTERCHANGE_FORMAT),
+        );
+
+        let path = self.temp.path().join(name);
+        std::fs::write(&path, &tiff).unwrap();
+        path
+    }
+
+    /// A RAW stub carrying **two** embedded JPEGs: a small thumbnail in IFD0 and
+    /// a larger preview in IFD1.
+    ///
+    /// F14 prefers the full-resolution render, so the extractor must pick the
+    /// larger one. A file with only one preview cannot demonstrate that.
+    ///
+    /// Returns the path and the bytes of the preview that ought to win.
+    pub fn raw_with_thumbnail_and_preview(&self, name: &str) -> (PathBuf, Vec<u8>) {
+        let thumbnail = encode_jpeg(&patterned(160, 120, Rgb([30, 30, 30])), 70);
+        let preview = encode_jpeg(&patterned(1600, 1200, Rgb([200, 160, 40])), 90);
+
+        // IFD0 points at the thumbnail; IFD1 — the next IFD in the chain —
+        // points at the larger preview, which is how several makers lay it out.
+        let mut out = Vec::new();
+        out.extend_from_slice(b"II");
+        out.extend_from_slice(&42u16.to_le_bytes());
+        out.extend_from_slice(&8u32.to_le_bytes());
+
+        let ifd_len = 2 + 12 * 3 + 4;
+        let ifd0_at = 8usize;
+        let ifd1_at = ifd0_at + ifd_len;
+        let thumbnail_at = ifd1_at + ifd_len;
+        let preview_at = thumbnail_at + thumbnail.len();
+
+        let write_ifd = |out: &mut Vec<u8>, jpeg_at: usize, jpeg_len: usize, next: u32| {
+            out.extend_from_slice(&3u16.to_le_bytes());
+            for (tag, kind, count, value) in [
+                (tag::MODEL, 3u16, 1u32, 1u32),
+                (tag::JPEG_INTERCHANGE_FORMAT, 4, 1, jpeg_at as u32),
+                (tag::JPEG_INTERCHANGE_FORMAT_LENGTH, 4, 1, jpeg_len as u32),
+            ] {
+                out.extend_from_slice(&tag.to_le_bytes());
+                out.extend_from_slice(&kind.to_le_bytes());
+                out.extend_from_slice(&count.to_le_bytes());
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            out.extend_from_slice(&next.to_le_bytes());
+        };
+
+        write_ifd(&mut out, thumbnail_at, thumbnail.len(), ifd1_at as u32);
+        write_ifd(&mut out, preview_at, preview.len(), 0);
+        out.extend_from_slice(&thumbnail);
+        out.extend_from_slice(&preview);
+
+        let path = self.temp.path().join(name);
+        std::fs::write(&path, &out).unwrap();
+        (path, preview)
+    }
+
+    /// A RAW stub with no embedded preview at all — the case that must fall
+    /// through F14's ladder.
+    pub fn raw_without_preview(&self, name: &str, w: u32, h: u32) -> PathBuf {
+        let tiff = build_tiff(
+            &[
+                (tag::IMAGE_WIDTH, TiffValue::Long(w)),
+                (tag::IMAGE_HEIGHT, TiffValue::Long(h)),
+                (tag::MODEL, TiffValue::Ascii("STUBCAM".into())),
+            ],
+            &[],
+            None,
+            None,
+        );
+        let path = self.temp.path().join(name);
+        std::fs::write(&path, &tiff).unwrap();
+        path
+    }
+
     pub fn raw_stub_with_preview(&self, name: &str, w: u32, h: u32) -> (PathBuf, Vec<u8>) {
         let preview = encode_jpeg(&patterned(w, h, Rgb([200, 160, 40])), 90);
         let tiff = build_tiff(

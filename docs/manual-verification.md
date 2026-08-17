@@ -120,8 +120,29 @@ is judgement rather than correctness.
   publish, or whether such a frame should be resized further instead, is a taste question.
 
 ## Phase 10
-- macOS ImageIO RAW decode path requires a macOS machine.
-- Needs a human to judge colour quality on real RAW files from each camera body.
+
+Rung 1 — the embedded preview — is fully tested, and it is the rung that will handle nearly every
+real file. What cannot be tested here is everything about how the results *look*, and the two rungs
+below it.
+
+- **Judge colour quality on real RAW files from each camera body.** This is the item the build plan
+  names. The tests prove a JPEG comes out with the right dimensions and the right date; whether the
+  colour and tone are right is a judgement no assertion can make. Compare a derived JPEG against the
+  camera's own JPEG for the same frame if you have one.
+- **Confirm the embedded preview is full-resolution on your bodies.** The extractor takes the largest
+  embedded JPEG, which on most cameras is the full-size render — but some bodies write only a
+  screen-sized preview, and a 1616×1080 derivative from a 45 MP frame would pass every test here
+  while being useless. Check the dimensions of a derived file against the RAW's own.
+- **Confirm rung 2 runs on macOS.** `sips` is invoked only on macOS and cannot be exercised on Linux
+  at all. Force it by deriving from a RAW with no embedded preview, and confirm the reported rung is
+  `macos_imageio` rather than `rawler`.
+- **Judge whether rung 3's output is acceptable when it is reached.** `rawler`'s development pipeline
+  is a generic demosaic with no camera-specific tuning, so its colour will not match either the
+  camera's own render or Apple's. It is the only rung available on the Linux server, so the question
+  is whether server-side derivation is worth having at all or should be refused in favour of doing it
+  on the Mac.
+- **Confirm CR3 files are declined rather than mangled.** F14 puts CR3 out of scope; a CR3 on a card
+  will be reported as underivable. Confirm that reads as a clear message rather than a crash.
 
 ## Phase 14
 - macOS `.dmg` bundle requires installation and launch testing on macOS.

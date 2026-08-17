@@ -104,6 +104,14 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX IF NOT EXISTS idx_shots_card_id    ON shots (card_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_state       ON jobs (state);
     "#,
+    // 3 — the physical card a shot came from, as distinct from the observation
+    // of it. F10 identifies a card by label *plus contents*, so `card_id`
+    // changes the moment another frame is shot; a shot needs a key that does
+    // not, or a reinserted card reports every frame on it as new.
+    r#"
+    ALTER TABLE shots ADD COLUMN card_scope TEXT;
+    CREATE INDEX IF NOT EXISTS idx_shots_card_scope ON shots (card_scope);
+    "#,
 ];
 
 pub struct Ledger {
@@ -191,6 +199,21 @@ impl Ledger {
         Ok(())
     }
 
+    /// Record a shot against both the physical card and the observation of it.
+    ///
+    /// `scope` identifies the card across shooting sessions; `card_id` is the
+    /// state it was in when this scan ran, and is refreshed on every re-scan so
+    /// the row points at the most recent observation.
+    pub fn upsert_shot(&self, id: &str, scope: &str, card_id: &str, stem: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "INSERT INTO shots (id, card_id, card_scope, stem, status)
+             VALUES (?1, ?3, ?2, ?4, 'new')
+             ON CONFLICT(id) DO UPDATE SET card_id = excluded.card_id",
+            (id, scope, card_id, stem),
+        )?;
+        Ok(())
+    }
+
     /// Record which asset of a shot is the one that will be published (F11).
     pub fn set_shot_candidate(&self, shot_id: &str, asset_id: &str) -> SqlResult<()> {
         self.conn.execute(
@@ -252,6 +275,46 @@ impl Ledger {
             ],
         )?;
         Ok(())
+    }
+
+    /// How many rows a table holds.
+    ///
+    /// SQLite cannot bind an identifier, so the table name is interpolated. It
+    /// is asserted to be a bare identifier for that reason: this is only ever
+    /// called with a literal from this crate, and the assertion is what keeps it
+    /// that way.
+    pub fn count(&self, table: &str) -> SqlResult<i64> {
+        assert!(
+            table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "table names are literals, not input: {table:?}"
+        );
+        self.conn
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+    }
+
+    /// The filename stems already recorded for a physical card.
+    ///
+    /// Used by detection to say how many shots on a reinserted card are new
+    /// (F10), without reading a single photograph. Keyed by scope rather than
+    /// `card_id` — see [`upsert_shot`](Self::upsert_shot).
+    pub fn shot_stems(&self, scope: &str) -> SqlResult<std::collections::HashSet<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT stem FROM shots WHERE card_scope = ?1")?;
+        let rows = stmt.query_map([scope], |row| row.get::<_, String>(0))?;
+        rows.collect()
+    }
+
+    /// Shots with no candidate recorded — a scan that did not complete, or a
+    /// shot whose only asset could not be read (F11).
+    pub fn shots_without_candidate(&self) -> SqlResult<i64> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM shots WHERE candidate_asset_id IS NULL",
+            [],
+            |row| row.get(0),
+        )
     }
 
     // --------------------------------------------------------------- checks

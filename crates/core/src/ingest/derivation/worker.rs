@@ -1,6 +1,6 @@
 use crate::error::Error;
 use crate::ingest::scanner::hash_file;
-use crate::ingest::{CandidateAsset, CandidateShot};
+use crate::ingest::{ScannedAsset, Shot};
 use crate::ledger::Ledger;
 use crate::media::image_ops;
 use crate::media::meta::ExifWriter;
@@ -14,8 +14,8 @@ const DERIVATIVE_LONG_EDGE: u32 = 2000;
 #[derive(Debug, Clone)]
 pub struct DeriveJob {
     pub shot_id: String,
-    pub shot: CandidateShot,
-    pub primary_asset: CandidateAsset,
+    pub shot: Shot,
+    pub primary_asset: ScannedAsset,
     pub staging_dir: PathBuf,
 }
 
@@ -113,7 +113,7 @@ impl WorkerPool {
     fn derive_pixels(job: DeriveJob) -> Result<(DeriveJob, PathBuf, u32, u32), Error> {
         fs::create_dir_all(&job.staging_dir)?;
 
-        let out_path = job.staging_dir.join(format!("{}_proxy.jpg", job.shot.id));
+        let out_path = job.staging_dir.join(format!("{}_proxy.jpg", job.shot.stem));
         let img = image_ops::decode_oriented(&job.primary_asset.path)?;
         let resized = image_ops::downscale_to_max_edge(&img, DERIVATIVE_LONG_EDGE)?;
         let (width, height) = (resized.width(), resized.height());

@@ -191,6 +191,15 @@ impl JobRunner {
         }
     }
 
+    /// A handle on the same ledger the runner writes jobs through.
+    ///
+    /// Shared rather than reopened: two connections to one SQLite file would
+    /// contend for the write lock, and card detection reads the ledger on every
+    /// mount while jobs may be writing to it.
+    pub fn ledger(&self) -> Arc<Mutex<Ledger>> {
+        Arc::clone(&self.ledger)
+    }
+
     /// Mark jobs orphaned by a previous process. Call once at startup.
     pub fn recover(&self) -> Result<Vec<Job>, Error> {
         self.with_ledger(|l| l.recover_interrupted_jobs())

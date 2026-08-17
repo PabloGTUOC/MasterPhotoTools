@@ -350,6 +350,49 @@ impl Fixtures {
         )
     }
 
+    /// A JPEG whose metadata is intact but whose pixel data cannot be decoded.
+    ///
+    /// This exists to make F11's "dimensions come from metadata, never by
+    /// decoding" assertion mean something. Anything that decodes this file
+    /// fails; anything that reads its metadata gets `w`×`h`. A scan that passes
+    /// on this fixture demonstrably did not decode.
+    ///
+    /// The APP1 segment carrying EXIF is left exactly as the encoder wrote it,
+    /// and everything from the start-of-frame marker onwards is dropped. The
+    /// result is a well-formed EXIF container with no frame header, so no
+    /// decoder can determine even the image's size, while any metadata reader
+    /// finds the full tag set.
+    ///
+    /// Corrupting the entropy-coded scan data instead does *not* work: a run of
+    /// `0xFF` reads as JPEG fill bytes, and decoders tolerate a truncated scan
+    /// by returning whatever they managed to reconstruct.
+    pub fn jpeg_with_unreadable_pixels(&self, name: &str, w: u32, h: u32) -> PathBuf {
+        let path = self.temp.path().join(name);
+        let intact = std::fs::read(self.jpeg_with_exif(
+            &format!("__tmp_broken_{name}"),
+            w,
+            h,
+            "2024:05:01 09:00:00",
+            "CANON EOS R6",
+        ))
+        .unwrap();
+
+        // Every SOFn marker — baseline, progressive and the arithmetic-coded
+        // variants — excluding the markers in that range that are not frame
+        // headers (DHT 0xC4, JPG 0xC8, DAC 0xCC).
+        let sof = intact
+            .windows(2)
+            .position(|w| {
+                w[0] == 0xFF && (0xC0..=0xCF).contains(&w[1]) && !matches!(w[1], 0xC4 | 0xC8 | 0xCC)
+            })
+            .expect("a JPEG the encoder produced has a frame header");
+
+        let mut broken = intact[..sof].to_vec();
+        broken.extend_from_slice(&[0xFF, 0xD9]); // EOI
+        std::fs::write(&path, broken).unwrap();
+        path
+    }
+
     /// A JPEG with no metadata at all.
     pub fn jpeg_without_exif(&self, name: &str, w: u32, h: u32) -> PathBuf {
         let path = self.temp.path().join(name);

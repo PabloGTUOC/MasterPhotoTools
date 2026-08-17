@@ -6,9 +6,37 @@
 
 use phototools_core::config::Config;
 use phototools_core::ledger::Ledger;
+use phototools_desktop::detection::{self, CardDetected};
 use phototools_desktop::{commands, jobs, AppState};
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{AppHandle, Emitter, Manager};
+
+/// The Tauri event a detected card arrives on.
+const CARD_EVENT: &str = "phototools://card-detected";
+
+/// What happens when a card is detected: a native notification (F10), and an
+/// event so the UI can offer to review it.
+fn notify_card(handle: AppHandle) -> impl Fn(CardDetected) + Send + 'static {
+    move |card: CardDetected| {
+        use tauri_plugin_notification::NotificationExt;
+
+        // F10's notification: `EOS_DIGITAL — 412 new shots. Review?`
+        if let Err(e) = handle
+            .notification()
+            .builder()
+            .title("Card detected")
+            .body(card.notification())
+            .show()
+        {
+            eprintln!("could not raise a notification: {e}");
+        }
+
+        // The event carries the path, which is all the pipeline needs (§6.3).
+        if let Err(e) = handle.emit(CARD_EVENT, &card) {
+            eprintln!("could not tell the window about the card: {e}");
+        }
+    }
+}
 
 fn main() {
     let config = Config::load().unwrap_or_else(|_| Config::default());
@@ -43,6 +71,23 @@ fn main() {
                 Err(e) => eprintln!("could not recover interrupted jobs: {e}"),
             }
 
+            // F10: watch for cards. Held in state so the watch lives as long as
+            // the application; dropping the watcher stops it.
+            //
+            // A machine with no mount root is not an error — it is Linux, or a
+            // Mac with `/Volumes` unreadable — and the rest of the application
+            // works without card detection, so the failure is reported and
+            // stepped over rather than fatal.
+            let watcher = detection::VolumeWatcher::start(
+                detection::MOUNT_ROOT,
+                state.jobs.ledger(),
+                notify_card(app.handle().clone()),
+            );
+            match watcher {
+                Ok(watcher) => state.set_card_watcher(watcher),
+                Err(e) => eprintln!("card detection is not running: {e}"),
+            }
+
             app.manage(state);
             Ok(())
         })
@@ -64,6 +109,10 @@ fn main() {
             commands::tiff_to_jpeg,
             commands::contact_sheet,
             commands::transform,
+            commands::summarise_card,
+            commands::scan_card,
+            commands::stage_card,
+            commands::read_card,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the PhotoTools desktop application");

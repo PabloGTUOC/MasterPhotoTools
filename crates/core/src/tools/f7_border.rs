@@ -5,6 +5,7 @@
 
 use crate::error::Error;
 use crate::jobs::{Outcome, Progress, ToolResult};
+use crate::media::jpeg::JpegOptions;
 use crate::media::{image_ops, slices};
 use crate::tools::{expand_inputs, Plan, Tool};
 use image::{DynamicImage, ImageBuffer, Rgb, RgbImage, Rgba, RgbaImage};
@@ -180,7 +181,12 @@ fn border_one(action: &PrintBorderAction) -> Result<(), Error> {
         }
     }
 
-    image_ops::encode_jpeg(&DynamicImage::ImageRgb8(canvas), QUALITY, &action.target)
+    // Step 5: centre on white and save at quality 95 with no chroma subsampling.
+    image_ops::write_jpeg_with(
+        &DynamicImage::ImageRgb8(canvas),
+        &action.target,
+        &JpegOptions::deliverable(QUALITY),
+    )
 }
 
 /// Step 1: trim while more than 70% of a sampled band falls below luma 28, up to

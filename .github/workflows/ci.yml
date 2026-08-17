@@ -22,12 +22,15 @@ jobs:
       # exiftool is required for metadata *writing* (specification §2.6) and by
       # the test fixture generator. The webkit/gtk libraries are required to
       # build phototools-desktop (Tauri v2) on Linux; without them
-      # `cargo build --workspace` cannot succeed.
+      # `cargo build --workspace` cannot succeed. nasm builds mozjpeg's SIMD
+      # kernels — without it the JPEG encoder still works but loses the
+      # assembly paths the §9.1 performance target depends on.
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libimage-exiftool-perl \
+            nasm \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             libxdo-dev \

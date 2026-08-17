@@ -3,6 +3,7 @@
 use crate::error::Error;
 use crate::jobs::{Outcome, Progress, ToolResult};
 use crate::media::image_ops;
+use crate::media::jpeg::JpegOptions;
 use crate::tools::{expand_inputs, Plan, Skip, Tool};
 use image::ImageFormat;
 use serde::{Deserialize, Serialize};
@@ -91,6 +92,7 @@ pub struct TransformAction {
     pub max_long_edge: Option<u32>,
     pub format: TargetFormat,
     pub quality: u8,
+    pub optimise: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -151,6 +153,7 @@ impl Tool for TransformTool {
                 max_long_edge: p.max_long_edge,
                 format,
                 quality: p.quality,
+                optimise: p.optimise,
             });
         }
 
@@ -202,6 +205,12 @@ fn transform_one(action: &TransformAction) -> Result<(), Error> {
 
     if action.format.is_opaque() {
         img = image_ops::flatten_onto(&img, [255, 255, 255]);
+    }
+
+    if action.format == TargetFormat::Jpeg {
+        let mut options = JpegOptions::deliverable(action.quality);
+        options.optimise = action.optimise;
+        return image_ops::write_jpeg_with(&img, &action.target, &options);
     }
 
     image_ops::encode_to(

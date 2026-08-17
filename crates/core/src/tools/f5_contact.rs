@@ -2,6 +2,7 @@
 
 use crate::error::Error;
 use crate::jobs::{Outcome, Progress, ToolResult};
+use crate::media::jpeg::JpegOptions;
 use crate::media::{image_ops, text};
 use crate::tools::{expand_inputs, Plan, Tool};
 use image::{DynamicImage, ImageBuffer, Rgb, RgbImage};
@@ -263,7 +264,12 @@ impl Tool for ContactSheetTool {
         if let Some(parent) = action.out_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        image_ops::encode_jpeg(&DynamicImage::ImageRgb8(sheet), QUALITY, &action.out_path)?;
+        // Output at JPEG quality 95, optimised.
+        image_ops::write_jpeg_with(
+            &DynamicImage::ImageRgb8(sheet),
+            &action.out_path,
+            &JpegOptions::deliverable(QUALITY),
+        )?;
 
         progress.report(total, total, "done");
         Ok(Outcome {

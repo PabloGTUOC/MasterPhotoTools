@@ -2,6 +2,7 @@
 
 pub mod exif_jpeg;
 pub mod image_ops;
+pub mod jpeg;
 pub mod meta;
 pub mod slices;
 pub mod text;

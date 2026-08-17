@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    name: Build, Test, and Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+        
+      - name: Clippy lints
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        
+      - name: Build workspace
+        run: cargo build --workspace
+        
+      - name: Test workspace
+        run: cargo test --workspace
+        
+      - name: Isolated core tests
+        run: cargo test -p phototools-core

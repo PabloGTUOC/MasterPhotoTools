@@ -4,6 +4,7 @@ pub mod exif_jpeg;
 pub mod image_ops;
 pub mod meta;
 pub mod slices;
+pub mod text;
 
 pub use image_ops::{
     apply_orientation, decode, decode_oriented, dimensions_for_megapixels, downscale_to_max_edge,

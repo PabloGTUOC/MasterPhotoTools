@@ -21,8 +21,23 @@ This document tracks verification steps that require human intervention, physica
   capture date rather than the upload date (specification §6.4).
 
 ## Phase 4
-- F4 (Half-frame split): Needs a human to judge colour quality and split accuracy on real scans.
-- F7 (Print border): Needs a human to judge the border trim on real scans.
+
+- **F4 (half-frame split) needs a human on real scans.** The synthetic fixture plants a hard-edged
+  dark divider at a known column against flat colour panels. A real lab scan has a soft, uneven
+  divider, film grain, dust, and a surround that is neither uniformly white nor uniformly black.
+  Check on real Pentax 17 scans that: the divider is found rather than a dark part of the image; the
+  lab border is fully removed without eating into the frame; and the trimmed halves are not cropping
+  away picture content.
+- **F7 (print border) needs a human on real scans.** The dark-edge trim thresholds (luma 28, 70% of
+  a band, 40 px maximum) are the specification's numbers but have only been exercised against
+  synthetic edges. Check that a genuinely dark photograph is not mistaken for a scan border, and
+  judge whether the 2%-of-short-side corner radius looks right at print size.
+- **Chroma subsampling and progressive encoding cannot currently be honoured.** The `image` crate's
+  JPEG encoder is fixed at 4:2:2 with no progressive mode, so F4's and F7's "no chroma subsampling"
+  and F8's "4:2:0, progressive, optimised" are not met. Judge whether the difference is visible in
+  print and social output; this is the same encoder decision raised by the Phase 2 benchmark.
+- **F5 captions use a built-in 5×7 bitmap font**, not a real typeface. Check that captions are
+  legible at the intended cell sizes and print scale.
 
 ## Phase 7
 - Requires macOS machine to build and run the Tauri application.

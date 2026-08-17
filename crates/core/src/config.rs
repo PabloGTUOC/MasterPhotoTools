@@ -172,6 +172,48 @@ impl Config {
             canonical.display()
         )))
     }
+
+    /// G6 for a path that does not exist yet, such as an output directory.
+    ///
+    /// [`resolve`](Self::resolve) canonicalises, which fails outright on a
+    /// missing path — so it cannot vet a destination before it is created.
+    /// This resolves the nearest existing ancestor, checks *that* against the
+    /// roots, and re-appends the remainder. Any `..` in the remainder is
+    /// rejected, so the check cannot be walked back out of afterwards.
+    pub fn resolve_for_create(&self, requested: &Path) -> Result<PathBuf, Error> {
+        if requested.exists() {
+            return self.resolve(requested);
+        }
+
+        let mut trailing: Vec<std::ffi::OsString> = Vec::new();
+        let mut cursor = requested;
+
+        loop {
+            let name = cursor.file_name().ok_or_else(|| {
+                Error::AccessDenied(format!(
+                    "Path {} contains a component that cannot be resolved safely",
+                    requested.display()
+                ))
+            })?;
+            trailing.push(name.to_os_string());
+
+            let parent = cursor.parent().ok_or_else(|| {
+                Error::AccessDenied(format!(
+                    "Path {} has no existing ancestor inside an allowed root",
+                    requested.display()
+                ))
+            })?;
+
+            if parent.exists() {
+                let mut resolved = self.resolve(parent)?;
+                for name in trailing.iter().rev() {
+                    resolved.push(name);
+                }
+                return Ok(resolved);
+            }
+            cursor = parent;
+        }
+    }
 }
 
 #[cfg(test)]

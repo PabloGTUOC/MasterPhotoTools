@@ -33,10 +33,7 @@ fn main() {
         .manage(AppState {
             config: Mutex::new(config),
         })
-        .invoke_handler(tauri::generate_handler![
-            get_config,
-            save_config
-        ])
+        .invoke_handler(tauri::generate_handler![get_config, save_config])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

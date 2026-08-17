@@ -1,3 +1,5 @@
+//! The single crate-wide error type.
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("I/O error: {0}")]

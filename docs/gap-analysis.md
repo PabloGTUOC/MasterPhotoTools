@@ -4,6 +4,11 @@
 **Commit audited:** `82533b7` ("Gemini first temp") — the only substantive commit in the repository.
 **Method:** every source file read; `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt` run locally; CI history checked on GitHub.
 
+> **Status update.** This document records the state at `82533b7` and is kept as the baseline.
+> Phase 0 has since been closed — all five §4.2 acceptance commands now pass, and the §1 table
+> below no longer reflects the toolchain state. See [`phase-reports/phase-00.md`](phase-reports/phase-00.md).
+> Every functional gap in §4 onward is still open.
+
 ---
 
 ## 1. Headline

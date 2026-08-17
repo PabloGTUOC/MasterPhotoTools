@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-const GOOGLE_CERTS_URL: &str = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
+const GOOGLE_CERTS_URL: &str =
+    "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
 
 lazy_static::lazy_static! {
     static ref KEY_CACHE: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
@@ -43,6 +44,9 @@ pub struct Claims {
     pub sub: String,
 }
 
+/// Verified Firebase claims, attached to a request by the extractor below.
+/// Handlers do not read the claims yet; per-user behaviour arrives in Phase 5.
+#[allow(dead_code)]
 pub struct ClaimsExtracted(pub Claims);
 
 async fn fetch_google_certs() -> Result<HashMap<String, String>, reqwest::Error> {
@@ -52,7 +56,11 @@ async fn fetch_google_certs() -> Result<HashMap<String, String>, reqwest::Error>
     Ok(certs)
 }
 
-pub async fn verify_token(token: &str, project_id: &str, allowed_uids: &[String]) -> Result<Claims, AuthError> {
+pub async fn verify_token(
+    token: &str,
+    project_id: &str,
+    allowed_uids: &[String],
+) -> Result<Claims, AuthError> {
     // Break-glass admin token
     if let Ok(admin_token) = std::env::var("ADMIN_TOKEN") {
         if token == admin_token {
@@ -69,7 +77,7 @@ pub async fn verify_token(token: &str, project_id: &str, allowed_uids: &[String]
         code: "invalid_header",
         message: e.to_string(),
     })?;
-    
+
     let kid = header.kid.ok_or_else(|| AuthError {
         code: "missing_kid",
         message: "No kid in header".into(),
@@ -139,10 +147,13 @@ where
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let auth_header = parts.headers.get("Authorization").ok_or_else(|| AuthError {
-            code: "missing_auth_header",
-            message: "Missing Authorization header".into(),
-        })?;
+        let auth_header = parts
+            .headers
+            .get("Authorization")
+            .ok_or_else(|| AuthError {
+                code: "missing_auth_header",
+                message: "Missing Authorization header".into(),
+            })?;
 
         let auth_str = auth_header.to_str().map_err(|_| AuthError {
             code: "invalid_auth_header",
@@ -157,11 +168,15 @@ where
         }
 
         let token = &auth_str[7..];
-        
-        let project_id = std::env::var("FIREBASE_PROJECT_ID").unwrap_or_else(|_| "masterphototools".into());
+
+        let project_id =
+            std::env::var("FIREBASE_PROJECT_ID").unwrap_or_else(|_| "masterphototools".into());
         // For testing, let's just parse an env var
         let allowed_uids_str = std::env::var("ALLOWED_UIDS").unwrap_or_default();
-        let allowed_uids: Vec<String> = allowed_uids_str.split(',').map(|s| s.trim().to_string()).collect();
+        let allowed_uids: Vec<String> = allowed_uids_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect();
 
         let claims = verify_token(token, &project_id, &allowed_uids).await?;
         Ok(ClaimsExtracted(claims))
@@ -191,14 +206,27 @@ mod tests {
         };
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some("test_kid".into());
-        encode(&header, &claims, &EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY).unwrap()).unwrap()
+        encode(
+            &header,
+            &claims,
+            &EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY).unwrap(),
+        )
+        .unwrap()
     }
 
     #[tokio::test]
     async fn test_valid_token_accepted() {
         setup_cache().await;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize;
-        let token = make_token("https://securetoken.google.com/test_proj", "test_proj", "user123", now + 3600);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as usize;
+        let token = make_token(
+            "https://securetoken.google.com/test_proj",
+            "test_proj",
+            "user123",
+            now + 3600,
+        );
         let res = verify_token(&token, "test_proj", &["user123".into()]).await;
         assert!(res.is_ok());
     }
@@ -206,8 +234,16 @@ mod tests {
     #[tokio::test]
     async fn test_expired_token_rejected() {
         setup_cache().await;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize;
-        let token = make_token("https://securetoken.google.com/test_proj", "test_proj", "user123", now - 3600);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as usize;
+        let token = make_token(
+            "https://securetoken.google.com/test_proj",
+            "test_proj",
+            "user123",
+            now - 3600,
+        );
         let res = verify_token(&token, "test_proj", &["user123".into()]).await;
         assert_eq!(res.unwrap_err().code, "token_expired");
     }
@@ -215,8 +251,16 @@ mod tests {
     #[tokio::test]
     async fn test_wrong_aud_rejected() {
         setup_cache().await;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize;
-        let token = make_token("https://securetoken.google.com/test_proj", "wrong_proj", "user123", now + 3600);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as usize;
+        let token = make_token(
+            "https://securetoken.google.com/test_proj",
+            "wrong_proj",
+            "user123",
+            now + 3600,
+        );
         let res = verify_token(&token, "test_proj", &["user123".into()]).await;
         assert_eq!(res.unwrap_err().code, "invalid_signature");
     }
@@ -224,8 +268,16 @@ mod tests {
     #[tokio::test]
     async fn test_wrong_iss_rejected() {
         setup_cache().await;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize;
-        let token = make_token("https://securetoken.google.com/wrong_proj", "test_proj", "user123", now + 3600);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as usize;
+        let token = make_token(
+            "https://securetoken.google.com/wrong_proj",
+            "test_proj",
+            "user123",
+            now + 3600,
+        );
         let res = verify_token(&token, "test_proj", &["user123".into()]).await;
         assert_eq!(res.unwrap_err().code, "invalid_signature");
     }
@@ -233,8 +285,16 @@ mod tests {
     #[tokio::test]
     async fn test_valid_sig_but_uid_not_on_allowlist_rejected() {
         setup_cache().await;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize;
-        let token = make_token("https://securetoken.google.com/test_proj", "test_proj", "unknown_hacker", now + 3600);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as usize;
+        let token = make_token(
+            "https://securetoken.google.com/test_proj",
+            "test_proj",
+            "unknown_hacker",
+            now + 3600,
+        );
         let res = verify_token(&token, "test_proj", &["user123".into()]).await;
         assert_eq!(res.unwrap_err().code, "not_authorized");
     }

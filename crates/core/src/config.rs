@@ -34,9 +34,13 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             roots: vec![],
-            staging_dir: dirs::cache_dir().unwrap_or_else(|| PathBuf::from(".")).join("masterphototools/staging"),
+            staging_dir: dirs::cache_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("masterphototools/staging"),
             thresholds: Thresholds::default(),
-            database: dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("masterphototools/db.sqlite3"),
+            database: dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("masterphototools/db.sqlite3"),
         }
     }
 }
@@ -52,7 +56,7 @@ impl Config {
     pub fn load() -> Result<Self, Error> {
         let path = Self::config_path();
         if path.exists() {
-            let data = std::fs::read_to_string(path).map_err(|e| Error::Io(e))?;
+            let data = std::fs::read_to_string(path).map_err(Error::Io)?;
             serde_json::from_str(&data).map_err(|e| Error::Internal(e.to_string()))
         } else {
             Self::from_env()
@@ -62,10 +66,11 @@ impl Config {
     pub fn save(&self) -> Result<(), Error> {
         let path = Self::config_path();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| Error::Io(e))?;
+            std::fs::create_dir_all(parent).map_err(Error::Io)?;
         }
-        let data = serde_json::to_string_pretty(self).map_err(|e| Error::Internal(e.to_string()))?;
-        std::fs::write(path, data).map_err(|e| Error::Io(e))?;
+        let data =
+            serde_json::to_string_pretty(self).map_err(|e| Error::Internal(e.to_string()))?;
+        std::fs::write(path, data).map_err(Error::Io)?;
         Ok(())
     }
 

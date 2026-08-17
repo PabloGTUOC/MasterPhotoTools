@@ -1,3 +1,5 @@
+//! Google Photos client (F15)
+
 pub mod album;
 pub mod auth;
 pub mod uploader;

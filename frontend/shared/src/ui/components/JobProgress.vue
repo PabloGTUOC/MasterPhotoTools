@@ -7,7 +7,7 @@
  */
 import { onUnmounted, ref, watch } from 'vue';
 import type { JobEvent } from '@phototools/shared';
-import { api } from '../api';
+import { api } from '@host/api';
 
 const props = defineProps<{ jobId: string | null }>();
 

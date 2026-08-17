@@ -2,7 +2,7 @@
 /** F6 — rotate, resize, convert. */
 import { computed, ref, useTemplateRef } from 'vue';
 import type { TargetFormat } from '@phototools/shared';
-import { api } from '../api';
+import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
 
 const page = useTemplateRef<InstanceType<typeof ToolPage>>('page');

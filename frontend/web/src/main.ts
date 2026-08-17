@@ -1,15 +1,15 @@
 import { createApp } from 'vue';
 import { createRouter, createWebHistory } from 'vue-router';
-import './style.css';
+import '@ui/style.css';
 import App from './App.vue';
 
-import ContactSheet from './views/ContactSheet.vue';
-import Dashboard from './views/Dashboard.vue';
-import Dates from './views/Dates.vue';
-import ImageTool from './views/ImageTool.vue';
-import Library from './views/Library.vue';
-import Rename from './views/Rename.vue';
-import Transform from './views/Transform.vue';
+import ContactSheet from '@ui/views/ContactSheet.vue';
+import Dashboard from '@ui/views/Dashboard.vue';
+import Dates from '@ui/views/Dates.vue';
+import ImageTool from '@ui/views/ImageTool.vue';
+import Library from '@ui/views/Library.vue';
+import Rename from '@ui/views/Rename.vue';
+import Transform from '@ui/views/Transform.vue';
 
 const router = createRouter({
   history: createWebHistory(),

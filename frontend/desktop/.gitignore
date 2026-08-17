@@ -1,0 +1,6 @@
+
+# Emitted beside the source config by an earlier tsconfig. Vite prefers
+# vite.config.js over vite.config.ts, so a stale copy silently replaces the
+# real configuration.
+vite.config.js
+vite.config.d.ts

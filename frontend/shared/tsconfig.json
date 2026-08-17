@@ -14,5 +14,10 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // `src/ui` holds Vue single-file components, which plain `tsc` cannot compile
+  // and which import `@host/api` — a module only an application can supply.
+  // They are consumed as source by each front end's Vite build and typechecked
+  // there; `dist` stays the compiled client library it has always been.
+  "exclude": ["src/ui"]
 }

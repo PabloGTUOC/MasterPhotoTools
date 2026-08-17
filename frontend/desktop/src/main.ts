@@ -1,14 +1,14 @@
 import { createApp } from 'vue';
 import { createRouter, createWebHashHistory } from 'vue-router';
-import './style.css';
+import '@ui/style.css';
 import App from './App.vue';
 
-import ContactSheet from './views/ContactSheet.vue';
-import Dates from './views/Dates.vue';
-import ImageTool from './views/ImageTool.vue';
-import Library from './views/Library.vue';
-import Rename from './views/Rename.vue';
-import Transform from './views/Transform.vue';
+import ContactSheet from '@ui/views/ContactSheet.vue';
+import Dates from '@ui/views/Dates.vue';
+import ImageTool from '@ui/views/ImageTool.vue';
+import Library from '@ui/views/Library.vue';
+import Rename from '@ui/views/Rename.vue';
+import Transform from '@ui/views/Transform.vue';
 
 // Hash history: the app is served from a file URL inside Tauri, where path
 // routing has no server to fall back on.

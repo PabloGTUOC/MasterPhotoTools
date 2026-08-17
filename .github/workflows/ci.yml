@@ -77,10 +77,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: frontend/web/package-lock.json
+          cache-dependency-path: |
+            frontend/shared/package-lock.json
+            frontend/web/package-lock.json
+            frontend/desktop/package-lock.json
 
-      # The web build consumes the shared client's compiled output, so the
-      # shared package is built first.
+      # Both front ends consume the shared package: the client as compiled
+      # output, and the views as source compiled into each application's own
+      # build. It is installed and built first for that reason, and its install
+      # also supplies the `vue` types the shared views are typechecked against.
       - name: Build the shared API client
         run: |
           npm --prefix frontend/shared ci
@@ -99,8 +104,10 @@ jobs:
       - name: Transport boundary
         run: npm --prefix frontend/web run check:transport
 
-      # The desktop front end reuses the same views over a Tauri transport, so
-      # it gets the same three checks.
+      # The desktop front end compiles the same shared views over a Tauri
+      # transport, so it gets the same three checks. Both typechecks cover
+      # frontend/shared/src/ui, each against its own client — a view that used
+      # something only one transport offers fails the other build.
       - name: Desktop front end
         run: |
           npm --prefix frontend/desktop ci

@@ -10,6 +10,10 @@ import vue from '@vitejs/plugin-vue';
 // frontend/shared/src/ui/README.md.
 const ui = fileURLToPath(new URL('../shared/src/ui', import.meta.url));
 const host = fileURLToPath(new URL('./src', import.meta.url));
+// The dev server has to serve index.html, which sits at the package root rather
+// than in src/. Naming `allow` at all replaces Vite's default of the project
+// root, so leaving this out refuses the entry document itself.
+const root = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
   plugins: [vue()],
@@ -27,7 +31,7 @@ export default defineConfig({
     port: 5174,
     strictPort: true,
     // The shared views live outside this package's root.
-    fs: { allow: [host, ui] },
+    fs: { allow: [root, ui] },
   },
   build: { target: 'es2022' },
 });

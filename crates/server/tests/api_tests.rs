@@ -1013,3 +1013,42 @@ async fn publishing_an_unknown_session_is_a_404() {
 
     assert_eq!(response.status(), 404);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 14 — the roots a folder picker may start from
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_configured_roots_are_reported_so_a_picker_knows_where_to_begin() {
+    // G6 refuses every path outside a root, `/` included, so "list the top" is
+    // not a question the filesystem can answer — only the configuration can.
+    let s = start().await;
+
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/storage/roots", s.base))
+        .bearer_auth(token_for(ALLOWED_UID, now() + 3600))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let roots: Vec<String> = response.json().await.unwrap();
+    assert_eq!(
+        roots,
+        vec![s.root.display().to_string()],
+        "the picker is offered exactly the directories G6 would allow"
+    );
+}
+
+#[tokio::test]
+async fn the_roots_are_not_readable_without_a_token() {
+    // The roots name where the library lives on disk. That is not a secret from
+    // an invited account, and it is not for anyone else either.
+    let s = start().await;
+
+    let response = reqwest::get(format!("{}/api/storage/roots", s.base))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 401);
+}

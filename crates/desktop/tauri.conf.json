@@ -3,8 +3,14 @@
   "version": "0.1.0",
   "identifier": "com.phototools.master",
   "build": {
-    "beforeDevCommand": "npm --prefix ../../frontend/desktop run dev",
-    "beforeBuildCommand": "npm --prefix ../../frontend/desktop run build",
+    "beforeDevCommand": {
+      "script": "npm run dev",
+      "cwd": "../../frontend/desktop"
+    },
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../../frontend/desktop"
+    },
     "devUrl": "http://localhost:5174",
     "frontendDist": "../../frontend/desktop/dist"
   },
@@ -26,6 +32,20 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png"
+    ],
+    "category": "Photography",
+    "shortDescription": "Ingest, prepare and publish photographs",
+    "longDescription": "Ingest photographs from a camera SD card, validate and prepare them, publish them to Google Photos, and maintain a photo library on a NAS.",
+    "macOS": {
+      "minimumSystemVersion": "14.0"
+    }
   }
 }

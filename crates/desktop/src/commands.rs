@@ -78,9 +78,19 @@ pub fn get_server_settings(state: State<'_, AppState>) -> ServerSettings {
     state.server.settings()
 }
 
+/// Apply the settings and keep them for the next launch.
+///
+/// Persisting can fail on its own — a locked Keychain, an unwritable
+/// configuration directory — and that is reported rather than swallowed (G10).
+/// The settings are applied to the running session either way, so a failure to
+/// save costs the next launch, not this one.
 #[tauri::command]
-pub fn set_server_settings(settings: ServerSettings, state: State<'_, AppState>) {
-    state.server.set_settings(settings);
+pub fn set_server_settings(
+    settings: ServerSettings,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    state.server.set_settings(settings.clone());
+    settings.save().map_err(|e| e.to_string())
 }
 
 /// Whether the NAS is answering.
@@ -112,6 +122,16 @@ pub fn list_directory(
 ) -> CommandResult<Vec<f9_browser::BrowserEntry>> {
     let config = state.config();
     f9_browser::list_directory(&config, std::path::Path::new(&path)).map_err(describe)
+}
+
+/// The directories a browser may start from.
+///
+/// The desktop's counterpart to `GET /api/storage/roots`. G6 refuses anything
+/// outside a configured root, `/` included, so a folder picker cannot discover
+/// the top by listing it — the configuration is the only thing that knows.
+#[tauri::command]
+pub fn list_roots(state: State<'_, AppState>) -> CommandResult<Vec<PathBuf>> {
+    Ok(state.config().roots.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -938,4 +958,39 @@ pub fn derive_raw(
             ))
         })
         .map_err(describe)
+}
+
+// ---------------------------------------------------------------------------
+// Launch at login
+// ---------------------------------------------------------------------------
+//
+// Platform integration, which is what a binary crate is for (G1). The plugin
+// writes a macOS LaunchAgent; nothing about it belongs in `core`, which has no
+// platform assumptions at all.
+
+/// Whether the application is registered to start at login.
+#[tauri::command]
+pub fn get_launch_at_login(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// Register or unregister the login item.
+///
+/// Reports the state it could confirm rather than the state it was asked for
+/// (§9.2 invariant 6): the write can fail on its own, and answering "on"
+/// because "on" was requested would be a UI that lies after a reboot.
+#[tauri::command]
+pub fn set_launch_at_login(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+
+    let launcher = app.autolaunch();
+    let outcome = if enabled {
+        launcher.enable()
+    } else {
+        launcher.disable()
+    };
+    outcome.map_err(|e| e.to_string())?;
+
+    launcher.is_enabled().map_err(|e| e.to_string())
 }

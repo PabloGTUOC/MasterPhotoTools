@@ -3,6 +3,9 @@
 import { computed, ref, useTemplateRef } from 'vue';
 import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
+import PathListField from '../components/PathListField.vue';
+import PathField from '../components/PathField.vue';
+import { useRoots } from '../useRoots';
 
 const page = useTemplateRef<InstanceType<typeof ToolPage>>('page');
 
@@ -11,6 +14,10 @@ const outPath = ref('');
 const recursive = ref(false);
 const confirmed = ref(false);
 const busy = ref(false);
+
+// The folders the pickers may offer, and the lister they walk with.
+const { roots } = useRoots();
+const list = (path: string) => api.list(path);
 
 const inputList = computed(() =>
   inputs.value.split('\n').map((p) => p.trim()).filter(Boolean),
@@ -51,14 +58,22 @@ async function apply() {
     @apply="apply"
   >
     <template #form>
-      <label class="field">
-        <span>Inputs — files or folders, one per line</span>
-        <textarea v-model="inputs" rows="4" spellcheck="false"></textarea>
-      </label>
-      <label class="field">
-        <span>Output file</span>
-        <input v-model="outPath" type="text" placeholder="/mnt/photos/contact.jpg" />
-      </label>
+      <PathListField
+        v-model="inputs"
+        label="Inputs — files or folders, one per line"
+        :roots="roots"
+        :list="list"
+      />
+
+      <PathField
+        v-model="outPath"
+        label="Output file"
+        placeholder="/mnt/photos/contact.jpg"
+        hint="Choosing a folder keeps the file name."
+        keep-file-name
+        :roots="roots"
+        :list="list"
+      />
       <label class="checkbox"><input v-model="recursive" type="checkbox" /> Include subfolders</label>
     </template>
 

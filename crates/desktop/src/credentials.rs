@@ -8,6 +8,7 @@ use keyring::Entry;
 
 const SERVICE: &str = "com.phototools.master";
 const REFRESH_TOKEN: &str = "firebase-refresh-token";
+const SERVER_AUTH_TOKEN: &str = "server-auth-token";
 
 /// A named secret in the platform credential store.
 pub struct Credential {
@@ -24,6 +25,15 @@ impl Credential {
     /// The Firebase refresh token, which is what lets the desktop stay signed in.
     pub fn refresh_token() -> Result<Self, String> {
         Self::new(REFRESH_TOKEN)
+    }
+
+    /// The bearer token sent to the server (§5.2, today §5.3's `ADMIN_TOKEN`).
+    ///
+    /// In the Keychain rather than beside the address it belongs to, because it
+    /// is a credential and §9.2 rule 4 keeps those off disk in the clear. The
+    /// address is not a secret and is persisted as plain JSON.
+    pub fn server_auth_token() -> Result<Self, String> {
+        Self::new(SERVER_AUTH_TOKEN)
     }
 
     pub fn store(&self, secret: &str) -> Result<(), String> {

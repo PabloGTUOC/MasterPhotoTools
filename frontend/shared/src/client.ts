@@ -58,6 +58,15 @@ export interface ApiClient {
 
   // F9 — storage
   list(path: string): Promise<BrowserEntry[]>;
+  /**
+   * The directories a browser may start from.
+   *
+   * G6 refuses any path outside a configured root, `/` included, so a picker
+   * cannot find the top by listing it. Both transports answer this from their
+   * own configuration — which is not the same configuration: the desktop's
+   * roots are on the Mac, the server's are inside its container.
+   */
+  roots(): Promise<string[]>;
 
   // F11, F12, F13 — ingest.
   //
@@ -278,6 +287,11 @@ export class HttpApiClient implements ApiClient {
     const query = new URLSearchParams({ path });
     const response = await this.send(`/api/storage/ls?${query}`);
     return this.readJson<BrowserEntry[]>(response, 'a directory listing');
+  }
+
+  async roots(): Promise<string[]> {
+    const response = await this.send('/api/storage/roots');
+    return this.readJson<string[]>(response, 'the configured roots');
   }
 
   // -------------------------------------------------------------------------

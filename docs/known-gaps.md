@@ -84,11 +84,47 @@ about whether rung 3's output is usable at all.
 `sips` is invoked only under `#[cfg(target_os = "macos")]`. Away from macOS the rung reports "not
 applicable" rather than failing, which is why rung 3 exists. **MV-10.3**.
 
+### The application icons are placeholders
+
+`crates/desktop/icons/icon.icns` and `icon.ico` are **0-byte files** and `icon.png` is a single
+pixel. Referencing the empty `.icns` aborts the application at launch on macOS — Tauri sets the
+dock icon through `NSImage::initWithData(..).expect("creating icon")`, and a panic there cannot
+unwind — so `bundle.icon` lists only the three valid PNGs, which are blank but well-formed.
+
+That is enough to run and to bundle, and not enough to ship: a `.dmg` wants a real `.icns`, and the
+window and dock currently show nothing. Closing it needs a square source PNG — 1024×1024 — after
+which `cargo tauri icon <file>` regenerates the whole set. What the icon should *look* like is a
+decision about the product rather than a packaging task (G11), so it is recorded rather than
+invented. Blocks **MV-14.1**.
+
 ---
 
 ## Places the specification is incomplete or contradicts itself
 
 Recorded rather than resolved by editing it (G9).
+
+### §9.3's `distroless/cc` base cannot run §2.6's `exiftool`
+
+§9.3 specifies a `distroless/cc` base for the server image. §2.6 makes `exiftool` the one permitted
+external binary and requires it for every metadata **write**, and two shipped server routes perform
+one — `POST /api/tools/dates/fix` (F1) and `POST /api/ingest/derive` (F14).
+
+`exiftool` is a Perl program. `distroless/cc` carries a C runtime and no interpreter, so on that
+base both routes fail at their first write: a capability the API offers and the image cannot honour.
+
+The image is `debian:bookworm-slim` instead, recorded in
+[`phase-reports/phase-14.md`](phase-reports/phase-14.md). The alternative was withdrawing two
+specified routes from the server build, which is a larger decision than a base image.
+
+### §2.2 has the server serving the web UI, and no phase implemented it
+
+"Web UI | Vue 3 | **Served by `phototools-server`**" (§2.2), but the router had no static route, and
+`tower-http`'s `fs` feature was enabled in `crates/server/Cargo.toml` and unused — so the front end
+existed, was built by CI, and had nothing to serve it outside Vite's development server.
+
+Closed in Phase 14 rather than left: the deployed container is the first place it would have
+mattered, and it would have read as "the deployment is broken" rather than as an unimplemented line
+of the specification.
 
 ### §7 lists neither the `published` nor the `sessions` table
 
@@ -120,10 +156,7 @@ the shots sit as unconfirmed for a person to check — §9.2 invariant 6 applied
 
 ## Not yet built
 
-**Phase 14 — packaging and deployment.** Multi-stage `Dockerfile` on `distroless/cc` with
-`cargo-chef`, `docker buildx` for `linux/amd64` and `linux/arm64`, `docker-compose.yml` with a health
-check, the `.dmg` bundle, and `docs/deployment.md`.
+Nothing. Phases 0–14 are built.
 
-One thing to know going in: a full debug `target/` reaches around **20 GB**, most of it `rawler` and
-rustls' `aws-lc-sys`. Without `cargo-chef` caching configured from the first commit, every image
-build recompiles that tree.
+What remains is [`manual-verification.md`](manual-verification.md) — the checks
+needing a Mac, a camera, a NAS, a Google account or somebody's judgement.

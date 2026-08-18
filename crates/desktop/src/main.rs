@@ -53,6 +53,22 @@ fn main() {
     };
 
     tauri::Builder::default()
+        // Both plugins have to be registered here, not merely depended on and
+        // permitted in capabilities/default.json. `NotificationExt` resolves
+        // through `Manager::state`, which panics when the type was never
+        // managed — so without this line the first detected card panics the
+        // watcher thread instead of raising F10's notification, and the
+        // `if let Err(..)` below never sees anything to report.
+        .plugin(tauri_plugin_notification::init())
+        // Launch at login (build plan Phase 14). A LaunchAgent is the macOS
+        // mechanism that survives a reboot without asking for privileges.
+        // Registering the plugin only makes the setting available; it is off
+        // until something turns it on, because a login item somebody did not
+        // ask for is a bad surprise.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(move |app| {
             // The sink needs an AppHandle, which only exists once the app is
             // being set up — hence building state here rather than earlier.
@@ -100,6 +116,7 @@ fn main() {
             commands::server_status,
             commands::get_job,
             commands::list_directory,
+            commands::list_roots,
             commands::scan_dates,
             commands::fix_dates,
             commands::plan_rename,
@@ -117,6 +134,8 @@ fn main() {
             commands::remediate,
             commands::derive_raw,
             commands::hand_off_card,
+            commands::get_launch_at_login,
+            commands::set_launch_at_login,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the PhotoTools desktop application");

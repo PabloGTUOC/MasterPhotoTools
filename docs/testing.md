@@ -1,10 +1,10 @@
 # Testing on a Mac
 
-Phases 0–13 are built and pass their gates on Linux. What is left is everything a machine with no
-camera, no Mac, no NAS and no Google account could not settle — the numbered checks in
+Phases 0–14 are built and pass their gates. What is left is everything a machine with no camera, no
+Mac, no NAS and no Google account could not settle — the numbered checks in
 [`manual-verification.md`](manual-verification.md).
 
-**50 checks in all; 48 are actionable now** — Phase 14's two wait on the phase existing.
+**51 checks in all, and all of them are actionable.**
 
 This file gets you to the point where you can start them.
 
@@ -35,7 +35,7 @@ machine, the problem is the environment, not the phase you are about to test.
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # expect 461 passed
+cargo test --workspace          # expect 467 passed
 cargo test -p phototools-core   # expect 400 passed — G2, core in isolation
 ```
 
@@ -136,6 +136,9 @@ cargo run -p phototools-server     # PORT defaults to 3000
 npm --prefix frontend/web run dev  # proxies /api to 127.0.0.1:3000
 ```
 
+> Deploying for real — the container on the NAS, the `.dmg`, Firebase and the OAuth client — is
+> [`deployment.md`](deployment.md). This file is for running from a checkout while verifying.
+
 ## 5. Suggested order
 
 Each session unblocks the next. Doing them out of order mostly means discovering the same setup
@@ -151,6 +154,7 @@ problem later and more confusingly.
 | 6 | **Google Photos** | MV-12.1 – MV-12.7 | Needs an OAuth client. **MV-12.1 is one photograph, before any bulk run.** |
 | 7 | **The UI** | MV-13.1 – MV-13.6, MV-6.1 | Judgement about screens, once there is real data behind them. |
 | 8 | **Scans** | MV-4.1 – MV-4.4 | Independent of everything above; do whenever you have scans. |
+| 9 | **Packaging** | MV-14.1 – MV-14.3 | Last, because it is the only session that needs everything else to have worked. |
 
 ### If you only have an hour
 

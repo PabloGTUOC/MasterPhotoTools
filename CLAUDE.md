@@ -5,17 +5,18 @@ and maintain a photo library on a NAS.
 
 ## Where the current work is
 
-**Phases 0–13 are built and pass their gates. Phase 14 (packaging) is not started.**
+**Phases 0–14 are built and pass their gates.** Every phase of the build plan is closed.
 
 The active job is **manual verification on a Mac** — 50 numbered checks that could not be settled on
-a Linux container with no camera, no NAS and no Google account. Forty-eight are actionable now; the
-last two wait on Phase 14 existing.
+a Linux container with no camera, no NAS and no Google account. All 50 are actionable now that
+Phase 14 exists.
 
 | Read this | For |
 |---|---|
 | [`docs/testing.md`](docs/testing.md) | Setting up on the Mac, and the order to work through the checks |
 | [`docs/manual-verification.md`](docs/manual-verification.md) | The checks, each with a stable id like `MV-8.3` |
 | [`docs/known-gaps.md`](docs/known-gaps.md) | What is open **in the code**, as opposed to awaiting a human |
+| [`docs/deployment.md`](docs/deployment.md) | Deploying the server and the desktop app, and every environment variable |
 | [`docs/phase-reports/`](docs/phase-reports/) | One report per phase: what was delivered, what deviated, and why |
 
 The user may name items directly — *"do MV-8.6"*, *"MV-11.2 came back at 380 of 400, work out
@@ -55,7 +56,7 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 461 passing
+cargo test --workspace          # 467 passing
 cargo test -p phototools-core   # 400 passing — G2
 ```
 
@@ -88,6 +89,7 @@ One Rust library, two binaries, two front ends over shared components.
 ```
 crates/core        all functionality — no web framework, no UI, no platform assumptions
 crates/server      axum, on the NAS in Docker. Owns the ledger and Google credentials.
+                   Also serves the built web front end from WEB_ROOT (§2.2).
 crates/desktop     Tauri v2 on macOS. Reads the card, processes locally, hands off.
 
 frontend/shared    the API client (compiled) and the shared views (source)
@@ -131,7 +133,7 @@ never offered. Do not add methods to `ApiClient` that one transport has to throw
 
 ## Commit and branch
 
-- One branch per phase. Current: `claude/repo-status-md-gaps-qwe1ob`.
+- One branch per phase. Current: `phase/14-packaging`.
 - Imperative subject under 72 characters; the body explains **why**, referencing the requirement
   (`F14`, `G6`, `§9.2`).
 - Do not put a model identifier in commits, PR bodies or code comments.

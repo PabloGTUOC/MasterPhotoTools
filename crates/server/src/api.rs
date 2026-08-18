@@ -42,6 +42,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/ingest/validate", post(ingest_validate))
         .route("/api/ingest/remediate", post(ingest_remediate))
         .route("/api/ingest/derive", post(ingest_derive))
+        // The desktop-to-server handoff — F16, specification §8.
+        .route("/api/ingest/sessions", post(ingest_open_session))
+        .route("/api/ingest/sessions/:id/ready", post(ingest_session_ready))
+        .route("/api/ingest/sessions/:id/shots", get(ingest_session_shots))
         // Jobs.
         .route("/api/jobs/:id", get(job_state))
         .route("/api/jobs/:id/events", get(job_events))
@@ -795,6 +799,265 @@ async fn ingest_derive(
             summary.by_rung(phototools_core::media::RawSource::EmbeddedPreview),
             summary.failures.len()
         ))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// F16 — the handoff
+// ---------------------------------------------------------------------------
+
+/// `POST /api/ingest/sessions` — a manifest in, dispositions out.
+///
+/// Answered inline rather than as a job, and that is the point of F16: this
+/// request reads no photographs. It is one indexed lookup per manifest and a
+/// `stat` per entry, so a 400-frame card is answered in milliseconds — which is
+/// what makes it worth asking *before* copying a gigabyte.
+///
+/// The session id is minted here rather than taken from the manifest. A client
+/// that chose its own could name a session another client is using, and the
+/// second `ready` would then verify against the first one's agreement.
+async fn ingest_open_session(
+    auth: Authenticated,
+    State(state): State<AppState>,
+    Json(mut manifest): Json<ingest::Manifest>,
+) -> Result<Response, ApiError> {
+    let session_id = uuid::Uuid::new_v4().to_string();
+    manifest.session_id = session_id.clone();
+
+    // Every `file_name` in here was chosen by a client and is about to be
+    // joined onto the staging directory. Checked before anything is touched.
+    manifest.validate()?;
+
+    let staging = state.config.staging_dir.clone();
+    let ledger = state.jobs.ledger();
+
+    let plan = {
+        let guard = lock(&ledger)?;
+        let plan = ingest::handoff::decide(&manifest, &guard, &staging)?;
+
+        guard
+            .open_session(
+                &session_id,
+                &manifest.card_id,
+                &to_json(&manifest)?,
+                &to_json(&plan)?,
+            )
+            .map_err(|e| ApiError::from(Error::Internal(e.to_string())))?;
+        plan
+    };
+
+    tracing::info!(
+        uid = auth.uid(),
+        session_id,
+        entries = plan.entries.len(),
+        to_send = plan.count(ingest::Disposition::Send),
+        already_published = plan.count(ingest::Disposition::AlreadyPublished),
+        "handoff session opened"
+    );
+
+    Ok((StatusCode::CREATED, Json(plan)).into_response())
+}
+
+/// `POST /api/ingest/sessions/{id}/ready` — the staged files are written.
+///
+/// A job (F17). Verification hashes every arrival, which for a card's worth of
+/// derivatives is gigabytes off the NAS's own disks; no request waits for that.
+/// The report lands on the session row, and `GET .../shots` serves it.
+async fn ingest_session_ready(
+    auth: Authenticated,
+    State(state): State<AppState>,
+    UrlPath(session_id): UrlPath<String>,
+) -> Result<Response, ApiError> {
+    let staging = state.config.staging_dir.clone();
+    let ledger = state.jobs.ledger();
+
+    // Read the agreement before starting a job, so an unknown session is a 404
+    // rather than a job that fails a moment later.
+    let (manifest, plan) = load_agreement(&ledger, &session_id)?;
+    let total = plan
+        .entries
+        .iter()
+        .filter(|e| e.disposition.expects_a_file())
+        .count() as u64;
+
+    let id = session_id.clone();
+    accept(&state, &auth, "handoff_verify", total, move |progress| {
+        let report = ingest::handoff::verify_arrivals(&manifest, &plan, &staging, progress);
+
+        // The lock is taken only now. `verify_arrivals` reports progress, and
+        // progress is itself written through this ledger — holding it across
+        // the hashing would deadlock the job against its own updates.
+        let state_name = if report.complete() {
+            "verified"
+        } else {
+            "incomplete"
+        };
+        let json = serde_json::to_string(&report)
+            .map_err(|e| Error::Internal(format!("could not store the arrival report: {e}")))?;
+
+        {
+            let guard = ledger
+                .lock()
+                .map_err(|_| Error::Internal("ledger lock poisoned".into()))?;
+            guard
+                .set_session_report(&id, state_name, &json)
+                .map_err(|e| Error::Internal(e.to_string()))?;
+        }
+
+        Ok(format!(
+            "{} verified, {} to recopy",
+            report.verified.len(),
+            report.recopy.len()
+        ))
+    })
+}
+
+/// One shot in a session, with what is known about it so far.
+///
+/// Specification §8 calls this "results with per-check status". Phase 11 fills
+/// in the arrival status; Phase 13 adds F12's validation checks to the same
+/// rows, which is why the shape has room for more than one verdict.
+#[derive(Debug, Serialize)]
+pub struct SessionShot {
+    pub stem: String,
+    pub file_name: String,
+    pub width: u32,
+    pub height: u32,
+    pub bytes: u64,
+    pub capture: Option<chrono::NaiveDateTime>,
+    /// What the manifest exchange settled: send, already staged, published.
+    pub disposition: &'static str,
+    /// `verified`, `awaiting` before `ready` has run, or why it must come again.
+    pub arrival: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SessionShotsResponse {
+    pub session_id: String,
+    pub state: String,
+    pub shots: Vec<SessionShot>,
+    /// The verification result verbatim, once `ready` has run.
+    ///
+    /// The same facts as `shots`, in the shape the *desktop* needs rather than
+    /// the one a review grid needs: it has to recopy an exact list of files, and
+    /// re-deriving that list by parsing display strings would put a parser
+    /// between the two halves of one protocol.
+    pub report: Option<ingest::ArrivalReport>,
+}
+
+/// `GET /api/ingest/sessions/{id}/shots`.
+async fn ingest_session_shots(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    UrlPath(session_id): UrlPath<String>,
+) -> Result<Response, ApiError> {
+    let ledger = state.jobs.ledger();
+    let (manifest, plan) = load_agreement(&ledger, &session_id)?;
+
+    let (session_state, report) = {
+        let guard = lock(&ledger)?;
+        let session_state = guard
+            .session_state(&session_id)
+            .map_err(|e| ApiError::from(Error::Internal(e.to_string())))?
+            .unwrap_or_else(|| "open".into());
+        let report: Option<ingest::ArrivalReport> = guard
+            .session_report(&session_id)
+            .map_err(|e| ApiError::from(Error::Internal(e.to_string())))?
+            .map(|json| from_json(&json))
+            .transpose()?;
+        (session_state, report)
+    };
+
+    let shots = plan
+        .entries
+        .iter()
+        .map(|planned| {
+            let entry = manifest.entry(&planned.file_name);
+            SessionShot {
+                stem: planned.stem.clone(),
+                file_name: planned.file_name.clone(),
+                width: entry.map(|e| e.width).unwrap_or(0),
+                height: entry.map(|e| e.height).unwrap_or(0),
+                bytes: entry.map(|e| e.bytes).unwrap_or(0),
+                capture: entry.and_then(|e| e.capture),
+                disposition: planned.disposition.as_str(),
+                arrival: arrival_of(planned, report.as_ref()),
+            }
+        })
+        .collect();
+
+    Ok(Json(SessionShotsResponse {
+        session_id,
+        state: session_state,
+        shots,
+        report,
+    })
+    .into_response())
+}
+
+/// How one shot fared, in a word.
+fn arrival_of(planned: &ingest::EntryPlan, report: Option<&ingest::ArrivalReport>) -> String {
+    // A published photograph was never asked for, so it is not "awaiting"
+    // anything — saying so would read as a file that failed to turn up.
+    if !planned.disposition.expects_a_file() {
+        return "not_required".into();
+    }
+    let Some(report) = report else {
+        return "awaiting".into();
+    };
+    if let Some(recopy) = report
+        .recopy
+        .iter()
+        .find(|r| r.file_name == planned.file_name)
+    {
+        return recopy.reason.as_str().into();
+    }
+    if report.verified.contains(&planned.file_name) {
+        return "verified".into();
+    }
+    "awaiting".into()
+}
+
+/// The manifest and plan a session was opened with.
+fn load_agreement(
+    ledger: &std::sync::Arc<std::sync::Mutex<phototools_core::ledger::Ledger>>,
+    session_id: &str,
+) -> Result<(ingest::Manifest, ingest::SessionPlan), ApiError> {
+    let stored = {
+        let guard = lock(ledger)?;
+        guard
+            .session_agreement(session_id)
+            .map_err(|e| ApiError::from(Error::Internal(e.to_string())))?
+    };
+
+    let (manifest, plan) = stored.ok_or(ApiError {
+        code: "not_found",
+        message: format!("No ingest session {session_id}"),
+    })?;
+
+    Ok((from_json(&manifest)?, from_json(&plan)?))
+}
+
+fn lock<T>(
+    guarded: &std::sync::Arc<std::sync::Mutex<T>>,
+) -> Result<std::sync::MutexGuard<'_, T>, ApiError> {
+    guarded.lock().map_err(|_| ApiError {
+        code: "internal",
+        message: "The ledger lock is poisoned".into(),
+    })
+}
+
+fn to_json<T: Serialize>(value: &T) -> Result<String, ApiError> {
+    serde_json::to_string(value).map_err(|e| ApiError {
+        code: "internal",
+        message: format!("Could not store the session: {e}"),
+    })
+}
+
+fn from_json<T: serde::de::DeserializeOwned>(json: &str) -> Result<T, ApiError> {
+    serde_json::from_str(json).map_err(|e| ApiError {
+        code: "internal",
+        message: format!("A stored session could not be read back: {e}"),
     })
 }
 

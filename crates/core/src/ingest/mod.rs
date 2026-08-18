@@ -9,6 +9,7 @@ pub mod card;
 pub mod derivation;
 pub mod fingerprint;
 pub mod grouping;
+pub mod handoff;
 pub mod remediation;
 pub mod scanner;
 pub mod staging;
@@ -18,6 +19,11 @@ pub mod walk;
 pub use card::{Card, Origin};
 pub use fingerprint::Fingerprint;
 pub use grouping::{group_into_shots, Shot};
+pub use handoff::{
+    items_for, run_handoff, ArrivalReport, Disposition, EntryPlan, Handoff, HandoffItem,
+    HandoffOutcome, Manifest, ManifestEntry, NotReady, Recopy, RecopyReason, SessionClient,
+    SessionPlan,
+};
 pub use remediation::{
     actions_for, apply_bulk, default_action, plan_bulk, ActionKind, BulkRequest, PlannedAction,
     RemediationParams, RemediationSummary, RemediationTool,

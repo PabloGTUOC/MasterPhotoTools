@@ -83,6 +83,15 @@ impl JobManager {
         self.runner.recover()
     }
 
+    /// A handle on the same ledger jobs are written through.
+    ///
+    /// Shared rather than reopened: two connections to one SQLite file contend
+    /// for the write lock, and the ingest handlers read the ledger while jobs
+    /// are writing to it.
+    pub fn ledger(&self) -> Arc<Mutex<phototools_core::ledger::Ledger>> {
+        self.runner.ledger()
+    }
+
     pub fn get(&self, id: &str) -> Result<Option<Job>, Error> {
         self.runner.get(id)
     }

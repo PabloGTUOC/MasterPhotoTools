@@ -67,6 +67,7 @@ async fn local_jobs_run_while_the_server_is_unreachable() {
     // Port 1 is not listening, which is the "NAS is off" case.
     let connection = ServerConnection::new(ServerSettings {
         base_url: "http://127.0.0.1:1".into(),
+        auth_token: None,
     });
     let status = connection.status().await;
     assert!(!status.reachable, "precondition: no server");
@@ -124,6 +125,7 @@ async fn the_server_address_can_be_changed_without_a_restart() {
 
     connection.set_settings(ServerSettings {
         base_url: "http://nas.local:3000".into(),
+        auth_token: None,
     });
     assert_eq!(connection.settings().base_url, "http://nas.local:3000");
 

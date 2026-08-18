@@ -21,7 +21,14 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # Specification §8: the desktop's HTTP calls to the server are made from the
 # Rust side, never from the webview, which avoids CORS and mixed content.
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+# `blocking` because the handoff runs inside a job on its own std::thread
+# (F17), where a synchronous client is the honest shape; the async client stays
+# for the health probe, which is called from Tauri's async command context.
+reqwest = { version = "0.12", features = [
+    "json",
+    "rustls-tls",
+    "blocking",
+], default-features = false }
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
 # F13's manual date actions parse dates at the command boundary.
 chrono = "0.4"

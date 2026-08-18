@@ -112,6 +112,41 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE shots ADD COLUMN card_scope TEXT;
     CREATE INDEX IF NOT EXISTS idx_shots_card_scope ON shots (card_scope);
     "#,
+    // 4 — F16's deduplication ledger, and the handoff sessions that write to it.
+    //
+    // Specification §7 lists neither table. It does list `publishes`, but that
+    // is keyed by `shot_id` and holds the Google Photos state machine; F16 asks
+    // for something different and says so plainly — *"the server maintains a
+    // SHA-256 ledger of every file it has published"* — and a key that is a shot
+    // on one particular card cannot answer "have I published this photograph
+    // before?" for a card that has been reformatted since. Recorded as a gap in
+    // the phase report rather than resolved by editing the specification (G9).
+    //
+    // The key is the **source** hash: the bytes the camera wrote, which never
+    // change. See `ingest::handoff::manifest::ManifestEntry` for why the derived
+    // hash cannot do this job.
+    r#"
+    CREATE TABLE IF NOT EXISTS published (
+        source_sha256 TEXT PRIMARY KEY,
+        stem TEXT,
+        derived_sha256 TEXT,
+        session_id TEXT,
+        media_item_id TEXT,
+        published_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        card_id TEXT,
+        state TEXT,
+        created_at INTEGER,
+        manifest TEXT,
+        plan TEXT,
+        report TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_state ON sessions (state);
+    "#,
 ];
 
 pub struct Ledger {
@@ -511,6 +546,166 @@ impl Ledger {
             (provider, token, scope, expires_at),
         )?;
         Ok(())
+    }
+
+    // ------------------------------------------------- F16: published hashes
+
+    /// Record that one photograph reached Google Photos.
+    ///
+    /// `media_item_id` is optional because Phase 12's state machine reaches
+    /// `uploaded` before it reaches `created`; a row with no media item is a
+    /// photograph whose bytes are up but whose item is not yet made.
+    pub fn record_published(
+        &self,
+        source_sha256: &str,
+        stem: &str,
+        derived_sha256: &str,
+        session_id: &str,
+        media_item_id: Option<&str>,
+    ) -> SqlResult<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO published
+                 (source_sha256, stem, derived_sha256, session_id, media_item_id, published_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (
+                source_sha256,
+                stem,
+                derived_sha256,
+                session_id,
+                media_item_id,
+                chrono::Utc::now().timestamp(),
+            ),
+        )?;
+        Ok(())
+    }
+
+    pub fn is_published(&self, source_sha256: &str) -> SqlResult<bool> {
+        let found: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM published WHERE source_sha256 = ?1",
+                [source_sha256],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    /// Which of `hashes` have been published (F16).
+    ///
+    /// One query per chunk rather than one per hash, because a 400-frame card
+    /// would otherwise make 400 round trips to answer a question SQLite can
+    /// answer in one. Chunked at 500 because SQLite's default limit is 999
+    /// bound parameters, and a manifest is not bounded by anything the caller
+    /// controls — a burst-mode card can carry thousands of frames.
+    pub fn published_among(
+        &self,
+        hashes: &[String],
+    ) -> SqlResult<std::collections::HashSet<String>> {
+        const CHUNK: usize = 500;
+        let mut found = std::collections::HashSet::new();
+
+        for chunk in hashes.chunks(CHUNK) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT source_sha256 FROM published WHERE source_sha256 IN ({placeholders})"
+            );
+
+            let mut statement = self.conn.prepare(&sql)?;
+            let rows = statement.query_map(rusqlite::params_from_iter(chunk), |row| {
+                row.get::<_, String>(0)
+            })?;
+            for row in rows {
+                found.insert(row?);
+            }
+        }
+
+        Ok(found)
+    }
+
+    // ------------------------------------------------------ handoff sessions
+
+    /// Open a handoff session, storing the manifest it was opened with.
+    ///
+    /// The manifest is kept whole, as the JSON it arrived as. The protocol
+    /// spans two requests — `sessions` then `ready` — and the second cannot
+    /// verify arrivals without what the first was promised. Storing it verbatim
+    /// also means a server restarted between the two still knows what it agreed
+    /// to (F17).
+    pub fn open_session(
+        &self,
+        id: &str,
+        card_id: &str,
+        manifest_json: &str,
+        plan_json: &str,
+    ) -> SqlResult<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO sessions (id, card_id, state, created_at, manifest, plan)
+             VALUES (?1, ?2, 'open', ?3, ?4, ?5)",
+            (
+                id,
+                card_id,
+                chrono::Utc::now().timestamp(),
+                manifest_json,
+                plan_json,
+            ),
+        )?;
+        Ok(())
+    }
+
+    /// The manifest and plan a session was opened with, as stored JSON.
+    ///
+    /// Both, together, because verification needs both and reading them in one
+    /// statement means a session cannot be seen half-updated.
+    pub fn session_agreement(&self, id: &str) -> SqlResult<Option<(String, String)>> {
+        self.conn
+            .query_row(
+                "SELECT manifest, plan FROM sessions WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
+    pub fn set_session_plan(&self, id: &str, plan_json: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE sessions SET plan = ?2 WHERE id = ?1",
+            (id, plan_json),
+        )?;
+        Ok(())
+    }
+
+    /// Store what verification found, so `GET .../shots` can answer after the
+    /// job that produced it has finished.
+    pub fn set_session_report(&self, id: &str, state: &str, report_json: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE sessions SET state = ?2, report = ?3 WHERE id = ?1",
+            (id, state, report_json),
+        )?;
+        Ok(())
+    }
+
+    pub fn session_report(&self, id: &str) -> SqlResult<Option<String>> {
+        self.conn
+            .query_row("SELECT report FROM sessions WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map(Option::flatten)
+    }
+
+    pub fn set_session_state(&self, id: &str, state: &str) -> SqlResult<()> {
+        self.conn
+            .execute("UPDATE sessions SET state = ?2 WHERE id = ?1", (id, state))?;
+        Ok(())
+    }
+
+    pub fn session_state(&self, id: &str) -> SqlResult<Option<String>> {
+        self.conn
+            .query_row("SELECT state FROM sessions WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .optional()
     }
 }
 

@@ -23,6 +23,9 @@ const ALLOWED_UID: &str = "photographer-1";
 struct TestServer {
     base: String,
     root: PathBuf,
+    /// Where the desktop writes and the server verifies (F16).
+    staging: PathBuf,
+    database: PathBuf,
     _temp: tempfile::TempDir,
 }
 
@@ -31,9 +34,12 @@ async fn start() -> TestServer {
     let root = temp.path().join("library");
     std::fs::create_dir(&root).unwrap();
 
+    let staging = temp.path().join("staging");
+    std::fs::create_dir_all(&staging).unwrap();
+
     let config = Config {
         roots: vec![root.canonicalize().unwrap()],
-        staging_dir: temp.path().join("staging"),
+        staging_dir: staging,
         thresholds: Thresholds::default(),
         database: temp.path().join("ledger.sqlite3"),
     };
@@ -71,6 +77,8 @@ async fn start() -> TestServer {
     TestServer {
         base: format!("http://127.0.0.1:{port}"),
         root: root.canonicalize().unwrap(),
+        staging: temp.path().join("staging"),
+        database: temp.path().join("ledger.sqlite3"),
         _temp: temp,
     }
 }
@@ -477,4 +485,334 @@ async fn a_request_with_no_paths_is_a_bad_request_not_a_job() {
     assert_eq!(response.status(), 400);
     let body: Value = response.json().await.unwrap();
     assert_eq!(body["code"], "bad_request");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 11 — the handoff (F16)
+// ---------------------------------------------------------------------------
+//
+// These run against the real routes over real HTTP, so the manifest crosses a
+// socket and is deserialised exactly as the desktop would send it.
+
+use phototools_core::ingest::{Handoff, HandoffItem, Manifest};
+
+/// A manifest built from files in a temporary directory, as the desktop builds
+/// one.
+fn handoff_of(dir: &std::path::Path, files: &[(&str, &[u8])]) -> Handoff {
+    std::fs::create_dir_all(dir).unwrap();
+    let items: Vec<HandoffItem> = files
+        .iter()
+        .map(|(stem, bytes)| {
+            let path = dir.join(format!("{stem}.jpg"));
+            std::fs::write(&path, bytes).unwrap();
+            HandoffItem {
+                stem: (*stem).into(),
+                source_sha256: format!("source-of-{stem}"),
+                derived: path,
+                width: 3000,
+                height: 2000,
+                capture: None,
+            }
+        })
+        .collect();
+    Handoff::prepare("pending", "card-1", &items).unwrap()
+}
+
+async fn open_session(s: &TestServer, manifest: &Manifest) -> Value {
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/ingest/sessions", s.base))
+        .bearer_auth(good_token())
+        .json(manifest)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201, "opening a session");
+    response.json().await.unwrap()
+}
+
+/// Call `ready` and wait for the verification job it starts.
+async fn mark_ready(s: &TestServer, session_id: &str) -> Value {
+    let client = reqwest::Client::new();
+    let accepted: Value = client
+        .post(format!("{}/api/ingest/sessions/{session_id}/ready", s.base))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let job_id = accepted["job_id"].as_str().expect("ready must start a job");
+
+    for _ in 0..100 {
+        let job: Value = client
+            .get(format!("{}/api/jobs/{job_id}", s.base))
+            .bearer_auth(good_token())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if job["status"] == "completed" || job["status"] == "failed" {
+            assert_eq!(job["status"], "completed", "verification job: {job}");
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    client
+        .get(format!("{}/api/ingest/sessions/{session_id}/shots", s.base))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+/// Copy a manifest's files into staging, as the desktop's writer does.
+fn deliver(s: &TestServer, handoff: &Handoff, only: Option<&[&str]>) {
+    std::fs::create_dir_all(&s.staging).unwrap();
+    for entry in &handoff.manifest().entries {
+        if only.is_some_and(|stems| !stems.contains(&entry.stem.as_str())) {
+            continue;
+        }
+        let local = handoff.local_path(&entry.file_name).unwrap();
+        std::fs::copy(local, s.staging.join(&entry.file_name)).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn the_handoff_routes_refuse_an_anonymous_request() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("{}/api/ingest/sessions", s.base))
+        .json(&json!({"session_id":"x","card_id":"y","created_at":0,"entries":[]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+
+    for route in [
+        "/api/ingest/sessions/abc/ready",
+        "/api/ingest/sessions/abc/shots",
+    ] {
+        let response = if route.ends_with("ready") {
+            client.post(format!("{}{route}", s.base)).send().await
+        } else {
+            client.get(format!("{}{route}", s.base)).send().await
+        };
+        assert_eq!(response.unwrap().status(), 401, "{route}");
+    }
+}
+
+/// **Phase 11 acceptance.** A fresh card is all `send`; the same card ingested
+/// again after publishing transfers nothing and publishes nothing (F16).
+#[tokio::test]
+async fn re_ingesting_a_published_card_transfers_nothing() {
+    let s = start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let handoff = handoff_of(temp.path(), &[("IMG_0001", b"one"), ("IMG_0002", b"two")]);
+
+    let plan = open_session(&s, handoff.manifest()).await;
+    let dispositions: Vec<&str> = plan["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["disposition"].as_str().unwrap())
+        .collect();
+    assert_eq!(dispositions, vec!["send", "send"]);
+
+    deliver(&s, &handoff, None);
+    let shots = mark_ready(&s, plan["session_id"].as_str().unwrap()).await;
+    assert_eq!(shots["state"], "verified");
+
+    // Phase 12 will do this when Google Photos accepts each photograph.
+    {
+        let ledger = phototools_core::ledger::Ledger::open(&s.database).unwrap();
+        for entry in &handoff.manifest().entries {
+            ledger
+                .record_published(
+                    &entry.source_sha256,
+                    &entry.stem,
+                    &entry.derived_sha256,
+                    "session-1",
+                    Some("media-item"),
+                )
+                .unwrap();
+        }
+    }
+
+    let second = open_session(&s, handoff.manifest()).await;
+    let dispositions: Vec<&str> = second["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["disposition"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        dispositions,
+        vec!["already_published", "already_published"],
+        "a card already processed must ask for nothing"
+    );
+}
+
+/// **Phase 11 acceptance.** A truncated staged file is caught by hash and asked
+/// for again (specification §2.3).
+#[tokio::test]
+async fn a_truncated_staged_file_is_reported_for_recopy() {
+    let s = start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let handoff = handoff_of(
+        temp.path(),
+        &[("IMG_0001", b"a whole photograph"), ("IMG_0002", b"two")],
+    );
+
+    let plan = open_session(&s, handoff.manifest()).await;
+    let session_id = plan["session_id"].as_str().unwrap().to_string();
+
+    deliver(&s, &handoff, None);
+    // The interrupted copy: right name, not all of it.
+    let damaged = &handoff.manifest().entries[0];
+    std::fs::write(s.staging.join(&damaged.file_name), b"a whole").unwrap();
+
+    let shots = mark_ready(&s, &session_id).await;
+
+    assert_eq!(shots["state"], "incomplete");
+    assert_eq!(shots["report"]["recopy"].as_array().unwrap().len(), 1);
+    assert_eq!(shots["report"]["recopy"][0]["reason"], "short_file");
+    assert_eq!(shots["report"]["recopy"][0]["stem"], "IMG_0001");
+
+    // And the review grid says so per shot.
+    let arrivals: Vec<&str> = shots["shots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|shot| shot["arrival"].as_str().unwrap())
+        .collect();
+    assert_eq!(arrivals, vec!["short_file", "verified"]);
+
+    // Recopying it whole clears the session.
+    deliver(&s, &handoff, Some(&["IMG_0001"]));
+    let shots = mark_ready(&s, &session_id).await;
+    assert_eq!(shots["state"], "verified");
+    assert!(shots["report"]["recopy"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_file_that_never_arrived_is_reported_as_missing() {
+    let s = start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let handoff = handoff_of(temp.path(), &[("IMG_0001", b"one"), ("IMG_0002", b"two")]);
+
+    let plan = open_session(&s, handoff.manifest()).await;
+    deliver(&s, &handoff, Some(&["IMG_0002"]));
+
+    let shots = mark_ready(&s, plan["session_id"].as_str().unwrap()).await;
+
+    assert_eq!(shots["report"]["recopy"][0]["reason"], "missing");
+    assert_eq!(shots["report"]["verified"].as_array().unwrap().len(), 1);
+}
+
+/// A manifest naming a file outside the staging directory is refused before
+/// anything is read. The one place in this protocol where a client names a file.
+#[tokio::test]
+async fn a_manifest_that_names_a_path_outside_staging_is_refused() {
+    let s = start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let handoff = handoff_of(temp.path(), &[("IMG_0001", b"one")]);
+
+    let mut manifest = handoff.manifest().clone();
+    manifest.entries[0].file_name = "../../../etc/cron.d/pwn".into();
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/ingest/sessions", s.base))
+        .bearer_auth(good_token())
+        .json(&manifest)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["code"], "path_not_allowed");
+}
+
+#[tokio::test]
+async fn an_unknown_session_is_a_404() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!(
+            "{}/api/ingest/sessions/no-such-session/ready",
+            s.base
+        ))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+
+    let response = client
+        .get(format!(
+            "{}/api/ingest/sessions/no-such-session/shots",
+            s.base
+        ))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+}
+
+/// The session id is the server's, not the client's. A client that could name
+/// its own session could name one another client is using.
+#[tokio::test]
+async fn the_server_mints_the_session_id() {
+    let s = start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let handoff = handoff_of(temp.path(), &[("IMG_0001", b"one")]);
+
+    let mut manifest = handoff.manifest().clone();
+    manifest.session_id = "chosen-by-the-client".into();
+
+    let plan = open_session(&s, &manifest).await;
+
+    assert_ne!(plan["session_id"], "chosen-by-the-client");
+    assert!(plan["session_id"].as_str().unwrap().len() >= 32);
+}
+
+/// Before `ready` runs there is no report, and the shots say so rather than
+/// claiming anything about files nobody has looked at.
+#[tokio::test]
+async fn shots_are_awaiting_until_verification_has_run() {
+    let s = start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let handoff = handoff_of(temp.path(), &[("IMG_0001", b"one")]);
+
+    let plan = open_session(&s, handoff.manifest()).await;
+    let shots: Value = reqwest::Client::new()
+        .get(format!(
+            "{}/api/ingest/sessions/{}/shots",
+            s.base,
+            plan["session_id"].as_str().unwrap()
+        ))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(shots["state"], "open");
+    assert!(shots["report"].is_null());
+    assert_eq!(shots["shots"][0]["arrival"], "awaiting");
+    assert_eq!(shots["shots"][0]["stem"], "IMG_0001");
 }

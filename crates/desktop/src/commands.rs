@@ -839,6 +839,67 @@ fn parse_action(raw: &str) -> CommandResult<ingest::ActionKind> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// F16 — the handoff
+// ---------------------------------------------------------------------------
+
+/// Hand a card's derivatives to the server (F16).
+///
+/// A job, and a long one: it copies gigabytes over SMB. The protocol itself
+/// lives in `core` — this resolves paths, builds the transport and gets out of
+/// the way (G1).
+///
+/// `staging_dir` is the directory on the **NAS share**, as the Mac sees it.
+/// It is deliberately not `config.staging_dir`: that one is local scratch for
+/// F11's copy off the card, and the two are different places that happen to
+/// share a word.
+#[tauri::command]
+pub fn hand_off_card(
+    path: String,
+    derived_dir: String,
+    staging_dir: String,
+    state: State<'_, AppState>,
+) -> CommandResult<String> {
+    let config = state.config();
+    let root = resolve_input(&config, &path)?;
+    let derived_dir = resolve_input(&config, &derived_dir)?;
+    let staging_dir = resolve_output(&config, &staging_dir)?;
+    let card = Card::at(&root).map_err(describe)?;
+    let client = state.server.session_client();
+
+    state
+        .jobs
+        .spawn("card_handoff", 0, move |progress| {
+            let scan = ingest::scan_card(&card, progress)?;
+            let (items, not_ready) = ingest::items_for(&scan, &derived_dir);
+
+            if items.is_empty() {
+                return Ok(format!(
+                    "nothing to hand over: {} shot(s) have no JPEG yet",
+                    not_ready.len()
+                ));
+            }
+
+            let handoff = ingest::Handoff::prepare(
+                // Replaced by the id the server mints; sent so a manifest is
+                // never on the wire without one.
+                "pending",
+                &scan.card_id,
+                &items,
+            )?;
+            let outcome = ingest::run_handoff(&handoff, &staging_dir, &client, progress)?;
+
+            // A shot with no JPEG is not a handoff failure, but it is a
+            // photograph that will not be published, so it is said out loud.
+            let mut summary = outcome.describe();
+            if !not_ready.is_empty() {
+                summary.push_str(&format!(", {} shot(s) not ready", not_ready.len()));
+            }
+            Ok(summary)
+        })
+        .map_err(describe)
+}
+
 /// Derive JPEGs for the card's RAW-only shots (F14).
 #[tauri::command]
 pub fn derive_raw(

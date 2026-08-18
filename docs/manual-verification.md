@@ -144,6 +144,36 @@ below it.
 - **Confirm CR3 files are declined rather than mangled.** F14 puts CR3 out of scope; a CR3 on a card
   will be reported as underivable. Confirm that reads as a clear message rather than a crash.
 
+## Phase 11
+
+The protocol is fully tested and the ledger is a file on disk that outlives the process. What cannot
+be tested here is the **medium**: every test in this phase writes to a local temporary directory, and
+the real staging directory is an SMB share mounted from a NAS. That is a different filesystem with
+different guarantees, and three of the five items below are about exactly that.
+
+- **Confirm `rename` is atomic enough on your SMB share.** The copy writes `<hash>.jpg.partial` and
+  renames it into place, so the server never sees a half-written file under its final name. On a
+  local POSIX filesystem that rename is atomic; over SMB it is a server-side operation whose
+  atomicity depends on the NAS. If it is not atomic, the failure is benign — verification fails and
+  the file is recopied — but it would happen on *every* file, turning one pass into two. Watch the
+  `recopied` count on a real card: it should be zero.
+- **Confirm the server can read a file the Mac has just finished writing.** SMB clients cache
+  writes, so a file can look complete on the Mac before all of it has reached the NAS. The recopy
+  path covers this correctly, but again: if it fires on most files rather than none, the handoff is
+  doing double the work and the cause is write caching, not corruption.
+- **Time a real card, and check the two timeouts against it.** Verification hashes every arrival and
+  is allowed 30 minutes (`VERIFY_TIMEOUT`); each individual HTTP call is allowed 60 seconds
+  (`HANDOFF_TIMEOUT`). Neither has ever been measured against a real card over a real network. A
+  400-frame card is 1–3 GB, and the hashing runs against the NAS's own disks rather than the share.
+- **Set `ADMIN_TOKEN` and confirm the desktop can authenticate.** The desktop has a Keychain but no
+  Firebase sign-in yet, so today the handoff authenticates with §5.3's break-glass token, set in
+  `ServerSettings.auth_token`. Without it every request is a `401`. This is the one thing that stops
+  the handoff working end to end today, and it is configuration rather than code.
+- **Fill the NAS and watch what happens.** A copy that runs out of space fails the handoff with the
+  underlying I/O error rather than reporting a hash mismatch, which is the right answer — but nobody
+  has seen the message it produces, and "no space left on device" arriving in the middle of a card
+  is a moment when the wording matters.
+
 ## Phase 14
 - macOS `.dmg` bundle requires installation and launch testing on macOS.
 - NAS deployment testing.

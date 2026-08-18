@@ -46,6 +46,12 @@ pub fn router() -> Router<AppState> {
         .route("/api/ingest/sessions", post(ingest_open_session))
         .route("/api/ingest/sessions/:id/ready", post(ingest_session_ready))
         .route("/api/ingest/sessions/:id/shots", get(ingest_session_shots))
+        .route("/api/ingest/sessions/:id/publish", post(ingest_publish))
+        // Google Photos connector — F15, specification §8.
+        .route("/api/connectors/google/status", get(google_status))
+        .route("/api/connectors/google/connect", post(google_connect))
+        .route("/api/connectors/google/callback", get(google_callback))
+        .route("/api/connectors/google/disconnect", post(google_disconnect))
         // Jobs.
         .route("/api/jobs/:id", get(job_state))
         .route("/api/jobs/:id/events", get(job_events))
@@ -1058,6 +1064,252 @@ fn from_json<T: serde::de::DeserializeOwned>(json: &str) -> Result<T, ApiError> 
     serde_json::from_str(json).map_err(|e| ApiError {
         code: "internal",
         message: format!("A stored session could not be read back: {e}"),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// F15 — Google Photos
+// ---------------------------------------------------------------------------
+
+use phototools_core::publish::{self, AccessTokens, Connector, OAuthConfig, TokenCipher};
+
+/// Build a connector from the environment.
+///
+/// Configuration is read per request rather than held in `AppState`, so a
+/// server started before the credentials were set picks them up on the next
+/// attempt instead of needing a restart — and so a missing variable is reported
+/// to whoever is trying to connect, not buried in a startup log.
+fn connector_parts(state: &AppState) -> Result<(OAuthConfig, TokenCipher), ApiError> {
+    let _ = state;
+    Ok((OAuthConfig::from_env()?, TokenCipher::from_env()?))
+}
+
+/// `GET /api/connectors/google/status`.
+async fn google_status(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+) -> Result<Response, ApiError> {
+    let ledger = state.jobs.ledger();
+
+    // A connector that cannot be configured is not an error here: "no Google
+    // account is connected" is exactly what the UI needs to show, and saying so
+    // is more useful than a 500 about an environment variable.
+    let Ok((config, cipher)) = connector_parts(&state) else {
+        return Ok(Json(publish::ConnectorStatus {
+            connected: false,
+            scope: None,
+            connected_at: None,
+            needs_reauthorisation: false,
+            detail: Some(
+                "Google Photos is not configured on this server. Set the OAuth \
+                 client and the token encryption key."
+                    .into(),
+            ),
+        })
+        .into_response());
+    };
+
+    let endpoint = publish::HttpTokenEndpoint::new();
+    let guard = lock(&ledger)?;
+    let connector = Connector::new(&guard, config, cipher, &endpoint);
+
+    Ok(Json(connector.status()?).into_response())
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConsentUrl {
+    pub url: String,
+}
+
+/// `POST /api/connectors/google/connect` — the consent URL to visit (§6.2).
+async fn google_connect(
+    auth: Authenticated,
+    State(state): State<AppState>,
+) -> Result<Response, ApiError> {
+    let (config, cipher) = connector_parts(&state)?;
+    let endpoint = publish::HttpTokenEndpoint::new();
+    let ledger = state.jobs.ledger();
+
+    let url = {
+        let guard = lock(&ledger)?;
+        Connector::new(&guard, config, cipher, &endpoint).begin()?
+    };
+
+    tracing::info!(uid = auth.uid(), "google photos consent started");
+    Ok(Json(ConsentUrl { url }).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CallbackQuery {
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    /// Google sends this instead of a code when somebody declines.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CallbackResult {
+    pub connected: bool,
+    pub message: String,
+}
+
+/// `GET /api/connectors/google/callback` (§6.2 steps 2–4).
+async fn google_callback(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Query(query): Query<CallbackQuery>,
+) -> Result<Response, ApiError> {
+    if let Some(error) = query.error {
+        return Err(ApiError::bad_request(format!(
+            "Google did not grant access: {error}"
+        )));
+    }
+
+    let code = query
+        .code
+        .ok_or_else(|| ApiError::bad_request("The callback carried no authorisation code"))?;
+    let returned_state = query
+        .state
+        .ok_or_else(|| ApiError::bad_request("The callback carried no state parameter"))?;
+
+    let (config, cipher) = connector_parts(&state)?;
+    let endpoint = publish::HttpTokenEndpoint::new();
+    let ledger = state.jobs.ledger();
+
+    {
+        let guard = lock(&ledger)?;
+        Connector::new(&guard, config, cipher, &endpoint).complete(&code, &returned_state)?;
+    }
+
+    Ok(Json(CallbackResult {
+        connected: true,
+        message: "Google Photos is connected.".into(),
+    })
+    .into_response())
+}
+
+/// `POST /api/connectors/google/disconnect`.
+async fn google_disconnect(
+    auth: Authenticated,
+    State(state): State<AppState>,
+) -> Result<Response, ApiError> {
+    let (config, cipher) = connector_parts(&state)?;
+    let endpoint = publish::HttpTokenEndpoint::new();
+    let ledger = state.jobs.ledger();
+
+    {
+        let guard = lock(&ledger)?;
+        Connector::new(&guard, config, cipher, &endpoint).disconnect()?;
+    }
+
+    tracing::info!(uid = auth.uid(), "google photos disconnected");
+    Ok(Json(CallbackResult {
+        connected: false,
+        message: "Google Photos is disconnected.".into(),
+    })
+    .into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PublishRequest {
+    /// `true` produces a plan and touches nothing. Required before a real
+    /// publish (§9.2 rule 3).
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// `POST /api/ingest/sessions/{id}/publish`.
+///
+/// A dry run answers inline — it reads the database and nothing else. A real
+/// publish is a job: 500 photographs is upwards of 510 requests to Google, and
+/// F17 forbids blocking a request on that.
+async fn ingest_publish(
+    auth: Authenticated,
+    State(state): State<AppState>,
+    UrlPath(session_id): UrlPath<String>,
+    Json(request): Json<PublishRequest>,
+) -> Result<Response, ApiError> {
+    let ledger = state.jobs.ledger();
+    let (manifest, plan) = load_agreement(&ledger, &session_id)?;
+    let staging = state.config.staging_dir.clone();
+
+    let report: Option<ingest::ArrivalReport> = {
+        let guard = lock(&ledger)?;
+        guard
+            .session_report(&session_id)
+            .map_err(|e| ApiError::from(Error::Internal(e.to_string())))?
+            .map(|json| from_json(&json))
+            .transpose()?
+    };
+
+    if request.dry_run {
+        let guard = lock(&ledger)?;
+        let plan = publish::dry_run(&manifest, &plan, report.as_ref(), &guard)?;
+        tracing::info!(
+            uid = auth.uid(),
+            session_id,
+            items = plan.items.len(),
+            "publish dry run"
+        );
+        return Ok(Json(plan).into_response());
+    }
+
+    // Checked here as well as inside the publisher, and checked *first*: a
+    // publish with no dry run behind it should never become a running job, and
+    // "review a dry run" is a more useful answer than "your OAuth client is not
+    // configured" when both are true.
+    {
+        let guard = lock(&ledger)?;
+        if guard
+            .dry_run_at(&session_id)
+            .map_err(|e| ApiError::from(Error::Internal(e.to_string())))?
+            .is_none()
+        {
+            return Err(ApiError::bad_request(format!(
+                "Session {session_id} has had no dry run. Google Photos cannot \
+                 delete what it has created, so review a dry run first \
+                 (specification §9.2 rule 3)."
+            )));
+        }
+    }
+
+    let (config, cipher) = connector_parts(&state)?;
+    let database = state.config.database.clone();
+
+    accept(&state, &auth, "publish", 0, move |progress| {
+        let endpoint = publish::HttpTokenEndpoint::new();
+        let api = publish::HttpPhotosApi::new();
+        let sleeper = publish::RealSleeper;
+
+        // **Its own connection, deliberately.** A publish holds a `&Ledger` for
+        // the length of the run while reporting progress, and job progress is
+        // written through the shared `Arc<Mutex<Ledger>>` — so borrowing that
+        // one would have the job deadlock against its own progress updates on
+        // the first photograph. `Ledger::open` sets a busy timeout, which is
+        // what makes two writers to one file wait rather than fail.
+        let own = phototools_core::ledger::Ledger::open(&database)
+            .map_err(|e| Error::Internal(e.to_string()))?;
+
+        // The plan is rebuilt rather than carried from the dry run: the request
+        // that authorised this may be minutes old, and what matters is what is
+        // true now. `plan_publish`, **not** `dry_run` — the latter would stamp
+        // the session as reviewed and let this publish satisfy its own
+        // precondition on the way past.
+        let publish_plan = publish::plan_publish(&manifest, &plan, report.as_ref(), &own)?;
+
+        let connector = Connector::new(&own, config, cipher, &endpoint);
+        let publisher = publish::Publisher {
+            ledger: &own,
+            api: &api,
+            tokens: &connector as &dyn AccessTokens,
+            sleeper: &sleeper,
+            staging_dir: staging,
+        };
+
+        Ok(publisher.publish(&publish_plan, progress)?.describe())
     })
 }
 

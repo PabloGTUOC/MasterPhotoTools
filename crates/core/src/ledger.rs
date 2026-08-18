@@ -147,7 +147,56 @@ const MIGRATIONS: &[&str] = &[
 
     CREATE INDEX IF NOT EXISTS idx_sessions_state ON sessions (state);
     "#,
+    // 5 — F15's publishing. Three additions, each for one requirement.
+    //
+    // `oauth.state` is §6.2's reconnect path: catching `invalid_grant` has to
+    // leave a mark somewhere, or the next of four hundred photographs asks
+    // Google the same dead question again.
+    //
+    // `sessions.dry_run_at` is §9.2 rule 3, which makes a dry run mandatory
+    // before publishing. It has to be *persisted*: the API cannot delete, so a
+    // dry run remembered only in a process that has since restarted is no
+    // safeguard at all.
+    //
+    // `publishes.session_id` lets a publish job find its own shots. §7 lists the
+    // table without it, because §7 predates sessions existing.
+    r#"
+    ALTER TABLE oauth ADD COLUMN state TEXT;
+    ALTER TABLE sessions ADD COLUMN dry_run_at INTEGER;
+    ALTER TABLE publishes ADD COLUMN session_id TEXT;
+    ALTER TABLE publishes ADD COLUMN source_sha256 TEXT;
+    ALTER TABLE publishes ADD COLUMN file_name TEXT;
+    ALTER TABLE publishes ADD COLUMN stem TEXT;
+
+    CREATE INDEX IF NOT EXISTS idx_publishes_session ON publishes (session_id);
+    CREATE INDEX IF NOT EXISTS idx_publishes_state   ON publishes (state);
+    "#,
 ];
+
+/// One provider's stored authorisation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OAuthGrant {
+    pub encrypted_refresh_token: String,
+    pub scope: String,
+    /// When the grant was last stored, as Unix seconds.
+    pub expires_at: i64,
+    /// `connected` or `disconnected` (§6.2's reconnect path).
+    pub state: String,
+}
+
+/// One row of the publish state machine (§6.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishRow {
+    pub shot_id: String,
+    pub stem: String,
+    pub source_sha256: String,
+    pub file_name: String,
+    pub upload_token: Option<String>,
+    pub media_item_id: Option<String>,
+    pub state: String,
+    pub attempts: i64,
+    pub error: Option<String>,
+}
 
 pub struct Ledger {
     conn: Connection,
@@ -156,6 +205,13 @@ pub struct Ledger {
 impl Ledger {
     pub fn open<P: AsRef<Path>>(path: P) -> SqlResult<Self> {
         let conn = Connection::open(path)?;
+
+        // A second connection to the same file is a normal thing here — a
+        // publish job writes its own rows while the job runner writes progress
+        // through another — and without a busy timeout the loser of that race
+        // gets `SQLITE_BUSY` immediately rather than waiting the moment out.
+        conn.busy_timeout(std::time::Duration::from_secs(10))?;
+
         Self::apply_migrations(&conn)?;
         Ok(Self { conn })
     }
@@ -533,19 +589,246 @@ impl Ledger {
 
     // ---------------------------------------------------------------- oauth
 
-    pub fn set_oauth_token(
+    /// Store an OAuth grant. The token must already be encrypted (§6.2 step 4)
+    /// — this layer does not know how, deliberately, so a plaintext token
+    /// cannot arrive here by a caller forgetting.
+    pub fn set_oauth_grant(
         &self,
         provider: &str,
-        token: &str,
+        encrypted_refresh_token: &str,
         scope: &str,
-        expires_at: i64,
+        connected_at: i64,
+        state: &str,
     ) -> SqlResult<()> {
         self.conn.execute(
-            "INSERT OR REPLACE INTO oauth (provider, encrypted_refresh_token, scope, expires_at)
-             VALUES (?1, ?2, ?3, ?4)",
-            (provider, token, scope, expires_at),
+            "INSERT OR REPLACE INTO oauth
+                 (provider, encrypted_refresh_token, scope, expires_at, state)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            (
+                provider,
+                encrypted_refresh_token,
+                scope,
+                connected_at,
+                state,
+            ),
         )?;
         Ok(())
+    }
+
+    pub fn oauth_grant(&self, provider: &str) -> SqlResult<Option<OAuthGrant>> {
+        self.conn
+            .query_row(
+                "SELECT encrypted_refresh_token, scope, expires_at, state
+                   FROM oauth WHERE provider = ?1",
+                [provider],
+                |row| {
+                    Ok(OAuthGrant {
+                        encrypted_refresh_token: row.get(0)?,
+                        scope: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        expires_at: row.get::<_, Option<i64>>(2)?.unwrap_or_default(),
+                        state: row
+                            .get::<_, Option<String>>(3)?
+                            .unwrap_or_else(|| "connected".into()),
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn set_oauth_state(&self, provider: &str, state: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE oauth SET state = ?2 WHERE provider = ?1",
+            (provider, state),
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_oauth(&self, provider: &str) -> SqlResult<()> {
+        self.conn
+            .execute("DELETE FROM oauth WHERE provider = ?1", [provider])?;
+        Ok(())
+    }
+
+    // ---------------------------------------------------- F15: publish state
+
+    /// Record a shot as awaiting publication, without disturbing one that is
+    /// already under way.
+    ///
+    /// `INSERT OR IGNORE`, because re-running a publish must resume from what is
+    /// recorded rather than reset it to `pending` — resetting is precisely how a
+    /// photograph gets uploaded and created twice (§6.3).
+    pub fn queue_publish(
+        &self,
+        shot_id: &str,
+        session_id: &str,
+        stem: &str,
+        source_sha256: &str,
+        file_name: &str,
+    ) -> SqlResult<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO publishes
+                 (shot_id, session_id, stem, source_sha256, file_name, state, attempts)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', 0)",
+            (shot_id, session_id, stem, source_sha256, file_name),
+        )?;
+        Ok(())
+    }
+
+    /// Every queued shot for one session, in a stable order.
+    pub fn publishes_for_session(&self, session_id: &str) -> SqlResult<Vec<PublishRow>> {
+        let mut statement = self.conn.prepare(
+            "SELECT shot_id, stem, source_sha256, file_name, upload_token,
+                    media_item_id, state, attempts, error
+               FROM publishes WHERE session_id = ?1 ORDER BY stem",
+        )?;
+        let rows = statement.query_map([session_id], |row| {
+            Ok(PublishRow {
+                shot_id: row.get(0)?,
+                stem: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                source_sha256: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                file_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                upload_token: row.get(4)?,
+                media_item_id: row.get(5)?,
+                state: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                attempts: row.get::<_, Option<i64>>(7)?.unwrap_or_default(),
+                error: row.get(8)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn publish_row(&self, shot_id: &str) -> SqlResult<Option<PublishRow>> {
+        Ok(self
+            .publishes_matching("shot_id = ?1", shot_id)?
+            .into_iter()
+            .next())
+    }
+
+    fn publishes_matching(&self, predicate: &str, value: &str) -> SqlResult<Vec<PublishRow>> {
+        let mut statement = self.conn.prepare(&format!(
+            "SELECT shot_id, stem, source_sha256, file_name, upload_token,
+                    media_item_id, state, attempts, error
+               FROM publishes WHERE {predicate}"
+        ))?;
+        let rows = statement.query_map([value], |row| {
+            Ok(PublishRow {
+                shot_id: row.get(0)?,
+                stem: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                source_sha256: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                file_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                upload_token: row.get(4)?,
+                media_item_id: row.get(5)?,
+                state: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                attempts: row.get::<_, Option<i64>>(7)?.unwrap_or_default(),
+                error: row.get(8)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Move a shot to `uploaded`, holding the token Google gave back (§6.3).
+    pub fn record_upload(&self, shot_id: &str, upload_token: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE publishes SET state = 'uploaded', upload_token = ?2, error = NULL
+              WHERE shot_id = ?1",
+            (shot_id, upload_token),
+        )?;
+        Ok(())
+    }
+
+    /// Mark that a create is about to be sent.
+    ///
+    /// Written **before** the request, so a process that dies mid-call leaves a
+    /// row saying so. `batchCreate` is not idempotent and the API cannot delete,
+    /// so "we sent it and never heard back" has to be distinguishable from "we
+    /// never sent it" — see `publish::Publisher`.
+    pub fn record_creating(&self, shot_id: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE publishes SET state = 'creating', attempts = attempts + 1
+              WHERE shot_id = ?1",
+            [shot_id],
+        )?;
+        Ok(())
+    }
+
+    /// Record a media item **and** F16's published-hash entry in one
+    /// transaction.
+    ///
+    /// Two writes that must not come apart. A crash between them leaves a
+    /// photograph that is in Google Photos but not in the deduplication ledger,
+    /// and the next ingest of that card publishes it a second time — the exact
+    /// duplicate F16 exists to prevent, arriving through the back door.
+    pub fn record_created_and_published(
+        &self,
+        shot_id: &str,
+        media_item_id: &str,
+        source_sha256: &str,
+        stem: &str,
+        derived_file_name: &str,
+    ) -> SqlResult<()> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        tx.execute(
+            "UPDATE publishes SET state = 'created', media_item_id = ?2, error = NULL
+              WHERE shot_id = ?1",
+            (shot_id, media_item_id),
+        )?;
+        tx.execute(
+            "INSERT OR REPLACE INTO published
+                 (source_sha256, stem, derived_sha256, session_id, media_item_id, published_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (
+                source_sha256,
+                stem,
+                derived_file_name,
+                shot_id,
+                media_item_id,
+                chrono::Utc::now().timestamp(),
+            ),
+        )?;
+
+        tx.commit()
+    }
+
+    pub fn record_created(&self, shot_id: &str, media_item_id: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE publishes SET state = 'created', media_item_id = ?2, error = NULL
+              WHERE shot_id = ?1",
+            (shot_id, media_item_id),
+        )?;
+        Ok(())
+    }
+
+    /// A definite failure: nothing was created, so the shot goes back to the
+    /// last state that is safe to resume from.
+    pub fn record_publish_failure(&self, shot_id: &str, state: &str, error: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE publishes SET state = ?2, error = ?3 WHERE shot_id = ?1",
+            (shot_id, state, error),
+        )?;
+        Ok(())
+    }
+
+    // ----------------------------------------------------------- dry runs
+
+    /// Record that a dry run was performed for a session (§9.2 rule 3).
+    pub fn record_dry_run(&self, session_id: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE sessions SET dry_run_at = ?2 WHERE id = ?1",
+            (session_id, chrono::Utc::now().timestamp()),
+        )?;
+        Ok(())
+    }
+
+    pub fn dry_run_at(&self, session_id: &str) -> SqlResult<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT dry_run_at FROM sessions WHERE id = ?1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(Option::flatten)
     }
 
     // ------------------------------------------------- F16: published hashes
@@ -950,24 +1233,28 @@ mod tests {
 
         // oauth
         ledger
-            .set_oauth_token(
+            .set_oauth_grant(
                 "google",
                 "cipher-text",
                 "photoslibrary.appendonly",
                 4102444800,
+                "connected",
             )
             .unwrap();
-        let (token, scope, exp): (String, String, i64) = conn
-            .query_row(
-                "SELECT encrypted_refresh_token, scope, expires_at
-                   FROM oauth WHERE provider = 'google'",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(token, "cipher-text");
-        assert_eq!(scope, "photoslibrary.appendonly");
-        assert_eq!(exp, 4102444800);
+        let grant = ledger.oauth_grant("google").unwrap().unwrap();
+        assert_eq!(grant.encrypted_refresh_token, "cipher-text");
+        assert_eq!(grant.scope, "photoslibrary.appendonly");
+        assert_eq!(grant.expires_at, 4102444800);
+        assert_eq!(grant.state, "connected");
+
+        ledger.set_oauth_state("google", "disconnected").unwrap();
+        assert_eq!(
+            ledger.oauth_grant("google").unwrap().unwrap().state,
+            "disconnected"
+        );
+
+        ledger.delete_oauth("google").unwrap();
+        assert!(ledger.oauth_grant("google").unwrap().is_none());
     }
 
     #[test]

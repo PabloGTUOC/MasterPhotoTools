@@ -816,3 +816,200 @@ async fn shots_are_awaiting_until_verification_has_run() {
     assert_eq!(shots["shots"][0]["arrival"], "awaiting");
     assert_eq!(shots["shots"][0]["stem"], "IMG_0001");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 12 — Google Photos (F15)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_google_connector_routes_refuse_an_anonymous_request() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    for route in [
+        "/api/connectors/google/status",
+        "/api/connectors/google/callback?code=x&state=y",
+    ] {
+        let response = client
+            .get(format!("{}{route}", s.base))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 401, "{route}");
+    }
+
+    for route in [
+        "/api/connectors/google/connect",
+        "/api/connectors/google/disconnect",
+    ] {
+        let response = client
+            .post(format!("{}{route}", s.base))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 401, "{route}");
+    }
+
+    let response = client
+        .post(format!("{}/api/ingest/sessions/abc/publish", s.base))
+        .json(&json!({"dry_run": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+}
+
+/// An unconfigured connector is a state to show, not a server error. The web UI
+/// needs something to render on a fresh deployment.
+#[tokio::test]
+async fn an_unconfigured_google_connector_reports_itself_rather_than_failing() {
+    let s = start().await;
+
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/connectors/google/status", s.base))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["connected"], false);
+    assert!(body["detail"].as_str().unwrap().contains("not configured"));
+}
+
+/// **Phase 12 acceptance**, over HTTP: publish is refused without a dry run, and
+/// refused before it can become a job.
+#[tokio::test]
+async fn publishing_without_a_dry_run_is_refused_over_http() {
+    let s = start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let handoff = handoff_of(temp.path(), &[("IMG_0001", b"one")]);
+    let plan = open_session(&s, handoff.manifest()).await;
+    let session_id = plan["session_id"].as_str().unwrap();
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/ingest/sessions/{session_id}/publish",
+            s.base
+        ))
+        .bearer_auth(good_token())
+        .json(&json!({"dry_run": false}))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400, "not a job that fails later");
+    let body: Value = response.json().await.unwrap();
+    assert!(body["message"].as_str().unwrap().contains("no dry run"));
+}
+
+#[tokio::test]
+async fn a_dry_run_returns_a_plan_and_records_that_it_was_reviewed() {
+    let s = start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let handoff = handoff_of(
+        temp.path(),
+        &[
+            ("IMG_0001", b"one"),
+            ("IMG_0002", b"two"),
+            ("IMG_0003", b"three"),
+        ],
+    );
+
+    let plan = open_session(&s, handoff.manifest()).await;
+    let session_id = plan["session_id"].as_str().unwrap().to_string();
+    deliver(&s, &handoff, None);
+    mark_ready(&s, &session_id).await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/ingest/sessions/{session_id}/publish",
+            s.base
+        ))
+        .bearer_auth(good_token())
+        .json(&json!({"dry_run": true}))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "a dry run answers inline, not as a job"
+    );
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["items"].as_array().unwrap().len(), 3);
+    assert_eq!(body["upload_requests"], 3);
+    assert_eq!(body["batch_create_requests"], 1);
+    assert!(body["total_bytes"].as_u64().unwrap() > 0);
+
+    // Having been reviewed, the session is no longer refused for that reason.
+    // It now fails on the connector instead, which is the next thing wrong.
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/ingest/sessions/{session_id}/publish",
+            s.base
+        ))
+        .bearer_auth(good_token())
+        .json(&json!({"dry_run": false}))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = response.json().await.unwrap();
+    assert!(
+        !body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no dry run"),
+        "got {body}"
+    );
+}
+
+/// A session whose staged files were never verified publishes nothing, and the
+/// dry run says so rather than quietly listing fewer items.
+#[tokio::test]
+async fn a_dry_run_on_an_unverified_session_plans_nothing() {
+    let s = start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let handoff = handoff_of(temp.path(), &[("IMG_0001", b"one")]);
+    let plan = open_session(&s, handoff.manifest()).await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/ingest/sessions/{}/publish",
+            s.base,
+            plan["session_id"].as_str().unwrap()
+        ))
+        .bearer_auth(good_token())
+        .json(&json!({"dry_run": true}))
+        .send()
+        .await
+        .unwrap();
+
+    let body: Value = response.json().await.unwrap();
+    assert!(body["items"].as_array().unwrap().is_empty());
+    assert_eq!(body["skipped"].as_array().unwrap().len(), 1);
+    assert!(body["skipped"][0]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("not been verified"));
+}
+
+#[tokio::test]
+async fn publishing_an_unknown_session_is_a_404() {
+    let s = start().await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/ingest/sessions/no-such-session/publish",
+            s.base
+        ))
+        .bearer_auth(good_token())
+        .json(&json!({"dry_run": true}))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 404);
+}

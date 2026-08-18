@@ -8,6 +8,9 @@
 import { computed, ref, useTemplateRef } from 'vue';
 import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
+import PathListField from '../components/PathListField.vue';
+import PathField from '../components/PathField.vue';
+import { useRoots } from '../useRoots';
 
 const props = defineProps<{
   operation: 'split' | 'border' | 'tiffToJpeg';
@@ -23,6 +26,10 @@ const outDir = ref('');
 const recursive = ref(false);
 const confirmed = ref(false);
 const busy = ref(false);
+
+// The folders the pickers may offer, and the lister they walk with.
+const { roots } = useRoots();
+const list = (path: string) => api.list(path);
 
 const inputList = computed(() =>
   inputs.value.split('\n').map((p) => p.trim()).filter(Boolean),
@@ -79,15 +86,20 @@ function confirm() {
     @apply="apply"
   >
     <template #form>
-      <label class="field">
-        <span>Inputs — files or folders, one per line</span>
-        <textarea v-model="inputs" rows="4" spellcheck="false"></textarea>
-      </label>
+      <PathListField
+        v-model="inputs"
+        label="Inputs — files or folders, one per line"
+        :roots="roots"
+        :list="list"
+      />
 
-      <label class="field">
-        <span>Output directory</span>
-        <input v-model="outDir" type="text" placeholder="/mnt/photos/out" />
-      </label>
+      <PathField
+        v-model="outDir"
+        label="Output directory"
+        placeholder="/mnt/photos/out"
+        :roots="roots"
+        :list="list"
+      />
 
       <label class="checkbox"><input v-model="recursive" type="checkbox" /> Include subfolders</label>
     </template>

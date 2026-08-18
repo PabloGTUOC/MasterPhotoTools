@@ -29,7 +29,9 @@ impl AppState {
         ledger: Ledger,
         sink: Arc<dyn phototools_core::jobs::JobEventSink>,
     ) -> Self {
-        let server = ServerConnection::new(server::ServerSettings::default());
+        // What was saved last time, not the default: an address typed once
+        // should not have to be typed again at every launch.
+        let server = ServerConnection::new(server::ServerSettings::load());
         Self {
             config: RwLock::new(Arc::new(config)),
             jobs: JobRunner::new(ledger, sink),

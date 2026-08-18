@@ -39,6 +39,94 @@ impl Default for ServerSettings {
     }
 }
 
+/// What is written to disk: the address, and deliberately not the token.
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredSettings {
+    base_url: String,
+}
+
+/// Where the address is kept — beside `config.json`, in the same directory the
+/// rest of this application's configuration already uses.
+fn settings_path() -> Option<std::path::PathBuf> {
+    phototools_core::config::Config::config_path()
+        .parent()
+        .map(|dir| dir.join("server.json"))
+}
+
+impl ServerSettings {
+    /// Read what was last saved, falling back to the default.
+    ///
+    /// **The address comes from a file and the token from the Keychain.** They
+    /// are split because they are different kinds of thing: an address is
+    /// configuration, and a bearer token is a credential that §9.2 rule 4 keeps
+    /// off disk in the clear.
+    ///
+    /// Every failure here degrades to the default rather than propagating. A
+    /// machine with no credential store, or a settings file somebody has
+    /// mangled, should still open a window — the address is re-typable, and
+    /// refusing to start over it would be worse than starting at the default.
+    pub fn load() -> Self {
+        let base_url = settings_path()
+            .map(|path| Self::base_url_from(&path))
+            .unwrap_or_else(|| Self::default().base_url);
+
+        let auth_token = crate::credentials::Credential::server_auth_token()
+            .and_then(|c| c.read())
+            .unwrap_or(None);
+
+        Self {
+            base_url,
+            auth_token,
+        }
+    }
+
+    /// The saved address, or the default when there is not a usable one.
+    ///
+    /// A file that is missing, unreadable or malformed all mean the same thing
+    /// to a person opening the application: start at the default and let them
+    /// retype it. None of them is worth refusing to open a window over.
+    fn base_url_from(path: &std::path::Path) -> String {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<StoredSettings>(&raw).ok())
+            .map(|stored| stored.base_url)
+            .unwrap_or_else(|| Self::default().base_url)
+    }
+
+    /// Write the address, and only the address.
+    fn write_base_url(&self, path: &std::path::Path) -> Result<(), String> {
+        let stored = StoredSettings {
+            base_url: self.base_url.clone(),
+        };
+        let json = serde_json::to_string_pretty(&stored)
+            .map_err(|e| format!("Could not encode the server settings: {e}"))?;
+        std::fs::write(path, json).map_err(|e| format!("Could not write {}: {e}", path.display()))
+    }
+
+    /// Persist, so the next launch does not start at the default again.
+    ///
+    /// Reports what it could not do rather than failing silently (G10): a
+    /// Keychain that refused the token is the difference between a handoff that
+    /// works tomorrow and one that answers 401 for no visible reason.
+    pub fn save(&self) -> Result<(), String> {
+        let path = settings_path().ok_or("There is no configuration directory to save into.")?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Could not create {}: {e}", parent.display()))?;
+        }
+
+        self.write_base_url(&path)?;
+
+        let credential = crate::credentials::Credential::server_auth_token()?;
+        match self.auth_token.as_deref().filter(|t| !t.trim().is_empty()) {
+            Some(token) => credential.store(token),
+            // Clearing matters as much as storing: a token removed from the
+            // field has to leave the Keychain, or the next launch restores it.
+            None => credential.clear(),
+        }
+    }
+}
+
 /// What the UI needs to know to disable server-backed features clearly.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServerStatus {
@@ -108,33 +196,48 @@ impl ServerConnection {
                     version: Some(health.version),
                     detail: None,
                 },
-                Err(e) => ServerStatus {
+                // Something is there and it answered 200, but not with the
+                // health document. Another service on the same port.
+                Err(_) => ServerStatus {
                     reachable: false,
-                    base_url,
+                    base_url: base_url.clone(),
                     version: None,
-                    detail: Some(format!("The server answered but not with health: {e}")),
+                    detail: Some(format!(
+                        "Something is listening at {base_url}, but it did not answer as \
+                         PhotoTools. This is usually another application on that port."
+                    )),
                 },
             },
+            // The distinction that matters: an answer means the address reaches
+            // *a* server, so the fix is the address or the port — not starting
+            // something that is already running.
             Ok(response) => ServerStatus {
                 reachable: false,
-                base_url,
+                base_url: base_url.clone(),
                 version: None,
-                detail: Some(format!("The server answered {}", response.status())),
+                detail: Some(format!(
+                    "Something is listening at {base_url}, but it answered {} and is not \
+                     PhotoTools. Check the address and port.",
+                    response.status()
+                )),
             },
             Err(e) if e.is_timeout() => ServerStatus {
                 reachable: false,
-                base_url,
+                base_url: base_url.clone(),
                 version: None,
-                detail: Some("The server did not answer in time.".into()),
+                detail: Some(format!(
+                    "{base_url} did not answer within {} seconds.",
+                    PROBE_TIMEOUT.as_secs()
+                )),
             },
             Err(_) => ServerStatus {
                 reachable: false,
-                base_url,
+                base_url: base_url.clone(),
                 version: None,
-                detail: Some(
-                    "Could not reach the server. Check it is running and the address is right."
-                        .into(),
-                ),
+                detail: Some(format!(
+                    "Nothing answered at {base_url}. Check the server is running and the \
+                     address is right."
+                )),
             },
         }
     }
@@ -328,6 +431,70 @@ mod tests {
         assert!(
             status.detail.is_some(),
             "the UI needs something to show the user"
+        );
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn an_address_survives_a_round_trip_to_disk() {
+        // The whole point: an address typed once is not typed again.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.json");
+
+        let settings = ServerSettings {
+            base_url: "http://nas.local:3000".into(),
+            auth_token: Some("not written here".into()),
+        };
+        settings.write_base_url(&path).unwrap();
+
+        assert_eq!(
+            ServerSettings::base_url_from(&path),
+            "http://nas.local:3000"
+        );
+    }
+
+    #[test]
+    fn the_token_is_never_written_beside_the_address() {
+        // §9.2 rule 4. The Keychain holds the credential; this file must not,
+        // and a regression here would be invisible until somebody read the file.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.json");
+
+        ServerSettings {
+            base_url: "http://nas.local:3000".into(),
+            auth_token: Some("super-secret-admin-token".into()),
+        }
+        .write_base_url(&path)
+        .unwrap();
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !written.contains("super-secret-admin-token"),
+            "the token reached the settings file: {written}"
+        );
+    }
+
+    #[test]
+    fn a_missing_or_mangled_file_falls_back_to_the_default() {
+        // Neither is worth refusing to open a window over: the address is
+        // re-typable, and an application that will not start is not.
+        let dir = tempfile::tempdir().unwrap();
+
+        let missing = dir.path().join("absent.json");
+        assert_eq!(
+            ServerSettings::base_url_from(&missing),
+            ServerSettings::default().base_url
+        );
+
+        let mangled = dir.path().join("mangled.json");
+        std::fs::write(&mangled, "{ this is not json").unwrap();
+        assert_eq!(
+            ServerSettings::base_url_from(&mangled),
+            ServerSettings::default().base_url
         );
     }
 }

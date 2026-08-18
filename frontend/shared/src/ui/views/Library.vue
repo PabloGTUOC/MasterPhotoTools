@@ -1,10 +1,14 @@
 <script setup lang="ts">
 /** F9 — library browser, with breadcrumbs, usable one-handed. */
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import type { BrowserEntry } from '@phototools/shared';
 import { api } from '@host/api';
+import { useRoots } from '../useRoots';
 
-const path = ref(import.meta.env.VITE_API_BASE_URL ? '' : '');
+const path = ref('');
+// Where browsing may start. Without these the screen opens blank and the only
+// way in is to already know a path and type it — which is no browser at all.
+const { roots } = useRoots();
 const entries = ref<BrowserEntry[]>([]);
 const failure = ref<string | null>(null);
 const loading = ref(false);
@@ -24,14 +28,21 @@ async function load(target: string) {
   }
 }
 
-/** Path segments, each navigable. */
+/**
+ * Path segments, each navigable, from the containing root downwards.
+ *
+ * The trail stops at the root rather than at `/`: G6 refuses every path above
+ * one, so a crumb for `/` is a button that can only produce an error.
+ */
 function crumbs(): { label: string; full: string }[] {
-  const parts = path.value.split('/').filter(Boolean);
-  const out: { label: string; full: string }[] = [];
-  let accumulated = '';
-  for (const part of parts) {
-    accumulated += `/${part}`;
-    out.push({ label: part, full: accumulated });
+  const root = roots.value.find((r) => path.value === r || path.value.startsWith(`${r}/`));
+  if (!root) return [];
+
+  const out = [{ label: root, full: root }];
+  let walked = root;
+  for (const part of path.value.slice(root.length).split('/').filter(Boolean)) {
+    walked += `/${part}`;
+    out.push({ label: part, full: walked });
   }
   return out;
 }
@@ -52,6 +63,12 @@ onMounted(() => {
   const start = new URLSearchParams(location.search).get('path');
   if (start) void load(start);
 });
+
+// With one root there is nowhere else to begin, so begin there. With several,
+// the choice is the person's and they are listed instead.
+watch(roots, (available) => {
+  if (!path.value && available.length === 1) void load(available[0]);
+});
 </script>
 
 <template>
@@ -70,7 +87,6 @@ onMounted(() => {
     </form>
 
     <nav v-if="crumbs().length" class="crumbs" aria-label="Breadcrumb">
-      <button type="button" class="crumb" @click="load('/')">/</button>
       <button
         v-for="crumb in crumbs()"
         :key="crumb.full"
@@ -84,6 +100,15 @@ onMounted(() => {
 
     <p v-if="failure" class="error" role="alert">{{ failure }}</p>
     <p v-else-if="loading" class="muted">Loading…</p>
+
+    <ul v-else-if="!path && roots.length" class="entries">
+      <li v-for="root in roots" :key="root">
+        <button type="button" class="entry" @click="load(root)">
+          <span class="entry-icon" aria-hidden="true">/</span>
+          <span class="entry-name">{{ root }}</span>
+        </button>
+      </li>
+    </ul>
 
     <ul v-else-if="entries.length" class="entries">
       <li v-for="entry in entries" :key="entry.absolute_path">

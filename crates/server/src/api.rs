@@ -37,6 +37,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/tools/border", post(border))
         .route("/api/tools/tiff-to-jpeg", post(tiff_to_jpeg))
         .route("/api/storage/ls", get(storage_ls))
+        .route("/api/storage/roots", get(storage_roots))
         // Ingest — F11, F12, F13. A card is any directory (build plan §6.3).
         .route("/api/ingest/scan", post(ingest_scan))
         .route("/api/ingest/validate", post(ingest_validate))
@@ -479,6 +480,21 @@ async fn storage_ls(
     // f9_browser resolves internally; the listing is cheap and synchronous.
     let entries = f9_browser::list_directory(&state.config, std::path::Path::new(&query.path))?;
     Ok(Json(entries).into_response())
+}
+
+/// The directories a browser may start from.
+///
+/// Without this a folder picker has nowhere to begin: G6 refuses any path
+/// outside a configured root, `/` included, so "list the top" is not a question
+/// the filesystem can answer — only the configuration can. Returning them is
+/// not a disclosure: a caller is already authenticated, and every path it could
+/// reach is reachable by walking `ls` from a root it guessed.
+async fn storage_roots(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+) -> Result<Response, ApiError> {
+    let roots: Vec<&std::path::Path> = state.config.roots.iter().map(|r| r.as_path()).collect();
+    Ok(Json(roots).into_response())
 }
 
 // ---------------------------------------------------------------------------

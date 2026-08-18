@@ -4,6 +4,8 @@ import { ref, useTemplateRef } from 'vue';
 import type { RepairMode } from '@phototools/shared';
 import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
+import PathListField from '../components/PathListField.vue';
+import { useRoots } from '../useRoots';
 
 const page = useTemplateRef<InstanceType<typeof ToolPage>>('page');
 
@@ -13,6 +15,10 @@ const mode = ref<'Auto' | 'Manual' | 'Shift' | 'Sidecar'>('Auto');
 const manualDate = ref('');
 const shiftDelta = ref('+0:0:0 0:0:0');
 const busy = ref(false);
+
+// The folders the pickers may offer, and the lister they walk with.
+const { roots } = useRoots();
+const list = (path: string) => api.list(path);
 
 function pathList(): string[] {
   return paths.value
@@ -82,10 +88,13 @@ async function scan() {
     @apply="run(false)"
   >
     <template #form>
-      <label class="field">
-        <span>Paths, one per line</span>
-        <textarea v-model="paths" rows="4" spellcheck="false" placeholder="/mnt/photos/2024/roll-01.jpg"></textarea>
-      </label>
+      <PathListField
+        v-model="paths"
+        label="Paths, one per line"
+        placeholder="/mnt/photos/2024/roll-01.jpg"
+        :roots="roots"
+        :list="list"
+      />
 
       <fieldset class="field">
         <legend>Repair mode</legend>

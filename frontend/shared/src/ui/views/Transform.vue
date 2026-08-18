@@ -4,6 +4,9 @@ import { computed, ref, useTemplateRef } from 'vue';
 import type { TargetFormat } from '@phototools/shared';
 import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
+import PathListField from '../components/PathListField.vue';
+import PathField from '../components/PathField.vue';
+import { useRoots } from '../useRoots';
 
 const page = useTemplateRef<InstanceType<typeof ToolPage>>('page');
 
@@ -16,6 +19,10 @@ const format = ref<TargetFormat | ''>('');
 const quality = ref('95');
 const confirmed = ref(false);
 const busy = ref(false);
+
+// The folders the pickers may offer, and the lister they walk with.
+const { roots } = useRoots();
+const list = (path: string) => api.list(path);
 
 const inputList = computed(() =>
   inputs.value.split('\n').map((p) => p.trim()).filter(Boolean),
@@ -67,14 +74,20 @@ async function apply() {
     @apply="apply"
   >
     <template #form>
-      <label class="field">
-        <span>Inputs — files or folders, one per line</span>
-        <textarea v-model="inputs" rows="4" spellcheck="false"></textarea>
-      </label>
-      <label class="field">
-        <span>Output directory</span>
-        <input v-model="outDir" type="text" placeholder="/mnt/photos/out" />
-      </label>
+      <PathListField
+        v-model="inputs"
+        label="Inputs — files or folders, one per line"
+        :roots="roots"
+        :list="list"
+      />
+
+      <PathField
+        v-model="outDir"
+        label="Output directory"
+        placeholder="/mnt/photos/out"
+        :roots="roots"
+        :list="list"
+      />
 
       <div class="options">
         <label class="field"><span>Rotate (degrees)</span><input v-model="rotate" type="text" inputmode="numeric" placeholder="0" /></label>

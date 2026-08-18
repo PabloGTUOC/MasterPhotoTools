@@ -21,7 +21,9 @@ import type {
 } from '@phototools/shared';
 import BulkActions from '@ui/components/BulkActions.vue';
 import JobProgress from '@ui/components/JobProgress.vue';
+import PathField from '@ui/components/PathField.vue';
 import ShotGrid from '@ui/components/ShotGrid.vue';
+import { useRoots } from '@ui/useRoots';
 import { desktop } from '../api';
 
 /** Where the desktop is in the card's life. */
@@ -30,6 +32,12 @@ type Stage = 'idle' | 'reviewing' | 'handed-over';
 const cardPath = ref('');
 const derivedDir = ref('');
 const stagingDir = ref('');
+
+// The folders the pickers may offer, and the lister they walk with. A card
+// mounted under /Volumes only appears once /Volumes is a configured root —
+// G6 refuses it otherwise, and scan_card would refuse it too.
+const { roots } = useRoots();
+const list = (path: string) => desktop.list(path);
 
 const summary = ref<CardSummary | null>(null);
 const scan = ref<CardScan | null>(null);
@@ -181,21 +189,31 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
     </header>
 
     <div class="form">
-      <label class="field">
-        <span>Card or folder</span>
-        <input v-model="cardPath" type="text" placeholder="/Volumes/EOS_DIGITAL" />
-      </label>
+      <PathField
+        v-model="cardPath"
+        label="Card or folder"
+        placeholder="/Volumes/EOS_DIGITAL"
+        hint="A card is only offered here if its mount point is one of the configured folders."
+        :roots="roots"
+        :list="list"
+      />
 
-      <label class="field">
-        <span>Output folder for new files</span>
-        <input v-model="derivedDir" type="text" placeholder="~/Pictures/ingest/2024-05-01" />
-        <small class="muted">Remediation and derivation write here. Originals are never modified.</small>
-      </label>
+      <PathField
+        v-model="derivedDir"
+        label="Output folder for new files"
+        placeholder="~/Pictures/ingest/2024-05-01"
+        hint="Remediation and derivation write here. Originals are never modified."
+        :roots="roots"
+        :list="list"
+      />
 
-      <label class="field">
-        <span>Staging folder on the NAS share</span>
-        <input v-model="stagingDir" type="text" placeholder="/Volumes/photos/staging" />
-      </label>
+      <PathField
+        v-model="stagingDir"
+        label="Staging folder on the NAS share"
+        placeholder="/Volumes/photos/staging"
+        :roots="roots"
+        :list="list"
+      />
 
       <div class="row">
         <button type="button" class="secondary" :disabled="busy" @click="look">Look</button>

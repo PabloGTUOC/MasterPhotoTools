@@ -86,8 +86,14 @@ const server = await createServer({
 });
 await server.listen();
 
-const port = server.config.server.port ?? server.httpServer.address().port;
-const base = `http://127.0.0.1:${port}`;
+// Ask the socket where it actually landed rather than assuming. Vite binds to
+// `localhost`, which Node resolves in the host's DNS order — on macOS that is
+// `::1` ahead of `127.0.0.1`, so a hardcoded IPv4 URL is refused outright. The
+// configured port is the requested one, not the bound one, and differs whenever
+// 5173 is already taken.
+const bound = server.httpServer.address();
+const host = bound.family === 'IPv6' ? `[${bound.address}]` : bound.address;
+const base = `http://${host}:${bound.port}`;
 
 const browser = await chromium.launch({ executablePath: preinstalledChromium() });
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });

@@ -26,15 +26,15 @@ established from a machine with no camera, no Mac, no NAS and no Google account.
 
 | You need | Unblocks | Items |
 |---|---|---|
-| A Mac | 7, 8, 10.3, 13, 14 | 20 |
+| A Mac | 7, 8, 10.3, 13, 14 | 21 |
 | A Google OAuth client | 12 | 7 |
-| A NAS and an SMB share | 11, 14 | 6 |
+| A NAS and an SMB share | 11, 14 | 7 |
 | A physical SD card | 8 | 7 |
 | A Firebase project | 6.2 | 1 |
 | Real photographs, and your eyes | 2, 4, 9, 10 | 15 |
 
-**50 checks in all; 48 are actionable now** — Phase 14's two wait on the phase existing. The
-suggested order, and why, is in [`testing.md`](testing.md#5-suggested-order).
+**51 checks in all, and all of them are actionable** now that Phase 14 exists. The suggested order,
+and why, is in [`testing.md`](testing.md#5-suggested-order).
 
 ---
 
@@ -391,10 +391,38 @@ assembled into.
       rather than a measurement.
       **Result:**
 
-## Phase 14 — Packaging · not built yet
+## Phase 14 — Packaging
 
-- [ ] **MV-14.1 — The `.dmg` installs and launches on macOS.**
+- [ ] **MV-14.1 — The `.dmg` installs and launches on macOS.** *(blocked: needs a real icon)*
+      **The application icons are 0-byte placeholders**
+      ([`known-gaps.md`](known-gaps.md#the-application-icons-are-placeholders)). Supply a square
+      1024×1024 PNG and run `cargo tauri icon <file>` first, or the bundle carries a blank icon.
+      **The build is unsigned**, which §9.3 accepts for personal use, so macOS will refuse it on
+      first launch. That refusal is expected; what is being checked is that the application works
+      once past it.
+      **Run:** `cd crates/desktop && cargo tauri build`, then open the `.dmg` from
+      `target/release/bundle/dmg/`, drag to Applications, and **right-click → Open**.
+      **Pass:** the window opens with the sidebar and the tool routes, as MV-7.1. If it opens from
+      `cargo tauri dev` but not from the bundle, the difference is the bundle, not the code.
       **Result:**
 
 - [ ] **MV-14.2 — The container deploys to the NAS and passes its health check.**
+      Built, started and driven on an Apple Silicon Mac: the image is 295 MB, the container reports
+      `healthy` within 10 s, `/api/health` answers 200, `/` serves the web UI and `/api/storage/ls`
+      answers 401. **None of that is the NAS.** What is unverified is its architecture, its Docker
+      version, whether a `/volume1/...` bind mount arrives writable by uid 10001, and whether the
+      library on its own filesystem behaves like a local mount.
+      **Run:** follow [`deployment.md`](deployment.md) §2 on the NAS itself.
+      **Pass:** `docker compose ps` shows `healthy`, and `curl http://nas.local:3000/api/health`
+      answers from another machine. If it is `unhealthy`, read
+      [`deployment.md`](deployment.md#9-when-it-will-not-start) — a `/data` uid 10001 cannot write
+      to is the likeliest cause.
+      **Result:**
+
+- [ ] **MV-14.3 — Confirm the multi-architecture image runs on the NAS's own architecture.**
+      `linux/arm64` was built natively and verified running. `linux/amd64` was built under
+      emulation, which proves it compiles and links, **not** that it runs — no emulated container
+      was started.
+      **Run:** on an amd64 NAS, pull or build the image and start it.
+      **Pass:** as MV-14.2.
       **Result:**

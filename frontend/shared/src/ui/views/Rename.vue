@@ -4,6 +4,8 @@ import { ref, useTemplateRef } from 'vue';
 import type { Plan, RenameAction, RenameOrder } from '@phototools/shared';
 import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
+import PathListField from '../components/PathListField.vue';
+import { useRoots } from '../useRoots';
 
 const page = useTemplateRef<InstanceType<typeof ToolPage>>('page');
 
@@ -15,6 +17,10 @@ const film = ref('');
 const order = ref<RenameOrder>('Capture');
 const plan = ref<Plan<RenameAction> | null>(null);
 const busy = ref(false);
+
+// The folders the pickers may offer, and the lister they walk with.
+const { roots } = useRoots();
+const list = (path: string) => api.list(path);
 
 function request() {
   return {
@@ -72,10 +78,12 @@ const leaf = (p: string) => p.split('/').pop() ?? p;
     @apply="apply"
   >
     <template #form>
-      <label class="field">
-        <span>Paths, one per line</span>
-        <textarea v-model="paths" rows="4" spellcheck="false"></textarea>
-      </label>
+      <PathListField
+        v-model="paths"
+        label="Paths, one per line"
+        :roots="roots"
+        :list="list"
+      />
 
       <div class="prefix-grid">
         <label class="field"><span>Date</span><input v-model="date" type="text" placeholder="2024-05-01" /></label>

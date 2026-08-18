@@ -106,6 +106,10 @@ export class TauriApiClient implements ApiClient {
     return invoke<BrowserEntry[]>('list_directory', { path });
   }
 
+  roots(): Promise<string[]> {
+    return invoke<string[]>('list_roots');
+  }
+
   // -------------------------------------------------------------------------
   // Ingest — F11 to F14
   // -------------------------------------------------------------------------

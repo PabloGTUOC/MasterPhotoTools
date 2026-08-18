@@ -14,13 +14,19 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   ApiClient,
   BrowserEntry,
+  CardScan,
+  CardSummary,
+  CardValidation,
   ContactSheetRequest,
   DatesFixRequest,
   DatesScanRequest,
+  DeriveRequest,
   ImageToolRequest,
   Job,
   JobEvent,
   Plan,
+  RemediateRequest,
+  RemediationPlan,
   RenameAction,
   RenameRequest,
   TransformRequest,
@@ -98,6 +104,66 @@ export class TauriApiClient implements ApiClient {
 
   list(path: string): Promise<BrowserEntry[]> {
     return invoke<BrowserEntry[]>('list_directory', { path });
+  }
+
+  // -------------------------------------------------------------------------
+  // Ingest — F11 to F14
+  // -------------------------------------------------------------------------
+
+  scanCard(path: string): Promise<string> {
+    return invoke<string>('scan_card', { path });
+  }
+
+  validateCard(path: string): Promise<CardValidation> {
+    return invoke<CardValidation>('validate_card', { path });
+  }
+
+  remediate(request: RemediateRequest): Promise<RemediationPlan | string> {
+    return invoke<RemediationPlan | string>('remediate', { args: request });
+  }
+
+  deriveRaw(request: DeriveRequest): Promise<string> {
+    return invoke<string>('derive_raw', {
+      path: request.path,
+      outDir: request.out_dir,
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // The desktop's alone
+  // -------------------------------------------------------------------------
+  //
+  // Not on {@link ApiClient}, because the server genuinely cannot do these:
+  // §2.3 puts the card reader on the Mac, and the handoff is the Mac writing to
+  // the NAS share. A view that calls them is a desktop view, and the type
+  // system says so at compile time.
+
+  /** A cheap look at a directory offered as a card — entries only (F10). */
+  summariseCard(path: string): Promise<CardSummary> {
+    return invoke<CardSummary>('summarise_card', { path });
+  }
+
+  /** The card's shots, ready to render. Not a job — the scan already ran. */
+  readCard(path: string): Promise<CardScan> {
+    return invoke<CardScan>('read_card', { path });
+  }
+
+  /** Copy the card's candidates into local staging, verified by hash (G5). */
+  stageCard(path: string): Promise<string> {
+    return invoke<string>('stage_card', { path });
+  }
+
+  /** Hand the derivatives to the server (F16). A job, and a long one. */
+  handOffCard(
+    path: string,
+    derivedDir: string,
+    stagingDir: string,
+  ): Promise<string> {
+    return invoke<string>('hand_off_card', {
+      path,
+      derivedDir,
+      stagingDir,
+    });
   }
 
   async job(id: string): Promise<Job> {

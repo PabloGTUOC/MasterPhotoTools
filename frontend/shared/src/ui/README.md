@@ -28,6 +28,32 @@ declaration, these views are typechecked against each application's actual
 client — twice, once per build. A view that used something only the HTTP client
 offers would fail the desktop typecheck.
 
+## Views, components, and where each belongs
+
+`views/` is the **rendered-twice** contract: a view here is compiled into both
+applications, so it may only use `ApiClient` methods both transports genuinely
+implement.
+
+`components/` is a **library**. A component here is transport-free — props in,
+events out, no `@host/api` — so it can be used by a shared view, by one
+application's own view, or by a test harness with no application at all.
+`ShotGrid` and `BulkActions` are used by the desktop alone and still live here,
+because being transport-free is what makes them measurable: `check:ingest`
+mounts them on their own and puts four hundred shots through them.
+
+Some screens genuinely belong to one application, and those live in that
+application's `src/views/`:
+
+| View | Where | Why |
+|---|---|---|
+| `Ingest` | `frontend/desktop/src/views/` | §2.3 puts the card reader on the Mac. The server has no card to read. |
+| `Publish` | `frontend/web/src/views/` | The Google refresh token lives on exactly one machine (§2.3). |
+
+The alternative — putting both in `views/` and having each transport throw for
+the half it cannot do — was rejected. A capability that exists in the type
+system and fails at runtime is worse than one the type system never offered:
+the first is discovered by a person pressing a button, the second by a compiler.
+
 ## What stays in the applications
 
 `App.vue`, `main.ts` and `api.ts` are per-application and deliberately not here:

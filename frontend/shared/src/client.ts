@@ -9,13 +9,20 @@
 import {
   ApiError,
   type BrowserEntry,
+  type CardValidation,
   type ContactSheetRequest,
   type DatesFixRequest,
   type DatesScanRequest,
+  type DeriveRequest,
   type ImageToolRequest,
   type Job,
   type JobEvent,
   type Plan,
+  type ConnectorStatus,
+  type PublishPlan,
+  type RemediateRequest,
+  type RemediationPlan,
+  type SessionShots,
   type RenameAction,
   type RenameRequest,
   type TransformRequest,
@@ -51,6 +58,24 @@ export interface ApiClient {
 
   // F9 — storage
   list(path: string): Promise<BrowserEntry[]>;
+
+  // F11, F12, F13 — ingest.
+  //
+  // Only the operations **both** transports genuinely perform. Reading a card's
+  // shot rows and handing a card to the server are the desktop's alone, because
+  // §2.3 puts the card reader on the Mac; publishing is the server's alone,
+  // because that is where the refresh token lives. Those live on the concrete
+  // clients, so a view that needs one has to say which build it belongs to
+  // rather than discovering at runtime that its transport cannot oblige.
+
+  /** Scan and record a card. A job. */
+  scanCard(path: string): Promise<string>;
+  /** Validate a card against F12's three rules. Reads no pixels, so no job. */
+  validateCard(path: string): Promise<CardValidation>;
+  /** Apply one F13 action to every shot sharing one failure. */
+  remediate(request: RemediateRequest): Promise<RemediationPlan | string>;
+  /** Derive JPEGs for a card's RAW-only shots (F14). A job. */
+  deriveRaw(request: DeriveRequest): Promise<string>;
 
   // F17 — jobs
   job(id: string): Promise<Job>;
@@ -135,12 +160,36 @@ export class HttpApiClient implements ApiClient {
     return new ApiError(response.status, code, message);
   }
 
+  /**
+   * Read a JSON body, or say plainly that it was not one.
+   *
+   * A misconfigured `VITE_API_BASE_URL` — or a dev proxy that is not running —
+   * answers `200 text/html`, and `response.json()` then reports
+   * `Unexpected token '<'`. That is a true statement about a string and a
+   * useless one about the system, so it is turned into a sentence naming the
+   * likely cause.
+   */
+  private async readJson<T>(response: Response, what: string): Promise<T> {
+    const text = await response.text();
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new ApiError(
+        response.status,
+        'not_json',
+        `Asked for ${what} and got ${response.headers.get('content-type') ?? 'an unknown format'} ` +
+          'instead of JSON. The address configured for the server is probably ' +
+          'not the server.',
+      );
+    }
+  }
+
   private async post<T>(path: string, body: unknown): Promise<T> {
     const response = await this.send(path, {
       method: 'POST',
       body: JSON.stringify(body),
     });
-    return (await response.json()) as T;
+    return this.readJson<T>(response, 'a result');
   }
 
   /** Start a job and return its id. */
@@ -156,7 +205,7 @@ export class HttpApiClient implements ApiClient {
   async health(): Promise<{ status: string; version: string }> {
     const response = await fetch(`${this.baseUrl}/api/health`);
     if (!response.ok) throw await this.toError(response);
-    return response.json();
+    return this.readJson(response, 'the server version');
   }
 
   scanDates(request: DatesScanRequest): Promise<string> {
@@ -195,15 +244,103 @@ export class HttpApiClient implements ApiClient {
     return this.startJob('/api/tools/tiff-to-jpeg', request);
   }
 
+  scanCard(path: string): Promise<string> {
+    return this.startJob('/api/ingest/scan', { path });
+  }
+
+  validateCard(path: string): Promise<CardValidation> {
+    return this.post('/api/ingest/validate', { path });
+  }
+
+  /**
+   * A dry run answers with the plan; a real run answers with a job id.
+   *
+   * The server distinguishes them by status code, and so does this: the two
+   * shapes are genuinely different answers to genuinely different questions.
+   */
+  async remediate(request: RemediateRequest): Promise<RemediationPlan | string> {
+    const response = await this.send('/api/ingest/remediate', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+    const body = await this.readJson<RemediationPlan & { job_id?: string }>(
+      response,
+      'a remediation plan',
+    );
+    return request.dry_run ? (body as RemediationPlan) : (body.job_id as string);
+  }
+
+  deriveRaw(request: DeriveRequest): Promise<string> {
+    return this.startJob('/api/ingest/derive', request);
+  }
+
   async list(path: string): Promise<BrowserEntry[]> {
     const query = new URLSearchParams({ path });
     const response = await this.send(`/api/storage/ls?${query}`);
-    return (await response.json()) as BrowserEntry[];
+    return this.readJson<BrowserEntry[]>(response, 'a directory listing');
+  }
+
+  // -------------------------------------------------------------------------
+  // The server's alone — F15 and F16
+  // -------------------------------------------------------------------------
+  //
+  // Not on {@link ApiClient}, and deliberately. The Google refresh token lives
+  // on exactly one machine (§2.3), so these are things only a build talking to
+  // the server can do. A view that calls them is a web view, and the type
+  // system says so at compile time rather than at the moment somebody presses
+  // the button.
+
+  /** A session's shots, with their arrival status. */
+  async sessionShots(sessionId: string): Promise<SessionShots> {
+    const response = await this.send(
+      `/api/ingest/sessions/${encodeURIComponent(sessionId)}/shots`,
+    );
+    return this.readJson<SessionShots>(response, "a session's shots");
+  }
+
+  /**
+   * Work out what publishing would do, and record that somebody looked.
+   *
+   * §9.2 rule 3 and §6.1: the Google Photos API cannot delete, so a mistaken
+   * bulk publish is cleaned up by hand. The server refuses to publish a session
+   * that has had no dry run.
+   */
+  publishDryRun(sessionId: string): Promise<PublishPlan> {
+    return this.post(
+      `/api/ingest/sessions/${encodeURIComponent(sessionId)}/publish`,
+      { dry_run: true },
+    );
+  }
+
+  /** Publish for real. A job. */
+  publish(sessionId: string): Promise<string> {
+    return this.startJob(
+      `/api/ingest/sessions/${encodeURIComponent(sessionId)}/publish`,
+      { dry_run: false },
+    );
+  }
+
+  async googleStatus(): Promise<ConnectorStatus> {
+    const response = await this.send('/api/connectors/google/status');
+    return this.readJson<ConnectorStatus>(response, 'the Google Photos connection');
+  }
+
+  /** Begin the consent flow; the answer is where to send the person (§6.2). */
+  async googleConnect(): Promise<string> {
+    const body = await this.post<{ url: string }>(
+      '/api/connectors/google/connect',
+      {},
+    );
+    return body.url;
+  }
+
+  async googleDisconnect(): Promise<void> {
+    await this.post('/api/connectors/google/disconnect', {});
   }
 
   async job(id: string): Promise<Job> {
     const response = await this.send(`/api/jobs/${encodeURIComponent(id)}`);
-    return (await response.json()) as Job;
+    return this.readJson<Job>(response, 'a job');
   }
 
   /**

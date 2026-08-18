@@ -11,4 +11,17 @@ import { tokenProvider } from './auth';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? '';
 
-export const api: ApiClient = new HttpApiClient(baseUrl, tokenProvider);
+const client = new HttpApiClient(baseUrl, tokenProvider);
+
+/** What the shared views see: the interface, never a transport. */
+export const api: ApiClient = client;
+
+/**
+ * The same client, typed as itself.
+ *
+ * Publishing and the Google connector are the server's alone — the refresh
+ * token lives on exactly one machine (§2.3) — so they are not on `ApiClient`.
+ * A view reaching for them through this export is declaring itself a web view,
+ * which it is.
+ */
+export const server = client;

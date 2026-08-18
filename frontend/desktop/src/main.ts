@@ -10,12 +10,17 @@ import Library from '@ui/views/Library.vue';
 import Rename from '@ui/views/Rename.vue';
 import Transform from '@ui/views/Transform.vue';
 
+// Desktop-only: §2.3 puts the card reader on the Mac, so the review screen has
+// no meaning in a build that cannot see a card.
+import Ingest from './views/Ingest.vue';
+
 // Hash history: the app is served from a file URL inside Tauri, where path
 // routing has no server to fall back on.
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     { path: '/', component: Library },
+    { path: '/ingest', component: Ingest },
     { path: '/dates', component: Dates },
     { path: '/rename', component: Rename },
     {

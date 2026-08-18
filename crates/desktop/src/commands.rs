@@ -895,6 +895,11 @@ pub fn hand_off_card(
             if !not_ready.is_empty() {
                 summary.push_str(&format!(", {} shot(s) not ready", not_ready.len()));
             }
+
+            // The session id, because it is the only handle anybody has on this
+            // card once the server owns it: publishing is a server operation
+            // addressed by session, and nothing else reports the id.
+            summary.push_str(&format!(" · session {}", outcome.session_id));
             Ok(summary)
         })
         .map_err(describe)

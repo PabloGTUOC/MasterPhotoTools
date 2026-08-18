@@ -9,7 +9,8 @@
     "typecheck": "vue-tsc --build --force",
     "preview": "vite preview",
     "check:transport": "node scripts/check-transport.mjs",
-    "check:layout": "node scripts/check-layout.mjs"
+    "check:layout": "node scripts/check-layout.mjs",
+    "check:ingest": "node scripts/check-ingest.mjs"
   },
   "dependencies": {
     "@phototools/shared": "file:../shared",

@@ -5,6 +5,7 @@ import { authReady, initAuth, isConfigured, signIn, signOutOfPhotoTools, user } 
 const links = [
   { to: '/', label: 'Home' },
   { to: '/library', label: 'Library' },
+  { to: '/publish', label: 'Publish' },
   { to: '/dates', label: 'Dates' },
   { to: '/rename', label: 'Rename' },
   { to: '/split', label: 'Split' },

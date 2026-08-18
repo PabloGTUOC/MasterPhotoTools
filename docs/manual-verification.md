@@ -210,6 +210,34 @@ about how a photograph looks once it arrives.
   stem, so a photograph is findable by the name the camera gave it. The `description` field is left
   empty, because inventing one is a choice about someone's library rather than a technical decision.
 
+## Phase 13
+
+Every acceptance criterion is measured in a real browser — first paint, filtering, scrolling, the
+bulk press and the publish gate — and the numbers are in the phase report. What cannot be checked
+here is the screen those pieces are assembled into.
+
+- **Look at the Ingest screen on the Mac.** It is the one part of this phase that has never been
+  rendered. `ShotGrid` and `BulkActions` are measured on their own against four hundred shots, and
+  the web build's `/publish` route is driven for real — but `Ingest.vue` composes them with the Tauri
+  transport, and Tauri needs macOS. The flow (look → scan → review → decide → derive → hand over) is
+  a judgement about whether the order makes sense with a card in the reader.
+- **Re-take the four hundred shot measurement in WKWebView.** The numbers below were taken in
+  Chromium on Linux at 1280×900. Tauri on macOS renders in WKWebView, which is a different engine
+  with different scrolling behaviour, and the grid's windowing is the part most likely to behave
+  differently.
+- **Time a real bulk resize.** One press requests a resize of every oversized shot on the card — 360
+  of 400 in the fixture. Whether that is thirty seconds or five minutes on real 24 MP files, and
+  whether the progress bar makes the wait tolerable, is unmeasured.
+- **Decide whether the session hand-off between the two screens is good enough.** The desktop reports
+  the session id in its handover panel; a person copies it into the web publish screen. There is no
+  endpoint that lists sessions, so this is the seam as specified — but it is a UUID typed by hand,
+  and only somebody using it can say whether that is acceptable.
+- **Check the chips at arm's length.** Each carries a mark as well as a colour — ✓, ✕ or ! — because
+  a review screen whose whole meaning is "which of these failed" cannot put that meaning in a hue
+  alone. Whether the marks are legible at chip size on a real display is a judgement.
+- **Confirm the grid height suits a real window.** The viewport is capped at 60% of the window
+  height, which is a guess about a desktop window rather than a measurement.
+
 ## Phase 14
 - macOS `.dmg` bundle requires installation and launch testing on macOS.
 - NAS deployment testing.

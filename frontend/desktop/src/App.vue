@@ -11,6 +11,7 @@ import { desktop, type ServerStatus } from './api';
 
 const links = [
   { to: '/', label: 'Library' },
+  { to: '/ingest', label: 'Ingest' },
   { to: '/dates', label: 'Dates' },
   { to: '/rename', label: 'Rename' },
   { to: '/split', label: 'Split' },

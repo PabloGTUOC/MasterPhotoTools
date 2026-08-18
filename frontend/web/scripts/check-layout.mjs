@@ -43,7 +43,7 @@ const TYPES = {
 };
 
 const ROUTES = [
-  '/', '/library', '/dates', '/rename',
+  '/', '/library', '/publish', '/dates', '/rename',
   '/split', '/contact-sheet', '/transform', '/border', '/tiff-to-jpeg',
 ];
 

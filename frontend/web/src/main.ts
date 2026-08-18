@@ -11,11 +11,16 @@ import Library from '@ui/views/Library.vue';
 import Rename from '@ui/views/Rename.vue';
 import Transform from '@ui/views/Transform.vue';
 
+// Web-only: the Google refresh token lives on the server (§2.3), so publishing
+// has no meaning in a build that talks to `core` directly.
+import Publish from './views/Publish.vue';
+
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', component: Dashboard },
     { path: '/library', component: Library },
+    { path: '/publish', component: Publish },
     { path: '/dates', component: Dates },
     { path: '/rename', component: Rename },
     {

@@ -123,6 +123,12 @@ jobs:
       - name: Layout at 390px
         run: npm --prefix frontend/web run check:layout
 
+      # Phase 13 acceptance, and it asserts numbers rather than shapes: a change
+      # that unwindows the review grid, or slows a filter past its budget, fails
+      # here rather than on somebody's Mac.
+      - name: Ingest UI — 400 shots, bulk resize, publish gate
+        run: npm --prefix frontend/web run check:ingest
+
       - name: Upload layout screenshots
         if: always()
         uses: actions/upload-artifact@v4

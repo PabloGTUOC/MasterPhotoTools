@@ -29,13 +29,27 @@ separate systems.
 
 ## Status
 
-Specification only. No implementation yet.
+**Phases 0–13 are built.** Phase 14 — packaging and deployment — is not started.
+
+Everything that can be settled by a test on a Linux machine has been: 461 tests across the
+workspace, 400 of them in `phototools-core` with no binary crate present. Both front ends typecheck
+and build, and the web UI's layout and the ingest grid's performance are measured in a real browser
+rather than asserted.
+
+What is left is **manual verification** — 50 numbered checks needing a Mac, a camera, a NAS, a
+Google account or somebody's judgement about how a photograph looks. Start at
+[`docs/testing.md`](docs/testing.md).
 
 ## Documents
 
 | File | Purpose |
 |---|---|
 | [`SPECIFICATION.md`](SPECIFICATION.md) | **What** the system does. Functional requirements F1–F18, architecture, API, data model, non-functional requirements. The authority on behaviour. |
-| [`BUILD-PLAN.md`](BUILD-PLAN.md) | **How** it gets built. Fifteen phases with tasks, acceptance criteria and ground rules — written to be handed to a development agent. |
+| [`BUILDPLAN.md`](BUILDPLAN.md) | **How** it gets built. Fifteen phases with tasks, acceptance criteria and ground rules. |
+| [`CLAUDE.md`](CLAUDE.md) | Working notes for an agent session: ground rules, gate commands, and where the current work is. |
+| [`docs/testing.md`](docs/testing.md) | **Start here on a Mac.** Setup, the gate commands, and the order to verify in. |
+| [`docs/manual-verification.md`](docs/manual-verification.md) | The checks themselves, numbered and tickable. |
+| [`docs/known-gaps.md`](docs/known-gaps.md) | What is open in the code — missed criteria, awkward seams, places the specification is incomplete. |
+| [`docs/phase-reports/`](docs/phase-reports/) | One report per phase: delivered, deviations, measurements, gates. |
 
 Start with the specification. Build from the plan.

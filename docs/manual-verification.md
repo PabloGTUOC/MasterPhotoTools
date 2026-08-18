@@ -174,6 +174,42 @@ different guarantees, and three of the five items below are about exactly that.
   has seen the message it produces, and "no space left on device" arriving in the middle of a card
   is a moment when the wording matters.
 
+## Phase 12
+
+Every acceptance criterion is tested against a mock, and **no test reaches Google** — the API is a
+trait, and the one test of the real HTTP client points it at a socket on `127.0.0.1`. That proves the
+client sends what it intends to send. It cannot prove Google wants it, and it cannot check anything
+about how a photograph looks once it arrives.
+
+- **Publish one photograph and confirm its capture date survives and it is filed under the correct
+  day.** Specification §6.4, and the build plan names it as the thing to do *before the first bulk
+  run*. The staged file is uploaded byte for byte — nothing here rewrites EXIF — so this is really a
+  check on what Phases 9 and 10 preserved, arriving at the one place that matters.
+- **Confirm the consent screen is published to "In production", not left in Testing.** A project in
+  Testing issues refresh tokens that **expire after seven days**, and no client configuration avoids
+  it. The reconnect path is built and tested regardless, but a connector that has to be
+  re-authorised every week is a weekly interruption nobody wants. Unverified is fine for personal
+  use; it shows a warning screen and caps at 100 users.
+- **Confirm the exact upload headers against the live API.** `X-Goog-Upload-Protocol: raw`,
+  `X-Goog-Upload-Content-Type` and `X-Goog-File-Name` are what the client sends, and the mock
+  asserts it sends them. Whether Google requires exactly that set — and whether the file name is
+  taken from the header or only from `simpleMediaItem.fileName` in the create call, which is also
+  set — cannot be established without an account. The first single-photograph publish answers it.
+- **Look at the `oauth` table and confirm the refresh token is unreadable.** `SELECT * FROM oauth`
+  should show `v1:<hex>:<hex>` and nothing resembling a token. If
+  `GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY` is unset, connecting refuses outright rather than storing it
+  in the clear — so seeing a plausible-looking token there would mean something is badly wrong.
+- **Confirm the redirect URI matches the OAuth client exactly.** `GOOGLE_OAUTH_REDIRECT_URI` has to
+  be registered on the client character for character, including scheme and port. A mismatch fails
+  at Google's end with an error the server never sees.
+- **Watch a real `429`.** The thirty-second floor and the exponential growth above it are asserted by
+  what the code *asks* to wait, not by wall-clock time — a test that slept for thirty seconds is a
+  test that gets deleted. Whether a 500-photograph run provokes rate limiting at all, and whether
+  Google's `Retry-After` is generous or absent, is unmeasured.
+- **Decide whether photographs should carry a description.** `simpleMediaItem.fileName` is set to the
+  stem, so a photograph is findable by the name the camera gave it. The `description` field is left
+  empty, because inventing one is a choice about someone's library rather than a technical decision.
+
 ## Phase 14
 - macOS `.dmg` bundle requires installation and launch testing on macOS.
 - NAS deployment testing.

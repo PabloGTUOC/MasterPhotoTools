@@ -24,6 +24,12 @@ mozjpeg = "0.10.13"
 # F14 rung 3: the pure-Rust RAW fallback, and the only option on Linux.
 # Named in specification §2.6.
 rawler = "0.7.2"
+# Specification §6.2 step 4: the Google refresh token is encrypted at rest with
+# a key from the environment. Not named in §2.6, which lists no cipher at all —
+# recorded in the Phase 12 report (G8). ChaCha20-Poly1305 rather than AES-GCM
+# because the NAS may be ARM, where AES has no hardware backing and a
+# constant-time software AES is the slower, more delicate option.
+chacha20poly1305 = "0.10"
 
 [dev-dependencies]
 tempfile = "3.10"

@@ -150,12 +150,12 @@ watch(roots, (available) => {
   background: none;
   border: none;
   color: var(--accent);
-  font-family: var(--mono);
-  font-size: 0.85rem;
+  font-family: var(--font-body);
+  font-size: 13px;
   padding: 6px 4px;
   cursor: pointer;
 }
-.crumb::after { content: '/'; color: var(--ink-faint); margin-left: 4px; }
+.crumb::after { content: '/'; color: var(--text-disabled); margin-left: 4px; }
 .crumb:last-child::after { content: ''; }
 .entries { list-style: none; display: grid; gap: 2px; }
 .entry {
@@ -167,7 +167,7 @@ watch(roots, (available) => {
   min-height: 44px;
   padding: 8px 10px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-none);
   background: transparent;
   color: inherit;
   font: inherit;
@@ -175,13 +175,13 @@ watch(roots, (available) => {
   cursor: pointer;
 }
 .entry-file { cursor: default; }
-button.entry:hover, button.entry:focus-visible { background: var(--surface-2); }
-.entry-icon { font-family: var(--mono); color: var(--ink-faint); }
+button.entry:hover, button.entry:focus-visible { background: var(--bg-panel); }
+.entry-icon { font-family: var(--font-body); color: var(--text-disabled); }
 .entry-name { flex: 1; word-break: break-all; }
 .entry-size {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  color: var(--ink-faint);
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-disabled);
   font-variant-numeric: tabular-nums;
 }
 </style>

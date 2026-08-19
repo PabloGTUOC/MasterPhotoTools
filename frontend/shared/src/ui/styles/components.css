@@ -1,0 +1,324 @@
+/* Shared primitives (§5). Border-driven, monospaced, no rounding.
+ *
+ * These class names predate the design system and are used across every view,
+ * so they are restyled in place rather than renamed — a rename would touch
+ * twenty files to change nothing a person can see.
+ */
+
+/* --- text roles --------------------------------------------------------- */
+
+.muted {
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 13px;
+}
+
+.error {
+  color: var(--danger);
+  font-family: var(--font-label);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-shadow: var(--glow-red);
+}
+
+/* --- fields (§5.9 terminal input) --------------------------------------- */
+
+.field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* label-md: Share Tech Mono, uppercase, tracked out. */
+.field > span,
+.field > legend {
+  font-family: var(--font-label);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+fieldset.field {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+input[type='text'],
+input[type='search'],
+input[type='number'],
+textarea,
+select {
+  width: 100%;
+  font-family: var(--font-body);
+  /* 16px, deliberately, and not the 15px of body-md: iOS zooms the viewport
+   * when a focused field is smaller, which MV-6.1 checks for on a real phone.
+   * The one place the type scale is overridden, and this is why. */
+  font-size: 16px;
+  padding: var(--space-3);
+  min-height: 44px;
+  border: var(--border-hair);
+  border-radius: var(--radius-none);
+  background: var(--bg-panel);
+  color: var(--text);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+input[type='text']:focus,
+input[type='search']:focus,
+input[type='number']:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--glow-phosphor);
+}
+
+input[aria-invalid='true'],
+.field--error input,
+.field--error textarea {
+  border-color: var(--danger);
+  box-shadow: var(--glow-red);
+}
+
+textarea {
+  font-size: 15px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.radio,
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* The finger lands on the label, so the label is what must clear 40px. */
+  min-height: 44px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--text);
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+}
+
+/* --- buttons (§5.10) ----------------------------------------------------- */
+
+button {
+  font-family: var(--font-label);
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  min-height: 44px;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-hair);
+  border-radius: var(--radius-none);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.primary {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: transparent;
+}
+.primary:hover:not(:disabled) {
+  background: rgba(0, 255, 148, 0.08);
+  box-shadow: var(--glow-phosphor);
+}
+.primary:active:not(:disabled) {
+  background: var(--accent);
+  color: var(--void);
+}
+
+.secondary,
+.ghost {
+  border-color: var(--border);
+  color: var(--text);
+}
+.secondary:hover:not(:disabled),
+.ghost:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.ghost {
+  color: var(--text-muted);
+}
+
+.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.danger:hover:not(:disabled) {
+  background: rgba(255, 45, 85, 0.08);
+  box-shadow: var(--glow-red);
+}
+
+button:disabled {
+  color: var(--text-disabled);
+  border-color: var(--border);
+  opacity: 1;
+  cursor: not-allowed;
+  box-shadow: none;
+  background: transparent;
+}
+
+/* :focus-visible, not :focus, so the ring never shows on a mouse click. */
+:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.danger:focus-visible {
+  outline-color: var(--danger);
+}
+
+/* --- pills and badges (§5.7) --------------------------------------------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0 var(--space-2);
+  min-height: 20px;
+  border: var(--border-hair);
+  border-radius: var(--radius-pill);
+  background: var(--bg-panel);
+  color: var(--text);
+}
+
+.badge--ok {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.badge--warn {
+  border-color: var(--accent-warm);
+  color: var(--accent-warm);
+}
+.badge--bad {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* --- panels -------------------------------------------------------------- */
+
+.panel {
+  background: var(--bg-elevated);
+  border: var(--border-hair);
+  border-radius: var(--radius-none);
+  padding: var(--space-4);
+}
+
+/* --- directory listings: Library and the folder picker share these -------- */
+
+.entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: var(--border-hair);
+  background: var(--bg-elevated);
+}
+
+.entries > li + li {
+  border-top: var(--border-hair);
+}
+
+.entry {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  background: none;
+  border: 0;
+  font-family: var(--font-body);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.entry:hover {
+  background: var(--bg-panel);
+  color: var(--text-heading);
+}
+
+.entry-icon {
+  color: var(--accent);
+  font-family: var(--font-label);
+}
+
+.entry-file {
+  cursor: default;
+  color: var(--text-muted);
+}
+.entry-file:hover {
+  background: none;
+}
+.entry-file .entry-icon {
+  color: var(--text-disabled);
+}
+
+.entry-name {
+  overflow-wrap: anywhere;
+}
+
+.entry-size {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* --- breadcrumbs --------------------------------------------------------- */
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.crumb {
+  background: none;
+  border: 0;
+  padding: var(--space-1) var(--space-2);
+  min-height: 40px;
+  font-family: var(--font-label);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.crumb:hover {
+  color: var(--accent);
+}
+
+.crumb + .crumb::before {
+  content: '›';
+  margin-right: var(--space-2);
+  color: var(--text-disabled);
+}

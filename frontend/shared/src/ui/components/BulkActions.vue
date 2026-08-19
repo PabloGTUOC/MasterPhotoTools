@@ -173,55 +173,97 @@ function label(failure: string): string {
 
 <style scoped>
 .bulk {
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-  padding: 14px;
-  background: var(--surface-2);
+  border: var(--border-hair);
+  border-radius: var(--radius-none);
+  padding: var(--space-4);
+  background: var(--bg-panel);
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
+
 .bulk-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
 }
-.bulk-head h3 { font-size: 1rem; }
-.groups { list-style: none; display: grid; gap: 10px; }
+/* label-lg: this is a subhead within a screen, not a page title, so it stays on
+   the label face rather than the display one. */
+.bulk-head h3 {
+  font-family: var(--font-label);
+  font-size: 18px;
+  letter-spacing: 0.1em;
+}
+
+.groups {
+  list-style: none;
+  display: grid;
+  gap: var(--space-3);
+}
+
 .group {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
+
+/* A failure class reads as a selectable terminal row: pick it, and the border
+   lights. */
 .group-name {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  color: var(--ink);
-  padding: 8px 12px;
+  gap: var(--space-2);
+  background: var(--bg-elevated);
+  border: var(--border-hair);
+  color: var(--text);
+  padding: var(--space-2) var(--space-3);
   flex: 1 1 180px;
   justify-content: flex-start;
   text-align: left;
+  font-family: var(--font-label);
+  font-size: 13px;
+  letter-spacing: 0.08em;
 }
-.group-name[data-active='true'] { border-color: var(--accent); color: var(--accent); }
+.group-name[data-active='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: var(--glow-phosphor);
+}
+
 .count {
-  font-family: var(--mono);
-  font-size: 0.8rem;
+  margin-left: auto;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
   min-width: 2.5ch;
   text-align: right;
+  color: var(--text-muted);
 }
-.action { flex: 0 1 214px; }
-.action select { min-height: 44px; }
-.date { flex: 1 1 200px; }
-.small { font-size: 0.82rem; }
+
+.action {
+  flex: 0 1 214px;
+}
+.action select {
+  min-height: 44px;
+}
+.date {
+  flex: 1 1 200px;
+}
+.small {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .sr-only {
   position: absolute;
-  width: 1px; height: 1px;
-  padding: 0; margin: -1px;
-  overflow: hidden; clip: rect(0 0 0 0);
-  white-space: nowrap; border: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 </style>

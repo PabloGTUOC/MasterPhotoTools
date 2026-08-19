@@ -85,19 +85,21 @@ defineExpose({ setJob, setReviewed, setFailure });
 <style scoped>
 .tool {
   display: grid;
-  gap: 18px;
+  gap: var(--space-5);
   max-width: 46rem;
 }
-header h1 {
-  font-size: 1.4rem;
-  letter-spacing: -0.01em;
+/* No font-size here: the display scale in base.css owns headings, and a
+   scoped override is how a page ends up off the type scale by accident. */
+header {
+  display: grid;
+  gap: var(--space-2);
 }
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .gate {
-  font-size: 0.85rem;
+  font-size: 13px;
 }
 </style>

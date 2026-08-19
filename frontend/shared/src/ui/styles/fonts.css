@@ -1,0 +1,75 @@
+/* Self-hosted, latin subset only.
+ *
+ * Not a CDN link: the desktop application is expected to work with no network
+ * (MV-7.3), and a stylesheet fetched from Google falls back to system
+ * monospace exactly when somebody is travelling with a card reader. These
+ * eight files are 88 KB in total, which is less than one thumbnail.
+ *
+ * `font-display: block` rather than `swap`: this interface is almost entirely
+ * type, and a flash of proportional fallback re-flows every terminal readout
+ * before settling. The files are local, so the block period is imperceptible.
+ */
+
+@font-face {
+  font-family: 'VT323';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('../fonts/vt323-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Share Tech Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('../fonts/share-tech-mono-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('../fonts/ibm-plex-mono-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url('../fonts/ibm-plex-mono-500.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url('../fonts/ibm-plex-mono-600.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('../fonts/orbitron-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url('../fonts/orbitron-500.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url('../fonts/orbitron-700.woff2') format('woff2');
+}

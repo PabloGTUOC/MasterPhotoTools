@@ -216,7 +216,9 @@ onMounted(refreshConnector);
 
 <style scoped>
 .page { display: grid; gap: 16px; padding: 16px; max-width: 780px; }
-.head h1 { font-size: 1.35rem; }
+.head h1 {
+  font-size: 40px;
+}
 .row { display: flex; gap: 10px; flex-wrap: wrap; }
 .connector {
   display: flex;
@@ -224,38 +226,42 @@ onMounted(refreshConnector);
   gap: 10px;
   flex-wrap: wrap;
   padding: 10px 12px;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  background: var(--bg-panel);
 }
 .pill {
-  font-size: 0.8rem;
+  font-size: 13px;
   padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--rule);
-  color: var(--ink-soft);
+  border-radius: var(--radius-none);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
 }
-.pill[data-tone='ok'] { color: var(--ok); border-color: var(--ok); }
-.pill[data-tone='bad'] { color: var(--critical); border-color: var(--critical); }
+.pill[data-tone='ok'] { color: var(--accent); border-color: var(--accent); }
+.pill[data-tone='bad'] { color: var(--danger); border-color: var(--danger); }
 .plan {
   display: grid;
   gap: 10px;
   padding: 14px;
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  background: var(--bg-panel);
 }
-.plan h2 { font-size: 1.05rem; }
-.facts { list-style: none; display: grid; gap: 4px; font-size: 0.9rem; }
+.plan h2 {
+  font-family: var(--font-label);
+  font-size: 18px;
+  letter-spacing: 0.1em;
+}
+.facts { list-style: none; display: grid; gap: 4px; font-size: 14px; }
 .skipped, .items { list-style: none; display: grid; gap: 3px; padding-top: 8px; max-height: 40vh; overflow-y: auto; }
 .warning {
   padding: 10px 12px;
-  border: 1px solid var(--warn);
-  border-radius: 8px;
-  color: var(--warn);
-  font-size: 0.88rem;
+  border: 1px solid var(--accent-warm);
+  border-radius: var(--radius-none);
+  color: var(--accent-warm);
+  font-size: 13px;
 }
-.small { font-size: 0.82rem; }
-.mono { font-family: var(--mono); }
-summary { cursor: pointer; font-size: 0.9rem; min-height: 32px; }
+.small { font-size: 13px; }
+.mono { font-family: var(--font-body); }
+summary { cursor: pointer; font-size: 14px; min-height: 32px; }
 </style>

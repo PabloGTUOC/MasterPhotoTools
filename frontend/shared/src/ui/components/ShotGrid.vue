@@ -210,29 +210,34 @@ defineExpose({ visibleCount: () => visible.value.length });
 
 <style scoped>
 .grid {
-  border: 1px solid var(--rule);
-  border-radius: 10px;
+  border: var(--border-hair);
+  border-radius: var(--radius-none);
   overflow: hidden;
-  background: var(--surface);
+  background: var(--bg-elevated);
 }
-.head, .row {
+
+.head,
+.row {
   display: grid;
   /* The stem and the chips take the slack; the measurements are fixed so the
      columns do not shift as rows scroll into view. */
   grid-template-columns: minmax(90px, 1fr) 84px 132px 68px 74px minmax(120px, 1.4fr);
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
-  padding: 0 12px;
+  padding: 0 var(--space-3);
 }
+
 .head {
   height: 38px;
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--rule);
-  font-size: 0.72rem;
+  background: var(--bg-panel);
+  border-bottom: var(--border-hair);
+  font-family: var(--font-label);
+  font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--ink-soft);
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
 }
+
 .viewport {
   /* Bounded, so the window has something to be a window onto. */
   max-height: 60vh;
@@ -240,12 +245,30 @@ defineExpose({ visibleCount: () => visible.value.length });
   overflow-x: auto;
   position: relative;
 }
-.spacer { position: relative; }
-.rows { position: absolute; top: 0; left: 0; right: 0; }
-.row {
-  border-bottom: 1px solid var(--rule);
-  font-size: 0.88rem;
+
+.spacer {
+  position: relative;
 }
+.rows {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+.row {
+  border-bottom: var(--border-hair);
+  font-family: var(--font-body);
+  font-size: 13px;
+  /* The marker for the row under the cursor. Transparent rather than absent so
+     the text does not shift left by 2px on hover. */
+  box-shadow: inset 2px 0 0 transparent;
+}
+.row:hover {
+  background: var(--bg-panel);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 /* Every cell is one line. The window's arithmetic assumes a fixed row height,
    so a wrapping date would put the rows out of step with the spacer that gives
    the scrollbar its length. */
@@ -254,44 +277,105 @@ defineExpose({ visibleCount: () => visible.value.length });
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.row:last-child { border-bottom: none; }
-.stem { font-weight: 600; white-space: nowrap; }
-.mono { font-family: var(--mono); }
-.small { font-size: 0.78rem; }
-.chips { display: flex; gap: 4px; flex-wrap: nowrap; overflow: hidden; }
+.row:last-child {
+  border-bottom: none;
+}
+
+.stem {
+  font-weight: 500;
+  color: var(--text-heading);
+  white-space: nowrap;
+}
+.mono {
+  font-family: var(--font-body);
+  font-variant-numeric: tabular-nums;
+}
+.small {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* --- verdict chips -------------------------------------------------------
+ * A review screen whose whole meaning is "which of these failed" cannot put
+ * that meaning in a hue alone, so each carries a mark as well: ✓, ✕ or !.
+ * MV-13.5 is the check that they are legible at this size on a real display.
+ *
+ * No glow here, deliberately (§2.3): at 11px it smears the glyph that carries
+ * the meaning. */
+.chips {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
 .chip {
   display: inline-flex;
   align-items: baseline;
-  gap: 4px;
-  font-size: 0.68rem;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--rule);
-  color: var(--ink-soft);
+  gap: var(--space-1);
+  font-family: var(--font-label);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-muted);
   white-space: nowrap;
 }
-.mark { font-family: var(--mono); font-weight: 700; }
+
+.mark {
+  font-family: var(--font-body);
+  font-weight: 700;
+  /* The mark is the meaning; it holds its size even as the label ellipses. */
+  flex: 0 0 auto;
+}
+
 .sr-only {
   position: absolute;
-  width: 1px; height: 1px;
-  padding: 0; margin: -1px;
-  overflow: hidden; clip: rect(0 0 0 0);
-  white-space: nowrap; border: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
-.chip[data-status='pass'] { color: var(--ok); border-color: var(--ok); }
-.chip[data-status='warn'] { color: var(--warn); border-color: var(--warn); }
-.chip[data-status='fail'] { color: var(--critical); border-color: var(--critical); }
-.empty { padding: 24px 12px; text-align: center; }
+
+.chip[data-status='pass'] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.chip[data-status='warn'] {
+  color: var(--accent-warm);
+  border-color: var(--accent-warm);
+}
+.chip[data-status='fail'] {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.empty {
+  padding: var(--space-5) var(--space-3);
+  text-align: center;
+}
 
 /* Narrow screens drop the measurements a phone cannot usefully read, keeping
    the shot, its date and its verdicts. */
 @media (max-width: 560px) {
-  .head, .row { grid-template-columns: minmax(80px, 1fr) 108px minmax(96px, 1fr); }
+  .head,
+  .row {
+    grid-template-columns: minmax(80px, 1fr) 108px minmax(96px, 1fr);
+  }
   .head > :nth-child(2),
   .row > :nth-child(2),
   .head > :nth-child(4),
   .row > :nth-child(4),
   .head > :nth-child(5),
-  .row > :nth-child(5) { display: none; }
+  .row > :nth-child(5) {
+    display: none;
+  }
 }
 </style>

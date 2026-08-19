@@ -323,6 +323,14 @@ pub enum RepairMode {
 pub struct DateRepairParams {
     pub paths: Vec<PathBuf>,
     pub mode: RepairMode,
+    /// Whether a folder among `paths` contributes its subfolders too.
+    ///
+    /// The scan path has always walked folders (`collect_media`); the repair
+    /// path treated every input as a file, so a folder reached `read_meta`,
+    /// failed, and was reported as skipped — the tool doing nothing at all on
+    /// the most obvious thing to point it at.
+    #[serde(default)]
+    pub recursive: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -394,6 +402,10 @@ impl Tool for DateRepairTool {
             _ => None,
         };
 
+        // A folder contributes the media files inside it, exactly as it does
+        // for a scan. Anything that is not media is not silently dropped: it
+        // never entered the list, and a folder with nothing in it reports so.
+        let mut inputs: Vec<PathBuf> = Vec::new();
         for path in &p.paths {
             if !path.exists() {
                 skipped.push(Skip {
@@ -403,6 +415,22 @@ impl Tool for DateRepairTool {
                 continue;
             }
 
+            if path.is_dir() {
+                let found = collect_media(path, p.recursive);
+                if found.is_empty() {
+                    skipped.push(Skip {
+                        file: path.to_string_lossy().to_string(),
+                        reason: "Folder holds no media this tool reads".into(),
+                    });
+                }
+                inputs.extend(found);
+                continue;
+            }
+
+            inputs.push(path.clone());
+        }
+
+        for path in &inputs {
             let resolved = match &p.mode {
                 RepairMode::Manual(dt) => Some((*dt, None)),
                 RepairMode::Auto => read_meta(path)
@@ -630,5 +658,76 @@ mod tests {
 
         s.failures.push((PathBuf::from("b"), "boom".into()));
         assert!(!s.fully_verified());
+    }
+
+    /// The repair path used to treat a folder as a file: `read_meta` failed on
+    /// it and the whole request came back "0 files would be redated, 1
+    /// skipped" — the tool doing nothing on the most obvious input.
+    #[test]
+    fn a_folder_contributes_the_media_inside_it_to_a_repair() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("roll");
+        std::fs::create_dir_all(folder.join("deeper")).unwrap();
+        std::fs::write(folder.join("a.jpg"), b"x").unwrap();
+        std::fs::write(folder.join("b.jpg"), b"y").unwrap();
+        std::fs::write(folder.join("notes.txt"), b"z").unwrap();
+        std::fs::write(folder.join("deeper/c.jpg"), b"w").unwrap();
+
+        let when = chrono::NaiveDate::from_ymd_opt(2024, 5, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+
+        let shallow = DateRepairTool
+            .plan(&DateRepairParams {
+                paths: vec![folder.clone()],
+                mode: RepairMode::Manual(when),
+                recursive: false,
+            })
+            .unwrap()
+            .data;
+        assert_eq!(
+            shallow.actions.len(),
+            2,
+            "the two media files at the top, and not the .txt: {:?}",
+            shallow.actions
+        );
+
+        let deep = DateRepairTool
+            .plan(&DateRepairParams {
+                paths: vec![folder],
+                mode: RepairMode::Manual(when),
+                recursive: true,
+            })
+            .unwrap()
+            .data;
+        assert_eq!(deep.actions.len(), 3, "recursive reaches the subfolder");
+    }
+
+    /// A folder with nothing readable says so rather than reporting success
+    /// over an empty list.
+    #[test]
+    fn a_folder_with_no_media_is_reported_rather_than_silently_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("empty");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("readme.txt"), b"x").unwrap();
+
+        let plan = DateRepairTool
+            .plan(&DateRepairParams {
+                paths: vec![folder],
+                mode: RepairMode::Auto,
+                recursive: false,
+            })
+            .unwrap()
+            .data;
+
+        assert!(plan.actions.is_empty());
+        assert_eq!(plan.skipped.len(), 1);
+        assert!(
+            plan.skipped[0].reason.contains("no media"),
+            "{:?}",
+            plan.skipped
+        );
     }
 }

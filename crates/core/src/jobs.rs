@@ -79,6 +79,11 @@ pub struct Job {
     pub started_at: i64,
     pub finished_at: Option<i64>,
     pub error: Option<String>,
+    /// What the job reported when it ended.
+    ///
+    /// Persisted rather than only emitted, so a client that subscribes after a
+    /// job has finished still learns what it did (§9.2 invariant 6).
+    pub summary: Option<String>,
 }
 
 impl Job {
@@ -93,6 +98,7 @@ impl Job {
             started_at: chrono::Utc::now().timestamp(),
             finished_at: None,
             error: None,
+            summary: None,
         }
     }
 }
@@ -273,7 +279,12 @@ impl JobRunner {
                 };
 
                 if let Ok(guard) = ledger.lock() {
-                    let _ = guard.finish_job(&finished_id, status, error.as_deref());
+                    let _ = guard.finish_job(
+                        &finished_id,
+                        status,
+                        error.as_deref(),
+                        Some(message.as_str()),
+                    );
                 }
 
                 // A terminal update, so a watcher knows the stream has ended

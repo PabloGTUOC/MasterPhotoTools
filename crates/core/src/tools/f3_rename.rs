@@ -145,6 +145,18 @@ impl Tool for BatchRenamerTool {
         // and the second rename would fail with its source already moved.
         let mut present: Vec<PathBuf> = Vec::new();
         let mut seen: HashSet<PathBuf> = HashSet::new();
+
+        // A directory contributes the files inside it; it is never itself
+        // renamed. Every other tool that takes "files or folders" expands one
+        // (`expand_inputs`), and F3 did not — so a folder passed `exists()`,
+        // took a sequence number, and the folder itself was renamed while the
+        // photographs inside it kept their names. That is destructive, silent,
+        // and the opposite of what the person asked for.
+        //
+        // Non-recursive, because F3 has no recursion flag to honour: a
+        // subdirectory is reported rather than descended into, so a nested
+        // batch is a visible decision instead of a surprise.
+        let mut inputs: Vec<PathBuf> = Vec::new();
         for path in &p.paths {
             if !path.exists() {
                 skipped.push(Skip {
@@ -153,6 +165,33 @@ impl Tool for BatchRenamerTool {
                 });
                 continue;
             }
+
+            if path.is_dir() {
+                let Ok(entries) = std::fs::read_dir(path) else {
+                    skipped.push(Skip {
+                        file: path.to_string_lossy().to_string(),
+                        reason: "Directory could not be read".into(),
+                    });
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let child = entry.path();
+                    if child.is_dir() {
+                        skipped.push(Skip {
+                            file: child.to_string_lossy().to_string(),
+                            reason: "Subfolder — list it directly to rename what is inside".into(),
+                        });
+                    } else {
+                        inputs.push(child);
+                    }
+                }
+                continue;
+            }
+
+            inputs.push(path.clone());
+        }
+
+        for path in inputs {
             let identity = path.canonicalize().unwrap_or_else(|_| path.clone());
             if !seen.insert(identity) {
                 skipped.push(Skip {
@@ -161,7 +200,7 @@ impl Tool for BatchRenamerTool {
                 });
                 continue;
             }
-            present.push(path.clone());
+            present.push(path);
         }
 
         // Sort keys are computed in parallel: `capture` ordering reads metadata
@@ -362,5 +401,75 @@ mod tests {
         assert_eq!(leading_number("no-digits.jpg"), None);
         // The *first* run of digits, not the last.
         assert_eq!(leading_number("12_of_34.jpg"), Some(12));
+    }
+
+    /// A folder passed to F3 used to be renamed itself, leaving the
+    /// photographs inside it untouched — destructive, silent, and the opposite
+    /// of the request.
+    #[test]
+    fn a_folder_contributes_the_files_inside_it_and_is_never_itself_renamed() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Holiday");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("a.jpg"), b"x").unwrap();
+        std::fs::write(folder.join("b.jpg"), b"y").unwrap();
+
+        let plan = BatchRenamerTool
+            .plan(&BatchRenameParams {
+                paths: vec![folder.clone()],
+                date: None,
+                subject: Some("Trip".into()),
+                camera: None,
+                film: None,
+                order: RenameOrder::Numeric,
+            })
+            .unwrap()
+            .data;
+
+        assert_eq!(plan.actions.len(), 2, "both files, and only the files");
+        for action in &plan.actions {
+            assert_ne!(
+                action.source, folder,
+                "the folder itself must never be a rename source"
+            );
+            assert_eq!(action.source.parent().unwrap(), folder);
+        }
+
+        let targets: Vec<String> = plan
+            .actions
+            .iter()
+            .map(|a| a.target.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(targets, vec!["Trip-01.jpg", "Trip-02.jpg"]);
+    }
+
+    /// Non-recursive: F3 has no recursion flag, so a nested folder is reported
+    /// rather than quietly walked.
+    #[test]
+    fn a_subfolder_is_reported_rather_than_descended_into() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Roll");
+        std::fs::create_dir_all(folder.join("nested")).unwrap();
+        std::fs::write(folder.join("top.jpg"), b"x").unwrap();
+        std::fs::write(folder.join("nested/deep.jpg"), b"y").unwrap();
+
+        let plan = BatchRenamerTool
+            .plan(&BatchRenameParams {
+                paths: vec![folder],
+                date: None,
+                subject: None,
+                camera: None,
+                film: None,
+                order: RenameOrder::Numeric,
+            })
+            .unwrap()
+            .data;
+
+        assert_eq!(plan.actions.len(), 1, "only the file at the top level");
+        assert!(
+            plan.skipped.iter().any(|s| s.file.contains("nested")),
+            "the subfolder must be reported, not silently ignored: {:?}",
+            plan.skipped
+        );
     }
 }

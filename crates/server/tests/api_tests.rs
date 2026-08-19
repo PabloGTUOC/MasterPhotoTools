@@ -314,15 +314,21 @@ async fn a_job_streams_progress_and_ends_with_a_terminal_event() {
     let s = start().await;
     let client = reqwest::Client::new();
 
-    // Enough files that the scan reports progress.
+    // Enough files that the job reports progress.
+    let mut frames = Vec::new();
     for i in 0..8 {
-        std::fs::write(s.root.join(format!("frame{i}.jpg")), b"x").unwrap();
+        let frame = s.root.join(format!("frame{i}.jpg"));
+        std::fs::write(&frame, b"x").unwrap();
+        frames.push(frame.display().to_string());
     }
 
+    // A dry-run date repair: still a job, and it writes nothing. The scan that
+    // used to stand here answers with its rows directly now, because a scan
+    // writes nothing and its whole value is the table.
     let response = client
-        .post(format!("{}/api/tools/dates/scan", s.base))
+        .post(format!("{}/api/tools/dates/fix", s.base))
         .bearer_auth(good_token())
-        .json(&json!({ "path": s.root.display().to_string(), "recursive": false }))
+        .json(&json!({ "paths": frames, "mode": "Auto", "dry_run": true }))
         .send()
         .await
         .unwrap();
@@ -341,7 +347,7 @@ async fn a_job_streams_progress_and_ends_with_a_terminal_event() {
         .unwrap();
     assert_eq!(state.status(), 200);
     let job: Value = state.json().await.unwrap();
-    assert_eq!(job["kind"], "dates_scan");
+    assert_eq!(job["kind"], "dates_fix");
 
     // Read the event stream to its end.
     let stream = client
@@ -1051,4 +1057,37 @@ async fn the_roots_are_not_readable_without_a_token() {
         .unwrap();
 
     assert_eq!(response.status(), 401);
+}
+
+/// A scan answers with its table rather than an id.
+///
+/// It writes nothing, and the rows are the whole point: returning a job id
+/// meant every client computed them, counted them and threw them away.
+#[tokio::test]
+async fn a_date_scan_answers_with_the_rows_themselves() {
+    let s = start().await;
+
+    std::fs::write(s.root.join("a.jpg"), b"x").unwrap();
+    std::fs::write(s.root.join("b.jpg"), b"y").unwrap();
+    std::fs::write(s.root.join("notes.txt"), b"z").unwrap();
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/tools/dates/scan", s.base))
+        .bearer_auth(good_token())
+        .json(&json!({ "path": s.root.display().to_string(), "recursive": false }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200, "not 202: there is no job to follow");
+
+    let rows: Vec<Value> = response.json().await.unwrap();
+    assert_eq!(rows.len(), 2, "the two media files, not the .txt: {rows:?}");
+    for row in &rows {
+        assert!(row["name"].is_string());
+        assert!(
+            row["status"].is_string(),
+            "every row carries the state the table shows: {row:?}"
+        );
+    }
 }

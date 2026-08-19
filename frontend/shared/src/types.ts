@@ -23,6 +23,8 @@ export interface Job {
   started_at: number;
   finished_at: number | null;
   error: string | null;
+  /** What the job reported when it ended, persisted so a late watcher sees it. */
+  summary: string | null;
 }
 
 /** `phototools_server::jobs::JobEvent` */
@@ -89,6 +91,24 @@ export type TargetFormat = 'Jpeg' | 'Png' | 'Tiff' | 'WebP';
 // Requests
 // ---------------------------------------------------------------------------
 
+/** `phototools_core::tools::f1_dates::DateStatus` */
+export type DateStatus = 'Ok' | 'Mismatch' | 'MissingMetadata';
+
+/** `phototools_core::tools::f1_dates::FsTimeSource` */
+export type FsTimeSource = 'Created' | 'Modified';
+
+/** `phototools_core::tools::f1_dates::ScanResult` */
+export interface ScanResult {
+  name: string;
+  path: string;
+  metadata_date: string | null;
+  /** Which of F1's seven tags supplied the date. */
+  tag: string | null;
+  fs_date: string | null;
+  fs_date_source: FsTimeSource | null;
+  status: DateStatus;
+}
+
 export interface DatesScanRequest {
   path: string;
   recursive?: boolean;
@@ -98,6 +118,8 @@ export interface DatesFixRequest {
   paths: string[];
   mode: RepairMode;
   dry_run?: boolean;
+  /** Whether a folder among `paths` contributes its subfolders too. */
+  recursive?: boolean;
 }
 
 export interface RenameRequest {

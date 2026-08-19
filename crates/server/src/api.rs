@@ -172,26 +172,19 @@ pub struct DatesScanRequest {
 }
 
 async fn dates_scan(
-    auth: Authenticated,
+    _auth: Authenticated,
     State(state): State<AppState>,
     Json(request): Json<DatesScanRequest>,
 ) -> Result<Response, ApiError> {
     let root = resolve_input(&state.config, &request.path)?;
-    let recursive = request.recursive;
 
-    accept(&state, &auth, "dates_scan", 0, move |progress| {
-        let results = f1_dates::scan_dates(&root, recursive)?;
-        progress.report(results.len() as u64, results.len() as u64, "scanned");
-
-        let mismatched = results
-            .iter()
-            .filter(|r| r.status != f1_dates::DateStatus::Ok)
-            .count();
-        Ok(format!(
-            "{} files scanned, {mismatched} needing attention",
-            results.len()
-        ))
-    })
+    // Answered directly rather than as a job. A scan writes nothing and its
+    // whole value is the table; handing back an id meant the rows were
+    // computed, counted and then dropped, and no client could ever show which
+    // files needed attention. §9.1 budgets 500 files under five seconds, which
+    // is what makes a synchronous answer honest here.
+    let results = f1_dates::scan_dates(&root, request.recursive)?;
+    Ok(Json(results).into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -200,6 +193,8 @@ pub struct DatesFixRequest {
     pub mode: f1_dates::RepairMode,
     #[serde(default)]
     pub dry_run: bool,
+    #[serde(default)]
+    pub recursive: bool,
 }
 
 async fn dates_fix(
@@ -212,6 +207,7 @@ async fn dates_fix(
     let params = f1_dates::DateRepairParams {
         paths,
         mode: request.mode,
+        recursive: request.recursive,
     };
     let dry_run = request.dry_run;
 
@@ -1366,7 +1362,13 @@ async fn job_events(
             state: job.status.as_str().to_string(),
             progress: job.progress,
             total: job.total,
-            message: job.error.clone().unwrap_or_else(|| "done".into()),
+            // What the job actually reported, not the word "done": a client
+            // that subscribed late is the one that most needs telling.
+            message: job
+                .summary
+                .clone()
+                .or_else(|| job.error.clone())
+                .unwrap_or_else(|| "done".into()),
             terminal: true,
         })
     } else {

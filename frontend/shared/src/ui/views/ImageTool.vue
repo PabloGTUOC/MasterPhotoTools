@@ -105,17 +105,22 @@ function confirm() {
     </template>
 
     <template #preview>
-      <p v-if="confirmed && inputList.length" class="confirmed">
-        Will write output from <strong>{{ inputList.length }}</strong>
-        input{{ inputList.length === 1 ? '' : 's' }} into
-        <code>{{ outDir }}</code>. Originals are never modified.
-      </p>
+      <div v-if="confirmed && inputList.length" class="confirmed">
+        <p>
+          Will write output from the <strong>{{ inputList.length }}</strong>
+          path{{ inputList.length === 1 ? '' : 's' }} listed into
+          <code>{{ outDir }}</code>. Originals are never modified.
+        </p>
+        <small class="muted">A folder counts as one path here; it contributes the files inside it, and subfolders only when "Include subfolders" is ticked.</small>
+      </div>
     </template>
   </ToolPage>
 </template>
 
 <style scoped>
 .confirmed {
+  display: grid;
+  gap: var(--space-1);
   border-left: 3px solid var(--accent);
   padding: 8px 12px;
   background: var(--bg-panel);

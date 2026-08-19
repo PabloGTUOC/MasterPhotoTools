@@ -9,12 +9,14 @@ use phototools_core::config::Config;
 use phototools_core::error::Error;
 use phototools_core::ingest::{self, Card, ScanProblem};
 use phototools_core::jobs::{InMemoryProgress, Job};
-use phototools_core::tools::f1_dates::{DateRepairParams, DateRepairTool, RepairMode, ScanResult};
+use phototools_core::tools::f1_dates::{
+    DateRepairAction, DateRepairParams, DateRepairTool, RepairMode, ScanResult,
+};
 use phototools_core::tools::f3_rename::{
     BatchRenameAction, BatchRenameParams, BatchRenamerTool, RenameOrder,
 };
 use phototools_core::tools::f4_split::{SplitParams, SplitTool};
-use phototools_core::tools::f5_contact::{ContactSheetParams, ContactSheetTool};
+use phototools_core::tools::f5_contact::{ContactSheetParams, ContactSheetTool, SheetStyle};
 use phototools_core::tools::f6_transform::{TargetFormat, TransformParams, TransformTool};
 use phototools_core::tools::f7_border::{PrintBorderParams, PrintBorderTool};
 use phototools_core::tools::f8_tiff::{TiffToJpegParams, TiffToJpegTool};
@@ -159,6 +161,26 @@ pub struct FixDatesArgs {
     pub dry_run: bool,
     #[serde(default)]
     pub recursive: bool,
+}
+
+/// What a repair would change, without changing it.
+///
+/// The desktop's counterpart to `POST /api/tools/dates/plan`.
+#[tauri::command]
+pub fn plan_dates(
+    args: FixDatesArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<Plan<DateRepairAction>> {
+    let config = state.config();
+    let paths = resolve_inputs(&config, &args.paths)?;
+    DateRepairTool
+        .plan(&DateRepairParams {
+            paths,
+            mode: args.mode,
+            recursive: args.recursive,
+        })
+        .map(|outcome| outcome.data)
+        .map_err(describe)
 }
 
 #[tauri::command]
@@ -351,6 +373,8 @@ pub struct ContactSheetArgs {
     #[serde(default)]
     pub recursive: bool,
     pub out_path: String,
+    #[serde(default)]
+    pub style: SheetStyle,
 }
 
 #[tauri::command]
@@ -362,6 +386,7 @@ pub fn contact_sheet(args: ContactSheetArgs, state: State<'_, AppState>) -> Comm
 
     let mut params = ContactSheetParams::new(inputs, out_path);
     params.recursive = args.recursive;
+    params.style = args.style;
 
     state
         .jobs

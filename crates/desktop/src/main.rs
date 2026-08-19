@@ -118,6 +118,7 @@ fn main() {
             commands::list_directory,
             commands::list_roots,
             commands::scan_dates,
+            commands::plan_dates,
             commands::fix_dates,
             commands::plan_rename,
             commands::apply_rename,

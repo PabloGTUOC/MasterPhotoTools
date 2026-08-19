@@ -109,10 +109,14 @@ async function apply() {
     </template>
 
     <template #preview>
-      <p v-if="confirmed && inputList.length" class="confirmed">
-        Will transform <strong>{{ inputList.length }}</strong> input(s) into
-        <code>{{ outDir }}</code>.
-      </p>
+      <div v-if="confirmed && inputList.length" class="confirmed">
+        <p>
+          Will transform the <strong>{{ inputList.length }}</strong>
+          path{{ inputList.length === 1 ? '' : 's' }} listed into
+          <code>{{ outDir }}</code>.
+        </p>
+        <small class="muted">A folder counts as one path here; it contributes the files inside it, and subfolders only when "Include subfolders" is ticked.</small>
+      </div>
     </template>
   </ToolPage>
 </template>
@@ -121,6 +125,8 @@ async function apply() {
 .options { display: grid; gap: 10px; grid-template-columns: 1fr; }
 @media (min-width: 34rem) { .options { grid-template-columns: 1fr 1fr; } }
 .confirmed {
+  display: grid;
+  gap: var(--space-1);
   border-left: 3px solid var(--accent);
   padding: 8px 12px;
   background: var(--bg-panel);

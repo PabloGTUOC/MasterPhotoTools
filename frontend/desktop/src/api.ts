@@ -19,6 +19,7 @@ import type {
   CardSummary,
   CardValidation,
   ContactSheetRequest,
+  DateRepairAction,
   DatesFixRequest,
   DatesScanRequest,
   DeriveRequest,
@@ -74,6 +75,10 @@ export class TauriApiClient implements ApiClient {
       path: request.path,
       recursive: request.recursive ?? false,
     });
+  }
+
+  planDates(request: DatesFixRequest): Promise<Plan<DateRepairAction>> {
+    return invoke<Plan<DateRepairAction>>('plan_dates', { args: request });
   }
 
   fixDates(request: DatesFixRequest): Promise<string> {

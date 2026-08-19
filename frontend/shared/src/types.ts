@@ -91,6 +91,15 @@ export type TargetFormat = 'Jpeg' | 'Png' | 'Tiff' | 'WebP';
 // Requests
 // ---------------------------------------------------------------------------
 
+/** `phototools_core::tools::f1_dates::DateRepairAction` */
+export interface DateRepairAction {
+  path: string;
+  /** What the file's date will read after applying. */
+  new_date: string;
+  /** Set for a shift, which is applied as a relative delta. */
+  shift: string | null;
+}
+
 /** `phototools_core::tools::f1_dates::DateStatus` */
 export type DateStatus = 'Ok' | 'Mismatch' | 'MissingMetadata';
 
@@ -137,10 +146,14 @@ export interface ImageToolRequest {
   out_dir: string;
 }
 
+/** `phototools_core::tools::f5_contact::SheetStyle` */
+export type SheetStyle = 'Grid' | 'Filmstrip';
+
 export interface ContactSheetRequest {
   inputs: string[];
   recursive?: boolean;
   out_path: string;
+  style?: SheetStyle;
 }
 
 export interface TransformRequest extends ImageToolRequest {

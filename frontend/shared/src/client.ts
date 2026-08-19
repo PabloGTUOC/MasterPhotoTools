@@ -11,6 +11,7 @@ import {
   type BrowserEntry,
   type CardValidation,
   type ContactSheetRequest,
+  type DateRepairAction,
   type DatesFixRequest,
   type DatesScanRequest,
   type DeriveRequest,
@@ -51,6 +52,14 @@ export interface ApiClient {
    * already computed and the screen had nothing to show.
    */
   scanDates(request: DatesScanRequest): Promise<ScanResult[]>;
+  /**
+   * What a repair would change, without changing it.
+   *
+   * A plan rather than a job, as {@link planRename} is: it writes nothing, and
+   * the per-file detail is the point. Counts alone tell somebody four dates
+   * would move but not to what.
+   */
+  planDates(request: DatesFixRequest): Promise<Plan<DateRepairAction>>;
   fixDates(request: DatesFixRequest): Promise<string>;
 
   // F3 — rename
@@ -231,6 +240,14 @@ export class HttpApiClient implements ApiClient {
       body: JSON.stringify(request),
     });
     return this.readJson<ScanResult[]>(response, 'a date scan');
+  }
+
+  async planDates(request: DatesFixRequest): Promise<Plan<DateRepairAction>> {
+    const response = await this.send('/api/tools/dates/plan', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+    return this.readJson<Plan<DateRepairAction>>(response, 'a date repair plan');
   }
 
   fixDates(request: DatesFixRequest): Promise<string> {

@@ -28,6 +28,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         // Archive tools — operate on library paths.
         .route("/api/tools/dates/scan", post(dates_scan))
+        .route("/api/tools/dates/plan", post(dates_plan))
         .route("/api/tools/dates/fix", post(dates_fix))
         .route("/api/tools/rename/plan", post(rename_plan))
         .route("/api/tools/rename/apply", post(rename_apply))
@@ -197,6 +198,28 @@ pub struct DatesFixRequest {
     pub recursive: bool,
 }
 
+/// What a repair would change, without changing it.
+///
+/// A plan rather than a job, as `rename/plan` is: it writes nothing, and the
+/// per-file detail is the whole point. Returning counts meant a person could
+/// see that four dates would move but never to what — which is exactly the
+/// judgement MV-9.3 asks them to make before applying a clock offset.
+async fn dates_plan(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<DatesFixRequest>,
+) -> Result<Response, ApiError> {
+    let paths = resolve_inputs(&state.config, &request.paths)?;
+    let plan = f1_dates::DateRepairTool
+        .plan(&f1_dates::DateRepairParams {
+            paths,
+            mode: request.mode,
+            recursive: request.recursive,
+        })?
+        .data;
+    Ok(Json(plan).into_response())
+}
+
 async fn dates_fix(
     auth: Authenticated,
     State(state): State<AppState>,
@@ -350,6 +373,8 @@ pub struct ContactSheetRequest {
     #[serde(default)]
     pub recursive: bool,
     pub out_path: String,
+    #[serde(default)]
+    pub style: f5_contact::SheetStyle,
 }
 
 async fn contact_sheet(
@@ -363,6 +388,7 @@ async fn contact_sheet(
 
     let mut params = f5_contact::ContactSheetParams::new(inputs, out_path);
     params.recursive = request.recursive;
+    params.style = request.style;
 
     accept(&state, &auth, "contact_sheet", total, move |progress| {
         let plan = f5_contact::ContactSheetTool.plan(&params)?.data;

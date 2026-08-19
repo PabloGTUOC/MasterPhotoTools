@@ -4054,6 +4054,7 @@ dependencies = [
 name = "phototools-desktop"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "keyring",
  "notify",
@@ -4075,8 +4076,10 @@ version = "0.1.0"
 dependencies = [
  "async-stream",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "futures",
+ "image",
  "jsonwebtoken",
  "phototools-core",
  "reqwest 0.12.28",

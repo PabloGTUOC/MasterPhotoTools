@@ -122,6 +122,76 @@ pub fn preview(source: &std::path::Path, settings: &SplitSettings) -> Result<Spl
     })
 }
 
+/// A preview reduced to something transportable.
+///
+/// Byte buffers rather than images: a preview crosses a process boundary in
+/// both builds — an HTTP response or a Tauri command result — and a decoded
+/// image cannot. Encoding here keeps the one definition of what a preview is
+/// in `core`, where the splitting lives, rather than in two transports.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SplitPreviewThumbs {
+    /// The divider column, in the border-cropped image's own coordinates.
+    pub divider_x: u32,
+    /// Where the divider falls across the cropped width, 0.0 to 1.0.
+    ///
+    /// The fraction rather than the pixel is what a caller can act on: it says
+    /// whether the divider was found near the middle, where a half-frame pair
+    /// puts it, or off at an edge where a dark part of the picture pulled it.
+    pub divider_fraction: f32,
+    pub cropped: SplitPreviewImage,
+    pub a: SplitPreviewImage,
+    pub b: SplitPreviewImage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SplitPreviewImage {
+    /// JPEG bytes, already reduced to the requested edge.
+    pub jpeg: Vec<u8>,
+    /// The dimensions of the **full-size** result, not of these bytes.
+    ///
+    /// A preview is for judging the split, and the size the halves would come
+    /// out at is part of that judgement.
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Longest edge of a preview image. Enough to judge a divider, small enough to
+/// cross a transport without being a transfer in its own right.
+pub const PREVIEW_MAX_EDGE: u32 = 900;
+
+/// Preview the split and reduce the three images for transport.
+pub fn preview_thumbnails(
+    source: &std::path::Path,
+    settings: &SplitSettings,
+    max_edge: u32,
+) -> Result<SplitPreviewThumbs, Error> {
+    let full = preview(source, settings)?;
+
+    let reduce = |img: &DynamicImage| -> Result<SplitPreviewImage, Error> {
+        let (width, height) = (img.width(), img.height());
+        let small = image_ops::downscale_to_max_edge(img, max_edge)?;
+        Ok(SplitPreviewImage {
+            jpeg: image_ops::encode_jpeg_with(&small, &JpegOptions::deliverable(82))?,
+            width,
+            height,
+        })
+    };
+
+    let divider_fraction = if full.cropped.width() == 0 {
+        0.0
+    } else {
+        full.divider_x as f32 / full.cropped.width() as f32
+    };
+
+    Ok(SplitPreviewThumbs {
+        divider_x: full.divider_x,
+        divider_fraction,
+        cropped: reduce(&full.cropped)?,
+        a: reduce(&full.a)?,
+        b: reduce(&full.b)?,
+    })
+}
+
 /// Step 1 — scan inward from each edge for the lab's white or black surround.
 fn remove_border(img: &DynamicImage, s: &SplitSettings) -> DynamicImage {
     let luma = img.to_luma8();

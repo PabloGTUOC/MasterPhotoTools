@@ -15,7 +15,7 @@ use phototools_core::tools::f1_dates::{
 use phototools_core::tools::f3_rename::{
     BatchRenameAction, BatchRenameParams, BatchRenamerTool, RenameOrder,
 };
-use phototools_core::tools::f4_split::{SplitParams, SplitTool};
+use phototools_core::tools::f4_split::{SplitParams, SplitSettings, SplitTool};
 use phototools_core::tools::f5_contact::{ContactSheetParams, ContactSheetTool, SheetStyle};
 use phototools_core::tools::f6_transform::{TargetFormat, TransformParams, TransformTool};
 use phototools_core::tools::f7_border::{PrintBorderParams, PrintBorderTool};
@@ -307,11 +307,83 @@ impl ImageToolArgs {
     }
 }
 
+/// A preview as the front end receives it: images as data URLs it can show.
+#[derive(Debug, Serialize)]
+pub struct SplitPreviewResult {
+    pub divider_x: u32,
+    pub divider_fraction: f32,
+    pub cropped: PreviewImage,
+    pub a: PreviewImage,
+    pub b: PreviewImage,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreviewImage {
+    pub src: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl From<phototools_core::tools::f4_split::SplitPreviewImage> for PreviewImage {
+    fn from(image: phototools_core::tools::f4_split::SplitPreviewImage) -> Self {
+        use base64::Engine as _;
+        Self {
+            src: format!(
+                "data:image/jpeg;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(&image.jpeg)
+            ),
+            width: image.width,
+            height: image.height,
+        }
+    }
+}
+
+/// §F4's preview: the border-cropped whole image and both halves, writing
+/// nothing.
+///
+/// Specified since F4 was written and never reachable from either build, which
+/// left the one operation whose thresholds most need judging by eye runnable
+/// only blind.
 #[tauri::command]
-pub fn split(args: ImageToolArgs, state: State<'_, AppState>) -> CommandResult<String> {
+pub fn split_preview(
+    path: String,
+    settings: Option<SplitSettings>,
+    state: State<'_, AppState>,
+) -> CommandResult<SplitPreviewResult> {
     let config = state.config();
-    let r = args.resolve(&config)?;
-    let params = SplitParams::new(r.inputs, r.out_dir);
+    let source = resolve_input(&config, &path)?;
+    let thumbs = phototools_core::tools::f4_split::preview_thumbnails(
+        &source,
+        &settings.unwrap_or_default(),
+        phototools_core::tools::f4_split::PREVIEW_MAX_EDGE,
+    )
+    .map_err(describe)?;
+
+    Ok(SplitPreviewResult {
+        divider_x: thumbs.divider_x,
+        divider_fraction: thumbs.divider_fraction,
+        cropped: thumbs.cropped.into(),
+        a: thumbs.a.into(),
+        b: thumbs.b.into(),
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SplitArgs {
+    #[serde(flatten)]
+    pub tool: ImageToolArgs,
+    #[serde(default)]
+    pub settings: Option<SplitSettings>,
+}
+
+#[tauri::command]
+pub fn split(args: SplitArgs, state: State<'_, AppState>) -> CommandResult<String> {
+    let config = state.config();
+    let settings = args.settings.unwrap_or_default();
+    let r = args.tool.resolve(&config)?;
+    let mut params = SplitParams::new(r.inputs, r.out_dir);
+    // The same settings the preview was judged with, or the defaults.
+    params.settings = settings;
 
     state
         .jobs

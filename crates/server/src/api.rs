@@ -33,6 +33,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/tools/rename/plan", post(rename_plan))
         .route("/api/tools/rename/apply", post(rename_apply))
         .route("/api/tools/split", post(split))
+        .route("/api/tools/split/preview", post(split_preview))
         .route("/api/tools/contact-sheet", post(contact_sheet))
         .route("/api/tools/transform", post(transform))
         .route("/api/tools/border", post(border))
@@ -351,10 +352,13 @@ impl ImageToolRequest {
 async fn split(
     auth: Authenticated,
     State(state): State<AppState>,
-    Json(request): Json<ImageToolRequest>,
+    Json(request): Json<SplitRequest>,
 ) -> Result<Response, ApiError> {
-    let r = request.resolve(&state.config)?;
-    let params = f4_split::SplitParams::new(r.inputs, r.out_dir);
+    let settings = request.settings.unwrap_or_default();
+    let r = request.tool.resolve(&state.config)?;
+    let mut params = f4_split::SplitParams::new(r.inputs, r.out_dir);
+    // The same settings the preview was judged with, or the defaults.
+    params.settings = settings;
 
     accept(&state, &auth, "split", r.total, move |progress| {
         let plan = f4_split::SplitTool.plan(&params)?.data;
@@ -375,6 +379,94 @@ pub struct ContactSheetRequest {
     pub out_path: String,
     #[serde(default)]
     pub style: f5_contact::SheetStyle,
+}
+
+/// A preview as the front ends receive it.
+///
+/// The images are data URLs rather than bytes: both builds put them straight
+/// into an `<img src>`, and a preview that needs a second request per image
+/// would be three more round trips for something the person is looking at
+/// once.
+#[derive(Debug, Serialize)]
+pub struct SplitPreviewResponse {
+    pub divider_x: u32,
+    pub divider_fraction: f32,
+    pub cropped: PreviewImageResponse,
+    pub a: PreviewImageResponse,
+    pub b: PreviewImageResponse,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreviewImageResponse {
+    /// `data:image/jpeg;base64,...`
+    pub src: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl From<f4_split::SplitPreviewImage> for PreviewImageResponse {
+    fn from(image: f4_split::SplitPreviewImage) -> Self {
+        use base64::Engine as _;
+        Self {
+            src: format!(
+                "data:image/jpeg;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(&image.jpeg)
+            ),
+            width: image.width,
+            height: image.height,
+        }
+    }
+}
+
+impl From<f4_split::SplitPreviewThumbs> for SplitPreviewResponse {
+    fn from(thumbs: f4_split::SplitPreviewThumbs) -> Self {
+        Self {
+            divider_x: thumbs.divider_x,
+            divider_fraction: thumbs.divider_fraction,
+            cropped: thumbs.cropped.into(),
+            a: thumbs.a.into(),
+            b: thumbs.b.into(),
+        }
+    }
+}
+
+/// §F4's preview: the border-cropped whole image and both halves, writing
+/// nothing.
+///
+/// Specified since F4 was written and never reachable — `preview()` existed in
+/// `core` and only `apply` called it, so the one operation whose thresholds
+/// most need judging by eye could only be run blind.
+async fn split_preview(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<SplitPreviewRequest>,
+) -> Result<Response, ApiError> {
+    let source = resolve_input(&state.config, &request.path)?;
+    let thumbs = f4_split::preview_thumbnails(
+        &source,
+        &request.settings.unwrap_or_default(),
+        f4_split::PREVIEW_MAX_EDGE,
+    )?;
+    Ok(Json(SplitPreviewResponse::from(thumbs)).into_response())
+}
+
+/// An image-tool request carrying F4's thresholds.
+///
+/// Flattened so the shape stays the one every image tool shares, with the
+/// split's own settings alongside rather than inside it.
+#[derive(Debug, Deserialize)]
+pub struct SplitRequest {
+    #[serde(flatten)]
+    pub tool: ImageToolRequest,
+    #[serde(default)]
+    pub settings: Option<f4_split::SplitSettings>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SplitPreviewRequest {
+    pub path: String,
+    #[serde(default)]
+    pub settings: Option<f4_split::SplitSettings>,
 }
 
 async fn contact_sheet(

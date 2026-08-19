@@ -123,6 +123,7 @@ fn main() {
             commands::plan_rename,
             commands::apply_rename,
             commands::split,
+            commands::split_preview,
             commands::border,
             commands::tiff_to_jpeg,
             commands::contact_sheet,

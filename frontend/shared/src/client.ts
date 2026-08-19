@@ -27,6 +27,9 @@ import {
   type RenameAction,
   type RenameRequest,
   type ScanResult,
+  type SplitPreview,
+  type SplitPreviewRequest,
+  type SplitRequest,
   type TransformRequest,
 } from './types';
 
@@ -67,7 +70,15 @@ export interface ApiClient {
   applyRename(request: RenameRequest): Promise<string>;
 
   // F4–F8 — the image tools
-  split(request: ImageToolRequest): Promise<string>;
+  split(request: SplitRequest): Promise<string>;
+  /**
+   * §F4's preview: the border-cropped whole image and both halves, writing
+   * nothing.
+   *
+   * The thresholds this tool works by have only ever met synthetic fixtures
+   * (MV-4.1), so being able to look at where it put the divider is the point.
+   */
+  splitPreview(request: SplitPreviewRequest): Promise<SplitPreview>;
   contactSheet(request: ContactSheetRequest): Promise<string>;
   transform(request: TransformRequest): Promise<string>;
   border(request: ImageToolRequest): Promise<string>;
@@ -262,8 +273,16 @@ export class HttpApiClient implements ApiClient {
     return this.startJob('/api/tools/rename/apply', request);
   }
 
-  split(request: ImageToolRequest): Promise<string> {
+  split(request: SplitRequest): Promise<string> {
     return this.startJob('/api/tools/split', request);
+  }
+
+  async splitPreview(request: SplitPreviewRequest): Promise<SplitPreview> {
+    const response = await this.send('/api/tools/split/preview', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+    return this.readJson<SplitPreview>(response, 'a split preview');
   }
 
   contactSheet(request: ContactSheetRequest): Promise<string> {

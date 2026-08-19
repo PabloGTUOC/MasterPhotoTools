@@ -33,6 +33,9 @@ import type {
   RenameAction,
   RenameRequest,
   ScanResult,
+  SplitPreview,
+  SplitPreviewRequest,
+  SplitRequest,
   TransformRequest,
 } from '@phototools/shared';
 
@@ -93,7 +96,14 @@ export class TauriApiClient implements ApiClient {
     return invoke<string>('apply_rename', { args: request });
   }
 
-  split(request: ImageToolRequest): Promise<string> {
+  splitPreview(request: SplitPreviewRequest): Promise<SplitPreview> {
+    return invoke<SplitPreview>('split_preview', {
+      path: request.path,
+      settings: request.settings ?? null,
+    });
+  }
+
+  split(request: SplitRequest): Promise<string> {
     return invoke<string>('split', { args: request });
   }
 

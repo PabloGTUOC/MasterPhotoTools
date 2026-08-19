@@ -104,6 +104,19 @@ invented. Blocks **MV-14.1**.
 Recorded because a reader comparing the two should not have to work out which
 of them moved.
 
+### Dependencies beyond §2.6
+
+G8 asks for the reason, not just the addition.
+
+| Crate | Where | Why |
+|---|---|---|
+| `base64` | `server`, `desktop` | F4's preview carries three images across a process boundary — an HTTP response or a Tauri command result — and both front ends put them straight into an `<img src>`. Data URLs avoid a second round trip per image, and a preview that needed three more requests for something looked at once would be worse. |
+| `image` | `server`, dev only | One test builds a two-panel fixture with a known divider so the preview route can be asserted against a real image rather than a fabricated JSON body. |
+| `tauri-plugin-autostart` | `desktop` | Launch at login (build plan Phase 14). §2.6 names no mechanism and the macOS one is a LaunchAgent. |
+
+All three were already in `Cargo.lock` through existing transitive dependencies, so none adds a
+tree that was not being compiled.
+
 ### F5 has a film-strip layout the specification does not describe
 
 §F5 asks for a grid proof sheet: uniform cells, filename captions, a

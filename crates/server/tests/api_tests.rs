@@ -1154,3 +1154,59 @@ async fn a_date_repair_preview_does_not_touch_the_file() {
         before
     );
 }
+
+/// §F4's preview answers with the halves, and writes nothing.
+///
+/// It was specified from the start and reachable from neither build, which
+/// left the tool whose thresholds most need judging by eye runnable only
+/// blind.
+#[tokio::test]
+async fn a_split_preview_returns_both_halves_and_writes_nothing() {
+    let s = start().await;
+
+    // Two dark-bordered panels with a black divider down the middle: the
+    // shape F4 looks for.
+    let scan = s.root.join("frame.jpg");
+    let mut img = image::RgbImage::from_pixel(400, 300, image::Rgb([200, 180, 160]));
+    for y in 0..300 {
+        for x in 190..210 {
+            img.put_pixel(x, y, image::Rgb([4, 4, 4]));
+        }
+    }
+    image::DynamicImage::ImageRgb8(img).save(&scan).unwrap();
+
+    let before: Vec<_> = std::fs::read_dir(&s.root).unwrap().collect();
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/tools/split/preview", s.base))
+        .bearer_auth(good_token())
+        .json(&json!({ "path": scan.display().to_string() }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: Value = response.json().await.unwrap();
+
+    for half in ["cropped", "a", "b"] {
+        let src = body[half]["src"].as_str().unwrap();
+        assert!(
+            src.starts_with("data:image/jpeg;base64,"),
+            "{half} must arrive ready for an img src, got {src:.40}"
+        );
+        assert!(body[half]["width"].as_u64().unwrap() > 0);
+    }
+
+    let fraction = body["divider_fraction"].as_f64().unwrap();
+    assert!(
+        (0.4..0.6).contains(&fraction),
+        "the divider is down the middle of this fixture; got {fraction}"
+    );
+
+    let after: Vec<_> = std::fs::read_dir(&s.root).unwrap().collect();
+    assert_eq!(
+        before.len(),
+        after.len(),
+        "a preview writes nothing — that is what makes it a preview"
+    );
+}

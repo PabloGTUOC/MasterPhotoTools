@@ -140,6 +140,47 @@ export interface RenameRequest {
   order: RenameOrder;
 }
 
+/** `phototools_core::tools::f4_split::SplitSettings` */
+export interface SplitSettings {
+  /** Pixel value at or below which a pixel counts as black. */
+  threshold_dark: number;
+  /** Pixel value at or above which a pixel counts as white. */
+  threshold_white: number;
+  /** Fraction of extreme pixels needed to call a line "border". */
+  border_tol: number;
+  /** Maximum proportion removable from one side. */
+  max_crop_pct: number;
+  /** Proportion of width ignored at each end when seeking the divider. */
+  margin: number;
+  /** Refinement radius around the darkest column, in pixels. */
+  window: number;
+  /** Target height ÷ width. */
+  ratio: number;
+}
+
+export interface PreviewImage {
+  /** A `data:image/jpeg;base64,...` URL, ready for an `<img src>`. */
+  src: string;
+  /** Dimensions of the full-size result, not of the preview bytes. */
+  width: number;
+  height: number;
+}
+
+/** §F4's preview: the border-cropped whole image and both halves. */
+export interface SplitPreview {
+  divider_x: number;
+  /** Where the divider falls across the width, 0.0 to 1.0. */
+  divider_fraction: number;
+  cropped: PreviewImage;
+  a: PreviewImage;
+  b: PreviewImage;
+}
+
+export interface SplitPreviewRequest {
+  path: string;
+  settings?: SplitSettings | null;
+}
+
 export interface ImageToolRequest {
   inputs: string[];
   recursive?: boolean;
@@ -154,6 +195,10 @@ export interface ContactSheetRequest {
   recursive?: boolean;
   out_path: string;
   style?: SheetStyle;
+}
+
+export interface SplitRequest extends ImageToolRequest {
+  settings?: SplitSettings | null;
 }
 
 export interface TransformRequest extends ImageToolRequest {

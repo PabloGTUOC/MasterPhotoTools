@@ -1091,3 +1091,66 @@ async fn a_date_scan_answers_with_the_rows_themselves() {
         );
     }
 }
+
+/// A date repair preview answers with the plan, not a count.
+///
+/// MV-9.3 asks somebody to read a clock-offset suggestion before applying it,
+/// which needs the resulting date per file. The dry run used to report only
+/// how many would move.
+#[tokio::test]
+async fn a_date_repair_preview_answers_with_what_each_file_would_become() {
+    let s = start().await;
+    let file = s.root.join("frame.jpg");
+    std::fs::write(&file, b"x").unwrap();
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/tools/dates/plan", s.base))
+        .bearer_auth(good_token())
+        .json(&json!({
+            "paths": [file.display().to_string()],
+            "mode": { "Manual": "2024-05-01T12:00:00" },
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200, "a plan, not an accepted job");
+
+    let plan: Value = response.json().await.unwrap();
+    let actions = plan["actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 1);
+    assert!(
+        actions[0]["new_date"]
+            .as_str()
+            .unwrap()
+            .starts_with("2024-05-01"),
+        "the plan says what the file would become: {actions:?}"
+    );
+    assert!(plan["skipped"].is_array(), "and what it would not touch");
+}
+
+/// The preview writes nothing — the whole reason it is a plan and not a job.
+#[tokio::test]
+async fn a_date_repair_preview_does_not_touch_the_file() {
+    let s = start().await;
+    let file = s.root.join("frame.jpg");
+    std::fs::write(&file, b"original").unwrap();
+    let before = std::fs::metadata(&file).unwrap().modified().unwrap();
+
+    reqwest::Client::new()
+        .post(format!("{}/api/tools/dates/plan", s.base))
+        .bearer_auth(good_token())
+        .json(&json!({
+            "paths": [file.display().to_string()],
+            "mode": { "Manual": "2024-05-01T12:00:00" },
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(std::fs::read(&file).unwrap(), b"original");
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().modified().unwrap(),
+        before
+    );
+}

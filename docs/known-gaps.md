@@ -99,6 +99,37 @@ invented. Blocks **MV-14.1**.
 
 ---
 
+## Places the implementation goes beyond the specification
+
+Recorded because a reader comparing the two should not have to work out which
+of them moved.
+
+### F5 has a film-strip layout the specification does not describe
+
+§F5 asks for a grid proof sheet: uniform cells, filename captions, a
+configurable column count. That is still what `ContactSheetParams` defaults to
+and what every F5 test asserts.
+
+Added beside it is a `Filmstrip` style — frames laid out as cut strips of 35mm
+with rebate, perforations and frame numbers printed on the edge, five frames to
+a strip. The geometry is the real film's, scaled from the frame width: 36×24 mm
+image, 5.5 mm rebate, 2 mm between frames, perforations 2.79×1.98 mm on a
+4.75 mm pitch. Strips are cut to the frames they hold, so a roll of four does
+not leave a fifth slot of bare film.
+
+**The desktop and web UI default to it**, which is the part that departs from
+the specification rather than merely extending it — the underlying tool still
+defaults to `Grid`. Requested deliberately; recorded here so the divergence is
+visible rather than discovered.
+
+Two decisions inside it worth knowing. A portrait frame is fitted whole into
+the 3:2 gate with film base either side rather than cropped to fill, because a
+proof sheet that crops is one you cannot judge a frame from. And the
+perforations run at a fixed pitch independent of where the frames fall, which
+is how film is manufactured and why they do not line up with the frame edges.
+
+---
+
 ## Places the specification is incomplete or contradicts itself
 
 Recorded rather than resolved by editing it (G9).

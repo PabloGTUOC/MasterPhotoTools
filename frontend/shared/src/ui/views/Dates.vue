@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** F1 and F2 — scan and repair capture dates. */
 import { ref, useTemplateRef } from 'vue';
-import type { RepairMode, ScanResult } from '@phototools/shared';
+import type { DateRepairAction, Plan, RepairMode, ScanResult } from '@phototools/shared';
 import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
 import PathListField from '../components/PathListField.vue';
@@ -18,6 +18,9 @@ const busy = ref(false);
 
 /** The last scan's rows. Empty until one has run; `null` while none has. */
 const scanned = ref<ScanResult[] | null>(null);
+
+/** What the last preview said would change. */
+const plan = ref<Plan<DateRepairAction> | null>(null);
 
 // The folders the pickers may offer, and the lister they walk with.
 const { roots } = useRoots();
@@ -43,25 +46,52 @@ function repairMode(): RepairMode {
   }
 }
 
-async function run(dryRun: boolean) {
-  const list = pathList();
-  if (!list.length) {
+/** The request both the preview and the apply are built from. */
+function request(dryRun: boolean) {
+  return {
+    paths: pathList(),
+    mode: repairMode(),
+    dry_run: dryRun,
+    // The same checkbox the scan uses. Sending it only on the scan meant a
+    // ticked box did nothing to the operation that actually writes.
+    recursive: recursive.value,
+  };
+}
+
+/**
+ * Show what would change, per file, without changing it.
+ *
+ * A plan rather than a job: the preview writes nothing, and its value is the
+ * detail. It used to run as a job that reported only "N would be redated",
+ * which is not enough to judge a clock offset before applying it (MV-9.3).
+ */
+async function preview() {
+  if (!pathList().length) {
     page.value?.setFailure('Add at least one path.');
     return;
   }
   busy.value = true;
   page.value?.setFailure(null);
   try {
-    const id = await api.fixDates({
-      paths: list,
-      mode: repairMode(),
-      dry_run: dryRun,
-      // The same checkbox the scan uses. Sending it only on the scan meant a
-      // ticked box did nothing to the operation that actually writes.
-      recursive: recursive.value,
-    });
-    page.value?.setJob(id);
-    if (dryRun) page.value?.setReviewed(true);
+    plan.value = await api.planDates(request(true));
+    page.value?.setReviewed(true);
+  } catch (e) {
+    plan.value = null;
+    page.value?.setFailure(e instanceof Error ? e.message : String(e));
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function apply() {
+  if (!pathList().length) {
+    page.value?.setFailure('Add at least one path.');
+    return;
+  }
+  busy.value = true;
+  page.value?.setFailure(null);
+  try {
+    page.value?.setJob(await api.fixDates(request(false)));
   } catch (e) {
     page.value?.setFailure(e instanceof Error ? e.message : String(e));
   } finally {
@@ -117,8 +147,8 @@ function stamp(value: string | null): string {
     has-preview
     apply-label="Apply dates"
     :busy="busy"
-    @preview="run(true)"
-    @apply="run(false)"
+    @preview="preview"
+    @apply="apply"
   >
     <template #form>
       <PathListField
@@ -155,6 +185,41 @@ function stamp(value: string | null): string {
     </template>
 
     <template #preview>
+      <section v-if="plan" class="scan" aria-live="polite">
+        <h2 class="scan__head">
+          // {{ plan.actions.length }} WOULD BE REDATED // {{ plan.skipped.length }} SKIPPED
+        </h2>
+
+        <p v-if="!plan.actions.length" class="muted">
+          Nothing would change. Every file already carries the date this mode resolves to.
+        </p>
+
+        <div v-else class="scan__table">
+          <div class="scan__row scan__row--plan scan__row--head" role="row">
+            <span role="columnheader">File</span>
+            <span role="columnheader">Would become</span>
+            <span role="columnheader">Shift</span>
+          </div>
+          <div
+            v-for="action in plan.actions"
+            :key="action.path"
+            class="scan__row scan__row--plan"
+            role="row"
+          >
+            <span class="scan__name" :title="action.path">{{ action.path.split('/').pop() }}</span>
+            <span class="scan__date">{{ stamp(action.new_date) }}</span>
+            <span class="scan__date">{{ action.shift ?? '—' }}</span>
+          </div>
+        </div>
+
+        <ul v-if="plan.skipped.length" class="skipped">
+          <li v-for="skip in plan.skipped" :key="skip.file">
+            <span class="mark" aria-hidden="true">✕</span>
+            {{ skip.file.split('/').pop() }} — {{ skip.reason }}
+          </li>
+        </ul>
+      </section>
+
       <section v-if="scanned" class="scan" aria-live="polite">
         <h2 class="scan__head">
           // {{ scanned.length }} SCANNED // {{ needingAttention(scanned) }} NEEDING ATTENTION
@@ -265,9 +330,27 @@ function stamp(value: string | null): string {
 .scan__row[data-status='Mismatch'] .scan__state { color: var(--accent-warm); }
 .scan__row[data-status='MissingMetadata'] .scan__state { color: var(--danger); }
 
+/* The plan has one column fewer: there is no filesystem date to compare with,
+   only what the file would become. */
+.scan__row--plan {
+  grid-template-columns: minmax(90px, 1.2fr) 170px 130px;
+}
+
+.skipped {
+  list-style: none;
+  display: grid;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.skipped .mark { color: var(--danger); }
+
 /* On a phone the two dates are what fall away last; the verdict never does. */
 @media (max-width: 560px) {
   .scan__row { grid-template-columns: minmax(80px, 1fr) 132px 104px; }
   .scan__row > :nth-child(3) { display: none; }
+  /* The plan's three columns already fit; nothing is dropped from it. */
+  .scan__row--plan { grid-template-columns: minmax(80px, 1fr) 140px 84px; }
+  .scan__row--plan > :nth-child(3) { display: block; }
 }
 </style>

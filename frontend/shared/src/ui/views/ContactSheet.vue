@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /** F5 — contact sheet. Writes one file, so it takes a path rather than a folder. */
 import { computed, ref, useTemplateRef } from 'vue';
+import type { SheetStyle } from '@phototools/shared';
 import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
 import PathListField from '../components/PathListField.vue';
@@ -12,6 +13,7 @@ const page = useTemplateRef<InstanceType<typeof ToolPage>>('page');
 const inputs = ref('');
 const outPath = ref('');
 const recursive = ref(false);
+const style = ref<SheetStyle>('Filmstrip');
 const confirmed = ref(false);
 const busy = ref(false);
 
@@ -36,6 +38,7 @@ async function apply() {
         inputs: inputList.value,
         recursive: recursive.value,
         out_path: outPath.value.trim(),
+        style: style.value,
       }),
     );
   } catch (e) {
@@ -75,20 +78,38 @@ async function apply() {
         :roots="roots"
         :list="list"
       />
+      <fieldset class="field">
+        <legend>Layout</legend>
+        <label class="radio">
+          <input v-model="style" type="radio" value="Filmstrip" />
+          Film strip — frames on 35mm, five to a strip, numbered on the rebate
+        </label>
+        <label class="radio">
+          <input v-model="style" type="radio" value="Grid" />
+          Grid — uniform cells with filename captions
+        </label>
+      </fieldset>
+
       <label class="checkbox"><input v-model="recursive" type="checkbox" /> Include subfolders</label>
     </template>
 
     <template #preview>
-      <p v-if="confirmed && inputList.length" class="confirmed">
-        Will build one sheet from <strong>{{ inputList.length }}</strong> input(s) at
-        <code>{{ outPath }}</code>.
-      </p>
+      <div v-if="confirmed && inputList.length" class="confirmed">
+        <p>
+          Will build one sheet from the <strong>{{ inputList.length }}</strong>
+          path{{ inputList.length === 1 ? '' : 's' }} listed, at
+          <code>{{ outPath }}</code>.
+        </p>
+        <small class="muted">A folder counts as one path here; it contributes the files inside it, and subfolders only when "Include subfolders" is ticked.</small>
+      </div>
     </template>
   </ToolPage>
 </template>
 
 <style scoped>
 .confirmed {
+  display: grid;
+  gap: var(--space-1);
   border-left: 3px solid var(--accent);
   padding: 8px 12px;
   background: var(--bg-panel);

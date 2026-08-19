@@ -307,7 +307,9 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
 
 <style scoped>
 .page { display: grid; gap: 16px; padding: 16px; max-width: 1100px; }
-.head h1 { font-size: 1.35rem; }
+.head h1 {
+  font-size: 40px;
+}
 .form { display: grid; gap: 12px; }
 .row { display: flex; gap: 10px; flex-wrap: wrap; }
 .summary {
@@ -316,26 +318,26 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
   align-items: baseline;
   flex-wrap: wrap;
   padding: 10px 12px;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  background: var(--bg-panel);
 }
 .counts { display: flex; gap: 8px; flex-wrap: wrap; }
 .pill {
-  font-size: 0.8rem;
+  font-size: 13px;
   padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--rule);
-  color: var(--ink-soft);
+  border-radius: var(--radius-none);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
 }
-.pill[data-tone='ok'] { color: var(--ok); border-color: var(--ok); }
-.pill[data-tone='bad'] { color: var(--critical); border-color: var(--critical); }
+.pill[data-tone='ok'] { color: var(--accent); border-color: var(--accent); }
+.pill[data-tone='bad'] { color: var(--danger); border-color: var(--danger); }
 .notice {
   padding: 10px 12px;
-  border: 1px solid var(--warn);
-  border-radius: 8px;
-  color: var(--warn);
-  font-size: 0.9rem;
+  border: 1px solid var(--accent-warm);
+  border-radius: var(--radius-none);
+  color: var(--accent-warm);
+  font-size: 14px;
 }
 .problems { list-style: none; display: grid; gap: 4px; }
 .handover {
@@ -343,11 +345,16 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
   gap: 10px;
   justify-items: start;
   padding: 16px;
-  border: 1px solid var(--ok);
-  border-radius: 10px;
-  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-none);
+  background: var(--bg-panel);
 }
-.handover h2 { font-size: 1.1rem; color: var(--ok); }
-.session { font-family: var(--mono); font-size: 0.85rem; word-break: break-all; }
-.small { font-size: 0.82rem; }
+.handover h2 {
+  font-family: var(--font-label);
+  font-size: 18px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+.session { font-family: var(--font-body); font-size: 13px; word-break: break-all; }
+.small { font-size: 13px; }
 </style>

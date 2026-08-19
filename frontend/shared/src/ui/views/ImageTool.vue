@@ -118,9 +118,9 @@ function confirm() {
 .confirmed {
   border-left: 3px solid var(--accent);
   padding: 8px 12px;
-  background: var(--surface-2);
+  background: var(--bg-panel);
   border-radius: 0 8px 8px 0;
-  font-size: 0.9rem;
+  font-size: 14px;
 }
-code { font-family: var(--mono); word-break: break-all; }
+code { font-family: var(--font-body); word-break: break-all; }
 </style>

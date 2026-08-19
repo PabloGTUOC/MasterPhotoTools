@@ -1,0 +1,184 @@
+/* Reset, document surface, and the texture layers (§4).
+ *
+ * Everything here is global and unconditional. Component aesthetics live in
+ * their own scoped blocks; this file owns the page itself.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  /* body-md (§2.2). The legibility floor is 12px and body never goes below 13. */
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+  /* Terminal type is designed on a grid; letting the browser synthesise
+   * weights or ligatures undoes that. */
+  font-variant-ligatures: none;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  color: var(--text-heading);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.05;
+}
+
+/* display-lg / display-md (§2.2), down-scaled ~30% on a phone (§7). */
+h1 {
+  font-size: 40px;
+}
+h2 {
+  font-size: 30px;
+}
+h3 {
+  font-family: var(--font-label);
+  font-size: 18px;
+  letter-spacing: 0.1em;
+}
+
+@media (min-width: 768px) {
+  h1 {
+    font-size: 56px;
+  }
+  h2 {
+    font-size: 40px;
+  }
+}
+
+p {
+  margin: 0;
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+}
+
+a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+/* --- scanlines (§4.1) ---------------------------------------------------
+ * One node for the whole application (§9.5). Never duplicated per component,
+ * and never interactive — it sits over everything below the chrome. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: var(--z-scanlines);
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 1px,
+    rgba(0, 0, 0, 0.05) 2px,
+    rgba(0, 0, 0, 0.05) 3px
+  );
+}
+
+/* --- CRT power-on (§4.2): one shot on load, never a loop ---------------- */
+@keyframes crt-on {
+  0% {
+    transform: scale(1, 0.001);
+    filter: brightness(6);
+    opacity: 0;
+  }
+  40% {
+    transform: scale(1, 0.02);
+    filter: brightness(4);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1, 1);
+    filter: brightness(1);
+  }
+}
+
+.crt-boot {
+  animation: crt-on var(--dur-slow) var(--ease) 1;
+}
+
+/* --- blinking cursor (§8). Loading is this, never a spinner (§5.11). ---- */
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.cursor {
+  animation: blink 1s step-end infinite;
+  color: var(--accent);
+}
+
+/* --- grid background (§4.5), opt-in behind main content ----------------- */
+.grid-bg {
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0.4;
+}
+
+/* --- corner brackets (§4.6): technical-drawing marks on a panel --------- */
+.bracket {
+  position: relative;
+}
+
+.bracket::before,
+.bracket::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-color: var(--accent);
+  border-style: solid;
+  pointer-events: none;
+}
+
+.bracket::before {
+  top: 0;
+  left: 0;
+  border-width: 1px 0 0 1px;
+}
+
+.bracket::after {
+  bottom: 0;
+  right: 0;
+  border-width: 0 1px 1px 0;
+}
+
+/* --- VHS aberration (§4.7): the hero title, sparingly ------------------- */
+.aberration {
+  text-shadow: -1px 0 var(--danger), 1px 0 #00e0ff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+  .crt-boot {
+    animation: none;
+  }
+  /* The cursor is the loading indicator, so it must stay visible rather than
+   * stop mid-blink on a hidden frame. */
+  .cursor {
+    animation: none;
+    opacity: 1;
+  }
+}

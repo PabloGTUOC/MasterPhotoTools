@@ -29,13 +29,14 @@ onMounted(async () => {
 
 <template>
   <section class="dash">
-    <header>
-      <h1>PhotoTools</h1>
+    <header class="hero">
+      <span class="hero__kicker">// ARCHIVE TERMINAL //</span>
+      <h1 class="hero__title">PhotoTools</h1>
       <p class="muted">Archive tools for the library on the NAS.</p>
     </header>
 
     <p class="status" :data-ok="reachable === true">
-      <template v-if="reachable === null">Checking the server…</template>
+      <template v-if="reachable === null">Checking the server<span class="cursor">_</span></template>
       <template v-else-if="reachable">Server reachable — version {{ version }}</template>
       <template v-else>Server unreachable. Archive tools will not work.</template>
     </p>
@@ -50,35 +51,85 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.dash { display: grid; gap: 20px; }
-h1 { font-size: 1.6rem; letter-spacing: -0.02em; }
-.status {
-  font-family: var(--mono);
-  font-size: 0.85rem;
-  color: var(--critical);
+.dash {
+  display: grid;
+  gap: var(--space-6);
 }
-.status[data-ok='true'] { color: var(--ok); }
+
+.hero {
+  display: grid;
+  gap: var(--space-2);
+}
+.hero__kicker {
+  font-family: var(--font-label);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+/* display-lg, down-scaled on a phone (§7). Glow is permitted here — it is a
+   heading at display size, not body copy (§2.3). */
+.hero__title {
+  font-size: 48px;
+  color: var(--text-heading);
+  text-shadow: var(--glow-phosphor);
+}
+@media (min-width: 768px) {
+  .hero__title {
+    font-size: 72px;
+  }
+}
+
+.status {
+  font-family: var(--font-label);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--danger);
+}
+.status[data-ok='true'] {
+  color: var(--accent);
+}
+
 .grid {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
   grid-template-columns: 1fr;
 }
 @media (min-width: 34rem) {
-  .grid { grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  }
 }
+
 .card {
   display: grid;
-  gap: 4px;
-  padding: 16px;
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-  background: var(--surface-2);
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: var(--border-hair);
+  border-radius: var(--radius-none);
+  background: var(--bg-elevated);
   text-decoration: none;
   color: inherit;
   /* Comfortable one-handed target on a phone. */
   min-height: 3.5rem;
+  transition: border-color var(--dur-fast) var(--ease);
 }
-.card:hover, .card:focus-visible { border-color: var(--accent); }
-.card-name { font-weight: 600; }
-.card-note { color: var(--ink-soft); font-size: 0.88rem; }
+.card:hover,
+.card:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--glow-phosphor);
+}
+
+.card-name {
+  font-family: var(--font-label);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-heading);
+}
+.card-note {
+  color: var(--text-muted);
+  font-size: 13px;
+}
 </style>

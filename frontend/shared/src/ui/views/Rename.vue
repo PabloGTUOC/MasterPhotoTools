@@ -131,11 +131,21 @@ const leaf = (p: string) => p.split('/').pop() ?? p;
 .prefix-grid { display: grid; gap: 10px; grid-template-columns: 1fr; }
 @media (min-width: 34rem) { .prefix-grid { grid-template-columns: 1fr 1fr; } }
 .plan { display: grid; gap: 10px; }
-.plan h2 { font-size: 1rem; }
-.table-scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 8px; }
-table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 0.82rem; }
-th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
-th { color: var(--ink-soft); font-weight: 600; }
+.plan h2 {
+  font-family: var(--font-label);
+  font-size: 18px;
+  letter-spacing: 0.1em;
+}
+.table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-none); }
+table { border-collapse: collapse; width: 100%; font-family: var(--font-body); font-size: 13px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th {
+  color: var(--text-muted);
+  font-family: var(--font-label);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
 tr:last-child td { border-bottom: none; }
-.skipped { list-style: none; display: grid; gap: 4px; font-size: 0.85rem; color: var(--ink-soft); }
+.skipped { list-style: none; display: grid; gap: 4px; font-size: 13px; color: var(--text-muted); }
 </style>

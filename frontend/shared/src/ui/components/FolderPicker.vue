@@ -157,71 +157,33 @@ watch(
 </template>
 
 <style scoped>
+/* A terminal file browser: bracketed frame, breadcrumb trail, one listing.
+   The entry and crumb faces come from components.css so this picker and the
+   Library screen cannot drift apart. */
 .picker {
   display: grid;
-  gap: 10px;
-  border: 1px solid var(--line, #d8d8d8);
-  border-radius: 10px;
-  padding: 12px;
+  gap: var(--space-3);
+  border: var(--border-hair);
+  border-radius: var(--radius-none);
+  padding: var(--space-3);
+  background: var(--bg-elevated);
 }
-.crumbs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-}
-.crumb {
-  background: none;
-  border: 0;
-  padding: 4px 6px;
-  min-height: 40px;
-  cursor: pointer;
-  text-decoration: underline;
-  font: inherit;
-  color: inherit;
-}
-.crumb + .crumb::before {
-  content: '›';
-  margin-right: 6px;
-  text-decoration: none;
-  display: inline-block;
-}
+
 .entries {
-  list-style: none;
-  margin: 0;
-  padding: 0;
   /* Bounded so the picker cannot push the form's buttons off the screen. */
   max-height: 40vh;
   overflow-y: auto;
 }
-.entry {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-  /* 40px is check:layout's floor for a touch target. */
-  min-height: 40px;
-  padding: 6px 8px;
-  background: none;
-  border: 0;
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.entry-file {
-  cursor: default;
-  opacity: 0.55;
-}
-.entry-name {
-  overflow-wrap: anywhere;
-}
+
 .empty {
-  padding: 8px;
+  padding: var(--space-3);
+  font-family: var(--font-body);
+  font-size: 13px;
 }
+
 .actions {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 </style>

@@ -11,6 +11,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+
 import type {
   ApiClient,
   BrowserEntry,
@@ -24,13 +25,18 @@ import type {
   ImageToolRequest,
   Job,
   JobEvent,
+  JobStatus,
   Plan,
   RemediateRequest,
   RemediationPlan,
   RenameAction,
   RenameRequest,
+  ScanResult,
   TransformRequest,
 } from '@phototools/shared';
+
+/** Statuses a job never leaves again, mirroring `JobStatus::is_terminal`. */
+const TERMINAL: JobStatus[] = ['completed', 'failed', 'interrupted'];
 
 /** The Tauri event `core`'s job runner emits through. */
 const JOB_EVENT = 'phototools://job';
@@ -60,14 +66,14 @@ export class TauriApiClient implements ApiClient {
     return invoke<ServerStatus>('server_status');
   }
 
-  async scanDates(request: DatesScanRequest): Promise<string> {
-    // The desktop scans locally and returns the table directly, so there is no
-    // job to watch. The id is empty, which the UI reads as "nothing to follow".
-    await invoke('scan_dates', {
+  scanDates(request: DatesScanRequest): Promise<ScanResult[]> {
+    // The scan runs locally and writes nothing, so its answer is the table
+    // itself rather than a job to follow. This used to discard that answer and
+    // return an empty id, which the screen read as "nothing to show".
+    return invoke<ScanResult[]>('scan_dates', {
       path: request.path,
       recursive: request.recursive ?? false,
     });
-    return '';
   }
 
   fixDates(request: DatesFixRequest): Promise<string> {
@@ -218,9 +224,39 @@ export class TauriApiClient implements ApiClient {
       })
         .then((stop) => {
           unlisten = stop;
+          if (settled) {
+            stop();
+            return;
+          }
+
           // The job may have finished between the invoke and this listener
-          // attaching, in which case no further event is coming.
-          if (settled) stop();
+          // attaching, in which case no further event is ever coming and a
+          // watcher would wait for one indefinitely — which is what the UI
+          // showed: "starting", and then nothing, for a job already done.
+          //
+          // The server closes the same race for the HTTP transport by
+          // replaying a terminal event to a late subscriber; this is that,
+          // for Tauri. Asking once is enough: a job that is not terminal now
+          // will emit its own events from here on.
+          void this.job(id)
+            .then((job) => {
+              if (settled || !job) return;
+              if (!TERMINAL.includes(job.status)) return;
+              onEvent({
+                id: job.id,
+                kind: job.kind,
+                state: job.status,
+                progress: job.progress,
+                total: job.total,
+                message: job.summary ?? job.error ?? 'done',
+                terminal: true,
+              });
+              finish();
+            })
+            // Not fatal: the listener is attached, so a job still running will
+            // still report. Only the already-finished case is lost, and that
+            // is better than rejecting a watch that may yet succeed.
+            .catch(() => undefined);
         })
         .catch((e) => finish(e instanceof Error ? e : new Error(String(e))));
     });

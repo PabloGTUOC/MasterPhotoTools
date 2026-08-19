@@ -171,6 +171,15 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX IF NOT EXISTS idx_publishes_session ON publishes (session_id);
     CREATE INDEX IF NOT EXISTS idx_publishes_state   ON publishes (state);
     "#,
+    // 6 — a job's closing summary.
+    //
+    // The string a job returns ("dry run: 4 files would be redated") went out
+    // on the live event and nowhere else, so anything that subscribed after
+    // the job finished could only ever be told "done". A preview whose result
+    // is unreadable a second later is not a preview.
+    r#"
+    ALTER TABLE jobs ADD COLUMN summary TEXT;
+    "#,
 ];
 
 /// One provider's stored authorisation.
@@ -504,12 +513,19 @@ impl Ledger {
     }
 
     /// Move a job to a terminal state and stamp `finished_at`.
-    pub fn finish_job(&self, id: &str, status: JobStatus, error: Option<&str>) -> SqlResult<()> {
+    pub fn finish_job(
+        &self,
+        id: &str,
+        status: JobStatus,
+        error: Option<&str>,
+        summary: Option<&str>,
+    ) -> SqlResult<()> {
         self.conn.execute(
             "UPDATE jobs
-                SET state = ?2, error = ?3, finished_at = strftime('%s', 'now')
+                SET state = ?2, error = ?3, summary = ?4,
+                    finished_at = strftime('%s', 'now')
               WHERE id = ?1",
-            (id, status.as_str(), error),
+            (id, status.as_str(), error, summary),
         )?;
         Ok(())
     }
@@ -517,7 +533,7 @@ impl Ledger {
     pub fn get_job(&self, id: &str) -> SqlResult<Option<Job>> {
         self.conn
             .query_row(
-                "SELECT id, kind, state, progress, total, started_at, finished_at, error
+                "SELECT id, kind, state, progress, total, started_at, finished_at, error, summary
                    FROM jobs WHERE id = ?1",
                 [id],
                 Self::row_to_job,
@@ -527,7 +543,7 @@ impl Ledger {
 
     pub fn jobs_with_status(&self, status: JobStatus) -> SqlResult<Vec<Job>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, state, progress, total, started_at, finished_at, error
+            "SELECT id, kind, state, progress, total, started_at, finished_at, error, summary
                FROM jobs WHERE state = ?1 ORDER BY started_at",
         )?;
         let rows = stmt.query_map([status.as_str()], Self::row_to_job)?;
@@ -566,6 +582,7 @@ impl Ledger {
             started_at: row.get(5)?,
             finished_at: row.get(6)?,
             error: row.get(7)?,
+            summary: row.get(8)?,
         })
     }
 
@@ -1213,7 +1230,7 @@ mod tests {
         ledger.insert_job(&job).unwrap();
         ledger.update_job_progress("job-1", 250, 500).unwrap();
         ledger
-            .finish_job("job-1", JobStatus::Completed, None)
+            .finish_job("job-1", JobStatus::Completed, None, Some("1 file renamed"))
             .unwrap();
         let stored = ledger.get_job("job-1").unwrap().unwrap();
         assert_eq!(stored.kind, "date_scan");
@@ -1310,7 +1327,7 @@ mod tests {
             let done = Job::new("job-done", "date_scan", 10);
             ledger.insert_job(&done).unwrap();
             ledger
-                .finish_job("job-done", JobStatus::Completed, None)
+                .finish_job("job-done", JobStatus::Completed, None, None)
                 .unwrap();
         } // process stops here
 
@@ -1354,5 +1371,58 @@ mod tests {
     fn an_unknown_job_is_none_not_an_error() {
         let ledger = Ledger::open_in_memory().unwrap();
         assert!(ledger.get_job("never-existed").unwrap().is_none());
+    }
+
+    /// A job's closing summary has to outlive the event that announced it.
+    ///
+    /// The dry run of a date repair reports what *would* change, and a person
+    /// who opened the screen a second later used to be told only "done".
+    #[test]
+    fn a_finished_jobs_summary_is_readable_after_the_event_has_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(dir.path().join("l.sqlite3")).unwrap();
+
+        let job = Job::new("job-dry", "dates_fix", 4);
+        ledger.insert_job(&job).unwrap();
+        ledger
+            .finish_job(
+                "job-dry",
+                JobStatus::Completed,
+                None,
+                Some("dry run: 4 files would be redated, 0 skipped"),
+            )
+            .unwrap();
+
+        let read = ledger.get_job("job-dry").unwrap().unwrap();
+        assert_eq!(read.status, JobStatus::Completed);
+        assert_eq!(
+            read.summary.as_deref(),
+            Some("dry run: 4 files would be redated, 0 skipped"),
+            "the result of the preview is what the screen has to show"
+        );
+    }
+
+    /// A failure keeps both: the error to explain it, the summary to say how
+    /// far it got.
+    #[test]
+    fn a_failed_job_keeps_its_error_and_its_summary_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(dir.path().join("l.sqlite3")).unwrap();
+
+        ledger
+            .insert_job(&Job::new("job-bad", "rename_apply", 9))
+            .unwrap();
+        ledger
+            .finish_job(
+                "job-bad",
+                JobStatus::Failed,
+                Some("disk full"),
+                Some("disk full"),
+            )
+            .unwrap();
+
+        let read = ledger.get_job("job-bad").unwrap().unwrap();
+        assert_eq!(read.error.as_deref(), Some("disk full"));
+        assert_eq!(read.summary.as_deref(), Some("disk full"));
     }
 }

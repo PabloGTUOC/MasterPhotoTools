@@ -71,6 +71,7 @@ async function apply() {
         placeholder="/mnt/photos/contact.jpg"
         hint="Choosing a folder keeps the file name."
         keep-file-name
+        file-name-fallback="contact.jpg"
         :roots="roots"
         :list="list"
       />

@@ -167,6 +167,7 @@ fn f1_manual_mode_forces_a_supplied_date_and_verifies_it() {
         .plan(&DateRepairParams {
             paths: vec![path.clone()],
             mode: RepairMode::Manual(wanted),
+            recursive: false,
         })
         .unwrap()
         .data;
@@ -192,6 +193,7 @@ fn f1_auto_mode_copies_the_best_metadata_date_to_the_filesystem() {
         .plan(&DateRepairParams {
             paths: vec![path.clone()],
             mode: RepairMode::Auto,
+            recursive: false,
         })
         .unwrap()
         .data;
@@ -216,6 +218,7 @@ fn f1_shift_moves_a_2019_fixture_to_2024() {
         .plan(&DateRepairParams {
             paths: vec![path.clone()],
             mode: RepairMode::Shift("+5:0:0 0:0:0".into()),
+            recursive: false,
         })
         .unwrap()
         .data;
@@ -246,6 +249,7 @@ fn f1_sidecar_mode_takes_its_date_from_a_takeout_json() {
         .plan(&DateRepairParams {
             paths: vec![media.clone()],
             mode: RepairMode::Sidecar,
+            recursive: false,
         })
         .unwrap()
         .data;
@@ -268,6 +272,7 @@ fn f1_reports_files_it_could_not_resolve_rather_than_guessing() {
         .plan(&DateRepairParams {
             paths: vec![bare, missing],
             mode: RepairMode::Auto,
+            recursive: false,
         })
         .unwrap()
         .data;
@@ -289,6 +294,7 @@ fn f1_a_malformed_shift_delta_fails_the_plan_outright() {
     let result = DateRepairTool.plan(&DateRepairParams {
         paths: vec![path],
         mode: RepairMode::Shift("next tuesday".into()),
+        recursive: false,
     });
     assert!(
         result.is_err(),
@@ -305,6 +311,7 @@ fn f1_reports_that_a_platform_without_a_settable_birth_time_only_moved_mtime() {
         .plan(&DateRepairParams {
             paths: vec![path],
             mode: RepairMode::Manual(dt("2022:01:01 00:00:00")),
+            recursive: false,
         })
         .unwrap()
         .data;
@@ -622,6 +629,7 @@ fn planning_never_touches_the_filesystem() {
             .plan(&DateRepairParams {
                 paths: paths.clone(),
                 mode,
+                recursive: false,
             })
             .unwrap();
         assert_eq!(hash_tree(&dir), before, "F1 plan modified the directory");

@@ -157,6 +157,8 @@ pub struct FixDatesArgs {
     pub mode: RepairMode,
     #[serde(default)]
     pub dry_run: bool,
+    #[serde(default)]
+    pub recursive: bool,
 }
 
 #[tauri::command]
@@ -167,6 +169,7 @@ pub fn fix_dates(args: FixDatesArgs, state: State<'_, AppState>) -> CommandResul
     let params = DateRepairParams {
         paths,
         mode: args.mode,
+        recursive: args.recursive,
     };
     let dry_run = args.dry_run;
 

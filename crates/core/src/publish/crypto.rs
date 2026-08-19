@@ -213,7 +213,15 @@ mod tests {
         let stored = c.encrypt("1//0abcdefgRefreshToken").unwrap();
 
         let mut parts: Vec<&str> = stored.split(':').collect();
-        let flipped = parts[2].replacen('a', "b", 1);
+
+        // Flip the first hex digit to a *different* one, whatever it is. The
+        // previous form replaced the first 'a' with 'b', which tampered with
+        // nothing at all when the ciphertext happened to contain no 'a' — and
+        // the nonce is fresh every run, so that was roughly one run in
+        // thirteen where this test passed a ciphertext it had not edited.
+        let (head, tail) = parts[2].split_at(1);
+        let flipped = format!("{}{tail}", if head == "0" { "1" } else { "0" });
+        assert_ne!(flipped, parts[2], "the ciphertext must actually be edited");
         parts[2] = &flipped;
 
         assert!(c.decrypt(&parts.join(":")).is_err());

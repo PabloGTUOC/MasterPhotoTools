@@ -30,6 +30,14 @@ const props = defineProps<{
    * untouched — only the picker's result is rewritten.
    */
   keepFileName?: boolean;
+  /**
+   * The name to use when `keepFileName` is set and the field is still empty.
+   *
+   * Without it, choosing a folder into an empty file field yields the folder
+   * itself, and the tool is then asked to write its output over a directory —
+   * which fails at the filesystem with "Is a directory", far from the cause.
+   */
+  fileNameFallback?: string;
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
@@ -38,8 +46,11 @@ const picking = ref(false);
 
 function choose(path: string) {
   if (props.keepFileName) {
-    const name = props.modelValue.split('/').pop();
-    emit('update:modelValue', name ? `${path}/${name}` : path);
+    const name = props.modelValue.split('/').pop()?.trim() || props.fileNameFallback;
+    // With no name and no fallback the field is left alone rather than being
+    // filled with a directory: a picker must not hand a tool a path it cannot
+    // write to.
+    if (name) emit('update:modelValue', `${path}/${name}`);
   } else {
     emit('update:modelValue', path);
   }

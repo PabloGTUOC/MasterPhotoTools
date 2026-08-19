@@ -25,6 +25,7 @@ import {
   type SessionShots,
   type RenameAction,
   type RenameRequest,
+  type ScanResult,
   type TransformRequest,
 } from './types';
 
@@ -42,7 +43,14 @@ export interface ApiClient {
   health(): Promise<{ status: string; version: string }>;
 
   // F1 — dates
-  scanDates(request: DatesScanRequest): Promise<string>;
+  /**
+   * The date state of every media file under a folder.
+   *
+   * Rows rather than a job id: a scan writes nothing, and its whole value is
+   * the table. Returning an id meant the desktop discarded the rows it had
+   * already computed and the screen had nothing to show.
+   */
+  scanDates(request: DatesScanRequest): Promise<ScanResult[]>;
   fixDates(request: DatesFixRequest): Promise<string>;
 
   // F3 — rename
@@ -217,8 +225,12 @@ export class HttpApiClient implements ApiClient {
     return this.readJson(response, 'the server version');
   }
 
-  scanDates(request: DatesScanRequest): Promise<string> {
-    return this.startJob('/api/tools/dates/scan', request);
+  async scanDates(request: DatesScanRequest): Promise<ScanResult[]> {
+    const response = await this.send('/api/tools/dates/scan', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+    return this.readJson<ScanResult[]>(response, 'a date scan');
   }
 
   fixDates(request: DatesFixRequest): Promise<string> {

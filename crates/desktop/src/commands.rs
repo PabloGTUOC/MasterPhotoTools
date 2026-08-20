@@ -20,7 +20,7 @@ use phototools_core::tools::f5_contact::{ContactSheetParams, ContactSheetTool, S
 use phototools_core::tools::f6_transform::{TargetFormat, TransformParams, TransformTool};
 use phototools_core::tools::f7_border::{BorderStyle, PrintBorderParams, PrintBorderTool};
 use phototools_core::tools::f8_tiff::{TiffToJpegParams, TiffToJpegTool};
-use phototools_core::tools::{f9_browser, Plan, Tool};
+use phototools_core::tools::{self, f9_browser, Plan, Tool};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::State;
@@ -266,11 +266,16 @@ pub fn apply_rename(args: RenameArgs, state: State<'_, AppState>) -> CommandResu
         .jobs
         .spawn("rename_apply", total, move |progress| {
             let plan = BatchRenamerTool.plan(&params)?.data;
+            // The plan is moved into `apply`, so its skips are taken first.
+            let skipped = plan.skipped.clone();
             let summary = BatchRenamerTool.apply(plan, progress)?.data;
-            Ok(format!(
-                "{} renamed, {} failed",
+            Ok(tools::summarise(
                 summary.renamed.len(),
-                summary.failures.len()
+                "renamed",
+                summary.failures.len(),
+                &skipped,
+                // F3 renames whatever it is given; it has no accepted list.
+                &[],
             ))
         })
         .map_err(describe)
@@ -422,11 +427,15 @@ pub fn split(args: SplitArgs, state: State<'_, AppState>) -> CommandResult<Strin
         .jobs
         .spawn("split", r.total, move |progress| {
             let plan = SplitTool.plan(&params)?.data;
+            // The plan is moved into `apply`, so its skips are taken first.
+            let skipped = plan.skipped.clone();
             let summary = SplitTool.apply(plan, progress)?.data;
-            Ok(format!(
-                "{} halves written, {} failed",
+            Ok(tools::summarise(
                 summary.written.len(),
-                summary.failures.len()
+                "halves written",
+                summary.failures.len(),
+                &skipped,
+                &phototools_core::tools::f4_split::ACCEPTED,
             ))
         })
         .map_err(describe)
@@ -448,11 +457,15 @@ pub fn border(args: BorderArgs, state: State<'_, AppState>) -> CommandResult<Str
         .jobs
         .spawn("border", r.total, move |progress| {
             let plan = PrintBorderTool.plan(&params)?.data;
+            // The plan is moved into `apply`, so its skips are taken first.
+            let skipped = plan.skipped.clone();
             let summary = PrintBorderTool.apply(plan, progress)?.data;
-            Ok(format!(
-                "{} bordered, {} failed",
+            Ok(tools::summarise(
                 summary.written.len(),
-                summary.failures.len()
+                "bordered",
+                summary.failures.len(),
+                &skipped,
+                &phototools_core::tools::f7_border::ACCEPTED,
             ))
         })
         .map_err(describe)
@@ -476,11 +489,15 @@ pub fn tiff_to_jpeg(args: TiffArgs, state: State<'_, AppState>) -> CommandResult
         .jobs
         .spawn("tiff_to_jpeg", r.total, move |progress| {
             let plan = TiffToJpegTool.plan(&params)?.data;
+            // The plan is moved into `apply`, so its skips are taken first.
+            let skipped = plan.skipped.clone();
             let summary = TiffToJpegTool.apply(plan, progress)?.data;
-            Ok(format!(
-                "{} pages written, {} failed",
+            Ok(tools::summarise(
                 summary.written.len(),
-                summary.failures.len()
+                "pages written",
+                summary.failures.len(),
+                &skipped,
+                &phototools_core::tools::f8_tiff::ACCEPTED,
             ))
         })
         .map_err(describe)
@@ -511,7 +528,20 @@ pub fn contact_sheet(args: ContactSheetArgs, state: State<'_, AppState>) -> Comm
         .jobs
         .spawn("contact_sheet", total, move |progress| {
             let plan = ContactSheetTool.plan(&params)?.data;
+            // The plan is moved into `apply`, so its skips are taken first.
+            let skipped = plan.skipped.clone();
             let summary = ContactSheetTool.apply(plan, progress)?.data;
+            // The descriptive line is better than the generic one when there
+            // is a sheet; when there is not, only the generic one explains why.
+            if summary.cells == 0 {
+                return Ok(tools::summarise(
+                    0,
+                    "images",
+                    0,
+                    &skipped,
+                    &phototools_core::tools::f5_contact::ACCEPTED,
+                ));
+            }
             Ok(format!(
                 "sheet {}x{} from {} images, {} unreadable",
                 summary.width,
@@ -555,11 +585,15 @@ pub fn transform(args: TransformArgs, state: State<'_, AppState>) -> CommandResu
         .jobs
         .spawn("transform", total, move |progress| {
             let plan = TransformTool.plan(&params)?.data;
+            // The plan is moved into `apply`, so its skips are taken first.
+            let skipped = plan.skipped.clone();
             let summary = TransformTool.apply(plan, progress)?.data;
-            Ok(format!(
-                "{} written, {} failed",
+            Ok(tools::summarise(
                 summary.written.len(),
-                summary.failures.len()
+                "transformed",
+                summary.failures.len(),
+                &skipped,
+                &phototools_core::tools::f6_transform::ACCEPTED,
             ))
         })
         .map_err(describe)

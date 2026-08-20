@@ -16,6 +16,7 @@ use phototools_core::config::Config;
 use phototools_core::error::Error;
 use phototools_core::ingest::{self, Card};
 use phototools_core::jobs::{InMemoryProgress, Progress};
+use phototools_core::tools;
 use phototools_core::tools::{f1_dates, f3_rename, f4_split, f5_contact, f6_transform};
 use phototools_core::tools::{f7_border, f8_tiff, f9_browser, Tool};
 use serde::{Deserialize, Serialize};
@@ -308,11 +309,16 @@ async fn rename_apply(
 
     accept(&state, &auth, "rename_apply", total, move |progress| {
         let plan = f3_rename::BatchRenamerTool.plan(&params)?.data;
+        // The plan is moved into `apply`, so its skips are taken first.
+        let skipped = plan.skipped.clone();
         let summary = f3_rename::BatchRenamerTool.apply(plan, progress)?.data;
-        Ok(format!(
-            "{} renamed, {} failed",
+        Ok(tools::summarise(
             summary.renamed.len(),
-            summary.failures.len()
+            "renamed",
+            summary.failures.len(),
+            &skipped,
+            // F3 renames whatever it is given; it has no accepted list.
+            &[],
         ))
     })
 }
@@ -362,11 +368,15 @@ async fn split(
 
     accept(&state, &auth, "split", r.total, move |progress| {
         let plan = f4_split::SplitTool.plan(&params)?.data;
+        // The plan is moved into `apply`, so its skips are taken first.
+        let skipped = plan.skipped.clone();
         let summary = f4_split::SplitTool.apply(plan, progress)?.data;
-        Ok(format!(
-            "{} halves written, {} failed",
+        Ok(tools::summarise(
             summary.written.len(),
-            summary.failures.len()
+            "halves written",
+            summary.failures.len(),
+            &skipped,
+            &f4_split::ACCEPTED,
         ))
     })
 }
@@ -530,7 +540,20 @@ async fn contact_sheet(
 
     accept(&state, &auth, "contact_sheet", total, move |progress| {
         let plan = f5_contact::ContactSheetTool.plan(&params)?.data;
+        // The plan is moved into `apply`, so its skips are taken first.
+        let skipped = plan.skipped.clone();
         let summary = f5_contact::ContactSheetTool.apply(plan, progress)?.data;
+        // The descriptive line is better than the generic one when there is
+        // a sheet; when there is not, only the generic one explains why.
+        if summary.cells == 0 {
+            return Ok(tools::summarise(
+                0,
+                "images",
+                0,
+                &skipped,
+                &f5_contact::ACCEPTED,
+            ));
+        }
         Ok(format!(
             "sheet {}x{} from {} images, {} unreadable",
             summary.width,
@@ -570,11 +593,15 @@ async fn transform(
 
     accept(&state, &auth, "transform", r.total, move |progress| {
         let plan = f6_transform::TransformTool.plan(&params)?.data;
+        // The plan is moved into `apply`, so its skips are taken first.
+        let skipped = plan.skipped.clone();
         let summary = f6_transform::TransformTool.apply(plan, progress)?.data;
-        Ok(format!(
-            "{} written, {} failed",
+        Ok(tools::summarise(
             summary.written.len(),
-            summary.failures.len()
+            "transformed",
+            summary.failures.len(),
+            &skipped,
+            &f6_transform::ACCEPTED,
         ))
     })
 }
@@ -598,11 +625,15 @@ async fn border(
 
     accept(&state, &auth, "border", r.total, move |progress| {
         let plan = f7_border::PrintBorderTool.plan(&params)?.data;
+        // The plan is moved into `apply`, so its skips are taken first.
+        let skipped = plan.skipped.clone();
         let summary = f7_border::PrintBorderTool.apply(plan, progress)?.data;
-        Ok(format!(
-            "{} bordered, {} failed",
+        Ok(tools::summarise(
             summary.written.len(),
-            summary.failures.len()
+            "bordered",
+            summary.failures.len(),
+            &skipped,
+            &f7_border::ACCEPTED,
         ))
     })
 }
@@ -628,11 +659,15 @@ async fn tiff_to_jpeg(
 
     accept(&state, &auth, "tiff_to_jpeg", r.total, move |progress| {
         let plan = f8_tiff::TiffToJpegTool.plan(&params)?.data;
+        // The plan is moved into `apply`, so its skips are taken first.
+        let skipped = plan.skipped.clone();
         let summary = f8_tiff::TiffToJpegTool.apply(plan, progress)?.data;
-        Ok(format!(
-            "{} pages written, {} failed",
+        Ok(tools::summarise(
             summary.written.len(),
-            summary.failures.len()
+            "pages written",
+            summary.failures.len(),
+            &skipped,
+            &f8_tiff::ACCEPTED,
         ))
     })
 }

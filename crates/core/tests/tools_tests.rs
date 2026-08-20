@@ -715,3 +715,97 @@ fn shift_deltas_round_trip_through_the_public_api() {
         Some(dt("2024:01:02 03:04:05"))
     );
 }
+
+// ---------------------------------------------------------------------------
+// §9.1 — the two performance targets that had no measurement
+// ---------------------------------------------------------------------------
+//
+// Four targets are stated; a 400-shot card scan and a 24 MP resize were
+// measured and these two were not. As with the resize benchmark, the figure is
+// asserted only in a release build — the targets describe optimised code, and a
+// debug number is evidence of nothing.
+
+/// §9.1: a date scan of 500 library files in under five seconds.
+#[test]
+fn benchmark_a_date_scan_of_five_hundred_files() {
+    use phototools_core::tools::f1_dates::scan_dates;
+
+    let f = Fixtures::new();
+    let root = f.path().join("library");
+    fs::create_dir_all(&root).unwrap();
+
+    // Small frames: this measures the metadata path, which §9.1's first rule
+    // says must stay in-process, not the decoder.
+    for i in 0..500 {
+        f.jpeg_with_exif(
+            &format!("library/IMG_{i:04}.jpg"),
+            64,
+            48,
+            "2024:05:01 12:00:00",
+            "PENTAX 17",
+        );
+    }
+
+    let started = std::time::Instant::now();
+    let results = scan_dates(&root, false).unwrap();
+    let elapsed = started.elapsed();
+
+    assert_eq!(results.len(), 500);
+    println!(
+        "500-file date scan: {elapsed:?}  [{} build]",
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
+    );
+
+    #[cfg(not(debug_assertions))]
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "specification §9.1 target is 5 s, measured {elapsed:?}"
+    );
+}
+
+/// §9.1: a contact sheet from 200 images in under twenty seconds.
+#[test]
+fn benchmark_a_contact_sheet_from_two_hundred_images() {
+    use phototools_core::tools::f5_contact::{ContactSheetParams, ContactSheetTool};
+
+    let f = Fixtures::new();
+    let root = f.path().join("shoot");
+    fs::create_dir_all(&root).unwrap();
+
+    // 800×600 is small for a photograph and large enough that the thumbnail is
+    // real work rather than a memcpy.
+    for i in 0..200 {
+        f.jpeg_without_exif(&format!("shoot/frame_{i:03}.jpg"), 800, 600);
+    }
+
+    let out = f.path().join("sheet.jpg");
+    let params = ContactSheetParams::new(vec![root], out.clone());
+
+    let started = std::time::Instant::now();
+    let plan = ContactSheetTool.plan(&params).unwrap().data;
+    let summary = ContactSheetTool
+        .apply(plan, &InMemoryProgress::default())
+        .unwrap()
+        .data;
+    let elapsed = started.elapsed();
+
+    assert_eq!(summary.cells, 200);
+    println!(
+        "200-image contact sheet: {elapsed:?}  [{} build]",
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
+    );
+
+    #[cfg(not(debug_assertions))]
+    assert!(
+        elapsed < std::time::Duration::from_secs(20),
+        "specification §9.1 target is 20 s, measured {elapsed:?}"
+    );
+}

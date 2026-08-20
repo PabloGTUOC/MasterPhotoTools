@@ -257,4 +257,40 @@ mod tests {
         assert_eq!(DEFAULT_MAX_LONG_EDGE, 2048);
         assert_eq!(DEFAULT_QUALITY, 90);
     }
+
+    /// The size cap is a parameter, not a constant.
+    ///
+    /// §F8's 2048 suits scanner output being sent somewhere; a 36 MP camera
+    /// TIFF reduced to it keeps about 8% of its pixels, and until this was
+    /// reachable there was no way to ask for anything else.
+    #[test]
+    fn the_long_edge_cap_is_honoured_rather_than_fixed_at_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("scan.tif");
+        let out = dir.path().join("out");
+
+        // 3000 × 2000: larger than 2048, so the cap has something to do.
+        let img = image::RgbImage::from_pixel(3000, 2000, image::Rgb([120, 130, 140]));
+        image::DynamicImage::ImageRgb8(img).save(&source).unwrap();
+
+        let convert = |edge: u32| {
+            let mut params = TiffToJpegParams::new(vec![source.clone()], out.clone());
+            params.max_long_edge = edge;
+            let plan = TiffToJpegTool.plan(&params).unwrap().data;
+            let summary = TiffToJpegTool
+                .apply(plan, &crate::jobs::InMemoryProgress::default())
+                .unwrap()
+                .data;
+            let written = summary.written.first().unwrap().clone();
+            let decoded = image::open(&written).unwrap();
+            (decoded.width(), decoded.height())
+        };
+
+        assert_eq!(convert(DEFAULT_MAX_LONG_EDGE), (2048, 1365));
+        assert_eq!(
+            convert(3000),
+            (3000, 2000),
+            "at the source size, nothing is lost"
+        );
+    }
 }

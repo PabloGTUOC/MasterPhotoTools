@@ -56,6 +56,23 @@ const settings = ref<SplitSettings>({
 
 const preview = ref<SplitPreview | null>(null);
 
+/**
+ * F7's one parameter, on by default as the tool is.
+ *
+ * MV-4.2 asks whether a genuinely dark photograph is mistaken for a scan
+ * border. Until now there was nothing to turn off when it was.
+ */
+const trimDarkEdges = ref(true);
+
+/**
+ * F8's size and quality, seeded with §F8's defaults.
+ *
+ * 2048 is a distributable size for scanner output — and throws away 92% of a
+ * 36 MP camera TIFF, which was not a choice anybody could make until now.
+ */
+const tiffMaxLongEdge = ref(2048);
+const tiffQuality = ref(90);
+
 /** Preview the first input, which is the one a person is judging. */
 async function previewSplit() {
   const first = inputList.value[0];
@@ -107,8 +124,12 @@ async function apply() {
       props.operation === 'split'
         ? api.split({ ...body, settings: settings.value })
         : props.operation === 'border'
-          ? api.border(body)
-          : api.tiffToJpeg(body);
+          ? api.border({ ...body, trim_dark_edges: trimDarkEdges.value })
+          : api.tiffToJpeg({
+              ...body,
+              max_long_edge: tiffMaxLongEdge.value,
+              quality: tiffQuality.value,
+            });
     page.value?.setJob(await start);
   } catch (e) {
     page.value?.setFailure(e instanceof Error ? e.message : String(e));
@@ -156,6 +177,33 @@ function confirm() {
       />
 
       <label class="checkbox"><input v-model="recursive" type="checkbox" /> Include subfolders</label>
+
+      <fieldset v-if="props.operation === 'tiffToJpeg'" class="field settings">
+        <legend>Output size and quality</legend>
+        <p class="muted">
+          §F8's defaults suit scanner output being sent somewhere. A 36 MP camera TIFF reduced to
+          2048 px keeps about 8% of its pixels — raise the long edge to keep more.
+        </p>
+        <div class="settings__grid">
+          <label class="field">
+            <span>Longest edge (px)</span>
+            <input v-model.number="tiffMaxLongEdge" type="number" min="1" />
+          </label>
+          <label class="field">
+            <span>JPEG quality</span>
+            <input v-model.number="tiffQuality" type="number" min="1" max="100" />
+          </label>
+        </div>
+      </fieldset>
+
+      <label v-if="props.operation === 'border'" class="checkbox">
+        <input v-model="trimDarkEdges" type="checkbox" />
+        Trim dark scan edges first
+      </label>
+      <p v-if="props.operation === 'border'" class="muted">
+        A side is trimmed while more than 70% of a sampled band falls below luma 28, up to 40 px.
+        Turn it off for a photograph that is genuinely dark at the edges.
+      </p>
 
       <fieldset v-if="props.operation === 'split'" class="field settings">
         <legend>Split settings</legend>

@@ -368,6 +368,30 @@ pub fn split_preview(
     })
 }
 
+/// F8's size and quality. Absent means §F8's default: 2048 px, quality 90.
+#[derive(Debug, Deserialize)]
+pub struct TiffArgs {
+    #[serde(flatten)]
+    pub tool: ImageToolArgs,
+    #[serde(default)]
+    pub max_long_edge: Option<u32>,
+    #[serde(default)]
+    pub quality: Option<u8>,
+}
+
+/// F7's one parameter. Everything else about the border is fixed by §F7.
+#[derive(Debug, Deserialize)]
+pub struct BorderArgs {
+    #[serde(flatten)]
+    pub tool: ImageToolArgs,
+    #[serde(default = "yes")]
+    pub trim_dark_edges: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SplitArgs {
     #[serde(flatten)]
@@ -400,10 +424,12 @@ pub fn split(args: SplitArgs, state: State<'_, AppState>) -> CommandResult<Strin
 }
 
 #[tauri::command]
-pub fn border(args: ImageToolArgs, state: State<'_, AppState>) -> CommandResult<String> {
+pub fn border(args: BorderArgs, state: State<'_, AppState>) -> CommandResult<String> {
     let config = state.config();
-    let r = args.resolve(&config)?;
-    let params = PrintBorderParams::new(r.inputs, r.out_dir);
+    let trim = args.trim_dark_edges;
+    let r = args.tool.resolve(&config)?;
+    let mut params = PrintBorderParams::new(r.inputs, r.out_dir);
+    params.trim_dark_edges = trim;
 
     state
         .jobs
@@ -420,10 +446,18 @@ pub fn border(args: ImageToolArgs, state: State<'_, AppState>) -> CommandResult<
 }
 
 #[tauri::command]
-pub fn tiff_to_jpeg(args: ImageToolArgs, state: State<'_, AppState>) -> CommandResult<String> {
+pub fn tiff_to_jpeg(args: TiffArgs, state: State<'_, AppState>) -> CommandResult<String> {
     let config = state.config();
-    let r = args.resolve(&config)?;
-    let params = TiffToJpegParams::new(r.inputs, r.out_dir);
+    let max_long_edge = args.max_long_edge;
+    let quality = args.quality;
+    let r = args.tool.resolve(&config)?;
+    let mut params = TiffToJpegParams::new(r.inputs, r.out_dir);
+    if let Some(edge) = max_long_edge {
+        params.max_long_edge = edge;
+    }
+    if let Some(q) = quality {
+        params.quality = q;
+    }
 
     state
         .jobs

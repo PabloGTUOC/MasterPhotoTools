@@ -14,6 +14,7 @@ import { listen } from '@tauri-apps/api/event';
 
 import type {
   ApiClient,
+  BorderRequest,
   BrowserEntry,
   CardScan,
   CardSummary,
@@ -23,7 +24,6 @@ import type {
   DatesFixRequest,
   DatesScanRequest,
   DeriveRequest,
-  ImageToolRequest,
   Job,
   JobEvent,
   JobStatus,
@@ -36,6 +36,7 @@ import type {
   SplitPreview,
   SplitPreviewRequest,
   SplitRequest,
+  TiffRequest,
   TransformRequest,
 } from '@phototools/shared';
 
@@ -115,11 +116,11 @@ export class TauriApiClient implements ApiClient {
     return invoke<string>('transform', { args: request });
   }
 
-  border(request: ImageToolRequest): Promise<string> {
+  border(request: BorderRequest): Promise<string> {
     return invoke<string>('border', { args: request });
   }
 
-  tiffToJpeg(request: ImageToolRequest): Promise<string> {
+  tiffToJpeg(request: TiffRequest): Promise<string> {
     return invoke<string>('tiff_to_jpeg', { args: request });
   }
 

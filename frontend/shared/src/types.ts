@@ -197,6 +197,26 @@ export interface ContactSheetRequest {
   style?: SheetStyle;
 }
 
+export interface TiffRequest extends ImageToolRequest {
+  /**
+   * Longest edge of the output. §F8's default is 2048 — a distributable size,
+   * which throws away most of a 36 MP camera TIFF.
+   */
+  max_long_edge?: number | null;
+  /** JPEG quality. §F8's default is 90. */
+  quality?: number | null;
+}
+
+export interface BorderRequest extends ImageToolRequest {
+  /**
+   * Trim dark scan edges before placing the image. On by default, as F7 is.
+   *
+   * The one thing about the border that is a choice: everything else — the
+   * 3000px canvas, the 50px margin, the 2% radius — is fixed by §F7.
+   */
+  trim_dark_edges?: boolean;
+}
+
 export interface SplitRequest extends ImageToolRequest {
   settings?: SplitSettings | null;
 }

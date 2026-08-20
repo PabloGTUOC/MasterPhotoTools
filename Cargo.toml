@@ -5,3 +5,30 @@ members = [
     "crates/desktop",
 ]
 resolver = "2"
+
+# Dependencies are optimised even in a debug build.
+#
+# The image work — `tiff` decoding, `fast_image_resize`, `mozjpeg` encoding —
+# happens entirely inside dependencies, and unoptimised it runs an order of
+# magnitude slower. A 36 MP TIFF took **7.0 s** to convert with this section
+# absent. §9.1's budgets (a 24 MP resize and encode in 150 ms) were measured in
+# a release build and are meaningless without it, so `cargo tauri dev` was
+# giving a misleading picture of the application's speed.
+#
+[profile.dev.package."*"]
+opt-level = 3
+
+# `core` is optimised too, and this is the line that actually matters.
+#
+# `fast_image_resize` is generic over its pixel types, so its kernels are
+# **monomorphised into the calling crate** and compile with *our* settings, not
+# the dependency's. Optimising dependencies alone therefore did nothing for the
+# part doing the work: measured on one 36 MP TIFF, the resize took 4.79 s with
+# only `package."*"` set and 0.06 s in release — eighty times.
+#
+# The binaries stay at the default. They hold transport and process lifecycle
+# (G1); no pixel is touched in either, and they are the crates worth stepping
+# through.
+[profile.dev.package.phototools-core]
+opt-level = 3
+

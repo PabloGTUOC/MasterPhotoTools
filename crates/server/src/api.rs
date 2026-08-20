@@ -389,6 +389,8 @@ pub struct ContactSheetRequest {
 /// once.
 #[derive(Debug, Serialize)]
 pub struct SplitPreviewResponse {
+    /// The file this preview is of — the caller may have named a folder.
+    pub source: String,
     pub divider_x: u32,
     pub divider_fraction: f32,
     pub cropped: PreviewImageResponse,
@@ -421,6 +423,7 @@ impl From<f4_split::SplitPreviewImage> for PreviewImageResponse {
 impl From<f4_split::SplitPreviewThumbs> for SplitPreviewResponse {
     fn from(thumbs: f4_split::SplitPreviewThumbs) -> Self {
         Self {
+            source: thumbs.source.display().to_string(),
             divider_x: thumbs.divider_x,
             divider_fraction: thumbs.divider_fraction,
             cropped: thumbs.cropped.into(),
@@ -441,9 +444,12 @@ async fn split_preview(
     State(state): State<AppState>,
     Json(request): Json<SplitPreviewRequest>,
 ) -> Result<Response, ApiError> {
-    let source = resolve_input(&state.config, &request.path)?;
-    let thumbs = f4_split::preview_thumbnails(
-        &source,
+    // The same inputs the apply takes, expanded the same way: a preview of
+    // something the run would not touch is worse than no preview.
+    let inputs = resolve_inputs(&state.config, &request.inputs)?;
+    let thumbs = f4_split::preview_first(
+        &inputs,
+        request.recursive,
         &request.settings.unwrap_or_default(),
         f4_split::PREVIEW_MAX_EDGE,
     )?;
@@ -499,7 +505,9 @@ pub struct SplitRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct SplitPreviewRequest {
-    pub path: String,
+    pub inputs: Vec<String>,
+    #[serde(default)]
+    pub recursive: bool,
     #[serde(default)]
     pub settings: Option<f4_split::SplitSettings>,
 }

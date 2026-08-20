@@ -130,6 +130,11 @@ pub fn preview(source: &std::path::Path, settings: &SplitSettings) -> Result<Spl
 /// in `core`, where the splitting lives, rather than in two transports.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SplitPreviewThumbs {
+    /// The file this preview is of.
+    ///
+    /// Reported because the caller may have named a folder: it needs to know
+    /// which frame it is looking at, not merely that it got one.
+    pub source: PathBuf,
     /// The divider column, in the border-cropped image's own coordinates.
     pub divider_x: u32,
     /// Where the divider falls across the cropped width, 0.0 to 1.0.
@@ -184,12 +189,35 @@ pub fn preview_thumbnails(
     };
 
     Ok(SplitPreviewThumbs {
+        source: source.to_path_buf(),
         divider_x: full.divider_x,
         divider_fraction,
         cropped: reduce(&full.cropped)?,
         a: reduce(&full.a)?,
         b: reduce(&full.b)?,
     })
+}
+
+/// Preview the first file these inputs would process.
+///
+/// The inputs are the same mix of files and folders the apply takes, expanded
+/// the same way — because a preview of something the run would not touch is
+/// worse than no preview. Handing a folder straight to the decoder is how this
+/// failed before: `Is a directory (os error 21)`, from the filesystem, a long
+/// way from the cause.
+pub fn preview_first(
+    inputs: &[PathBuf],
+    recursive: bool,
+    settings: &SplitSettings,
+    max_edge: u32,
+) -> Result<SplitPreviewThumbs, Error> {
+    let (files, _) = crate::tools::expand_inputs(inputs, recursive, &ACCEPTED);
+    let first = files.first().ok_or_else(|| {
+        Error::Config(
+            "Nothing here this tool reads. Check the folder, or tick Include subfolders.".into(),
+        )
+    })?;
+    preview_thumbnails(first, settings, max_edge)
 }
 
 /// Step 1 — scan inward from each edge for the lab's white or black surround.

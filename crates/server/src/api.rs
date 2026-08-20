@@ -485,6 +485,9 @@ pub struct BorderRequest {
     /// Trim dark scan edges before placing the image. Defaults to on, as F7 does.
     #[serde(default = "default_true")]
     pub trim_dark_edges: bool,
+    /// How the canvas looks. Absent means §F7's fixed appearance.
+    #[serde(default)]
+    pub style: Option<f7_border::BorderStyle>,
 }
 
 fn default_true() -> bool {
@@ -583,11 +586,15 @@ async fn border(
 ) -> Result<Response, ApiError> {
     let recursive = request.tool.recursive;
     let trim = request.trim_dark_edges;
+    let style = request.style;
     let r = request.tool.resolve(&state.config)?;
 
     let mut params = f7_border::PrintBorderParams::new(r.inputs, r.out_dir);
     params.recursive = recursive;
     params.trim_dark_edges = trim;
+    if let Some(style) = style {
+        params.style = style;
+    }
 
     accept(&state, &auth, "border", r.total, move |progress| {
         let plan = f7_border::PrintBorderTool.plan(&params)?.data;

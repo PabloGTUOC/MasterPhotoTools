@@ -6,7 +6,7 @@
  * naming exactly what will be written and where.
  */
 import { computed, ref, useTemplateRef } from 'vue';
-import type { SplitPreview, SplitSettings } from '@phototools/shared';
+import type { BorderStyle, SplitPreview, SplitSettings } from '@phototools/shared';
 import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
 import PathListField from '../components/PathListField.vue';
@@ -70,6 +70,39 @@ const trimDarkEdges = ref(true);
  * 2048 is a distributable size for scanner output — and throws away 92% of a
  * 36 MP camera TIFF, which was not a choice anybody could make until now.
  */
+/**
+ * F7's canvas, seeded with §F7's fixed appearance.
+ *
+ * The specification fixes all of this, and the point of fixing it was that a
+ * set of prints looks like a set. These are choices now — the consistency is
+ * the operator's to keep or spend.
+ */
+const borderColour = ref('#ffffff');
+const borderCanvasWidth = ref(3000);
+const borderMargin = ref(50);
+const borderRadiusPercent = ref(2);
+
+/** `#rrggbb` to the bytes `core` takes. */
+function hexToRgb(hex: string): [number, number, number] {
+  const clean = hex.replace('#', '');
+  return [
+    parseInt(clean.slice(0, 2), 16) || 0,
+    parseInt(clean.slice(2, 4), 16) || 0,
+    parseInt(clean.slice(4, 6), 16) || 0,
+  ];
+}
+
+function borderStyle(): BorderStyle {
+  return {
+    canvas_colour: hexToRgb(borderColour.value),
+    canvas_width: borderCanvasWidth.value,
+    min_margin: borderMargin.value,
+    // Shown as a percentage because that is how §F7 states it; sent as the
+    // fraction the tool works in.
+    corner_radius_fraction: borderRadiusPercent.value / 100,
+  };
+}
+
 const tiffMaxLongEdge = ref(2048);
 const tiffQuality = ref(90);
 
@@ -132,7 +165,11 @@ async function apply() {
       props.operation === 'split'
         ? api.split({ ...body, settings: settings.value })
         : props.operation === 'border'
-          ? api.border({ ...body, trim_dark_edges: trimDarkEdges.value })
+          ? api.border({
+              ...body,
+              trim_dark_edges: trimDarkEdges.value,
+              style: borderStyle(),
+            })
           : api.tiffToJpeg({
               ...body,
               max_long_edge: tiffMaxLongEdge.value,
@@ -212,6 +249,32 @@ function confirm() {
         A side is trimmed while more than 70% of a sampled band falls below luma 28, up to 40 px.
         Turn it off for a photograph that is genuinely dark at the edges.
       </p>
+
+      <fieldset v-if="props.operation === 'border'" class="field settings">
+        <legend>Canvas</legend>
+        <p class="muted">
+          §F7 fixes these so a set of prints looks like a set. Changing them is yours to spend:
+          the defaults are the specification's white 3000 px canvas, 50 px margin, 2% radius.
+        </p>
+        <div class="settings__grid">
+          <label class="field">
+            <span>Colour</span>
+            <input v-model="borderColour" type="color" class="colour" />
+          </label>
+          <label class="field">
+            <span>Canvas width (px)</span>
+            <input v-model.number="borderCanvasWidth" type="number" min="1" />
+          </label>
+          <label class="field">
+            <span>Margin (px)</span>
+            <input v-model.number="borderMargin" type="number" min="0" />
+          </label>
+          <label class="field">
+            <span>Corner radius (%)</span>
+            <input v-model.number="borderRadiusPercent" type="number" min="0" max="50" step="0.5" />
+          </label>
+        </div>
+      </fieldset>
 
       <fieldset v-if="props.operation === 'split'" class="field settings">
         <legend>Split settings</legend>
@@ -302,6 +365,14 @@ function confirm() {
 </template>
 
 <style scoped>
+/* A colour well, not a text field: it is the one input here that is a value
+   rather than a number, and it should look like one. */
+.colour {
+  min-height: 44px;
+  padding: var(--space-1);
+  cursor: pointer;
+}
+
 .settings__grid {
   display: grid;
   gap: var(--space-3);

@@ -117,6 +117,24 @@ G8 asks for the reason, not just the addition.
 All three were already in `Cargo.lock` through existing transitive dependencies, so none adds a
 tree that was not being compiled.
 
+### F7's canvas is configurable, where the specification fixes it
+
+§F7 describes "a fixed white canvas": 3000 px wide, a 50 px minimum margin, a
+2% corner radius. The word doing the work is *fixed* — the reason for fixing it
+is that a set of prints then looks like a set, and every post is framed
+identically.
+
+`BorderStyle` now carries the canvas colour, width, margin and radius, and the
+UI offers all four. **The defaults are the specification's values**, so an
+untouched run produces exactly what §F7 describes, and a test asserts that.
+What the specification guaranteed, the operator now has to choose to keep.
+
+Requested deliberately. One implementation detail worth recording: the rounded
+corners are blended against the canvas colour rather than against white, which
+the fixed version could hardcode. A dark canvas blended against white shows a
+pale fringe around every photograph, and that is the only place the change is
+visible if it is done carelessly — a test covers it.
+
 ### F5 has a film-strip layout the specification does not describe
 
 §F5 asks for a grid proof sheet: uniform cells, filename captions, a

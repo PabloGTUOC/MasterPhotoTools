@@ -18,7 +18,7 @@ use phototools_core::tools::f3_rename::{
 use phototools_core::tools::f4_split::{SplitParams, SplitSettings, SplitTool};
 use phototools_core::tools::f5_contact::{ContactSheetParams, ContactSheetTool, SheetStyle};
 use phototools_core::tools::f6_transform::{TargetFormat, TransformParams, TransformTool};
-use phototools_core::tools::f7_border::{PrintBorderParams, PrintBorderTool};
+use phototools_core::tools::f7_border::{BorderStyle, PrintBorderParams, PrintBorderTool};
 use phototools_core::tools::f8_tiff::{TiffToJpegParams, TiffToJpegTool};
 use phototools_core::tools::{f9_browser, Plan, Tool};
 use serde::{Deserialize, Serialize};
@@ -392,6 +392,9 @@ pub struct BorderArgs {
     pub tool: ImageToolArgs,
     #[serde(default = "yes")]
     pub trim_dark_edges: bool,
+    /// How the canvas looks. Absent means §F7's fixed appearance.
+    #[serde(default)]
+    pub style: Option<BorderStyle>,
 }
 
 fn yes() -> bool {
@@ -433,9 +436,13 @@ pub fn split(args: SplitArgs, state: State<'_, AppState>) -> CommandResult<Strin
 pub fn border(args: BorderArgs, state: State<'_, AppState>) -> CommandResult<String> {
     let config = state.config();
     let trim = args.trim_dark_edges;
+    let style = args.style;
     let r = args.tool.resolve(&config)?;
     let mut params = PrintBorderParams::new(r.inputs, r.out_dir);
     params.trim_dark_edges = trim;
+    if let Some(style) = style {
+        params.style = style;
+    }
 
     state
         .jobs

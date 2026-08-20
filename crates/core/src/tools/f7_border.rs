@@ -42,6 +42,8 @@ pub struct PrintBorderParams {
     pub recursive: bool,
     /// Trim dark scan edges before placing the image.
     pub trim_dark_edges: bool,
+    /// How the canvas looks. Defaults to §F7's fixed appearance.
+    pub style: BorderStyle,
     pub out_dir: PathBuf,
 }
 
@@ -51,6 +53,7 @@ impl PrintBorderParams {
             inputs,
             recursive: false,
             trim_dark_edges: true,
+            style: BorderStyle::default(),
             out_dir,
         }
     }
@@ -58,14 +61,54 @@ impl PrintBorderParams {
 
 /// The canvas for an input of a given shape.
 ///
-/// The specification fixes both sizes, so this encodes the *rule* rather than
-/// taking dimensions from the caller — no single pair of edge lengths can
-/// produce both 3000×3750 and 3000×2400.
-pub fn canvas_for(width: u32, height: u32) -> (u32, u32) {
+/// The canvas for an input of this shape, at this width.
+///
+/// This encodes the *rule* rather than taking both dimensions from the caller:
+/// no single pair of edge lengths can produce both 4:5 and 5:4. At the
+/// specification's 3000 px the results are its 3000×3750 and 3000×2400.
+pub fn canvas_for_width(width: u32, height: u32, canvas_width: u32) -> (u32, u32) {
+    let w = canvas_width.max(1);
     if height > width {
-        (CANVAS_WIDTH, PORTRAIT_HEIGHT)
+        // 4:5 — taller than wide.
+        (w, (w as u64 * 5 / 4) as u32)
     } else {
-        (CANVAS_WIDTH, LANDSCAPE_HEIGHT)
+        // 5:4 — wider than tall.
+        (w, (w as u64 * 4 / 5) as u32)
+    }
+}
+
+/// The specification's canvas, at its fixed 3000 px width.
+pub fn canvas_for(width: u32, height: u32) -> (u32, u32) {
+    canvas_for_width(width, height, CANVAS_WIDTH)
+}
+
+/// How the canvas looks.
+///
+/// §F7 fixes all of this — a white canvas, a 50 px margin, a 2% radius, 3000 px
+/// wide — and the defaults here are those values, so an untouched run produces
+/// exactly what the specification describes. They are parameters because a
+/// person asked to choose them; the consistency the fixed version guaranteed is
+/// now theirs to keep or spend.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BorderStyle {
+    /// The canvas the photograph sits on.
+    pub canvas_colour: [u8; 3],
+    /// Canvas width. The height follows from the input's shape.
+    pub canvas_width: u32,
+    /// Smallest gap between the photograph and any edge.
+    pub min_margin: u32,
+    /// Corner radius as a proportion of the placed image's short side.
+    pub corner_radius_fraction: f32,
+}
+
+impl Default for BorderStyle {
+    fn default() -> Self {
+        Self {
+            canvas_colour: [255, 255, 255],
+            canvas_width: CANVAS_WIDTH,
+            min_margin: MIN_MARGIN,
+            corner_radius_fraction: CORNER_RADIUS_FRACTION,
+        }
     }
 }
 
@@ -74,6 +117,7 @@ pub struct PrintBorderAction {
     pub source: PathBuf,
     pub target: PathBuf,
     pub trim_dark_edges: bool,
+    pub style: BorderStyle,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -101,6 +145,7 @@ impl Tool for PrintBorderTool {
                     target: p.out_dir.join(format!("{stem}.jpg")),
                     source,
                     trim_dark_edges: p.trim_dark_edges,
+                    style: p.style,
                 }
             })
             .collect();
@@ -148,11 +193,12 @@ fn border_one(action: &PrintBorderAction) -> Result<(), Error> {
     }
 
     // 2. Choose the canvas from the input's shape.
-    let (canvas_w, canvas_h) = canvas_for(img.width(), img.height());
+    let style = action.style;
+    let (canvas_w, canvas_h) = canvas_for_width(img.width(), img.height(), style.canvas_width);
 
     // 3. Fit inside the minimum margin, enlarging a smaller image to fill it.
-    let available_w = canvas_w.saturating_sub(2 * MIN_MARGIN).max(1);
-    let available_h = canvas_h.saturating_sub(2 * MIN_MARGIN).max(1);
+    let available_w = canvas_w.saturating_sub(2 * style.min_margin).max(1);
+    let available_h = canvas_h.saturating_sub(2 * style.min_margin).max(1);
     let scale =
         (available_w as f64 / img.width() as f64).min(available_h as f64 / img.height() as f64);
     let placed_w = ((img.width() as f64 * scale).floor() as u32).max(1);
@@ -160,11 +206,12 @@ fn border_one(action: &PrintBorderAction) -> Result<(), Error> {
     let placed = image_ops::resize(&img, placed_w, placed_h)?;
 
     // 4. Round the corners, antialiased by a supersampled mask.
-    let radius = (placed_w.min(placed_h) as f32 * CORNER_RADIUS_FRACTION).round() as u32;
+    let radius = (placed_w.min(placed_h) as f32 * style.corner_radius_fraction).round() as u32;
     let masked = rounded_corners(&placed.to_rgba8(), radius);
 
-    // 5. Centre on white.
-    let mut canvas: RgbImage = ImageBuffer::from_pixel(canvas_w, canvas_h, Rgb([255, 255, 255]));
+    // 5. Centre on the canvas.
+    let mut canvas: RgbImage =
+        ImageBuffer::from_pixel(canvas_w, canvas_h, Rgb(style.canvas_colour));
     let x0 = (canvas_w - placed_w) / 2;
     let y0 = (canvas_h - placed_h) / 2;
 
@@ -175,13 +222,16 @@ fn border_one(action: &PrintBorderAction) -> Result<(), Error> {
         }
         let target = canvas.get_pixel_mut(x0 + x, y0 + y);
         for c in 0..3 {
-            target[c] = ((1.0 - alpha) * 255.0 + alpha * pixel[c] as f32)
+            // Blended against the canvas, not against white: a dark canvas
+            // would otherwise show a pale fringe around every rounded corner,
+            // which is the one place this is visible.
+            target[c] = ((1.0 - alpha) * style.canvas_colour[c] as f32 + alpha * pixel[c] as f32)
                 .round()
                 .clamp(0.0, 255.0) as u8;
         }
     }
 
-    // Step 5: centre on white and save at quality 95 with no chroma subsampling.
+    // Save at quality 95 with no chroma subsampling.
     image_ops::write_jpeg_with(
         &DynamicImage::ImageRgb8(canvas),
         &action.target,
@@ -351,5 +401,75 @@ mod tests {
         assert_eq!(TRIM_INSET, 1);
         assert_eq!(MIN_MARGIN, 50);
         assert_eq!(MASK_SUPERSAMPLE, 4);
+    }
+
+    /// The defaults are the specification's canvas, so an untouched run still
+    /// produces exactly what §F7 describes.
+    #[test]
+    fn the_default_style_is_the_specifications_fixed_canvas() {
+        let style = BorderStyle::default();
+        assert_eq!(style.canvas_colour, [255, 255, 255]);
+        assert_eq!(style.canvas_width, CANVAS_WIDTH);
+        assert_eq!(style.min_margin, MIN_MARGIN);
+        assert_eq!(style.corner_radius_fraction, CORNER_RADIUS_FRACTION);
+
+        assert_eq!(canvas_for(2000, 3000), (CANVAS_WIDTH, PORTRAIT_HEIGHT));
+        assert_eq!(canvas_for(3000, 2000), (CANVAS_WIDTH, LANDSCAPE_HEIGHT));
+    }
+
+    /// A different width keeps the two aspect ratios.
+    #[test]
+    fn a_narrower_canvas_keeps_the_four_five_and_five_four_shapes() {
+        assert_eq!(canvas_for_width(2000, 3000, 1000), (1000, 1250));
+        assert_eq!(canvas_for_width(3000, 2000, 1000), (1000, 800));
+    }
+
+    /// The corners are blended against the canvas, not against white.
+    ///
+    /// Blending a rounded corner against white on a black canvas leaves a pale
+    /// fringe around every photograph — the one place the hardcoded colour was
+    /// visible, and the thing a careless version of this change gets wrong.
+    #[test]
+    fn a_dark_canvas_does_not_fringe_the_rounded_corners() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("frame.jpg");
+        let out = dir.path().join("out");
+
+        // A mid-grey photograph, so any pale pixel is the canvas leaking.
+        let img = image::RgbImage::from_pixel(400, 600, image::Rgb([128, 128, 128]));
+        image::DynamicImage::ImageRgb8(img).save(&source).unwrap();
+
+        let mut params = PrintBorderParams::new(vec![source], out.clone());
+        params.style = BorderStyle {
+            canvas_colour: [0, 0, 0],
+            canvas_width: 600,
+            min_margin: 20,
+            corner_radius_fraction: 0.2,
+        };
+
+        let plan = PrintBorderTool.plan(&params).unwrap().data;
+        PrintBorderTool
+            .apply(plan, &crate::jobs::InMemoryProgress::default())
+            .unwrap();
+
+        let written = image::open(out.join("frame.jpg")).unwrap().to_rgb8();
+
+        // On a black canvas holding a mid-grey photograph, a bright pixel can
+        // only be the canvas colour leaking through the corner blend.
+        //
+        // The bound is well above the grey rather than just above it: JPEG at
+        // quality 95 rings around the hard corner edge and reaches 141 against
+        // a 128 flat, which is compression, not fringing. Blending against
+        // white — the bug this guards — puts the corner pixels near 255, so
+        // this still fails decisively if it comes back.
+        let brightest = written
+            .pixels()
+            .map(|p| p[0].max(p[1]).max(p[2]))
+            .max()
+            .unwrap();
+        assert!(
+            brightest < 180,
+            "the canvas is leaking into the corners: brightest pixel {brightest}"
+        );
     }
 }

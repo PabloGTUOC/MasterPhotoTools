@@ -211,8 +211,18 @@ export interface TiffRequest extends ImageToolRequest {
   quality?: number | null;
 }
 
+/** `phototools_core::tools::f7_border::CanvasSizing` */
+export type CanvasSizing = 'FixedCanvas' | 'ImagePlusMargin';
+
 /** `phototools_core::tools::f7_border::BorderStyle` */
 export interface BorderStyle {
+  /**
+   * `FixedCanvas` is §F7's: one size and shape for every output, the
+   * photograph scaled to fit — which discards its resolution.
+   * `ImagePlusMargin` keeps the photograph untouched and grows the canvas
+   * around it.
+   */
+  sizing: CanvasSizing;
   /** The canvas the photograph sits on, as [r, g, b]. */
   canvas_colour: [number, number, number];
   /** Canvas width; the height follows from the input's shape. */

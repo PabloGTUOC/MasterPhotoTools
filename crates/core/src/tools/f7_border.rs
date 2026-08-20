@@ -59,8 +59,6 @@ impl PrintBorderParams {
     }
 }
 
-/// The canvas for an input of a given shape.
-///
 /// The canvas for an input of this shape, at this width.
 ///
 /// This encodes the *rule* rather than taking both dimensions from the caller:
@@ -82,6 +80,25 @@ pub fn canvas_for(width: u32, height: u32) -> (u32, u32) {
     canvas_for_width(width, height, CANVAS_WIDTH)
 }
 
+/// How the canvas is sized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CanvasSizing {
+    /// §F7's canvas: a fixed size and shape, the photograph scaled to fit.
+    ///
+    /// Every output is identical in shape and size, which is the point — it is
+    /// what makes a set look like a set and survives a feed cropping it. The
+    /// price is the photograph's own resolution: a 36 MP frame on a 3000 px
+    /// canvas comes out about 6 MP, and a smaller one is *enlarged* to fill.
+    #[default]
+    FixedCanvas,
+    /// The photograph at its own size, with a margin added around it.
+    ///
+    /// Output is `image + 2 × margin`, and the shape follows the photograph.
+    /// Nothing is rescaled, so nothing is lost — at the cost of the uniformity
+    /// the fixed canvas guarantees. This is the one for printing.
+    ImagePlusMargin,
+}
+
 /// How the canvas looks.
 ///
 /// §F7 fixes all of this — a white canvas, a 50 px margin, a 2% radius, 3000 px
@@ -91,6 +108,8 @@ pub fn canvas_for(width: u32, height: u32) -> (u32, u32) {
 /// now theirs to keep or spend.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct BorderStyle {
+    /// Whether the canvas is a fixed size or follows the photograph.
+    pub sizing: CanvasSizing,
     /// The canvas the photograph sits on.
     pub canvas_colour: [u8; 3],
     /// Canvas width. The height follows from the input's shape.
@@ -104,6 +123,7 @@ pub struct BorderStyle {
 impl Default for BorderStyle {
     fn default() -> Self {
         Self {
+            sizing: CanvasSizing::FixedCanvas,
             canvas_colour: [255, 255, 255],
             canvas_width: CANVAS_WIDTH,
             min_margin: MIN_MARGIN,
@@ -192,18 +212,37 @@ fn border_one(action: &PrintBorderAction) -> Result<(), Error> {
         img = trim_edges(&img);
     }
 
-    // 2. Choose the canvas from the input's shape.
+    // 2. and 3. — the canvas, and the photograph's size on it.
     let style = action.style;
-    let (canvas_w, canvas_h) = canvas_for_width(img.width(), img.height(), style.canvas_width);
+    let (canvas_w, canvas_h, placed) = match style.sizing {
+        CanvasSizing::FixedCanvas => {
+            let (canvas_w, canvas_h) =
+                canvas_for_width(img.width(), img.height(), style.canvas_width);
 
-    // 3. Fit inside the minimum margin, enlarging a smaller image to fill it.
-    let available_w = canvas_w.saturating_sub(2 * style.min_margin).max(1);
-    let available_h = canvas_h.saturating_sub(2 * style.min_margin).max(1);
-    let scale =
-        (available_w as f64 / img.width() as f64).min(available_h as f64 / img.height() as f64);
-    let placed_w = ((img.width() as f64 * scale).floor() as u32).max(1);
-    let placed_h = ((img.height() as f64 * scale).floor() as u32).max(1);
-    let placed = image_ops::resize(&img, placed_w, placed_h)?;
+            // Fit inside the margin, enlarging a smaller image to fill it.
+            let available_w = canvas_w.saturating_sub(2 * style.min_margin).max(1);
+            let available_h = canvas_h.saturating_sub(2 * style.min_margin).max(1);
+            let scale = (available_w as f64 / img.width() as f64)
+                .min(available_h as f64 / img.height() as f64);
+            let placed_w = ((img.width() as f64 * scale).floor() as u32).max(1);
+            let placed_h = ((img.height() as f64 * scale).floor() as u32).max(1);
+            (
+                canvas_w,
+                canvas_h,
+                image_ops::resize(&img, placed_w, placed_h)?,
+            )
+        }
+        CanvasSizing::ImagePlusMargin => {
+            // The photograph is not touched at all: the canvas grows to it.
+            // Nothing is scaled, so nothing is lost, and the shape follows the
+            // photograph rather than a fixed ratio.
+            let canvas_w = img.width() + 2 * style.min_margin;
+            let canvas_h = img.height() + 2 * style.min_margin;
+            (canvas_w, canvas_h, img.clone())
+        }
+    };
+    let placed_w = placed.width();
+    let placed_h = placed.height();
 
     // 4. Round the corners, antialiased by a supersampled mask.
     let radius = (placed_w.min(placed_h) as f32 * style.corner_radius_fraction).round() as u32;
@@ -441,6 +480,7 @@ mod tests {
 
         let mut params = PrintBorderParams::new(vec![source], out.clone());
         params.style = BorderStyle {
+            sizing: CanvasSizing::FixedCanvas,
             canvas_colour: [0, 0, 0],
             canvas_width: 600,
             min_margin: 20,
@@ -470,6 +510,68 @@ mod tests {
         assert!(
             brightest < 180,
             "the canvas is leaking into the corners: brightest pixel {brightest}"
+        );
+    }
+
+    /// Image plus margin keeps every pixel of the photograph.
+    ///
+    /// The fixed canvas rescales to fit — a 36 MP frame on a 3000 px canvas
+    /// comes out near 6 MP — which is right for a feed and wrong for a print.
+    #[test]
+    fn image_plus_margin_keeps_the_photograph_at_its_own_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("frame.jpg");
+        let out = dir.path().join("out");
+
+        let img = image::RgbImage::from_pixel(1200, 800, image::Rgb([90, 110, 130]));
+        image::DynamicImage::ImageRgb8(img).save(&source).unwrap();
+
+        let mut params = PrintBorderParams::new(vec![source.clone()], out.clone());
+        // The trim is off so this measures the sizing rule alone. With it on
+        // the output is two pixels smaller in each dimension, because the 1 px
+        // safety inset is applied to every side whether or not that side was
+        // trimmed — see `docs/known-gaps.md`.
+        params.trim_dark_edges = false;
+        params.style = BorderStyle {
+            sizing: CanvasSizing::ImagePlusMargin,
+            min_margin: 40,
+            ..BorderStyle::default()
+        };
+
+        let plan = PrintBorderTool.plan(&params).unwrap().data;
+        PrintBorderTool
+            .apply(plan, &crate::jobs::InMemoryProgress::default())
+            .unwrap();
+
+        let written = image::open(out.join("frame.jpg")).unwrap();
+        assert_eq!(
+            (written.width(), written.height()),
+            (1200 + 80, 800 + 80),
+            "the canvas grows to the photograph, not the other way round"
+        );
+    }
+
+    /// The fixed canvas still behaves exactly as §F7 describes.
+    #[test]
+    fn the_fixed_canvas_still_rescales_to_its_own_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("frame.jpg");
+        let out = dir.path().join("out");
+
+        let img = image::RgbImage::from_pixel(1200, 800, image::Rgb([90, 110, 130]));
+        image::DynamicImage::ImageRgb8(img).save(&source).unwrap();
+
+        let params = PrintBorderParams::new(vec![source], out.clone());
+        let plan = PrintBorderTool.plan(&params).unwrap().data;
+        PrintBorderTool
+            .apply(plan, &crate::jobs::InMemoryProgress::default())
+            .unwrap();
+
+        let written = image::open(out.join("frame.jpg")).unwrap();
+        assert_eq!(
+            (written.width(), written.height()),
+            (CANVAS_WIDTH, LANDSCAPE_HEIGHT),
+            "landscape input still yields the specification's 5:4 canvas"
         );
     }
 }

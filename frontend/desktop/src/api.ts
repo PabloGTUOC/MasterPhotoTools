@@ -99,7 +99,8 @@ export class TauriApiClient implements ApiClient {
 
   splitPreview(request: SplitPreviewRequest): Promise<SplitPreview> {
     return invoke<SplitPreview>('split_preview', {
-      path: request.path,
+      inputs: request.inputs,
+      recursive: request.recursive ?? false,
       settings: request.settings ?? null,
     });
   }

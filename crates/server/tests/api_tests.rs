@@ -1180,7 +1180,7 @@ async fn a_split_preview_returns_both_halves_and_writes_nothing() {
     let response = reqwest::Client::new()
         .post(format!("{}/api/tools/split/preview", s.base))
         .bearer_auth(good_token())
-        .json(&json!({ "path": scan.display().to_string() }))
+        .json(&json!({ "inputs": [scan.display().to_string()] }))
         .send()
         .await
         .unwrap();
@@ -1249,5 +1249,68 @@ async fn the_border_trim_can_be_turned_off() {
         response.status(),
         202,
         "the flag is accepted rather than rejected as an unknown field"
+    );
+}
+
+/// A folder is expanded for the preview, exactly as the apply expands it.
+///
+/// It was not: the first input went straight to the decoder, so naming a
+/// folder — which the folder picker encourages — answered "Is a directory (os
+/// error 21)" from the filesystem, a long way from the cause.
+#[tokio::test]
+async fn a_split_preview_accepts_a_folder_as_the_apply_does() {
+    let s = start().await;
+
+    let folder = s.root.join("roll");
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut img = image::RgbImage::from_pixel(400, 300, image::Rgb([200, 180, 160]));
+    for y in 0..300 {
+        for x in 190..210 {
+            img.put_pixel(x, y, image::Rgb([4, 4, 4]));
+        }
+    }
+    image::DynamicImage::ImageRgb8(img)
+        .save(folder.join("frame.jpg"))
+        .unwrap();
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/tools/split/preview", s.base))
+        .bearer_auth(good_token())
+        .json(&json!({ "inputs": [folder.display().to_string()] }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200, "a folder is an input, not an error");
+
+    let body: Value = response.json().await.unwrap();
+    assert!(
+        body["source"].as_str().unwrap().ends_with("frame.jpg"),
+        "the preview says which frame it is of: {body:?}"
+    );
+}
+
+/// A folder with nothing readable says so, rather than failing at the decoder.
+#[tokio::test]
+async fn a_split_preview_of_an_empty_folder_explains_itself() {
+    let s = start().await;
+    let folder = s.root.join("empty");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("notes.txt"), b"x").unwrap();
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/tools/split/preview", s.base))
+        .bearer_auth(good_token())
+        .json(&json!({ "inputs": [folder.display().to_string()] }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_ne!(response.status(), 200);
+    let body: Value = response.json().await.unwrap();
+    let message = body["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("Nothing here this tool reads"),
+        "the message names the cause rather than an errno: {message}"
     );
 }

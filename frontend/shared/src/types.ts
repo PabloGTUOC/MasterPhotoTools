@@ -168,6 +168,8 @@ export interface PreviewImage {
 
 /** §F4's preview: the border-cropped whole image and both halves. */
 export interface SplitPreview {
+  /** The file this preview is of — the request may have named a folder. */
+  source: string;
   divider_x: number;
   /** Where the divider falls across the width, 0.0 to 1.0. */
   divider_fraction: number;
@@ -177,7 +179,9 @@ export interface SplitPreview {
 }
 
 export interface SplitPreviewRequest {
-  path: string;
+  /** The same inputs the apply takes: files, folders, or both. */
+  inputs: string[];
+  recursive?: boolean;
   settings?: SplitSettings | null;
 }
 

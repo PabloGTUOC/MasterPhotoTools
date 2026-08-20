@@ -73,17 +73,25 @@ const trimDarkEdges = ref(true);
 const tiffMaxLongEdge = ref(2048);
 const tiffQuality = ref(90);
 
-/** Preview the first input, which is the one a person is judging. */
+/**
+ * Preview the first frame this run would process.
+ *
+ * The whole input list is sent, not the first line: a line may be a folder,
+ * and it is the tool that knows which files inside it it would take.
+ */
 async function previewSplit() {
-  const first = inputList.value[0];
-  if (!first) {
+  if (!inputList.value.length) {
     page.value?.setFailure('Add an input to preview.');
     return;
   }
   busy.value = true;
   page.value?.setFailure(null);
   try {
-    preview.value = await api.splitPreview({ path: first, settings: settings.value });
+    preview.value = await api.splitPreview({
+      inputs: inputList.value,
+      recursive: recursive.value,
+      settings: settings.value,
+    });
     // Seeing where the divider landed *is* the review this tool needs.
     confirmed.value = true;
     page.value?.setReviewed(true);
@@ -250,6 +258,9 @@ function confirm() {
           // DIVIDER AT {{ preview.divider_x }} PX //
           {{ Math.round(preview.divider_fraction * 100) }}% ACROSS
         </h2>
+        <p class="muted" :title="preview.source">
+          Previewing {{ preview.source.split('/').pop() }} — the first frame this run would take.
+        </p>
 
         <p v-if="dividerLooksWrong" class="error">
           That is a long way from the middle. A half-frame pair puts the divider near 50%, so this

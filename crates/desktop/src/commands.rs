@@ -310,6 +310,8 @@ impl ImageToolArgs {
 /// A preview as the front end receives it: images as data URLs it can show.
 #[derive(Debug, Serialize)]
 pub struct SplitPreviewResult {
+    /// The file this preview is of — the caller may have named a folder.
+    pub source: String,
     pub divider_x: u32,
     pub divider_fraction: f32,
     pub cropped: PreviewImage,
@@ -346,20 +348,24 @@ impl From<phototools_core::tools::f4_split::SplitPreviewImage> for PreviewImage 
 /// only blind.
 #[tauri::command]
 pub fn split_preview(
-    path: String,
+    inputs: Vec<String>,
+    recursive: bool,
     settings: Option<SplitSettings>,
     state: State<'_, AppState>,
 ) -> CommandResult<SplitPreviewResult> {
     let config = state.config();
-    let source = resolve_input(&config, &path)?;
-    let thumbs = phototools_core::tools::f4_split::preview_thumbnails(
-        &source,
+    // The same inputs the apply takes, expanded the same way.
+    let inputs = resolve_inputs(&config, &inputs)?;
+    let thumbs = phototools_core::tools::f4_split::preview_first(
+        &inputs,
+        recursive,
         &settings.unwrap_or_default(),
         phototools_core::tools::f4_split::PREVIEW_MAX_EDGE,
     )
     .map_err(describe)?;
 
     Ok(SplitPreviewResult {
+        source: thumbs.source.display().to_string(),
         divider_x: thumbs.divider_x,
         divider_fraction: thumbs.divider_fraction,
         cropped: thumbs.cropped.into(),

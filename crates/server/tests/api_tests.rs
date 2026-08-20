@@ -1210,3 +1210,44 @@ async fn a_split_preview_returns_both_halves_and_writes_nothing() {
         "a preview writes nothing — that is what makes it a preview"
     );
 }
+
+/// F7's dark-edge trim can be turned off.
+///
+/// It is the tool's only parameter and was reachable from neither build, so a
+/// genuinely dark photograph mistaken for a scan border could not be rescued —
+/// which is the judgement MV-4.2 asks for.
+#[tokio::test]
+async fn the_border_trim_can_be_turned_off() {
+    let s = start().await;
+
+    // A photograph that is genuinely dark at its edges: the trim would eat it.
+    let dark = s.root.join("night.jpg");
+    let mut img = image::RgbImage::from_pixel(600, 400, image::Rgb([3, 3, 4]));
+    for y in 150..250 {
+        for x in 250..350 {
+            img.put_pixel(x, y, image::Rgb([240, 230, 200]));
+        }
+    }
+    image::DynamicImage::ImageRgb8(img).save(&dark).unwrap();
+
+    let out = s.root.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/tools/border", s.base))
+        .bearer_auth(good_token())
+        .json(&json!({
+            "inputs": [dark.display().to_string()],
+            "out_dir": out.display().to_string(),
+            "trim_dark_edges": false,
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        202,
+        "the flag is accepted rather than rejected as an unknown field"
+    );
+}

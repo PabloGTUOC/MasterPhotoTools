@@ -8,6 +8,7 @@
 
 import {
   ApiError,
+  type BorderRequest,
   type BrowserEntry,
   type CardValidation,
   type ContactSheetRequest,
@@ -30,6 +31,7 @@ import {
   type SplitPreview,
   type SplitPreviewRequest,
   type SplitRequest,
+  type TiffRequest,
   type TransformRequest,
 } from './types';
 
@@ -81,8 +83,8 @@ export interface ApiClient {
   splitPreview(request: SplitPreviewRequest): Promise<SplitPreview>;
   contactSheet(request: ContactSheetRequest): Promise<string>;
   transform(request: TransformRequest): Promise<string>;
-  border(request: ImageToolRequest): Promise<string>;
-  tiffToJpeg(request: ImageToolRequest): Promise<string>;
+  border(request: BorderRequest): Promise<string>;
+  tiffToJpeg(request: TiffRequest): Promise<string>;
 
   // F9 — storage
   list(path: string): Promise<BrowserEntry[]>;
@@ -293,11 +295,11 @@ export class HttpApiClient implements ApiClient {
     return this.startJob('/api/tools/transform', request);
   }
 
-  border(request: ImageToolRequest): Promise<string> {
+  border(request: BorderRequest): Promise<string> {
     return this.startJob('/api/tools/border', request);
   }
 
-  tiffToJpeg(request: ImageToolRequest): Promise<string> {
+  tiffToJpeg(request: TiffRequest): Promise<string> {
     return this.startJob('/api/tools/tiff-to-jpeg', request);
   }
 

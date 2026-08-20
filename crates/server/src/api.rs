@@ -450,6 +450,41 @@ async fn split_preview(
     Ok(Json(SplitPreviewResponse::from(thumbs)).into_response())
 }
 
+/// An image-tool request carrying F8's size and quality.
+///
+/// §F8 fixes 2048 px and quality 90 for scanner output being sent somewhere,
+/// and both were unreachable — so a 36 MP camera TIFF lost 92% of its pixels
+/// with no way to ask otherwise. Absent means the specification's default.
+#[derive(Debug, Deserialize)]
+pub struct TiffRequest {
+    #[serde(flatten)]
+    pub tool: ImageToolRequest,
+    #[serde(default)]
+    pub max_long_edge: Option<u32>,
+    #[serde(default)]
+    pub quality: Option<u8>,
+}
+
+/// An image-tool request carrying F7's one parameter.
+///
+/// Everything else about the border is fixed by §F7 — the 3000 px canvas, the
+/// 50 px margin, the 2% radius — and deliberately so. This is the only choice
+/// there is, and it was not reachable: a genuinely dark photograph mistaken
+/// for a scan border could not be rescued by turning the trim off, which is
+/// exactly what MV-4.2 asks somebody to watch for.
+#[derive(Debug, Deserialize)]
+pub struct BorderRequest {
+    #[serde(flatten)]
+    pub tool: ImageToolRequest,
+    /// Trim dark scan edges before placing the image. Defaults to on, as F7 does.
+    #[serde(default = "default_true")]
+    pub trim_dark_edges: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// An image-tool request carrying F4's thresholds.
 ///
 /// Flattened so the shape stays the one every image tool shares, with the
@@ -536,13 +571,15 @@ async fn transform(
 async fn border(
     auth: Authenticated,
     State(state): State<AppState>,
-    Json(request): Json<ImageToolRequest>,
+    Json(request): Json<BorderRequest>,
 ) -> Result<Response, ApiError> {
-    let recursive = request.recursive;
-    let r = request.resolve(&state.config)?;
+    let recursive = request.tool.recursive;
+    let trim = request.trim_dark_edges;
+    let r = request.tool.resolve(&state.config)?;
 
     let mut params = f7_border::PrintBorderParams::new(r.inputs, r.out_dir);
     params.recursive = recursive;
+    params.trim_dark_edges = trim;
 
     accept(&state, &auth, "border", r.total, move |progress| {
         let plan = f7_border::PrintBorderTool.plan(&params)?.data;
@@ -558,13 +595,21 @@ async fn border(
 async fn tiff_to_jpeg(
     auth: Authenticated,
     State(state): State<AppState>,
-    Json(request): Json<ImageToolRequest>,
+    Json(request): Json<TiffRequest>,
 ) -> Result<Response, ApiError> {
-    let recursive = request.recursive;
-    let r = request.resolve(&state.config)?;
+    let recursive = request.tool.recursive;
+    let max_long_edge = request.max_long_edge;
+    let quality = request.quality;
+    let r = request.tool.resolve(&state.config)?;
 
     let mut params = f8_tiff::TiffToJpegParams::new(r.inputs, r.out_dir);
     params.recursive = recursive;
+    if let Some(edge) = max_long_edge {
+        params.max_long_edge = edge;
+    }
+    if let Some(q) = quality {
+        params.quality = q;
+    }
 
     accept(&state, &auth, "tiff_to_jpeg", r.total, move |progress| {
         let plan = f8_tiff::TiffToJpegTool.plan(&params)?.data;

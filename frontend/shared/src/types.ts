@@ -211,6 +211,18 @@ export interface TiffRequest extends ImageToolRequest {
   quality?: number | null;
 }
 
+/** `phototools_core::tools::f7_border::BorderStyle` */
+export interface BorderStyle {
+  /** The canvas the photograph sits on, as [r, g, b]. */
+  canvas_colour: [number, number, number];
+  /** Canvas width; the height follows from the input's shape. */
+  canvas_width: number;
+  /** Smallest gap between the photograph and any edge. */
+  min_margin: number;
+  /** Corner radius as a proportion of the placed image's short side. */
+  corner_radius_fraction: number;
+}
+
 export interface BorderRequest extends ImageToolRequest {
   /**
    * Trim dark scan edges before placing the image. On by default, as F7 is.
@@ -219,6 +231,8 @@ export interface BorderRequest extends ImageToolRequest {
    * 3000px canvas, the 50px margin, the 2% radius — is fixed by §F7.
    */
   trim_dark_edges?: boolean;
+  /** How the canvas looks. Absent means §F7's fixed appearance. */
+  style?: BorderStyle | null;
 }
 
 export interface SplitRequest extends ImageToolRequest {

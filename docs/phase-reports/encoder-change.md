@@ -67,6 +67,11 @@ the tools and read the properties back with `exiftool`:
 
 **Performance: 463 ms → 203 ms. The 150 ms target is still missed by 53 ms.**
 
+> **Later note (2026-08-20).** These figures stand as taken, on the Linux container this phase was
+> built on. Re-measured in release on an Apple Silicon Mac the same operation is **97.8 ms**, inside
+> the target — the hardware differs, nothing here was changed. See
+> [`known-gaps.md`](../known-gaps.md#91--the-four-performance-targets-per-machine).
+
 | Stage | Before | After |
 |---|---|---|
 | Resize 6000×4000 → 3872×2581 | 128 ms | 128 ms |

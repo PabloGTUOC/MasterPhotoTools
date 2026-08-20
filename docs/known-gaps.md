@@ -8,16 +8,39 @@ limitation, recorded where it was found rather than left to be rediscovered.
 
 ---
 
+## Performance, measured
+
+### §9.1 — the four performance targets, per machine
+
+Re-measured 2026-08-20 in a release build on an Apple Silicon Mac. All four are met **there**;
+that is a statement about a machine, not a verdict about the project.
+
+| Target | Budget | Measured |
+|---|---|---|
+| 400-frame card scan | < 10 s | **32 ms** |
+| Date scan of 500 library files | < 5 s | **8.4 ms** |
+| Contact sheet from 200 images | < 20 s | **749 ms** |
+| Resize and encode one 24 MP JPEG | < 150 ms | **97.8 ms** |
+
+Two of those had never been measured. §9.1 states four targets and only the card scan and the
+resize had benchmarks; the date scan and the contact sheet were added when this was re-measured.
+All four assert only in a release build and print in debug — the targets describe optimised code,
+and a debug figure is evidence of nothing.
+
+**This entry previously read "Target 150 ms. Actual 203 ms", reported as a missed criterion.** That
+figure was honestly taken, but on the Linux container the earlier phases were built on. It is 97.8
+ms on the Mac the ingest actually runs on. Nothing was optimised to achieve that — the hardware
+differs. If the number matters for the server, it needs measuring on the NAS.
+
+The history is worth keeping: it was 463 ms with the `image` crate's encoder, and the mozjpeg
+change ([`phase-reports/encoder-change.md`](phase-reports/encoder-change.md)) took 260 ms out of it.
+
+The card scan's 32 ms is on 64×48 fixtures rather than camera files. **MV-8.7** exists to get the
+real figure and warns that a slow reader may exceed the ten seconds.
+
+---
+
 ## Missed acceptance criteria
-
-### §9.1 — 24 MP resize and encode, 150 ms
-
-**Target 150 ms. Actual 203 ms.** Reported rather than relaxed.
-
-Was 463 ms with the `image` crate's encoder; the mozjpeg change
-([`phase-reports/encoder-change.md`](phase-reports/encoder-change.md)) took 260 ms out of it and
-still misses by 53 ms. The remaining cost is split between decode and resize rather than encode, so
-closing it means attacking a different part of the pipeline than the one already replaced.
 
 ### F1 — four of seven date tags cannot be read from a file
 

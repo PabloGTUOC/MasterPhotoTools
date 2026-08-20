@@ -6,7 +6,12 @@
  * naming exactly what will be written and where.
  */
 import { computed, ref, useTemplateRef } from 'vue';
-import type { BorderStyle, SplitPreview, SplitSettings } from '@phototools/shared';
+import type {
+  BorderStyle,
+  CanvasSizing,
+  SplitPreview,
+  SplitSettings,
+} from '@phototools/shared';
 import { api } from '@host/api';
 import ToolPage from '../components/ToolPage.vue';
 import PathListField from '../components/PathListField.vue';
@@ -77,6 +82,7 @@ const trimDarkEdges = ref(true);
  * set of prints looks like a set. These are choices now — the consistency is
  * the operator's to keep or spend.
  */
+const borderSizing = ref<CanvasSizing>('FixedCanvas');
 const borderColour = ref('#ffffff');
 const borderCanvasWidth = ref(3000);
 const borderMargin = ref(50);
@@ -94,6 +100,7 @@ function hexToRgb(hex: string): [number, number, number] {
 
 function borderStyle(): BorderStyle {
   return {
+    sizing: borderSizing.value,
     canvas_colour: hexToRgb(borderColour.value),
     canvas_width: borderCanvasWidth.value,
     min_margin: borderMargin.value,
@@ -252,16 +259,33 @@ function confirm() {
 
       <fieldset v-if="props.operation === 'border'" class="field settings">
         <legend>Canvas</legend>
+
+        <label class="radio">
+          <input v-model="borderSizing" type="radio" value="FixedCanvas" />
+          Fixed canvas — every output the same size and shape, the photograph scaled to fit
+        </label>
+        <label class="radio">
+          <input v-model="borderSizing" type="radio" value="ImagePlusMargin" />
+          Image plus margin — the photograph at its own size, the canvas grown around it
+        </label>
+
         <p class="muted">
-          §F7 fixes these so a set of prints looks like a set. Changing them is yours to spend:
-          the defaults are the specification's white 3000 px canvas, 50 px margin, 2% radius.
+          <template v-if="borderSizing === 'FixedCanvas'">
+            §F7's canvas: 4:5 for portrait, 5:4 for landscape, so a set looks like a set and a feed
+            cannot crop it unpredictably. The photograph is rescaled to fit — a 36 MP frame on a
+            3000 px canvas comes out near 6 MP, and a smaller one is enlarged.
+          </template>
+          <template v-else>
+            Nothing is rescaled, so nothing is lost, and the shape follows the photograph. The
+            canvas width is ignored — the output is the image plus the margin on every side.
+          </template>
         </p>
         <div class="settings__grid">
           <label class="field">
             <span>Colour</span>
             <input v-model="borderColour" type="color" class="colour" />
           </label>
-          <label class="field">
+          <label v-if="borderSizing === 'FixedCanvas'" class="field">
             <span>Canvas width (px)</span>
             <input v-model.number="borderCanvasWidth" type="number" min="1" />
           </label>

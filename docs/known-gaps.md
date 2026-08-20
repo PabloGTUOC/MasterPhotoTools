@@ -104,19 +104,6 @@ invented. Blocks **MV-14.1**.
 Recorded because a reader comparing the two should not have to work out which
 of them moved.
 
-### Dependencies beyond §2.6
-
-G8 asks for the reason, not just the addition.
-
-| Crate | Where | Why |
-|---|---|---|
-| `base64` | `server`, `desktop` | F4's preview carries three images across a process boundary — an HTTP response or a Tauri command result — and both front ends put them straight into an `<img src>`. Data URLs avoid a second round trip per image, and a preview that needed three more requests for something looked at once would be worse. |
-| `image` | `server`, dev only | One test builds a two-panel fixture with a known divider so the preview route can be asserted against a real image rather than a fabricated JSON body. |
-| `tauri-plugin-autostart` | `desktop` | Launch at login (build plan Phase 14). §2.6 names no mechanism and the macOS one is a LaunchAgent. |
-
-All three were already in `Cargo.lock` through existing transitive dependencies, so none adds a
-tree that was not being compiled.
-
 ### F7's canvas is configurable, where the specification fixes it
 
 §F7 describes "a fixed white canvas": 3000 px wide, a 50 px minimum margin, a
@@ -134,6 +121,19 @@ corners are blended against the canvas colour rather than against white, which
 the fixed version could hardcode. A dark canvas blended against white shows a
 pale fringe around every photograph, and that is the only place the change is
 visible if it is done carelessly — a test covers it.
+
+### Dependencies beyond §2.6
+
+G8 asks for the reason, not just the addition.
+
+| Crate | Where | Why |
+|---|---|---|
+| `base64` | `server`, `desktop` | F4's preview carries three images across a process boundary — an HTTP response or a Tauri command result — and both front ends put them straight into an `<img src>`. Data URLs avoid a second round trip per image, and a preview that needed three more requests for something looked at once would be worse. |
+| `image` | `server`, dev only | One test builds a two-panel fixture with a known divider so the preview route can be asserted against a real image rather than a fabricated JSON body. |
+| `tauri-plugin-autostart` | `desktop` | Launch at login (build plan Phase 14). §2.6 names no mechanism and the macOS one is a LaunchAgent. |
+
+All three were already in `Cargo.lock` through existing transitive dependencies, so none adds a
+tree that was not being compiled.
 
 ### F5 has a film-strip layout the specification does not describe
 
@@ -187,6 +187,25 @@ existed, was built by CI, and had nothing to serve it outside Vite's development
 Closed in Phase 14 rather than left: the deployed container is the first place it would have
 mattered, and it would have read as "the deployment is broken" rather than as an unimplemented line
 of the specification.
+
+### F7 trims a pixel from every edge, trimmed or not
+
+§F7's step 1 reads "up to a maximum of 40 px, plus a 1 px safety inset".
+`trim_dark_edges` applies that inset to all four sides unconditionally, in the
+`Bounds` it returns — so a photograph with no dark edge anywhere still loses one
+pixel from each side. A test pins it deliberately (`bounds.right == 59` on a
+60-wide buffer with nothing dark on the right), so this is somebody's reading of
+the wording rather than an oversight.
+
+It was invisible while the canvas was fixed, because the photograph is rescaled
+to fit regardless. It is visible now: `ImagePlusMargin` promises the photograph
+untouched, and with the trim on the output is two pixels smaller in each
+dimension than the arithmetic says.
+
+Both readings of "plus a 1 px safety inset" are defensible — a safety margin
+around a trim that happened, or an unconditional inset. Left as it is, and the
+inset can be avoided by turning the trim off. Deciding it belongs with whoever
+owns the specification (G9).
 
 ### §7 lists neither the `published` nor the `sessions` table
 

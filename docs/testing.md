@@ -35,8 +35,8 @@ machine, the problem is the environment, not the phase you are about to test.
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # expect 467 passed
-cargo test -p phototools-core   # expect 400 passed — G2, core in isolation
+cargo test --workspace          # expect 504 passed
+cargo test -p phototools-core   # expect 423 passed — G2, core in isolation
 ```
 
 Front ends:
@@ -61,6 +61,12 @@ npm --prefix frontend/desktop run check:transport
 
 > The `target/` directory reaches **20 GB or so** on a full debug build — `rawler` and rustls'
 > `aws-lc-sys` account for most of it. Budget the disk.
+
+> **The first build is slow on purpose.** `Cargo.toml` optimises dependencies *and*
+> `phototools-core` even in the dev profile. Without it a 36 MP TIFF takes 7 s to convert rather
+> than 0.26 s, because `fast_image_resize` is generic and its kernels compile inside `core` — so
+> optimising dependencies alone does almost nothing. Any timing taken without that section is
+> meaningless.
 
 ## 3. Configuration — read this before the first run
 

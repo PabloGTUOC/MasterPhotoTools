@@ -7,9 +7,15 @@ and maintain a photo library on a NAS.
 
 **Phases 0–14 are built and pass their gates.** Every phase of the build plan is closed.
 
-The active job is **manual verification on a Mac** — 50 numbered checks that could not be settled on
-a Linux container with no camera, no NAS and no Google account. All 50 are actionable now that
-Phase 14 exists.
+The active job is **using the application on a Mac and fixing what that finds.** Two sessions of
+working through the tabs with real photographs turned up sixteen defects that no test had caught —
+a rename that renamed the folder instead of the photographs, a metadata reader that silently
+returned nothing for camera TIFFs, tools that reported success having done nothing. Most shared one
+cause: **the tools had only ever been exercised with typed file paths, and the folder pickers made
+pointing at a folder the normal gesture.**
+
+The numbered checks in [`manual-verification.md`](docs/manual-verification.md) remain the
+structured half of that work — 51 of them, all actionable.
 
 | Read this | For |
 |---|---|
@@ -56,8 +62,8 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 467 passing
-cargo test -p phototools-core   # 400 passing — G2
+cargo test --workspace          # 504 passing
+cargo test -p phototools-core   # 423 passing — G2
 ```
 
 Front ends:
@@ -81,6 +87,11 @@ npm --prefix frontend/desktop run check:transport
 slower or unwindows it fails them.
 
 MSRV is **1.80**, enforced by clippy. `std::iter::repeat_n` and friends are too new.
+
+**`Cargo.toml` optimises dependencies *and* `phototools-core` in the dev profile.** Without it a
+36 MP TIFF took 7 s to convert instead of 0.26 s — and optimising dependencies alone was not
+enough, because `fast_image_resize` is generic and its kernels are monomorphised into `core`. Any
+performance figure taken without that section is meaningless.
 
 ## Shape
 
@@ -109,12 +120,45 @@ In short:
   implement.
 - `shared/src/ui/components/` — a **library**. Transport-free: props in, events out, never
   `@host/api`. This is what makes them measurable on their own.
+  `FolderPicker`, `PathField` and `PathListField` are the path controls every tool uses: they take
+  `roots` and a `list` function as props rather than reaching for a client, which is why they work
+  over HTTP, over Tauri and in a harness. `useRoots` is the view-side composable that supplies
+  them.
 - `web/src/views/` and `desktop/src/views/` — screens that genuinely belong to one application.
   `Publish` is web-only (the Google refresh token lives on one machine); `Ingest` is desktop-only
   (the card reader is on the Mac).
 
 A capability that exists in the type system and fails at runtime is worse than one the type system
 never offered. Do not add methods to `ApiClient` that one transport has to throw for.
+
+## The design language
+
+Both front ends are styled to a retro-brutalist terminal aesthetic. It is not decoration: several
+of its rules will be broken by accident by anyone who does not know them.
+
+`frontend/shared/src/ui/styles/` holds it, behind the single `style.css` both applications import:
+
+| File | Owns |
+|---|---|
+| `tokens.css` | Every colour, font, space, radius, duration and z-index. **Components reference tokens, never a raw hex.** |
+| `fonts.css` | VT323, Share Tech Mono, IBM Plex Mono, Orbitron — **self-hosted**, 88 KB of woff2 |
+| `base.css` | Document surface, scanlines, CRT power-on, blink cursor, corner brackets |
+| `components.css` | Buttons, terminal inputs, field labels, badges, directory listings, breadcrumbs |
+
+The rules that matter:
+
+- **Dark is canonical**, on bare `:root` rather than behind a preference query. Light is opt-in
+  under `[data-theme="light"]` and is never the default.
+- **Border-radius above 2px is prohibited.** Depth comes from borders and luminance; there are no
+  drop shadows, and the only "shadow" is a phosphor or amber glow.
+- **Fonts are self-hosted, not linked.** A CDN stylesheet falls back to system monospace whenever
+  the machine is offline — which for the desktop application is exactly when somebody is travelling
+  with a card reader (MV-7.3 expects it to work with the server off).
+- **No glow on body text or small type.** It is for headings at display size, active navigation and
+  status only; at chip size it smears the glyph that carries the meaning.
+- **Form controls stay at 16px**, the one deliberate departure from the type scale: iOS zooms the
+  viewport when a focused field is smaller, and `check:layout` asserts every control clears 40px.
+- Scanlines are **one** `body::after` for the whole application, never duplicated per component.
 
 ## Conventions that are load-bearing
 
@@ -133,7 +177,8 @@ never offered. Do not add methods to `ApiClient` that one transport has to throw
 
 ## Commit and branch
 
-- One branch per phase. Current: `phase/14-packaging`.
+- One branch per phase while phases were being built. Phase 14 closed the last of them, and work
+  since has gone straight to `main` at the user's instruction.
 - Imperative subject under 72 characters; the body explains **why**, referencing the requirement
   (`F14`, `G6`, `§9.2`).
 - Do not put a model identifier in commits, PR bodies or code comments.

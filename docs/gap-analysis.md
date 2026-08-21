@@ -4,12 +4,18 @@
 **Commit audited:** `82533b7` ("Gemini first temp") — the only substantive commit in the repository.
 **Method:** every source file read; `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt` run locally; CI history checked on GitHub.
 
-> **Status update.** This document records the state at `82533b7` and is kept as the baseline.
-> Phases 0–5 have since been closed; see [`phase-reports/`](phase-reports/). In particular the two
-> findings this document called out as most severe are fixed: **G6 is now wired at the API boundary**
-> (Phase 5) and **the G4 violation in the derivation worker is gone** (Phase 2). F1–F9 are
-> implemented and the server exposes §8's routes. Everything from F10 onward — ingest, validation,
-> remediation, RAW, publish, dedup — is still open, as are both front ends.
+> **Status update (2026-08-21).** This document records the state at `82533b7` and is kept as the
+> baseline — its findings are not rewritten as they are fixed, because the point of it is what was
+> true then.
+>
+> **All fifteen phases are now closed**, F1–F18 are implemented, both front ends are built and the
+> server image deploys. Every finding below has been addressed; the two this document called most
+> severe were fixed early — **G6 is wired at the API boundary** (Phase 5) and **the G4 violation in
+> the derivation worker is gone** (Phase 2). CI is green and the gates it lists as failing all pass.
+>
+> For where things actually stand, read [`../README.md`](../README.md) and
+> [`known-gaps.md`](known-gaps.md); for what remains to be checked by a person,
+> [`manual-verification.md`](manual-verification.md).
 
 ---
 

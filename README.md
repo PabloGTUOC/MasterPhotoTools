@@ -31,14 +31,20 @@ separate systems.
 
 **Phases 0–14 are built.** Every phase of the build plan is closed.
 
-Everything that can be settled by a test has been: 467 tests across the workspace, 400 of them in
-`phototools-core` with no binary crate present. Both front ends typecheck and build, and the web
-UI's layout and the ingest grid's performance are measured in a real browser rather than asserted.
-The server image builds and the container passes its health check; deployment to the NAS itself is
-still a human step.
+504 tests across the workspace, 423 of them in `phototools-core` with no binary crate present.
+Both front ends typecheck and build; the web UI's layout and the ingest grid's performance are
+measured in a real browser rather than asserted. The server image builds and the container passes
+its health check — deploying it to the NAS is still a human step.
 
-What is left is **manual verification** — 50 numbered checks needing a Mac, a camera, a NAS, a
-Google account or somebody's judgement about how a photograph looks. Start at
+**The tests were never the hard part.** Two sessions of actually using the application on a Mac,
+with real photographs, found sixteen defects none of them had caught: a rename that renamed the
+folder rather than the photographs inside it, a metadata reader that silently reported no date for
+camera TIFFs that plainly carried one, several tools that reported success having done nothing at
+all. Most had a single cause — every tool had only ever been exercised with typed file paths, and
+adding folder pickers made pointing at a folder the ordinary thing to do.
+
+What is left is more of that, plus the structured half: **51 numbered checks** needing a Mac, a
+camera, a NAS, a Google account or somebody's judgement about how a photograph looks. Start at
 [`docs/testing.md`](docs/testing.md).
 
 ## Documents

@@ -33,20 +33,37 @@ established from a machine with no camera, no Mac, no NAS and no Google account.
 | A Firebase project | 6.2 | 1 |
 | Real photographs, and your eyes | 2, 4, 9, 10 | 15 |
 
-**51 checks in all, and all of them are actionable** now that Phase 14 exists. The suggested order,
-and why, is in [`testing.md`](testing.md#5-suggested-order).
+**51 checks in all, and all of them are actionable.** Four are done — MV-2.1, MV-7.1, MV-7.2 and
+MV-7.3 — and **three of those four found defects**, which is the argument for doing the rest. The
+suggested order, and why, is in [`testing.md`](testing.md#5-suggested-order).
+
+> **These checks are not the only way to find things.** Sixteen defects were found in two sessions
+> simply by using the tabs with real photographs — a rename that renamed the folder, tools that
+> reported success having done nothing, a metadata reader that returned nothing for files that
+> plainly carried dates. Most had one cause: every tool had only ever been given typed file paths,
+> and the folder pickers made pointing at a folder the ordinary gesture. **Point things at folders.**
 
 ---
 
 ## Phase 2 — Media layer
 
-- [ ] **MV-2.1 — Read metadata from real files from each camera body.**
+- [x] **MV-2.1 — Read metadata from real files from each camera body.**
       The fixture generator writes its own TIFF/IFD structures rather than using a camera file.
       `exiftool` and `nom-exif` both read them correctly, but maker-note-heavy RAW containers are a
       different proposition.
       **Run:** for a few real files, compare `read_meta` against `exiftool -s <file>`.
       **Pass:** capture date, camera and dimensions agree.
-      **Result:**
+      **Result:** **Performed 2026-08-21 on Nikon D810 TIFFs, and it found a defect.** `read_meta`
+      returned nothing at all — no date, no camera, 0×0 — for files `exiftool` reads
+      `DateTimeOriginal 2025:10:03 12:51:27` from. `nom-exif`'s streaming reader opens the file and
+      then fails part-way through its IFD (`Incomplete(Size(3809))`), and the failure was being
+      turned into an empty result indistinguishable from a file with no metadata. Every TIFF on a
+      card would have looked undated to F12.
+      Fixed: a streaming failure is retried with the file in memory, which parses correctly. The
+      same files now read capture `2025-10-03T12:51:27`, camera `NIKON D810`, 7360×4912, agreeing
+      with `exiftool`.
+      **Still to do for this check:** the other camera bodies, and a genuine RAW container rather
+      than a TIFF — the maker-note case this check was written for is not yet covered.
 
 - [ ] **MV-2.2 — Check the four date tags that cannot be read yet.**
       `nom-exif` 3.6 exposes `EXIF:DateTimeOriginal`, `EXIF:CreateDate` and a single collapsed
@@ -118,21 +135,43 @@ and why, is in [`testing.md`](testing.md#5-suggested-order).
 
 ## Phase 7 — Desktop shell · needs a Mac
 
-- [ ] **MV-7.1 — The app builds and launches on macOS.** *(do this one first — it gates the rest)*
+- [x] **MV-7.1 — The app builds and launches on macOS.** *(do this one first — it gates the rest)*
       **Run:** `cargo tauri dev` from `crates/desktop`, or
       `npm --prefix frontend/desktop run build` then `cargo tauri build`.
       **Pass:** a window opens with the sidebar and the tool routes.
-      **Result:**
+      **Result:** **Passes, after three defects that each stopped it.** `beforeDevCommand` resolved
+      its path from the parent of `crates/desktop`, so the front end was never built;
+      `icons/icon.icns` and `icon.ico` are 0-byte placeholders and referencing the empty `.icns`
+      aborted the process at launch (`NSImage::initWithData(..).expect("creating icon")`); and both
+      `vite.config.ts` files set `server.fs.allow` without the package root, so the dev server
+      refused its own `index.html`. All fixed. `cargo tauri dev` has since opened the window
+      reliably, dozens of times.
+      **Not covered:** `cargo tauri build` — the bundle path is MV-14.1 and is still blocked on a
+      real icon.
 
-- [ ] **MV-7.2 — An F1 date scan through the running app.**
+- [x] **MV-7.2 — An F1 date scan through the running app.**
       The scan itself is tested headlessly; the `invoke` round trip and the rendering are not.
       **Pass:** the table appears with plausible dates.
-      **Result:**
+      **Result:** **The table did not exist.** The desktop's `scan_dates` command returned the rows
+      and its TypeScript wrapper discarded them, returning an empty job id; the server counted them
+      into a summary and dropped them; and `Dates.vue` had nowhere to put them. "Scan only" was
+      therefore a no-op with no output at all.
+      `scanDates` now returns `ScanResult[]` on both transports and the view renders file, metadata
+      date with the tag that supplied it, filesystem date with whether it is a birth or modification
+      time, and a per-file state carrying a mark as well as a colour. Confirmed against 39 Nikon
+      TIFFs, which read plausible dates once MV-2.1's reader defect was fixed.
 
-- [ ] **MV-7.3 — The app survives the server being off.**
+- [x] **MV-7.3 — The app survives the server being off.**
       **Run:** stop `phototools-server`, then launch the app.
       **Pass:** it starts, shows "Server offline" with a reason, and the local tools still run.
-      **Result:**
+      **Result:** **Passes.** The app runs with the server stopped and every local tool works —
+      most of this session's testing was done that way.
+      Two things were fixed along the way. The reason given was useless: any unreachable answer read
+      as "Server offline", including a 404 from an entirely different service on port 3000, which
+      sent somebody to restart a server that was already running. It now distinguishes "nothing
+      answered at <url>" from "something is listening but is not PhotoTools". And the server address
+      was held only in memory, so every launch returned to the default — it now persists, with the
+      token in the Keychain rather than beside it.
 
 - [ ] **MV-7.4 — The refresh token round-trips through the macOS Keychain.**
       `keyring` has no usable backend in a headless Linux container, so `credentials.rs` is only

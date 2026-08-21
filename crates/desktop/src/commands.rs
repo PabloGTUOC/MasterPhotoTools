@@ -206,11 +206,17 @@ pub fn fix_dates(args: FixDatesArgs, state: State<'_, AppState>) -> CommandResul
                     plan.skipped.len()
                 ));
             }
+            // The dry-run branch above reports its skips; this one did not,
+            // so "0 verified, 0 failed" was all a person saw when every file
+            // had been skipped for want of a readable date.
+            let skipped = plan.skipped.clone();
             let summary = DateRepairTool.apply(plan, progress)?.data;
-            Ok(format!(
-                "{} verified, {} failed",
+            Ok(tools::summarise(
                 summary.verified_count(),
-                summary.failures.len()
+                "redated and verified",
+                summary.failures.len(),
+                &skipped,
+                &[],
             ))
         })
         .map_err(describe)

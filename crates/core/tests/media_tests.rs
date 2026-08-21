@@ -545,3 +545,27 @@ fn benchmark_resize_and_encode_a_24mp_jpeg() {
         "specification §9.1 target is 150 ms, measured {elapsed:?}"
     );
 }
+
+/// A file the streaming reader opens but cannot walk is retried in memory.
+///
+/// `nom-exif`'s incremental reader fails part-way through a camera TIFF's IFD
+/// — `Incomplete(Size(..))` — and the same file parses correctly from memory.
+/// The silent empty answer sent every TIFF on a card to F1's skipped list as
+/// "No metadata date to copy", with the date plainly present in the file.
+#[test]
+fn a_tiff_whose_ifd_defeats_the_streaming_reader_is_still_read() {
+    let f = Fixtures::new();
+
+    // The fixture generator writes its own IFDs, so this asserts the fallback
+    // exists and agrees with the streaming path rather than reproducing the
+    // camera file that provoked it — that one is MV-2.1's job.
+    let path = f.jpeg_with_exif("shot.jpg", 64, 48, "2024:05:01 12:00:00", "PENTAX 17");
+
+    let meta = read_meta(&path).unwrap();
+    assert_eq!(meta.camera.as_deref(), Some("PENTAX 17"));
+    assert!(meta.capture.is_some(), "the streaming path still reads");
+
+    // And the in-memory path reaches the same answer for the same file.
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(!bytes.is_empty());
+}

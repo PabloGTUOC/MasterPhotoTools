@@ -231,18 +231,63 @@ pub fn read_meta(path: &Path) -> Result<MediaMeta, Error> {
     Ok(read_image_meta(path))
 }
 
+/// Parse metadata with the whole file in memory.
+///
+/// The fallback for a file the streaming reader opens but cannot walk. It costs
+/// the file's size in memory — 103 MB for a camera TIFF — which is why it is
+/// only reached after the streaming attempt has failed.
+fn read_image_meta_from_memory(path: &Path) -> MediaMeta {
+    use nom_exif::{MediaParser, MediaSource};
+
+    let Ok(bytes) = std::fs::read(path) else {
+        return MediaMeta::empty();
+    };
+    // `from_memory` with the unified `parse_exif`, not the deprecated
+    // `from_bytes` / `parse_exif_from_bytes` pair the crate is removing in v4.
+    let Ok(source) = MediaSource::from_memory(bytes) else {
+        return MediaMeta::empty();
+    };
+    let mut parser = MediaParser::new();
+    match parser.parse_exif(source) {
+        Ok(iter) => collect_exif(iter),
+        Err(_) => MediaMeta::empty(),
+    }
+}
+
 fn read_image_meta(path: &Path) -> MediaMeta {
-    use nom_exif::{ExifTag, MediaParser, MediaSource};
+    use nom_exif::{MediaParser, MediaSource};
 
     let mut parser = MediaParser::new();
     let source = match MediaSource::open(path) {
         Ok(s) => s,
         Err(_) => return MediaMeta::empty(),
     };
+
+    // The streaming reader cannot parse every file it can open. A camera TIFF
+    // fails part-way through its IFD — `Incomplete(Size(..))`, nom asking for
+    // bytes the incremental source did not hand it — while the same file parses
+    // correctly from memory. So a failure here is retried against the whole
+    // file rather than reported as "no metadata": the dates are demonstrably
+    // there, and a silent empty answer sent every one of them to the skipped
+    // list as "No metadata date to copy".
+    //
+    // Retried, not taken first: reading is the common path, this costs the
+    // file's size in memory, and §9.1's card scan budget is written against the
+    // streaming reader.
     let iter = match parser.parse_exif(source) {
         Ok(i) => i,
-        Err(_) => return MediaMeta::empty(),
+        Err(_) => return read_image_meta_from_memory(path),
     };
+
+    collect_exif(iter)
+}
+
+/// Walk an EXIF iterator into a [`MediaMeta`].
+///
+/// Shared by the streaming and in-memory paths so the two cannot disagree
+/// about which tag wins — F1's preference order is the whole point of this.
+fn collect_exif(iter: impl IntoIterator<Item = nom_exif::ExifIterEntry>) -> MediaMeta {
+    use nom_exif::ExifTag;
 
     let mut candidates: HashMap<TagSource, String> = HashMap::new();
     let mut meta = MediaMeta::empty();

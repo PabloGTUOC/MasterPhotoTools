@@ -131,6 +131,16 @@ fn sort_key(path: &std::path::Path, order: RenameOrder) -> SortKey {
 
 pub struct BatchRenamerTool;
 
+/// Whether a folder should contribute this entry.
+///
+/// A leading dot is the Unix convention for "not part of the visible contents",
+/// and on macOS `.DS_Store` is in practically every folder a person has opened.
+fn is_hidden(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with('.'))
+}
+
 impl Tool for BatchRenamerTool {
     type Params = BatchRenameParams;
     type Action = BatchRenameAction;
@@ -180,6 +190,20 @@ impl Tool for BatchRenamerTool {
                         skipped.push(Skip {
                             file: child.to_string_lossy().to_string(),
                             reason: "Subfolder — list it directly to rename what is inside".into(),
+                        });
+                    } else if is_hidden(&child) {
+                        // F3 renames any file type on purpose — it has no
+                        // accepted-extensions list, because a photograph can be
+                        // in any format. That makes `.DS_Store` a candidate: it
+                        // was taking sequence number 01 and shifting every
+                        // photograph by one, as well as being renamed itself.
+                        //
+                        // A dotfile named explicitly is still honoured; this
+                        // only governs what a *folder* contributes, where
+                        // nobody asked for it by name.
+                        skipped.push(Skip {
+                            file: child.to_string_lossy().to_string(),
+                            reason: "Hidden file — name it directly to rename it".into(),
                         });
                     } else {
                         inputs.push(child);
@@ -471,5 +495,81 @@ mod tests {
             "the subfolder must be reported, not silently ignored: {:?}",
             plan.skipped
         );
+    }
+
+    /// A folder does not contribute its hidden files.
+    ///
+    /// `.DS_Store` is in practically every folder on a Mac, and F3 renames any
+    /// file type by design — so it was renamed *and* it took sequence number
+    /// 01, shifting every photograph by one.
+    #[test]
+    fn a_folder_does_not_contribute_its_hidden_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("roll");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join(".DS_Store"), b"x").unwrap();
+        std::fs::write(folder.join("a.jpg"), b"y").unwrap();
+        std::fs::write(folder.join("b.jpg"), b"z").unwrap();
+
+        let plan = BatchRenamerTool
+            .plan(&BatchRenameParams {
+                paths: vec![folder],
+                date: None,
+                subject: Some("Roll".into()),
+                camera: None,
+                film: None,
+                order: RenameOrder::Numeric,
+            })
+            .unwrap()
+            .data;
+
+        assert_eq!(
+            plan.actions.len(),
+            2,
+            "the two photographs, and nothing else"
+        );
+        assert!(
+            plan.actions
+                .iter()
+                .all(|a| !a.source.ends_with(".DS_Store")),
+            "a hidden file must never be a rename source: {:?}",
+            plan.actions
+        );
+        assert!(
+            plan.skipped.iter().any(|s| s.file.ends_with(".DS_Store")),
+            "and it is reported rather than silently dropped: {:?}",
+            plan.skipped
+        );
+
+        // The sequence starts at the first photograph, not at the dotfile.
+        let targets: Vec<String> = plan
+            .actions
+            .iter()
+            .map(|a| a.target.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(targets, vec!["Roll-01.jpg", "Roll-02.jpg"]);
+    }
+
+    /// A hidden file named directly is still renamed: the person asked for it.
+    #[test]
+    fn a_hidden_file_named_explicitly_is_still_honoured() {
+        let dir = tempfile::tempdir().unwrap();
+        let hidden = dir.path().join(".hidden.jpg");
+        std::fs::write(&hidden, b"x").unwrap();
+
+        let plan = BatchRenamerTool
+            .plan(&BatchRenameParams {
+                paths: vec![hidden.clone()],
+                date: None,
+                subject: Some("Named".into()),
+                camera: None,
+                film: None,
+                order: RenameOrder::Numeric,
+            })
+            .unwrap()
+            .data;
+
+        assert_eq!(plan.actions.len(), 1, "naming it is asking for it");
+        assert_eq!(plan.actions[0].source, hidden);
     }
 }

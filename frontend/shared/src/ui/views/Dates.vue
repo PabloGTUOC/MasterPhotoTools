@@ -190,7 +190,11 @@ function stamp(value: string | null): string {
           // {{ plan.actions.length }} WOULD BE REDATED // {{ plan.skipped.length }} SKIPPED
         </h2>
 
-        <p v-if="!plan.actions.length" class="muted">
+        <p v-if="!plan.actions.length && plan.skipped.length" class="muted">
+          Nothing would change, because none of these files could be read for a date. The reasons
+          are listed below.
+        </p>
+        <p v-else-if="!plan.actions.length" class="muted">
           Nothing would change. Every file already carries the date this mode resolves to.
         </p>
 

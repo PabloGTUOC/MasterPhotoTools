@@ -26,6 +26,11 @@ export function useRoots(): { roots: Ref<string[]>; failure: Ref<string | null> 
     .catch((e: unknown) => {
       // Not fatal: the path can still be typed. The picker says what it knows.
       failure.value = e instanceof Error ? e.message : String(e);
+      // And not permanent: forget the attempt so the next view to ask tries
+      // again. Caching a failure for the life of the page meant one refused
+      // request — during sign-in, or with the server briefly down — left every
+      // picker empty until a reload.
+      asked = null;
     });
 
   return { roots, failure };

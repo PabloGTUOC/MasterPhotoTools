@@ -43,6 +43,18 @@ let auth: Auth | null = null;
 
 export const user: Ref<User | null> = ref(null);
 export const authReady = ref(false);
+
+/**
+ * Resolves once Firebase has decided who is signed in.
+ *
+ * On a fresh page load the session is restored asynchronously, so
+ * `auth.currentUser` is null for the first moments. Anything that needs a token
+ * has to wait for this rather than read `currentUser` and conclude "nobody".
+ */
+let resolveReady: () => void;
+const authSettled: Promise<void> = new Promise((resolve) => {
+  resolveReady = resolve;
+});
 /** True when the build has no Firebase configuration to sign in against. */
 export const isConfigured = ref(false);
 
@@ -52,6 +64,7 @@ export function initAuth(): void {
     // Not an error: a build without credentials should still run and say why.
     isConfigured.value = false;
     authReady.value = true;
+    resolveReady();
     return;
   }
 
@@ -62,6 +75,9 @@ export function initAuth(): void {
   onAuthStateChanged(auth, (current) => {
     user.value = current;
     authReady.value = true;
+    // Fires with `null` when nobody is signed in, which is just as much an
+    // answer as a user — either way the waiting is over.
+    resolveReady();
   });
 }
 
@@ -82,6 +98,12 @@ export async function signOutOfPhotoTools(): Promise<void> {
  */
 export const tokenProvider: TokenProvider = {
   async getToken(forceRefresh = false): Promise<string | null> {
+    // Wait for the session to be restored before concluding there is none.
+    // Reading `currentUser` on a fresh load answers null, and the request then
+    // goes out unauthenticated and is refused — which looked like the folders
+    // disappearing on refresh.
+    await authSettled;
+
     const current = auth?.currentUser;
     if (!current) return null;
     return current.getIdToken(forceRefresh);

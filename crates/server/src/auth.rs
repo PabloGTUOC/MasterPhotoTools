@@ -257,6 +257,18 @@ pub async fn verify_token(config: &AuthConfig, token: &str) -> Result<Claims, Au
         .iter()
         .any(|uid| uid == &data.claims.sub)
     {
+        // The uid is logged because this is the first thing anybody hits when
+        // setting the server up: the account is real, the token is valid, and
+        // the only missing step is putting the uid in ALLOWED_UIDS. Without
+        // this, finding it means hunting through the Firebase console for a
+        // column that is usually off-screen.
+        //
+        // A uid is an identifier, not a credential — it grants nothing on its
+        // own, and the token that carried it is not logged.
+        tracing::warn!(
+            uid = %data.claims.sub,
+            "refused: this uid is not in ALLOWED_UIDS. Add it to admit this account."
+        );
         return Err(AuthError {
             code: "not_authorized",
             message: "This account is not on the allow-list for this library".into(),

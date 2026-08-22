@@ -6,7 +6,6 @@ import App from './App.vue';
 import ContactSheet from '@ui/views/ContactSheet.vue';
 import Dates from '@ui/views/Dates.vue';
 import ImageTool from '@ui/views/ImageTool.vue';
-import Library from '@ui/views/Library.vue';
 import Rename from '@ui/views/Rename.vue';
 import Transform from '@ui/views/Transform.vue';
 
@@ -19,8 +18,9 @@ import Ingest from './views/Ingest.vue';
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/', component: Library },
-    { path: '/ingest', component: Ingest },
+    // Ingest is the landing screen: §2.3 puts the card reader on this machine,
+    // and reading a card is what the desktop application is for.
+    { path: '/', component: Ingest },
     { path: '/dates', component: Dates },
     { path: '/rename', component: Rename },
     {

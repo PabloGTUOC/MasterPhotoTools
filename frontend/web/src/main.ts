@@ -7,7 +7,6 @@ import ContactSheet from '@ui/views/ContactSheet.vue';
 import Dashboard from '@ui/views/Dashboard.vue';
 import Dates from '@ui/views/Dates.vue';
 import ImageTool from '@ui/views/ImageTool.vue';
-import Library from '@ui/views/Library.vue';
 import Rename from '@ui/views/Rename.vue';
 import Transform from '@ui/views/Transform.vue';
 
@@ -19,7 +18,6 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', component: Dashboard },
-    { path: '/library', component: Library },
     { path: '/publish', component: Publish },
     { path: '/dates', component: Dates },
     { path: '/rename', component: Rename },

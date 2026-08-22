@@ -6,7 +6,6 @@ const version = ref<string | null>(null);
 const reachable = ref<boolean | null>(null);
 
 const tools = [
-  { to: '/library', name: 'Library', note: 'Browse the archive' },
   { to: '/dates', name: 'Dates', note: 'Scan and repair capture dates' },
   { to: '/rename', name: 'Rename', note: 'Batch rename to a sortable scheme' },
   { to: '/split', name: 'Half-frame split', note: 'Separate two-up film scans' },

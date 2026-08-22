@@ -158,8 +158,8 @@ watch(
 
 <style scoped>
 /* A terminal file browser: bracketed frame, breadcrumb trail, one listing.
-   The entry and crumb faces come from components.css so this picker and the
-   Library screen cannot drift apart. */
+   The entry and crumb faces live in components.css rather than here, so every
+   picker in the application looks the same without each restating it. */
 .picker {
   display: grid;
   gap: var(--space-3);

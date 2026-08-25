@@ -133,8 +133,18 @@ pub fn downscale_to_max_edge(img: &DynamicImage, max_edge: u32) -> Result<Dynami
 /// h′ = floor(h × scale)
 /// ```
 ///
-/// Returns `None` when the image is already within the ceiling.
+/// Returns `None` when the image is already within the ceiling, and when there
+/// is no ceiling at all.
+///
+/// **Zero means no resolution ceiling.** Publishing is limited by file size far
+/// more often than by pixel count, and a photographer who wants the full frame
+/// kept has to be able to say so. Without this, zero would compute a scale of
+/// zero and reduce every image to a single pixel — a magic value that has to be
+/// handled rather than merely documented.
 pub fn dimensions_for_megapixels(w: u32, h: u32, max_megapixels: u32) -> Option<(u32, u32)> {
+    if max_megapixels == 0 {
+        return None;
+    }
     let pixels = w as f64 * h as f64;
     let ceiling = max_megapixels as f64 * 1_000_000.0;
     if pixels <= ceiling {

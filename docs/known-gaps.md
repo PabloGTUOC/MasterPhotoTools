@@ -127,6 +127,27 @@ invented. Blocks **MV-14.1**.
 Recorded because a reader comparing the two should not have to work out which
 of them moved.
 
+### The resolution ceiling defaults to off, where §F12 sets 10 MP
+
+§F12 gives two independent ceilings — `max_megapixels` (10) and
+`max_output_bytes` (10 MB) — and both are still implemented and still tested.
+What changed is the default: `max_megapixels` is now **0, meaning no ceiling**.
+
+What matters for publishing is the size of the file. A 40 MP frame that already
+fits inside the byte cap is a frame worth keeping whole, and resizing it to
+10 MP throws away three quarters of it to satisfy a limit nothing is enforcing.
+Setting `MAX_MEGAPIXELS` restores a ceiling, and the Ingest screen offers both
+per card, so one roll can differ from the installation's default.
+
+Zero is handled explicitly in the three places that consult it — validation
+(F12), derivation (F14) and remediation (F13) — rather than merely documented:
+computing a scale from a ceiling of zero would otherwise reduce every image to a
+single pixel.
+
+Tests that exercise the resolution rule now **state** the ceiling they are
+testing instead of inheriting it. The assertions are unchanged; a test of
+behaviour at ten megapixels sets ten.
+
 ### F7's canvas is configurable, where the specification fixes it
 
 §F7 describes "a fixed white canvas": 3000 px wide, a 50 px minimum margin, a

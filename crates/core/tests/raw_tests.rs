@@ -219,13 +219,19 @@ fn a_derivative_over_the_ceiling_is_resized_and_keeps_its_date() {
     );
 
     let out = f.path().join("derived");
+    // The ceiling is stated rather than inherited: the default is now zero, no
+    // ceiling at all, and this test is about what happens when there is one.
+    let thresholds = Thresholds {
+        max_megapixels: 10,
+        ..Thresholds::default()
+    };
     let summary = derive_batch(
         &[DerivationRequest {
             source: raw,
             stem: "IMG_0001".into(),
         }],
         &out,
-        &Thresholds::default(),
+        &thresholds,
         &progress(),
     )
     .unwrap();

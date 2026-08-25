@@ -721,6 +721,14 @@ pub struct CardRequest {
     pub path: String,
 }
 
+/// Validation takes the ceilings with it; a scan has none to take.
+#[derive(Debug, Deserialize)]
+pub struct ValidateRequest {
+    pub path: String,
+    #[serde(default)]
+    pub thresholds: Option<ThresholdOverrides>,
+}
+
 /// Scan a card (F11). Any directory is accepted — build plan §6.3.
 async fn ingest_scan(
     auth: Authenticated,
@@ -786,13 +794,53 @@ pub struct ClockOffsetResponse {
     pub affected: usize,
 }
 
+/// Per-session overrides for F12's two ceilings.
+///
+/// Absent means the configured default. `max_megapixels: Some(0)` means no
+/// resolution ceiling — publishing is limited by file size, and a frame inside
+/// the byte cap is worth keeping whole. A decision about one card, not about
+/// the installation, which is why it travels with the request.
+#[derive(Debug, Default, Deserialize)]
+pub struct ThresholdOverrides {
+    #[serde(default)]
+    pub max_megapixels: Option<u32>,
+    #[serde(default)]
+    pub max_output_bytes: Option<u64>,
+}
+
+impl ThresholdOverrides {
+    fn over(
+        &self,
+        base: &phototools_core::config::Thresholds,
+    ) -> phototools_core::config::Thresholds {
+        let mut t = base.clone();
+        if let Some(mp) = self.max_megapixels {
+            t.max_megapixels = mp;
+        }
+        if let Some(bytes) = self.max_output_bytes {
+            t.max_output_bytes = bytes;
+        }
+        t
+    }
+}
+
+fn session_thresholds(
+    config: &Config,
+    overrides: &Option<ThresholdOverrides>,
+) -> phototools_core::config::Thresholds {
+    match overrides {
+        Some(o) => o.over(&config.thresholds),
+        None => config.thresholds.clone(),
+    }
+}
+
 /// Validate a card against the three rules (F12).
 ///
 /// Synchronous: validation reads no pixels, so it is fast even on a full card.
 async fn ingest_validate(
     _auth: Authenticated,
     State(state): State<AppState>,
-    Json(request): Json<CardRequest>,
+    Json(request): Json<ValidateRequest>,
 ) -> Result<Response, ApiError> {
     let root = resolve_input(&state.config, &request.path)?;
     let card = Card::at(&root)?;
@@ -801,7 +849,7 @@ async fn ingest_validate(
     let validation = ingest::validate(
         &scan.shots,
         chrono::Utc::now().naive_utc(),
-        &state.config.thresholds,
+        &session_thresholds(&state.config, &request.thresholds),
     );
 
     let groups = validation
@@ -857,6 +905,9 @@ async fn ingest_validate(
 
 #[derive(Debug, Deserialize)]
 pub struct RemediateRequest {
+    /// F12's ceilings for this card. Absent means the configured default.
+    #[serde(default)]
+    pub thresholds: Option<ThresholdOverrides>,
     pub path: String,
     pub failure: String,
     pub action: String,
@@ -915,16 +966,16 @@ async fn ingest_remediate(
     };
 
     let scan = ingest::scan_card(&card, &InMemoryProgress::new())?;
-    let validation = ingest::validate(
-        &scan.shots,
-        chrono::Utc::now().naive_utc(),
-        &state.config.thresholds,
-    );
+    // One set of thresholds for the whole request: validating against one
+    // ceiling and remediating against another would plan work for failures
+    // that no longer exist.
+    let thresholds = session_thresholds(&state.config, &request.thresholds);
+    let validation = ingest::validate(&scan.shots, chrono::Utc::now().naive_utc(), &thresholds);
 
     let params = ingest::RemediationParams {
         shots: &scan.shots,
         validation: &validation,
-        thresholds: state.config.thresholds.clone(),
+        thresholds: thresholds.clone(),
         request: ingest::BulkRequest {
             failure,
             action,
@@ -1002,6 +1053,9 @@ fn parse_action(raw: &str) -> Result<ingest::ActionKind, ApiError> {
 
 #[derive(Debug, Deserialize)]
 pub struct DeriveRequest {
+    /// A derivative faces the same ceilings as a camera JPEG.
+    #[serde(default)]
+    pub thresholds: Option<ThresholdOverrides>,
     pub path: String,
     pub out_dir: String,
 }
@@ -1018,7 +1072,7 @@ async fn ingest_derive(
     let root = resolve_input(&state.config, &request.path)?;
     let out_dir = resolve_output(&state.config, &request.out_dir)?;
     let card = Card::at(&root)?;
-    let thresholds = state.config.thresholds.clone();
+    let thresholds = session_thresholds(&state.config, &request.thresholds);
 
     accept(&state, &auth, "raw_derive", 0, move |progress| {
         let scan = ingest::scan_card(&card, progress)?;

@@ -18,6 +18,7 @@ import type {
   CardSummary,
   CardValidation,
   ShotVerdict,
+  ThresholdOverrides,
 } from '@phototools/shared';
 import BulkActions from '@ui/components/BulkActions.vue';
 import JobProgress from '@ui/components/JobProgress.vue';
@@ -37,6 +38,26 @@ const stagingDir = ref('');
 // mounted under /Volumes only appears once /Volumes is a configured root —
 // G6 refuses it otherwise, and scan_card would refuse it too.
 const { roots } = useRoots();
+
+/**
+ * F12's two ceilings, for this card.
+ *
+ * Seeded with what the installation is configured with, and sent with every
+ * request so one card can differ from the default without editing config.json.
+ *
+ * A resolution ceiling of 0 means none at all — publishing is limited by file
+ * size, and a 40 MP frame inside the byte cap is worth keeping whole rather
+ * than resizing to a limit nothing is enforcing.
+ */
+const maxMegapixels = ref(0);
+const maxOutputMb = ref(10);
+
+function thresholds(): ThresholdOverrides {
+  return {
+    max_megapixels: maxMegapixels.value,
+    max_output_bytes: Math.round(maxOutputMb.value * 1024 * 1024),
+  };
+}
 const list = (path: string) => desktop.list(path);
 
 const summary = ref<CardSummary | null>(null);
@@ -99,7 +120,7 @@ async function review() {
     await desktop.watchJob(id, () => {});
 
     scan.value = await desktop.readCard(path);
-    validation.value = await desktop.validateCard(path);
+    validation.value = await desktop.validateCard({ path, thresholds: thresholds() });
     stage.value = 'reviewing';
   });
 }
@@ -124,13 +145,17 @@ async function applyBulk(request: {
       date: request.date,
       out_dir: out,
       dry_run: false,
+      thresholds: thresholds(),
     });
     if (typeof result === 'string') jobId.value = result;
 
     // The card has changed underneath the verdicts, so they are re-read rather
     // than patched: a resize alters dimensions, which alters two of the three
     // rules.
-    validation.value = await desktop.validateCard(cardPath.value.trim());
+    validation.value = await desktop.validateCard({
+      path: cardPath.value.trim(),
+      thresholds: thresholds(),
+    });
   });
 }
 
@@ -142,7 +167,11 @@ async function derive() {
     return;
   }
   const id = await guard(() =>
-    desktop.deriveRaw({ path: cardPath.value.trim(), out_dir: out }),
+    desktop.deriveRaw({
+      path: cardPath.value.trim(),
+      out_dir: out,
+      thresholds: thresholds(),
+    }),
   );
   if (id) jobId.value = id;
 }
@@ -214,6 +243,25 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
         :roots="roots"
         :list="list"
       />
+
+      <fieldset class="field limits">
+        <legend>Limits for this card</legend>
+        <p class="muted">
+          What a photograph has to satisfy to be publishable. Set per card, so one roll can differ
+          from the default without changing the configuration.
+        </p>
+        <div class="limits__grid">
+          <label class="field">
+            <span>File size ceiling (MB)</span>
+            <input v-model.number="maxOutputMb" type="number" min="1" step="0.5" />
+          </label>
+          <label class="field">
+            <span>Resolution ceiling (MP)</span>
+            <input v-model.number="maxMegapixels" type="number" min="0" />
+            <small class="muted">0 means no limit — the frame is kept whole.</small>
+          </label>
+        </div>
+      </fieldset>
 
       <div class="row">
         <button type="button" class="secondary" :disabled="busy" @click="look">Look</button>
@@ -306,6 +354,15 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
 </template>
 
 <style scoped>
+.limits__grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+.limits > .muted {
+  margin-bottom: var(--space-2);
+}
+
 .page { display: grid; gap: 16px; padding: 16px; max-width: 1100px; }
 .head h1 {
   font-size: 40px;

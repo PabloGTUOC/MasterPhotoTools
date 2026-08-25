@@ -364,6 +364,18 @@ export interface CardValidation {
   failing: number;
 }
 
+/**
+ * Per-session overrides for F12's two ceilings.
+ *
+ * Absent means the configured default. `max_megapixels: 0` means no resolution
+ * ceiling at all — publishing is limited by file size, and a frame inside the
+ * byte cap is worth keeping whole.
+ */
+export interface ThresholdOverrides {
+  max_megapixels?: number | null;
+  max_output_bytes?: number | null;
+}
+
 export interface RemediateRequest {
   path: string;
   failure: string;
@@ -371,6 +383,7 @@ export interface RemediateRequest {
   date?: string | null;
   out_dir: string;
   dry_run?: boolean;
+  thresholds?: ThresholdOverrides | null;
 }
 
 /** `phototools_server::api::RemediationPreview` */
@@ -392,6 +405,12 @@ export interface RemediationPlan {
 export interface DeriveRequest {
   path: string;
   out_dir: string;
+  thresholds?: ThresholdOverrides | null;
+}
+
+export interface ValidateRequest {
+  path: string;
+  thresholds?: ThresholdOverrides | null;
 }
 
 // ---------------------------------------------------------------------------

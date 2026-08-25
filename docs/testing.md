@@ -97,7 +97,7 @@ The variables that matter on day one:
 | `ROOTS` | *empty* | Colon-separated directories the app may touch. Each entry is canonicalised at load, so each must exist — see the warning below. |
 | `DATABASE_PATH` | `/tmp/phototools.db` | The SQLite ledger. Put it somewhere that survives a reboot. |
 | `STAGING_DIR` | `/tmp/phototools-staging` | Local scratch for F11's copy off the card. **Not** the NAS staging directory — that one is typed into the Ingest screen. |
-| `MAX_MEGAPIXELS` | `10` | F12's resolution ceiling. |
+| `MAX_MEGAPIXELS` | `0` | F12's resolution ceiling. **Zero means no ceiling** — the default. |
 | `MAX_OUTPUT_BYTES` | `10485760` | F12's size ceiling. |
 | `MAX_AGE_DAYS` | `90` | F12's capture-date window. |
 

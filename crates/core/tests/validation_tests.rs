@@ -49,7 +49,12 @@ fn a_24mp_frame_fails_and_resizing_brings_it_under_10mp_with_its_date_intact() {
     std::fs::rename(&big, dir.join("IMG_0001.JPG")).unwrap();
 
     let shots = shots_in(&dir);
-    let thresholds = Thresholds::default();
+    // Stated rather than inherited: the default ceiling is now zero — none —
+    // and this test is about the rule firing at ten.
+    let thresholds = Thresholds {
+        max_megapixels: 10,
+        ..Thresholds::default()
+    };
     let validation = phototools_core::ingest::validate(&shots, now(), &thresholds);
 
     // It fails the resolution check, as a 24 MP frame must against a 10 MP
@@ -134,7 +139,13 @@ fn a_24mp_frame_fails_and_resizing_brings_it_under_10mp_with_its_date_intact() {
 fn ten_megapixels_exactly_passes_and_ten_point_one_fails() {
     // 4000×2500 is 10,000,000 pixels exactly; 4040×2500 is 10,100,000.
     let f = Fixtures::new();
-    let thresholds = Thresholds::default();
+    // The boundary this test is about is ten megapixels, so it sets ten. The
+    // default is now zero — no ceiling — which would make every case pass and
+    // the test meaningless.
+    let thresholds = Thresholds {
+        max_megapixels: 10,
+        ..Thresholds::default()
+    };
 
     for (name, w, h, expected) in [
         ("exact", 4000u32, 2500u32, CheckStatus::Pass),

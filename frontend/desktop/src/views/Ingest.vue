@@ -254,6 +254,7 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
           <label class="field">
             <span>File size ceiling (MB)</span>
             <input v-model.number="maxOutputMb" type="number" min="1" step="0.5" />
+            <small class="muted">A frame over this is resized until it fits.</small>
           </label>
           <label class="field">
             <span>Resolution ceiling (MP)</span>
@@ -358,6 +359,14 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
   display: grid;
   gap: var(--space-3);
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  /* Each field is label, input, hint. Without this the shorter of two fields
+     stretches its input to fill the taller row and the two stop lining up. */
+  align-items: start;
+}
+.limits__grid .field > small {
+  /* Reserve the line whether or not the text wraps, so the inputs above stay
+     on the same baseline at any width. */
+  min-height: 2.4em;
 }
 .limits > .muted {
   margin-bottom: var(--space-2);

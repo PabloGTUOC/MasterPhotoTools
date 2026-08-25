@@ -522,6 +522,19 @@ mod tests {
 
     // --------------------------------------------------------- F13's table
 
+    /// Thresholds with §F12's 10 MP ceiling set.
+    ///
+    /// The default is zero — no ceiling — so a test of remediating a
+    /// resolution failure has to say which ceiling it is remediating against.
+    /// The assertions are unchanged; only the limit is now stated rather than
+    /// inherited.
+    fn with_ceiling(max_megapixels: u32) -> Thresholds {
+        Thresholds {
+            max_megapixels,
+            ..Thresholds::default()
+        }
+    }
+
     #[test]
     fn every_failure_offers_exactly_the_actions_f13_lists() {
         assert_eq!(
@@ -607,12 +620,12 @@ mod tests {
     #[test]
     fn an_action_f13_does_not_offer_is_refused() {
         let shots = vec![shot_with("A", 6000, 4000, 1000, Some(at(2024, 5, 30)))];
-        let validation = validate(&shots, now(), &Thresholds::default());
+        let validation = validate(&shots, now(), &with_ceiling(10));
 
         let params = RemediationParams {
             shots: &shots,
             validation: &validation,
-            thresholds: Thresholds::default(),
+            thresholds: with_ceiling(10),
             request: BulkRequest {
                 failure: FailureClass::TooManyPixels,
                 // F13 does not offer re-dating for a resolution failure.
@@ -642,12 +655,12 @@ mod tests {
                 )
             })
             .collect();
-        let validation = validate(&shots, now(), &Thresholds::default());
+        let validation = validate(&shots, now(), &with_ceiling(10));
 
         let params = RemediationParams {
             shots: &shots,
             validation: &validation,
-            thresholds: Thresholds::default(),
+            thresholds: with_ceiling(10),
             request: BulkRequest {
                 failure: FailureClass::TooManyPixels,
                 action: ActionKind::Resize,
@@ -664,12 +677,12 @@ mod tests {
     #[test]
     fn a_resize_plan_names_the_dimensions_it_would_produce() {
         let shots = vec![shot_with("A", 6000, 4000, 1000, Some(at(2024, 5, 30)))];
-        let validation = validate(&shots, now(), &Thresholds::default());
+        let validation = validate(&shots, now(), &with_ceiling(10));
 
         let params = RemediationParams {
             shots: &shots,
             validation: &validation,
-            thresholds: Thresholds::default(),
+            thresholds: with_ceiling(10),
             request: BulkRequest {
                 failure: FailureClass::TooManyPixels,
                 action: ActionKind::Resize,
@@ -694,12 +707,12 @@ mod tests {
         // Build plan §7: plan never touches disk.
         let out = tempfile::tempdir().unwrap();
         let shots = vec![shot_with("A", 6000, 4000, 1000, Some(at(2024, 5, 30)))];
-        let validation = validate(&shots, now(), &Thresholds::default());
+        let validation = validate(&shots, now(), &with_ceiling(10));
 
         let params = RemediationParams {
             shots: &shots,
             validation: &validation,
-            thresholds: Thresholds::default(),
+            thresholds: with_ceiling(10),
             request: BulkRequest {
                 failure: FailureClass::TooManyPixels,
                 action: ActionKind::Resize,
@@ -727,13 +740,13 @@ mod tests {
                 )
             })
             .collect();
-        let validation = validate(&shots, now(), &Thresholds::default());
+        let validation = validate(&shots, now(), &with_ceiling(10));
         assert!(validation.clock_offset.is_some(), "a clock reset");
 
         let params = RemediationParams {
             shots: &shots,
             validation: &validation,
-            thresholds: Thresholds::default(),
+            thresholds: with_ceiling(10),
             request: BulkRequest {
                 failure: FailureClass::DateOutOfRangeBatch,
                 action: ActionKind::BulkShift,
@@ -753,12 +766,12 @@ mod tests {
     #[test]
     fn a_manual_date_action_without_a_date_is_reported_not_guessed() {
         let shots = vec![shot_with("A", 4000, 2500, 1000, None)];
-        let validation = validate(&shots, now(), &Thresholds::default());
+        let validation = validate(&shots, now(), &with_ceiling(10));
 
         let params = RemediationParams {
             shots: &shots,
             validation: &validation,
-            thresholds: Thresholds::default(),
+            thresholds: with_ceiling(10),
             request: BulkRequest {
                 failure: FailureClass::NoDate,
                 action: ActionKind::EnterDateManually,
@@ -781,12 +794,12 @@ mod tests {
             shot_with("C", 4000, 2500, 1000, Some(at(2024, 5, 30))),
             shot_with("D", 4000, 2500, 1000, Some(at(2024, 5, 31))),
         ];
-        let validation = validate(&shots, now(), &Thresholds::default());
+        let validation = validate(&shots, now(), &with_ceiling(10));
 
         let params = RemediationParams {
             shots: &shots,
             validation: &validation,
-            thresholds: Thresholds::default(),
+            thresholds: with_ceiling(10),
             request: BulkRequest {
                 failure: FailureClass::NoDate,
                 action: ActionKind::DeriveFromBatchMedian,
@@ -806,12 +819,12 @@ mod tests {
             shot_with("BIG", 6000, 4000, 1000, Some(at(2024, 5, 30))),
             shot_with("OK", 4000, 2500, 1000, Some(at(2024, 5, 30))),
         ];
-        let validation = validate(&shots, now(), &Thresholds::default());
+        let validation = validate(&shots, now(), &with_ceiling(10));
 
         let params = RemediationParams {
             shots: &shots,
             validation: &validation,
-            thresholds: Thresholds::default(),
+            thresholds: with_ceiling(10),
             request: BulkRequest {
                 failure: FailureClass::TooManyPixels,
                 action: ActionKind::Resize,
@@ -828,12 +841,12 @@ mod tests {
     #[test]
     fn a_failure_nothing_shares_plans_nothing_rather_than_erroring() {
         let shots = vec![shot_with("A", 4000, 2500, 1000, Some(at(2024, 5, 30)))];
-        let validation = validate(&shots, now(), &Thresholds::default());
+        let validation = validate(&shots, now(), &with_ceiling(10));
 
         let params = RemediationParams {
             shots: &shots,
             validation: &validation,
-            thresholds: Thresholds::default(),
+            thresholds: with_ceiling(10),
             request: BulkRequest {
                 failure: FailureClass::TooManyPixels,
                 action: ActionKind::Resize,
@@ -850,13 +863,13 @@ mod tests {
         let shots: Vec<Shot> = (0..3)
             .map(|i| shot_with(&format!("IMG_{i}"), 6000, 4000, 1000, Some(at(2024, 5, 30))))
             .collect();
-        let validation = validate(&shots, now(), &Thresholds::default());
+        let validation = validate(&shots, now(), &with_ceiling(10));
 
         for (action, expected) in [(ActionKind::Skip, 3), (ActionKind::PublishAnyway, 3)] {
             let params = RemediationParams {
                 shots: &shots,
                 validation: &validation,
-                thresholds: Thresholds::default(),
+                thresholds: with_ceiling(10),
                 request: BulkRequest {
                     failure: FailureClass::TooManyPixels,
                     action,

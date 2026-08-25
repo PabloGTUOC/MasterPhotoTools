@@ -38,6 +38,7 @@ import type {
   SplitRequest,
   TiffRequest,
   TransformRequest,
+  ValidateRequest,
 } from '@phototools/shared';
 
 /** Statuses a job never leaves again, mirroring `JobStatus::is_terminal`. */
@@ -141,8 +142,11 @@ export class TauriApiClient implements ApiClient {
     return invoke<string>('scan_card', { path });
   }
 
-  validateCard(path: string): Promise<CardValidation> {
-    return invoke<CardValidation>('validate_card', { path });
+  validateCard(request: ValidateRequest): Promise<CardValidation> {
+    return invoke<CardValidation>('validate_card', {
+      path: request.path,
+      thresholds: request.thresholds ?? null,
+    });
   }
 
   remediate(request: RemediateRequest): Promise<RemediationPlan | string> {
@@ -153,6 +157,7 @@ export class TauriApiClient implements ApiClient {
     return invoke<string>('derive_raw', {
       path: request.path,
       outDir: request.out_dir,
+      thresholds: request.thresholds ?? null,
     });
   }
 

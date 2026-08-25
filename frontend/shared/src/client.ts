@@ -33,6 +33,7 @@ import {
   type SplitRequest,
   type TiffRequest,
   type TransformRequest,
+  type ValidateRequest,
 } from './types';
 
 /** Supplies a Firebase ID token, refreshing it on demand. */
@@ -110,7 +111,7 @@ export interface ApiClient {
   /** Scan and record a card. A job. */
   scanCard(path: string): Promise<string>;
   /** Validate a card against F12's three rules. Reads no pixels, so no job. */
-  validateCard(path: string): Promise<CardValidation>;
+  validateCard(request: ValidateRequest): Promise<CardValidation>;
   /** Apply one F13 action to every shot sharing one failure. */
   remediate(request: RemediateRequest): Promise<RemediationPlan | string>;
   /** Derive JPEGs for a card's RAW-only shots (F14). A job. */
@@ -307,8 +308,8 @@ export class HttpApiClient implements ApiClient {
     return this.startJob('/api/ingest/scan', { path });
   }
 
-  validateCard(path: string): Promise<CardValidation> {
-    return this.post('/api/ingest/validate', { path });
+  validateCard(request: ValidateRequest): Promise<CardValidation> {
+    return this.post('/api/ingest/validate', request);
   }
 
   /**

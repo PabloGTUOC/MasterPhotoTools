@@ -847,8 +847,53 @@ pub struct ValidationResult {
 }
 
 /// Validate a card's shots against the three rules (F12).
+/// Per-session overrides for F12's two ceilings.
+///
+/// Absent means the configured default. `max_megapixels: Some(0)` means no
+/// resolution ceiling — publishing is limited by file size, and a frame inside
+/// the byte cap is worth keeping whole. Held here rather than in `Config`
+/// because it is a decision about one card, not about the installation.
+#[derive(Debug, Default, Deserialize)]
+pub struct ThresholdOverrides {
+    #[serde(default)]
+    pub max_megapixels: Option<u32>,
+    #[serde(default)]
+    pub max_output_bytes: Option<u64>,
+}
+
+impl ThresholdOverrides {
+    fn over(
+        &self,
+        base: &phototools_core::config::Thresholds,
+    ) -> phototools_core::config::Thresholds {
+        let mut t = base.clone();
+        if let Some(mp) = self.max_megapixels {
+            t.max_megapixels = mp;
+        }
+        if let Some(bytes) = self.max_output_bytes {
+            t.max_output_bytes = bytes;
+        }
+        t
+    }
+}
+
+/// The thresholds for this request: the configuration, with any override.
+fn session_thresholds(
+    config: &Config,
+    overrides: &Option<ThresholdOverrides>,
+) -> phototools_core::config::Thresholds {
+    match overrides {
+        Some(o) => o.over(&config.thresholds),
+        None => config.thresholds.clone(),
+    }
+}
+
 #[tauri::command]
-pub fn validate_card(path: String, state: State<'_, AppState>) -> CommandResult<ValidationResult> {
+pub fn validate_card(
+    path: String,
+    thresholds: Option<ThresholdOverrides>,
+    state: State<'_, AppState>,
+) -> CommandResult<ValidationResult> {
     let config = state.config();
     let root = resolve_input(&config, &path)?;
     let card = Card::at(&root).map_err(describe)?;
@@ -857,7 +902,7 @@ pub fn validate_card(path: String, state: State<'_, AppState>) -> CommandResult<
     let validation = ingest::validate(
         &scan.shots,
         chrono::Utc::now().naive_utc(),
-        &config.thresholds,
+        &session_thresholds(&config, &thresholds),
     );
 
     let groups = validation
@@ -917,6 +962,9 @@ pub struct RemediateArgs {
     /// When true, plan only and write nothing (§9.2 rule 3).
     #[serde(default)]
     pub dry_run: bool,
+    /// F12's ceilings for this card. Absent means the configured default.
+    #[serde(default)]
+    pub thresholds: Option<ThresholdOverrides>,
 }
 
 #[derive(Debug, Serialize)]
@@ -965,16 +1013,16 @@ pub fn remediate(
     };
 
     let scan = ingest::scan_card(&card, &InMemoryProgress::new()).map_err(describe)?;
-    let validation = ingest::validate(
-        &scan.shots,
-        chrono::Utc::now().naive_utc(),
-        &config.thresholds,
-    );
+    // One set of thresholds for the whole request: validating against one
+    // ceiling and then remediating against another would plan work for
+    // failures that no longer exist.
+    let thresholds = session_thresholds(&config, &args.thresholds);
+    let validation = ingest::validate(&scan.shots, chrono::Utc::now().naive_utc(), &thresholds);
 
     let params = ingest::RemediationParams {
         shots: &scan.shots,
         validation: &validation,
-        thresholds: config.thresholds.clone(),
+        thresholds: thresholds.clone(),
         request: ingest::BulkRequest {
             failure,
             action,
@@ -1117,13 +1165,16 @@ pub fn hand_off_card(
 pub fn derive_raw(
     path: String,
     out_dir: String,
+    thresholds: Option<ThresholdOverrides>,
     state: State<'_, AppState>,
 ) -> CommandResult<String> {
     let config = state.config();
     let root = resolve_input(&config, &path)?;
     let out_dir = resolve_output(&config, &out_dir)?;
     let card = Card::at(&root).map_err(describe)?;
-    let thresholds = config.thresholds.clone();
+    // A derivative faces the same ceilings as a camera JPEG, so it faces the
+    // ones chosen for this card rather than the installation's defaults.
+    let thresholds = session_thresholds(&config, &thresholds);
 
     state
         .jobs

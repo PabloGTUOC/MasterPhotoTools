@@ -138,7 +138,7 @@ Two further traps:
 | `STAGING_DIR` | `/tmp/phototools-staging` | Where F11 copies files off the card. Local scratch on the Mac; **not** the NAS staging directory, which is typed into the Ingest screen. |
 | `DATABASE_PATH` | `/tmp/phototools.db` | The SQLite ledger. §7 requires it outside the photo library. Put it somewhere that survives a reboot — the default does not. |
 | `MAX_AGE_DAYS` | `90` | F12 rejects a capture date further than this from now. |
-| `MAX_MEGAPIXELS` | `10` | F12's resolution ceiling. A 24–45 MP camera fails this on nearly every frame, so resizing is the normal path. |
+| `MAX_MEGAPIXELS` | `0` | F12's resolution ceiling, in megapixels. **Zero means no ceiling**, which is the default: publishing is limited by file size, and a frame inside the byte cap is worth keeping whole. Set it to restore §F12's 10. |
 | `MAX_OUTPUT_BYTES` | `10485760` | F12's size ceiling, applied independently of the resolution one. |
 
 A threshold that is set but unparseable is a **startup error**, not a silent

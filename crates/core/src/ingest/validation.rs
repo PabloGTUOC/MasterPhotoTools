@@ -272,6 +272,26 @@ pub fn check_date(
 
 /// The resolution rule (F12): `width × height ≤ max_megapixels × 10⁶`.
 pub fn check_resolution(asset: &ScannedAsset, thresholds: &Thresholds) -> Check {
+    // Zero means there is no resolution ceiling, so the rule has nothing to
+    // decide. It passes with the measurement rather than a verdict: the number
+    // is still worth showing on the review screen, and calling it a "pass"
+    // against a limit that does not exist would be a small lie repeated on
+    // every row.
+    if thresholds.max_megapixels == 0 {
+        if asset.dimensions_unknown() {
+            return Check::pass(Rule::Resolution, "No ceiling set");
+        }
+        return Check::pass(
+            Rule::Resolution,
+            format!(
+                "{}×{}, {:.1} MP — no ceiling set",
+                asset.width,
+                asset.height,
+                asset.megapixels()
+            ),
+        );
+    }
+
     // F11 forbids decoding to find out, so "the card does not say" is its own
     // outcome. Not a pass — there is no evidence it is under the ceiling — and
     // not a fail, because there is none that it is over.
@@ -490,10 +510,23 @@ mod tests {
 
     // ------------------------------------------------------------ resolution
 
+    /// Thresholds with §F12's 10 MP ceiling set.
+    ///
+    /// The default is now zero — no ceiling — so a test of the resolution rule
+    /// has to say which ceiling it is testing. The rule itself is unchanged;
+    /// these assertions are the same ones, against a stated limit rather than
+    /// an inherited one.
+    fn with_ceiling(max_megapixels: u32) -> Thresholds {
+        Thresholds {
+            max_megapixels,
+            ..Thresholds::default()
+        }
+    }
+
     #[test]
     fn ten_megapixels_exactly_passes_and_a_fraction_over_fails() {
         // The acceptance boundary. 4000×2500 is 10,000,000 pixels exactly.
-        let t = Thresholds::default();
+        let t = with_ceiling(10);
 
         assert_eq!(
             check_resolution(&asset(4000, 2500, 1000, None), &t).status,
@@ -509,7 +542,7 @@ mod tests {
 
     #[test]
     fn a_frame_over_the_ceiling_reports_which_class_it_failed() {
-        let check = check_resolution(&asset(6000, 4000, 1000, None), &Thresholds::default());
+        let check = check_resolution(&asset(6000, 4000, 1000, None), &with_ceiling(10));
         assert_eq!(check.failure, Some(FailureClass::TooManyPixels));
         assert!(check.detail.contains("24.0 MP"), "{}", check.detail);
     }
@@ -518,9 +551,36 @@ mod tests {
     fn unknown_dimensions_warn_rather_than_fail() {
         // F11 forbids decoding to find out, so this is genuinely unknown. It is
         // not evidence of being over the ceiling.
-        let check = check_resolution(&asset(0, 0, 1000, None), &Thresholds::default());
+        let check = check_resolution(&asset(0, 0, 1000, None), &with_ceiling(10));
         assert_eq!(check.status, CheckStatus::Warn);
         assert_eq!(check.failure, None);
+    }
+
+    #[test]
+    fn no_ceiling_passes_any_resolution_and_says_so() {
+        // Zero means the rule has nothing to decide. It still reports the
+        // measurement, because the number is worth seeing on the review screen.
+        let t = with_ceiling(0);
+        assert_eq!(t.max_megapixels, 0, "this is the default");
+
+        let check = check_resolution(&asset(11648, 8736, 1000, None), &t);
+        assert_eq!(
+            check.status,
+            CheckStatus::Pass,
+            "102 MP with no ceiling set"
+        );
+        assert_eq!(check.failure, None);
+        assert!(check.detail.contains("no ceiling"), "{}", check.detail);
+        assert!(
+            check.detail.contains("MP"),
+            "the size is still shown: {}",
+            check.detail
+        );
+
+        // And unknown dimensions are no longer a warning: there is nothing they
+        // could be over.
+        let unknown = check_resolution(&asset(0, 0, 1000, None), &t);
+        assert_eq!(unknown.status, CheckStatus::Pass);
     }
 
     // ------------------------------------------------------------------ size
@@ -709,7 +769,7 @@ mod tests {
             shot("C", asset(4000, 2500, 1_000, None)),
         ];
 
-        let grouped = validate(&shots, now(), &Thresholds::default()).by_failure();
+        let grouped = validate(&shots, now(), &with_ceiling(10)).by_failure();
 
         assert_eq!(grouped[&FailureClass::TooManyPixels], vec![0, 1]);
         assert_eq!(grouped[&FailureClass::NoDate], vec![2]);
@@ -724,7 +784,7 @@ mod tests {
         raw.needs_derivation = true;
         raw.assets[0].kind = AssetKind::Raw;
 
-        let result = validate(&[raw], now(), &Thresholds::default());
+        let result = validate(&[raw], now(), &with_ceiling(10));
         let checks = &result.shots[0].checks;
 
         let size = checks.iter().find(|c| c.rule == Rule::Size).unwrap();
@@ -758,7 +818,7 @@ mod tests {
     fn the_worst_check_decides_a_shots_status() {
         let shots = vec![shot("A", asset(6000, 4000, 1_000, Some(at(2024, 5, 30))))];
 
-        let result = validate(&shots, now(), &Thresholds::default());
+        let result = validate(&shots, now(), &with_ceiling(10));
         assert_eq!(result.shots[0].status(), CheckStatus::Fail);
         assert!(!result.shots[0].passes());
     }

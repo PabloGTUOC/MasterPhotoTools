@@ -17,6 +17,7 @@ use phototools_core::error::Error;
 use phototools_core::ingest::{self, Card};
 use phototools_core::jobs::{InMemoryProgress, Progress};
 use phototools_core::tools;
+use phototools_core::tools::geotag;
 use phototools_core::tools::{f1_dates, f3_rename, f4_split, f5_contact, f6_transform};
 use phototools_core::tools::{f7_border, f8_tiff, f9_browser, Tool};
 use serde::{Deserialize, Serialize};
@@ -39,6 +40,14 @@ pub fn router() -> Router<AppState> {
         .route("/api/tools/transform", post(transform))
         .route("/api/tools/border", post(border))
         .route("/api/tools/tiff-to-jpeg", post(tiff_to_jpeg))
+        // Geotagging. Beyond the specification; see `docs/geotag-plan.md`.
+        .route("/api/tracks", get(tracks_list))
+        .route("/api/tracks/preview", post(track_preview))
+        .route("/api/tracks/import", post(track_import))
+        .route("/api/tracks/:id", axum::routing::delete(track_delete))
+        .route("/api/tools/geotag/scan", post(geotag_scan))
+        .route("/api/tools/geotag/plan", post(geotag_plan))
+        .route("/api/tools/geotag/apply", post(geotag_apply))
         .route("/api/storage/ls", get(storage_ls))
         .route("/api/storage/roots", get(storage_roots))
         // Ingest — F11, F12, F13. A card is any directory (build plan §6.3).
@@ -676,6 +685,175 @@ async fn tiff_to_jpeg(
             &f8_tiff::ACCEPTED,
         ))
     })
+}
+
+// ---------------------------------------------------------------------------
+// Geotagging — the track library and the matching tool
+//
+// Beyond the specification, which mentions neither GPS nor GPX; the reasoning
+// is in `docs/geotag-plan.md` and the deviation in `docs/known-gaps.md` (G9).
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct TrackPathRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TrackImportRequest {
+    pub path: String,
+    pub resolution: geotag::library::Resolution,
+    #[serde(default)]
+    pub overrides: Vec<geotag::library::Decision>,
+}
+
+async fn tracks_list(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+) -> Result<Response, ApiError> {
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    let rows: Vec<geotag::TrackSummary> = guard
+        .tracks()
+        .map_err(Error::Sqlite)?
+        .into_iter()
+        .map(geotag::TrackSummary::from)
+        .collect();
+    Ok(Json(rows).into_response())
+}
+
+/// What importing this file would do. Writes nothing.
+async fn track_preview(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<TrackPathRequest>,
+) -> Result<Response, ApiError> {
+    let path = resolve_input(&state.config, &request.path)?;
+    let file = geotag::library::read_track(&path)?;
+
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    Ok(Json(geotag::library::preview_import(&guard, &file)?).into_response())
+}
+
+/// Import the file, applying the decisions. One transaction.
+async fn track_import(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<TrackImportRequest>,
+) -> Result<Response, ApiError> {
+    let path = resolve_input(&state.config, &request.path)?;
+    let file = geotag::library::read_track(&path)?;
+
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    let result = geotag::library::commit_import(
+        &guard,
+        &file,
+        request.resolution,
+        &request.overrides,
+        chrono::Utc::now().timestamp(),
+    )?;
+    Ok(Json(result).into_response())
+}
+
+async fn track_delete(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    UrlPath(id): UrlPath<String>,
+) -> Result<Response, ApiError> {
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    let removed = guard.delete_track(&id).map_err(Error::Sqlite)?;
+    Ok(Json(serde_json::json!({ "points_removed": removed })).into_response())
+}
+
+/// The inventory. Reads metadata, writes nothing, and answers with the table
+/// rather than a job id — the same reasoning as the date scan.
+async fn geotag_scan(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<DatesScanRequest>,
+) -> Result<Response, ApiError> {
+    let root = resolve_input(&state.config, &request.path)?;
+    Ok(Json(geotag::scan::scan(&root, request.recursive)?).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GeotagRequest {
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub recursive: bool,
+    pub utc_offset_minutes: Option<i32>,
+    #[serde(default)]
+    pub clock_correction_seconds: i64,
+    #[serde(default)]
+    pub limits: geotag::join::Limits,
+    #[serde(default)]
+    pub overwrite_existing: bool,
+    #[serde(default = "write_altitude_by_default")]
+    pub write_altitude: bool,
+}
+
+/// Altitude is written unless somebody says otherwise: it is in the track, and
+/// leaving out a measurement the phone took is the deviation, not keeping it.
+fn write_altitude_by_default() -> bool {
+    true
+}
+
+impl GeotagRequest {
+    fn into_params(self, config: &Config) -> Result<geotag::tool::GeotagParams, ApiError> {
+        Ok(geotag::tool::GeotagParams {
+            paths: resolve_inputs(config, &self.paths)?,
+            recursive: self.recursive,
+            database: config.database.clone(),
+            utc_offset_minutes: self.utc_offset_minutes,
+            clock_correction_seconds: self.clock_correction_seconds,
+            limits: self.limits,
+            overwrite_existing: self.overwrite_existing,
+            write_altitude: self.write_altitude,
+        })
+    }
+}
+
+/// The dry run, with the offset the photographs themselves suggest.
+///
+/// The suggestion travels with the plan rather than living behind a button of
+/// its own: the moment somebody needs it is the moment they are looking at a
+/// table of refusals, and a number they have to go and ask for separately is a
+/// number they will not ask for.
+async fn geotag_plan(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<GeotagRequest>,
+) -> Result<Response, ApiError> {
+    let params = request.into_params(&state.config)?;
+    Ok(Json(geotag::preview(&params)?).into_response())
+}
+
+async fn geotag_apply(
+    auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<GeotagRequest>,
+) -> Result<Response, ApiError> {
+    let params = request.into_params(&state.config)?;
+    let total = params.paths.len() as u64;
+
+    accept(&state, &auth, "geotag", total, move |progress| {
+        let plan = geotag::tool::GeotagTool.plan(&params)?.data;
+        Ok(geotag::tool::GeotagTool
+            .apply(plan, progress)?
+            .data
+            .describe())
+    })
+}
+
+/// A poisoned ledger lock: an earlier panic left it unusable.
+fn poisoned() -> ApiError {
+    ApiError {
+        code: "internal",
+        message: "The ledger lock was poisoned by an earlier failure".into(),
+    }
 }
 
 // ---------------------------------------------------------------------------

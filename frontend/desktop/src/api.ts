@@ -24,6 +24,9 @@ import type {
   DatesFixRequest,
   DatesScanRequest,
   DeriveRequest,
+  GeoScanRow,
+  GeotagPreview,
+  GeotagRequest,
   Job,
   JobEvent,
   JobStatus,
@@ -37,6 +40,10 @@ import type {
   SplitPreviewRequest,
   SplitRequest,
   TiffRequest,
+  TrackImportPreview,
+  TrackImportRequest,
+  TrackImportResult,
+  TrackSummary,
   TransformRequest,
   ValidateRequest,
 } from '@phototools/shared';
@@ -132,6 +139,48 @@ export class TauriApiClient implements ApiClient {
 
   roots(): Promise<string[]> {
     return invoke<string[]>('list_roots');
+  }
+
+  // -------------------------------------------------------------------------
+  // Geotagging — the track library and the matching tool
+  //
+  // The desktop keeps its own timeline, because it keeps its own ledger: the
+  // tracks on this Mac are the ones fed to this Mac. That is the same split as
+  // the roots, and for the same reason — §2.3 puts this machine and the NAS on
+  // different sides of the card reader.
+  // -------------------------------------------------------------------------
+
+  tracks(): Promise<TrackSummary[]> {
+    return invoke<TrackSummary[]>('list_tracks');
+  }
+
+  previewTrackImport(path: string): Promise<TrackImportPreview> {
+    return invoke<TrackImportPreview>('preview_track_import', { path });
+  }
+
+  commitTrackImport(request: TrackImportRequest): Promise<TrackImportResult> {
+    return invoke<TrackImportResult>('import_track', { args: request });
+  }
+
+  deleteTrack(id: string): Promise<number> {
+    return invoke<number>('delete_track', { id });
+  }
+
+  scanGeo(request: DatesScanRequest): Promise<GeoScanRow[]> {
+    // Synchronous, like the date scan: it writes nothing, and the rows are the
+    // answer rather than something to fetch afterwards.
+    return invoke<GeoScanRow[]>('scan_geo', {
+      path: request.path,
+      recursive: request.recursive ?? false,
+    });
+  }
+
+  planGeotag(request: GeotagRequest): Promise<GeotagPreview> {
+    return invoke<GeotagPreview>('plan_geotag', { args: request });
+  }
+
+  applyGeotag(request: GeotagRequest): Promise<string> {
+    return invoke<string>('apply_geotag', { args: request });
   }
 
   // -------------------------------------------------------------------------

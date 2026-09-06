@@ -1232,3 +1232,164 @@ pub fn set_launch_at_login(app: tauri::AppHandle, enabled: bool) -> Result<bool,
 
     launcher.is_enabled().map_err(|e| e.to_string())
 }
+
+// ---------------------------------------------------------------------------
+// Geotagging — the track library and the matching tool
+//
+// Beyond the specification, which mentions neither GPS nor GPX; the reasoning
+// is in `docs/geotag-plan.md` and the deviation in `docs/known-gaps.md` (G9).
+//
+// The desktop's counterpart to `/api/tracks` and `/api/tools/geotag/*`. The
+// two sides keep their own timelines, because they keep their own ledgers: the
+// tracks on this Mac are the ones fed to this Mac.
+// ---------------------------------------------------------------------------
+
+use phototools_core::tools::geotag;
+
+#[tauri::command]
+pub fn list_tracks(state: State<'_, AppState>) -> CommandResult<Vec<geotag::TrackSummary>> {
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    Ok(guard
+        .tracks()
+        .map_err(|e| describe(e.into()))?
+        .into_iter()
+        .map(geotag::TrackSummary::from)
+        .collect())
+}
+
+/// What importing this file would do. Writes nothing.
+#[tauri::command]
+pub fn preview_track_import(
+    path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<geotag::library::TrackImportPreview> {
+    let config = state.config();
+    let resolved = resolve_input(&config, &path)?;
+    let file = geotag::library::read_track(&resolved).map_err(describe)?;
+
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    geotag::library::preview_import(&guard, &file).map_err(describe)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportTrackArgs {
+    pub path: String,
+    pub resolution: geotag::library::Resolution,
+    #[serde(default)]
+    pub overrides: Vec<geotag::library::Decision>,
+}
+
+/// Import the file, applying the decisions. One transaction.
+#[tauri::command]
+pub fn import_track(
+    args: ImportTrackArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<geotag::library::TrackImportResult> {
+    let config = state.config();
+    let resolved = resolve_input(&config, &args.path)?;
+    let file = geotag::library::read_track(&resolved).map_err(describe)?;
+
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    geotag::library::commit_import(
+        &guard,
+        &file,
+        args.resolution,
+        &args.overrides,
+        chrono::Utc::now().timestamp(),
+    )
+    .map_err(describe)
+}
+
+#[tauri::command]
+pub fn delete_track(id: String, state: State<'_, AppState>) -> CommandResult<usize> {
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    guard.delete_track(&id).map_err(|e| describe(e.into()))
+}
+
+/// The inventory. Synchronous, like the date scan: it writes nothing and the
+/// table is the answer.
+#[tauri::command]
+pub fn scan_geo(
+    path: String,
+    recursive: bool,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<geotag::scan::GeoScanRow>> {
+    let config = state.config();
+    let root = resolve_input(&config, &path)?;
+    geotag::scan::scan(&root, recursive).map_err(describe)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GeotagArgs {
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub recursive: bool,
+    pub utc_offset_minutes: Option<i32>,
+    #[serde(default)]
+    pub clock_correction_seconds: i64,
+    #[serde(default)]
+    pub limits: geotag::join::Limits,
+    #[serde(default)]
+    pub overwrite_existing: bool,
+    #[serde(default = "write_altitude_by_default")]
+    pub write_altitude: bool,
+}
+
+/// Altitude is written unless somebody says otherwise: it is in the track, and
+/// leaving out a measurement the phone took is the deviation, not keeping it.
+fn write_altitude_by_default() -> bool {
+    true
+}
+
+impl GeotagArgs {
+    fn into_params(self, config: &Config) -> CommandResult<geotag::tool::GeotagParams> {
+        Ok(geotag::tool::GeotagParams {
+            paths: resolve_inputs(config, &self.paths)?,
+            recursive: self.recursive,
+            database: config.database.clone(),
+            utc_offset_minutes: self.utc_offset_minutes,
+            clock_correction_seconds: self.clock_correction_seconds,
+            limits: self.limits,
+            overwrite_existing: self.overwrite_existing,
+            write_altitude: self.write_altitude,
+        })
+    }
+}
+
+/// The dry run, with the offset the photographs themselves suggest.
+#[tauri::command]
+pub fn plan_geotag(
+    args: GeotagArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<geotag::tool::GeotagPreview> {
+    let config = state.config();
+    let params = args.into_params(&config)?;
+    geotag::preview(&params).map_err(describe)
+}
+
+#[tauri::command]
+pub fn apply_geotag(args: GeotagArgs, state: State<'_, AppState>) -> CommandResult<String> {
+    let config = state.config();
+    let params = args.into_params(&config)?;
+    let total = params.paths.len() as u64;
+
+    state
+        .jobs
+        .spawn("geotag", total, move |progress| {
+            let plan = geotag::tool::GeotagTool.plan(&params)?.data;
+            Ok(geotag::tool::GeotagTool
+                .apply(plan, progress)?
+                .data
+                .describe())
+        })
+        .map_err(describe)
+}
+
+/// A poisoned ledger lock: an earlier panic left it unusable.
+fn poisoned() -> String {
+    "The ledger lock was poisoned by an earlier failure".to_string()
+}

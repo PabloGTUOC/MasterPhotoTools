@@ -6,6 +6,7 @@ import App from './App.vue';
 import ContactSheet from '@ui/views/ContactSheet.vue';
 import Dashboard from '@ui/views/Dashboard.vue';
 import Dates from '@ui/views/Dates.vue';
+import Geotag from '@ui/views/Geotag.vue';
 import ImageTool from '@ui/views/ImageTool.vue';
 import Rename from '@ui/views/Rename.vue';
 import Transform from '@ui/views/Transform.vue';
@@ -21,6 +22,7 @@ const router = createRouter({
     { path: '/publish', component: Publish },
     { path: '/dates', component: Dates },
     { path: '/rename', component: Rename },
+    { path: '/geotag', component: Geotag },
     {
       path: '/split',
       component: ImageTool,

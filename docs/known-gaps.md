@@ -127,6 +127,30 @@ invented. Blocks **MV-14.1**.
 Recorded because a reader comparing the two should not have to work out which
 of them moved.
 
+### The Geotag tab is not in the specification at all
+
+`SPECIFICATION.md` mentions neither GPS, geotagging, GPX nor location. The whole
+of `tools::geotag`, the `tracks` / `track_points` / `point_conflicts` tables in
+migration 7, seven server routes, seven Tauri commands, seven `ApiClient`
+methods and the `/geotag` route in both front ends are outside it.
+
+Built at the user's explicit request, planned in
+[`geotag-plan.md`](geotag-plan.md) before any code was written, and reported in
+[`phase-reports/geotag.md`](phase-reports/geotag.md).
+
+**No F-number was invented.** A fabricated `F19` would make the code look as
+though the specification had asked for something it never did, so the module is
+named for what it does and its doc comment says plainly that it is beyond the
+specification. The specification was not edited (G9).
+
+Two consequences a reader comparing the two documents should know:
+
+- §7's data model does not list these three tables, as it does not list
+  `published` or `sessions` (recorded separately below).
+- §2.5's module list does not include `tools::geotag`. It sits under `tools`
+  because that is where the archive operations live, and it behaves like one:
+  the same `Tool` trait, the same plan-then-apply, the same job.
+
 ### The resolution ceiling defaults to off, where §F12 sets 10 MP
 
 §F12 gives two independent ceilings — `max_megapixels` (10) and

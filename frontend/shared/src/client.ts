@@ -16,7 +16,9 @@ import {
   type DatesFixRequest,
   type DatesScanRequest,
   type DeriveRequest,
-  type ImageToolRequest,
+  type GeoScanRow,
+  type GeotagPreview,
+  type GeotagRequest,
   type Job,
   type JobEvent,
   type Plan,
@@ -32,6 +34,10 @@ import {
   type SplitPreviewRequest,
   type SplitRequest,
   type TiffRequest,
+  type TrackImportPreview,
+  type TrackImportRequest,
+  type TrackImportResult,
+  type TrackSummary,
   type TransformRequest,
   type ValidateRequest,
 } from './types';
@@ -116,6 +122,42 @@ export interface ApiClient {
   remediate(request: RemediateRequest): Promise<RemediationPlan | string>;
   /** Derive JPEGs for a card's RAW-only shots (F14). A job. */
   deriveRaw(request: DeriveRequest): Promise<string>;
+
+  // Geotagging — the track library and the matching tool.
+  //
+  // Beyond the specification (`docs/geotag-plan.md`). On `ApiClient` rather
+  // than on one concrete client because both transports genuinely do all of
+  // it: local files, a local `exiftool`, and each side's own timeline.
+
+  /** Every imported track, most recent first. */
+  tracks(): Promise<TrackSummary[]>;
+  /**
+   * What importing a `.gpx` would do. Writes nothing.
+   *
+   * The conflicts it returns are instants where the file and the library
+   * disagree. Every fix comes from one phone, so a disagreement is a fault
+   * rather than a tie to break, and nothing is stored until somebody has said
+   * which side to keep.
+   */
+  previewTrackImport(path: string): Promise<TrackImportPreview>;
+  /** Import the file, applying the decisions. One transaction. */
+  commitTrackImport(request: TrackImportRequest): Promise<TrackImportResult>;
+  /** Forget a track and the fixes still attributed to it. */
+  deleteTrack(id: string): Promise<number>;
+  /**
+   * What a folder of photographs already carries: a date, a position, both or
+   * neither.
+   *
+   * Rows rather than a job id, for the reason {@link scanDates} gives — the
+   * table is the answer.
+   */
+  scanGeo(request: DatesScanRequest): Promise<GeoScanRow[]>;
+  /**
+   * The dry run: what would be written, and what the photographs themselves
+   * say the camera's offset was.
+   */
+  planGeotag(request: GeotagRequest): Promise<GeotagPreview>;
+  applyGeotag(request: GeotagRequest): Promise<string>;
 
   // F17 — jobs
   job(id: string): Promise<Job>;
@@ -302,6 +344,39 @@ export class HttpApiClient implements ApiClient {
 
   tiffToJpeg(request: TiffRequest): Promise<string> {
     return this.startJob('/api/tools/tiff-to-jpeg', request);
+  }
+
+  async tracks(): Promise<TrackSummary[]> {
+    const response = await this.send('/api/tracks');
+    return this.readJson<TrackSummary[]>(response, 'the track library');
+  }
+
+  previewTrackImport(path: string): Promise<TrackImportPreview> {
+    return this.post('/api/tracks/preview', { path });
+  }
+
+  commitTrackImport(request: TrackImportRequest): Promise<TrackImportResult> {
+    return this.post('/api/tracks/import', request);
+  }
+
+  async deleteTrack(id: string): Promise<number> {
+    const response = await this.send(`/api/tracks/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    const body = await this.readJson<{ points_removed: number }>(response, 'a deletion');
+    return body.points_removed;
+  }
+
+  scanGeo(request: DatesScanRequest): Promise<GeoScanRow[]> {
+    return this.post('/api/tools/geotag/scan', request);
+  }
+
+  planGeotag(request: GeotagRequest): Promise<GeotagPreview> {
+    return this.post('/api/tools/geotag/plan', request);
+  }
+
+  applyGeotag(request: GeotagRequest): Promise<string> {
+    return this.startJob('/api/tools/geotag/apply', request);
   }
 
   scanCard(path: string): Promise<string> {

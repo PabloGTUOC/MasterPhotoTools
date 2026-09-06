@@ -107,6 +107,18 @@ about whether rung 3's output is usable at all.
 `sips` is invoked only under `#[cfg(target_os = "macos")]`. Away from macOS the rung reports "not
 applicable" rather than failing, which is why rung 3 exists. **MV-10.3**.
 
+### `exiftool` is found by searching, not by configuration alone
+
+Every metadata write shells out to `exiftool` (§2.6), and a `.app` launched from
+Finder inherits launchd's `PATH`, which has neither Homebrew nor MacPorts on it.
+Rather than require `EXIFTOOL_PATH` to be set for the bundle to work at all,
+`media::meta::exiftool_program` tries `PATH` and then four known locations.
+
+The limit is that the list is a list: an `exiftool` installed somewhere else —
+a manual build in `~/bin`, a Nix profile — is not found, and `EXIFTOOL_PATH` is
+the answer. Searching `~/bin` and the like was rejected as guessing at somebody
+else's machine. Documented in [`deployment.md`](deployment.md).
+
 ### The application icons are placeholders
 
 `crates/desktop/icons/icon.icns` and `icon.ico` are **0-byte files** and `icon.png` is a single

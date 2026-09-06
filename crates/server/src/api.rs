@@ -45,6 +45,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/tracks/preview", post(track_preview))
         .route("/api/tracks/import", post(track_import))
         .route("/api/tracks/:id", axum::routing::delete(track_delete))
+        .route("/api/tracks/:id/conflicts", get(track_conflicts))
         .route("/api/tools/geotag/scan", post(geotag_scan))
         .route("/api/tools/geotag/plan", post(geotag_plan))
         .route("/api/tools/geotag/apply", post(geotag_apply))
@@ -766,6 +767,27 @@ async fn track_delete(
     let guard = ledger.lock().map_err(|_| poisoned())?;
     let removed = guard.delete_track(&id).map_err(Error::Sqlite)?;
     Ok(Json(serde_json::json!({ "points_removed": removed })).into_response())
+}
+
+/// Every disagreement recorded against a track, and what was decided.
+///
+/// The audit rows exist so that a library which says something one of its own
+/// stored files does not can explain itself. Written and never read, they would
+/// have been reachable only by opening the database with `sqlite3`.
+async fn track_conflicts(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    UrlPath(id): UrlPath<String>,
+) -> Result<Response, ApiError> {
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    let rows: Vec<geotag::RecordedConflict> = guard
+        .conflicts_for_track(&id)
+        .map_err(Error::Sqlite)?
+        .into_iter()
+        .map(geotag::RecordedConflict::from)
+        .collect();
+    Ok(Json(rows).into_response())
 }
 
 /// The inventory. Reads metadata, writes nothing, and answers with the table

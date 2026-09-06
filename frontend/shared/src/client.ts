@@ -24,6 +24,7 @@ import {
   type Plan,
   type ConnectorStatus,
   type PublishPlan,
+  type RecordedConflict,
   type RemediateRequest,
   type RemediationPlan,
   type SessionShots,
@@ -144,6 +145,14 @@ export interface ApiClient {
   commitTrackImport(request: TrackImportRequest): Promise<TrackImportResult>;
   /** Forget a track and the fixes still attributed to it. */
   deleteTrack(id: string): Promise<number>;
+  /**
+   * The disagreements recorded against a track, and what was decided.
+   *
+   * Kept so a library that says something one of its own stored files does not
+   * can explain itself, rather than the record being reachable only by opening
+   * the database by hand.
+   */
+  trackConflicts(id: string): Promise<RecordedConflict[]>;
   /**
    * What a folder of photographs already carries: a date, a position, both or
    * neither.
@@ -365,6 +374,11 @@ export class HttpApiClient implements ApiClient {
     });
     const body = await this.readJson<{ points_removed: number }>(response, 'a deletion');
     return body.points_removed;
+  }
+
+  async trackConflicts(id: string): Promise<RecordedConflict[]> {
+    const response = await this.send(`/api/tracks/${encodeURIComponent(id)}/conflicts`);
+    return this.readJson<RecordedConflict[]>(response, 'the recorded disagreements');
   }
 
   scanGeo(request: DatesScanRequest): Promise<GeoScanRow[]> {

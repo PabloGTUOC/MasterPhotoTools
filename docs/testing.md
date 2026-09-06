@@ -160,7 +160,8 @@ problem later and more confusingly.
 | 6 | **Google Photos** | MV-12.1 – MV-12.7 | Needs an OAuth client. **MV-12.1 is one photograph, before any bulk run.** |
 | 7 | **The UI** | MV-13.1 – MV-13.6, MV-6.1 | Judgement about screens, once there is real data behind them. |
 | 8 | **Scans** | MV-4.1 – MV-4.4 | Independent of everything above; do whenever you have scans. |
-| 9 | **Packaging** | MV-14.1 – MV-14.3 | Last, because it is the only session that needs everything else to have worked. |
+| 9 | **Geotagging** | MV-15.1 – MV-15.13 | Needs the Mac and photographs from days a track covers. Independent of the NAS and of Google. |
+| 10 | **Packaging** | MV-14.1 – MV-14.3 | Last, because it is the only session that needs everything else to have worked. |
 
 ### If you only have an hour
 
@@ -173,6 +174,10 @@ done:
    rests on.
 3. **MV-12.1** — publish one photograph and check the date. §6.4 asks for this before any bulk run,
    and the API cannot delete what it creates.
+
+And one from the newest work, for the same reason — it can invalidate a decision already taken:
+**MV-15.3**, whether a genuine second export from your phone raises no false disagreements. The
+11 cm tolerance that decides "same reading" was chosen against one file.
 
 ## 6. Recording what you find
 

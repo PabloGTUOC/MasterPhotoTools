@@ -26,16 +26,6 @@ pub enum Method {
     CarriedForward,
 }
 
-impl Method {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Method::Exact => "exact",
-            Method::Nearest => "nearest",
-            Method::CarriedForward => "carried forward",
-        }
-    }
-}
-
 /// Which recorded fix to use when none was recorded at that exact second.
 ///
 /// **There is no mode that computes a position, and that is deliberate.** The

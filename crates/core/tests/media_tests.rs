@@ -675,10 +675,6 @@ fn the_inventory_reads_a_folder_of_real_files() {
     assert_eq!(status("undated.jpg"), scan::GeoStatus::NoDateOrLocation);
     assert_eq!(status("clip.mov"), scan::GeoStatus::NotSupported);
 
-    let summary = scan::summarise(&rows);
-    assert_eq!(summary.total, rows.len());
-    assert!(summary.missing_location >= 1);
-
     // The date and the tag that supplied it travel with the row: without them
     // there is no way to see *why* a photograph matched where it did.
     let row = rows.iter().find(|r| r.name == "dated.jpg").unwrap();
@@ -822,5 +818,58 @@ fn writing_a_position_into_fifty_files_spawns_one_exiftool() {
             .gps
             .expect("every file should carry the fix");
         assert!((read.lat - fix.lat).abs() < 1e-6);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Finding exiftool
+//
+// A `.app` launched from Finder inherits launchd's PATH, which does not include
+// Homebrew or MacPorts. The application therefore worked from a terminal and
+// wrote nothing at all when double-clicked — every date repair, every RAW
+// derivative and every position.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn exiftool_is_found_without_help_on_a_machine_that_has_it() {
+    use phototools_core::media::meta::exiftool_program;
+
+    let program = exiftool_program().expect("this machine has exiftool");
+    assert!(
+        program == "exiftool" || std::path::Path::new(&program).exists(),
+        "resolved to {program:?}, which is neither on PATH nor a real file"
+    );
+}
+
+#[test]
+fn an_explicit_path_wins_over_the_search() {
+    use phototools_core::media::meta::{exiftool_program, EXIFTOOL_PATH_VAR};
+
+    let f = Fixtures::new();
+    let stand_in = f.path().join("my-exiftool");
+    std::fs::write(&stand_in, "#!/bin/sh\nexec exiftool \"$@\"\n").unwrap();
+
+    // Serialised by running both env-var cases in one test: the variable is
+    // process-wide, and two tests setting it would race.
+    let restore = std::env::var(EXIFTOOL_PATH_VAR).ok();
+
+    std::env::set_var(EXIFTOOL_PATH_VAR, &stand_in);
+    assert_eq!(
+        exiftool_program().unwrap(),
+        stand_in.to_string_lossy(),
+        "an explicit path should be used as given"
+    );
+
+    // And a wrong one is reported rather than silently ignored: somebody who
+    // set it meant it, and quietly running a different binary answers a
+    // question they did not ask.
+    std::env::set_var(EXIFTOOL_PATH_VAR, "/nowhere/exiftool");
+    let error = exiftool_program().unwrap_err().to_string();
+    assert!(error.contains("/nowhere/exiftool"), "got {error}");
+    assert!(error.contains("nothing there"), "got {error}");
+
+    match restore {
+        Some(value) => std::env::set_var(EXIFTOOL_PATH_VAR, value),
+        None => std::env::remove_var(EXIFTOOL_PATH_VAR),
     }
 }

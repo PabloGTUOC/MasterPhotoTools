@@ -644,6 +644,16 @@ export interface TrackImportResult {
   already_imported: boolean;
 }
 
+/** One recorded disagreement, and what was decided about it. */
+export interface RecordedConflict {
+  at: number;
+  kept: TrackPoint;
+  other: TrackPoint;
+  metres: number;
+  /** `kept-existing` or `took-new`. */
+  decision: string;
+}
+
 export type GeoStatus =
   | 'Ok'
   | 'NoLocation'

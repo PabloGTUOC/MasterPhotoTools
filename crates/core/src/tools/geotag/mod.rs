@@ -48,6 +48,29 @@ pub struct Bounds {
     pub max_lon: f64,
 }
 
+/// One recorded disagreement, as a screen sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordedConflict {
+    pub at: i64,
+    pub kept: TrackPoint,
+    pub other: TrackPoint,
+    pub metres: f64,
+    /// `kept-existing` or `took-new`.
+    pub decision: String,
+}
+
+impl From<crate::ledger::TrackConflictRecord> for RecordedConflict {
+    fn from(row: crate::ledger::TrackConflictRecord) -> Self {
+        Self {
+            at: row.at,
+            kept: row.kept,
+            other: row.other,
+            metres: row.metres,
+            decision: row.decision,
+        }
+    }
+}
+
 impl From<TrackRow> for TrackSummary {
     fn from(row: TrackRow) -> Self {
         Self {

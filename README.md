@@ -29,9 +29,12 @@ separate systems.
 
 ## Status
 
-**Phases 0–14 are built.** Every phase of the build plan is closed.
+**Phases 0–14 are built.** Every phase of the build plan is closed. Since then a **Geotag** tab
+has been added — it places photographs from a GPS track exported from a phone, matching on time.
+It is outside the specification, which mentions neither GPS nor GPX; the reasoning is in
+[`docs/geotag-plan.md`](docs/geotag-plan.md).
 
-504 tests across the workspace, 423 of them in `phototools-core` with no binary crate present.
+632 tests across the workspace, 551 of them in `phototools-core` with no binary crate present.
 Both front ends typecheck and build; the web UI's layout and the ingest grid's performance are
 measured in a real browser rather than asserted. The server image builds and the container passes
 its health check — deploying it to the NAS is still a human step.
@@ -43,7 +46,7 @@ camera TIFFs that plainly carried one, several tools that reported success havin
 all. Most had a single cause — every tool had only ever been exercised with typed file paths, and
 adding folder pickers made pointing at a folder the ordinary thing to do.
 
-What is left is more of that, plus the structured half: **51 numbered checks** needing a Mac, a
+What is left is more of that, plus the structured half: **64 numbered checks** needing a Mac, a
 camera, a NAS, a Google account or somebody's judgement about how a photograph looks. Start at
 [`docs/testing.md`](docs/testing.md).
 

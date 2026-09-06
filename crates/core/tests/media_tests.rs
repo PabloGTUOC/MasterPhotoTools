@@ -569,3 +569,258 @@ fn a_tiff_whose_ifd_defeats_the_streaming_reader_is_still_read() {
     let bytes = std::fs::read(&path).unwrap();
     assert!(!bytes.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// The UTC offset (geotagging, GT-3)
+//
+// EXIF capture times are local wall-clock with no zone, which is why a track
+// cannot be joined to a photograph without an offset from somewhere. Where the
+// camera wrote one down there is nothing to guess, so it has to be read — and
+// it has to be read from the right tag, because the three that can carry one
+// are not interchangeable.
+// ---------------------------------------------------------------------------
+
+fn jpeg_with_offsets(f: &Fixtures, name: &str, offsets: &[(u16, &str)]) -> PathBuf {
+    let mut exif = vec![(
+        tag::DATE_TIME_ORIGINAL,
+        TiffValue::Ascii("2026:09:04 15:33:37".into()),
+    )];
+    for (which, value) in offsets {
+        exif.push((*which, TiffValue::Ascii((*value).into())));
+    }
+    f.jpeg_with_tags(
+        name,
+        40,
+        40,
+        &[(tag::ORIENTATION, TiffValue::Short(1))],
+        &exif,
+    )
+}
+
+#[test]
+fn a_camera_that_recorded_its_offset_is_believed() {
+    let f = Fixtures::new();
+    let path = jpeg_with_offsets(&f, "offset.jpg", &[(tag::OFFSET_TIME_ORIGINAL, "+02:00")]);
+
+    let meta = read_meta(&path).unwrap();
+    assert_eq!(meta.capture, Some(dt("2026:09:04 15:33:37")));
+    assert_eq!(meta.utc_offset_minutes, Some(120));
+}
+
+#[test]
+fn a_western_offset_is_read_as_a_negative_one() {
+    let f = Fixtures::new();
+    let path = jpeg_with_offsets(&f, "west.jpg", &[(tag::OFFSET_TIME_ORIGINAL, "-05:00")]);
+    assert_eq!(read_meta(&path).unwrap().utc_offset_minutes, Some(-300));
+}
+
+#[test]
+fn the_shutters_offset_wins_over_the_files_offset() {
+    // `OffsetTime` belongs to `ModifyDate` — the moment the file was last
+    // written, which for anything that has been through an editor is a
+    // different day in a different country from the moment it was taken.
+    let f = Fixtures::new();
+    let path = jpeg_with_offsets(
+        &f,
+        "both.jpg",
+        &[
+            (tag::OFFSET_TIME, "+09:00"),
+            (tag::OFFSET_TIME_ORIGINAL, "+02:00"),
+        ],
+    );
+    assert_eq!(read_meta(&path).unwrap().utc_offset_minutes, Some(120));
+}
+
+#[test]
+fn a_file_carrying_only_the_general_offset_still_offers_it() {
+    let f = Fixtures::new();
+    let path = jpeg_with_offsets(&f, "general.jpg", &[(tag::OFFSET_TIME, "+09:00")]);
+    assert_eq!(read_meta(&path).unwrap().utc_offset_minutes, Some(540));
+}
+
+#[test]
+fn a_camera_that_recorded_no_offset_offers_none_rather_than_utc() {
+    // The difference that matters: "I don't know" leaves the tool asking, and
+    // "UTC" silently moves every photograph a few kilometres.
+    let f = Fixtures::new();
+    let path = f.jpeg_with_exif("nooffset.jpg", 40, 40, "2026:09:04 15:33:37", "CAM");
+    assert_eq!(read_meta(&path).unwrap().utc_offset_minutes, None);
+}
+
+#[test]
+fn a_photograph_with_no_gps_block_reports_no_position() {
+    let f = Fixtures::new();
+    let path = f.jpeg_with_exif("plain.jpg", 40, 40, "2026:09:04 15:33:37", "CAM");
+    assert_eq!(read_meta(&path).unwrap().gps, None);
+}
+
+#[test]
+fn the_inventory_reads_a_folder_of_real_files() {
+    use phototools_core::tools::geotag::scan;
+
+    let f = Fixtures::new();
+    let dated = f.jpeg_with_exif("dated.jpg", 40, 40, "2026:09:04 15:33:37", "CAM");
+    let undated = f.jpeg_without_exif("undated.jpg", 40, 40);
+    let movie = f.quicktime("clip.mov", 1_788_536_017);
+
+    let rows = scan::scan(dated.parent().unwrap(), false).unwrap();
+    let status = |name: &str| {
+        rows.iter()
+            .find(|r| r.name == name)
+            .unwrap_or_else(|| panic!("{name} should be in the inventory"))
+            .status
+    };
+
+    assert_eq!(status("dated.jpg"), scan::GeoStatus::NoLocation);
+    assert_eq!(status("undated.jpg"), scan::GeoStatus::NoDateOrLocation);
+    assert_eq!(status("clip.mov"), scan::GeoStatus::NotSupported);
+
+    let summary = scan::summarise(&rows);
+    assert_eq!(summary.total, rows.len());
+    assert!(summary.missing_location >= 1);
+
+    // The date and the tag that supplied it travel with the row: without them
+    // there is no way to see *why* a photograph matched where it did.
+    let row = rows.iter().find(|r| r.name == "dated.jpg").unwrap();
+    assert_eq!(row.tag.as_deref(), Some("EXIF:DateTimeOriginal"));
+    assert!(row.capture.is_some());
+    assert!(row.location.is_none());
+
+    let _ = (undated, movie);
+}
+
+// ---------------------------------------------------------------------------
+// Writing and reading a position (geotagging, GT-7)
+//
+// The round trip is the test that matters: the default is to leave a
+// photograph that already knows where it was alone, so a read that quietly
+// returned nothing would have this tool overwriting real measurements with
+// inferred ones — silently, and on every phone photograph.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_position_written_into_a_photograph_reads_back_as_that_position() {
+    use phototools_core::tools::geotag::{exif, TrackPoint};
+
+    let f = Fixtures::new();
+    let path = f.jpeg_with_exif("geo.jpg", 40, 40, "2026:09:04 15:33:37", "CAM");
+
+    // A fix from the sample track: 4 September, 15:33:37 UTC, in Berlin.
+    let fix = TrackPoint {
+        at: 1_788_536_017,
+        lat: 52.531549,
+        lon: 13.369192,
+        ele: Some(36.40),
+    };
+
+    let mut writer = ExifWriter::start().unwrap();
+    writer
+        .set_tags(&path, &exif::render(&fix, true).args())
+        .unwrap();
+    writer.close().unwrap();
+
+    let read = read_meta(&path)
+        .unwrap()
+        .gps
+        .expect("the fix should read back");
+    assert!(
+        (read.lat - fix.lat).abs() < 1e-6,
+        "latitude came back as {}",
+        read.lat
+    );
+    assert!(
+        (read.lon - fix.lon).abs() < 1e-6,
+        "longitude came back as {}",
+        read.lon
+    );
+    assert!(
+        (read.altitude.unwrap() - 36.40).abs() < 0.01,
+        "altitude came back as {:?}",
+        read.altitude
+    );
+
+    // And the dates the file already had are untouched: writing a position must
+    // not disturb the one thing the position was matched on.
+    assert_eq!(
+        read_meta(&path).unwrap().capture,
+        Some(dt("2026:09:04 15:33:37"))
+    );
+}
+
+#[test]
+fn a_southern_western_position_keeps_its_hemispheres_through_the_file() {
+    use phototools_core::tools::geotag::{exif, TrackPoint};
+
+    let f = Fixtures::new();
+    let path = f.jpeg_with_exif("sydney.jpg", 40, 40, "2026:09:04 15:33:37", "CAM");
+    let fix = TrackPoint {
+        at: 1_788_536_017,
+        lat: -33.868800,
+        lon: -151.209300,
+        ele: None,
+    };
+
+    let mut writer = ExifWriter::start().unwrap();
+    writer
+        .set_tags(&path, &exif::render(&fix, true).args())
+        .unwrap();
+    writer.close().unwrap();
+
+    let read = read_meta(&path).unwrap().gps.unwrap();
+    assert!(
+        read.lat < 0.0,
+        "expected a southern latitude, got {}",
+        read.lat
+    );
+    assert!(
+        read.lon < 0.0,
+        "expected a western longitude, got {}",
+        read.lon
+    );
+    assert!((read.lat + 33.868800).abs() < 1e-6);
+    assert!((read.lon + 151.209300).abs() < 1e-6);
+}
+
+#[test]
+fn writing_a_position_into_fifty_files_spawns_one_exiftool() {
+    use phototools_core::tools::geotag::{exif, TrackPoint};
+
+    // The same claim Phase 2 makes about dates, for a tool that writes nine
+    // tags per file instead of six — where the temptation to call `set_tag`
+    // nine times would cost nine processes a file.
+    let f = Fixtures::new();
+    let (shim, log) = spawn_counting_shim(&f);
+
+    let paths: Vec<_> = (0..50)
+        .map(|i| f.jpeg_without_exif(&format!("g{i:02}.jpg"), 16, 16))
+        .collect();
+
+    let fix = TrackPoint {
+        at: 1_788_536_017,
+        lat: 52.531549,
+        lon: 13.369192,
+        ele: Some(36.4),
+    };
+    let args = exif::render(&fix, true).args();
+
+    let mut writer = start_against_script(&shim, Duration::from_secs(60)).unwrap();
+    for path in &paths {
+        writer.set_tags(path, &args).unwrap();
+    }
+    writer.close().unwrap();
+
+    let spawns = std::fs::read_to_string(&log).unwrap().lines().count();
+    assert_eq!(
+        spawns, 1,
+        "50 files must go through one process, not {spawns}"
+    );
+
+    // And the writes landed, rather than the process merely having been quiet.
+    for path in &paths {
+        let read = read_meta(path)
+            .unwrap()
+            .gps
+            .expect("every file should carry the fix");
+        assert!((read.lat - fix.lat).abs() < 1e-6);
+    }
+}

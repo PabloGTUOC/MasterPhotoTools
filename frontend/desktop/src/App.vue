@@ -13,6 +13,7 @@ const links = [
   { to: '/', label: 'Ingest' },
   { to: '/dates', label: 'Dates' },
   { to: '/rename', label: 'Rename' },
+  { to: '/geotag', label: 'Geotag' },
   { to: '/split', label: 'Split' },
   { to: '/contact-sheet', label: 'Sheet' },
   { to: '/transform', label: 'Transform' },

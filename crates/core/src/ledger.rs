@@ -1,8 +1,50 @@
 //! SQLite persistence
 
 use crate::jobs::{Job, JobStatus};
+use crate::tools::geotag::TrackPoint;
 use rusqlite::{Connection, OptionalExtension, Result as SqlResult};
+use std::collections::HashMap;
 use std::path::Path;
+
+/// One disagreement, and what was decided about it.
+///
+/// Written whenever a file offers a different position for an instant the
+/// library already holds. These are not supposed to happen — every fix comes
+/// from one phone — so when one does, this row is the only record of why the
+/// library says something one of its own stored files does not.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackConflictRecord {
+    pub at: i64,
+    /// The position that is in the timeline now.
+    pub kept: TrackPoint,
+    /// The position that lost.
+    pub other: TrackPoint,
+    pub metres: f64,
+    /// `kept-existing` or `took-new`.
+    pub decision: String,
+}
+
+fn track_row(row: &rusqlite::Row) -> SqlResult<TrackRow> {
+    let corners: (Option<f64>, Option<f64>, Option<f64>, Option<f64>) =
+        (row.get(11)?, row.get(12)?, row.get(13)?, row.get(14)?);
+    Ok(TrackRow {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        source_path: row.get(2)?,
+        creator: row.get(3)?,
+        imported_at: row.get(4)?,
+        point_count: row.get(5)?,
+        points_added: row.get(6)?,
+        points_identical: row.get(7)?,
+        points_conflicting: row.get(8)?,
+        first_fix: row.get(9)?,
+        last_fix: row.get(10)?,
+        bounds: match corners {
+            (Some(a), Some(b), Some(c), Some(d)) => Some((a, b, c, d)),
+            _ => None,
+        },
+    })
+}
 
 /// Forward-only schema migrations.
 ///
@@ -180,6 +222,60 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE jobs ADD COLUMN summary TEXT;
     "#,
+    // 7 — the GPS track library (`docs/geotag-plan.md`).
+    //
+    // **Beyond the specification**, which mentions neither GPS nor GPX; recorded
+    // in `docs/known-gaps.md` rather than resolved by editing it (G9).
+    //
+    // `track_points.at` is the primary key, and that is the whole design: one
+    // position per instant, enforced here rather than remembered by the
+    // importer. Every fix comes from one phone, so a second file offering a
+    // different position for a second already held is a fault to put to the
+    // user — and expressing that as a key collision is what makes it impossible
+    // to resolve silently by whichever import ran last.
+    //
+    // The GPX text is kept beside the parsed points. It costs a few kilobytes
+    // and buys provenance — the file can be handed back byte for byte to
+    // whoever asks where a coordinate came from — and a second chance at
+    // anything the reader ignores today.
+    r#"
+    CREATE TABLE IF NOT EXISTS tracks (
+        id                 TEXT PRIMARY KEY,
+        name               TEXT,
+        source_path        TEXT,
+        creator            TEXT,
+        imported_at        INTEGER,
+        point_count        INTEGER,
+        points_added       INTEGER,
+        points_identical   INTEGER,
+        points_conflicting INTEGER,
+        first_fix          INTEGER,
+        last_fix           INTEGER,
+        min_lat REAL, min_lon REAL, max_lat REAL, max_lon REAL,
+        gpx                TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS track_points (
+        at       INTEGER PRIMARY KEY,
+        lat      REAL NOT NULL,
+        lon      REAL NOT NULL,
+        ele      REAL,
+        track_id TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS point_conflicts (
+        at         INTEGER NOT NULL,
+        track_id   TEXT NOT NULL,
+        kept_lat REAL, kept_lon REAL, kept_ele REAL,
+        other_lat REAL, other_lon REAL, other_ele REAL,
+        metres     REAL,
+        decision   TEXT,
+        decided_at INTEGER,
+        PRIMARY KEY (at, track_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_track_points_track_id ON track_points (track_id);
+    "#,
 ];
 
 /// One provider's stored authorisation.
@@ -191,6 +287,28 @@ pub struct OAuthGrant {
     pub expires_at: i64,
     /// `connected` or `disconnected` (§6.2's reconnect path).
     pub state: String,
+}
+
+/// One imported GPX file.
+///
+/// The counts are what the import actually did, not what the file held: a
+/// second export of the same afternoon can be fifty points that add nothing,
+/// and a row saying so is the answer to "did that import work?"
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackRow {
+    /// The sha256 of the file's bytes, which is what makes importing idempotent.
+    pub id: String,
+    pub name: String,
+    pub source_path: String,
+    pub creator: Option<String>,
+    pub imported_at: i64,
+    pub point_count: i64,
+    pub points_added: i64,
+    pub points_identical: i64,
+    pub points_conflicting: i64,
+    pub first_fix: Option<i64>,
+    pub last_fix: Option<i64>,
+    pub bounds: Option<(f64, f64, f64, f64)>,
 }
 
 /// One row of the publish state machine (§6.3).
@@ -587,6 +705,254 @@ impl Ledger {
     }
 
     // ------------------------------------------------------------- settings
+
+    // -----------------------------------------------------------------------
+    // The GPS track library (`docs/geotag-plan.md`)
+    // -----------------------------------------------------------------------
+
+    /// Every imported track, most recent first.
+    pub fn tracks(&self) -> SqlResult<Vec<TrackRow>> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, name, source_path, creator, imported_at, point_count,
+                    points_added, points_identical, points_conflicting,
+                    first_fix, last_fix, min_lat, min_lon, max_lat, max_lon
+               FROM tracks ORDER BY imported_at DESC, id",
+        )?;
+        let rows = statement.query_map([], track_row)?;
+        rows.collect()
+    }
+
+    /// One track, by the hash of the file it came from.
+    pub fn track(&self, id: &str) -> SqlResult<Option<TrackRow>> {
+        self.conn
+            .query_row(
+                "SELECT id, name, source_path, creator, imported_at, point_count,
+                        points_added, points_identical, points_conflicting,
+                        first_fix, last_fix, min_lat, min_lon, max_lat, max_lon
+                   FROM tracks WHERE id = ?1",
+                [id],
+                track_row,
+            )
+            .optional()
+    }
+
+    /// The fixes recorded in a window, in time order.
+    ///
+    /// The window is what keeps a library of a year of five-minute fixes from
+    /// being loaded to place four hundred photographs from one afternoon.
+    pub fn points_between(&self, from: i64, to: i64) -> SqlResult<Vec<TrackPoint>> {
+        let mut statement = self.conn.prepare(
+            "SELECT at, lat, lon, ele FROM track_points
+              WHERE at BETWEEN ?1 AND ?2 ORDER BY at",
+        )?;
+        let rows = statement.query_map([from, to], |row| {
+            Ok(TrackPoint {
+                at: row.get(0)?,
+                lat: row.get(1)?,
+                lon: row.get(2)?,
+                ele: row.get(3)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// The last fix at or before an instant, and the first at or after it.
+    ///
+    /// The pair a windowed read cannot supply on its own. A window is chosen
+    /// from the photographs, and the fixes bracketing them can be any distance
+    /// outside it — an overnight leaves ten hours — so without these two a
+    /// refusal would report "after the last fix in the library" for a
+    /// photograph the library has fixes on both sides of. A tool that has to
+    /// refuse should at least refuse for the true reason.
+    pub fn points_around(
+        &self,
+        from: i64,
+        to: i64,
+    ) -> SqlResult<(Option<TrackPoint>, Option<TrackPoint>)> {
+        let read = |row: &rusqlite::Row| {
+            Ok(TrackPoint {
+                at: row.get(0)?,
+                lat: row.get(1)?,
+                lon: row.get(2)?,
+                ele: row.get(3)?,
+            })
+        };
+        let before = self
+            .conn
+            .query_row(
+                "SELECT at, lat, lon, ele FROM track_points
+                  WHERE at < ?1 ORDER BY at DESC LIMIT 1",
+                [from],
+                read,
+            )
+            .optional()?;
+        let after = self
+            .conn
+            .query_row(
+                "SELECT at, lat, lon, ele FROM track_points
+                  WHERE at > ?1 ORDER BY at ASC LIMIT 1",
+                [to],
+                read,
+            )
+            .optional()?;
+        Ok((before, after))
+    }
+
+    /// The fix held at each of these instants, and which track it came from.
+    ///
+    /// The read behind the import diff. Asked instant by instant rather than as
+    /// a range because an export can cover a fortnight with one afternoon
+    /// missing, and a range would drag the fortnight through memory to compare
+    /// fifty points.
+    pub fn points_at(&self, instants: &[i64]) -> SqlResult<HashMap<i64, (TrackPoint, String)>> {
+        let mut held = HashMap::new();
+        let mut statement = self
+            .conn
+            .prepare("SELECT at, lat, lon, ele, track_id FROM track_points WHERE at = ?1")?;
+        for at in instants {
+            let found = statement
+                .query_row([at], |row| {
+                    Ok((
+                        TrackPoint {
+                            at: row.get(0)?,
+                            lat: row.get(1)?,
+                            lon: row.get(2)?,
+                            ele: row.get(3)?,
+                        },
+                        row.get::<_, String>(4)?,
+                    ))
+                })
+                .optional()?;
+            if let Some(found) = found {
+                held.insert(*at, found);
+            }
+        }
+        Ok(held)
+    }
+
+    /// Record an import: the file, the fixes it contributes, and every
+    /// disagreement it turned up.
+    ///
+    /// **One transaction.** A half-applied import leaves a timeline nobody
+    /// chose — some of the file's points in, the decisions about the rest
+    /// unrecorded, and no way to tell from the outside which half happened.
+    ///
+    /// `points` are written with `INSERT OR REPLACE`, so the caller decides
+    /// what is in that list: an instant the user chose to keep as it stands is
+    /// simply not passed.
+    pub fn record_track_import(
+        &self,
+        row: &TrackRow,
+        gpx: &str,
+        points: &[TrackPoint],
+        conflicts: &[TrackConflictRecord],
+    ) -> SqlResult<()> {
+        let transaction = self.conn.unchecked_transaction()?;
+
+        transaction.execute(
+            "INSERT OR REPLACE INTO tracks
+                 (id, name, source_path, creator, imported_at, point_count,
+                  points_added, points_identical, points_conflicting,
+                  first_fix, last_fix, min_lat, min_lon, max_lat, max_lon, gpx)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            rusqlite::params![
+                row.id,
+                row.name,
+                row.source_path,
+                row.creator,
+                row.imported_at,
+                row.point_count,
+                row.points_added,
+                row.points_identical,
+                row.points_conflicting,
+                row.first_fix,
+                row.last_fix,
+                row.bounds.map(|b| b.0),
+                row.bounds.map(|b| b.1),
+                row.bounds.map(|b| b.2),
+                row.bounds.map(|b| b.3),
+                gpx,
+            ],
+        )?;
+
+        for point in points {
+            transaction.execute(
+                "INSERT OR REPLACE INTO track_points (at, lat, lon, ele, track_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![point.at, point.lat, point.lon, point.ele, row.id],
+            )?;
+        }
+
+        for conflict in conflicts {
+            transaction.execute(
+                "INSERT OR REPLACE INTO point_conflicts
+                     (at, track_id, kept_lat, kept_lon, kept_ele,
+                      other_lat, other_lon, other_ele, metres, decision, decided_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                rusqlite::params![
+                    conflict.at,
+                    row.id,
+                    conflict.kept.lat,
+                    conflict.kept.lon,
+                    conflict.kept.ele,
+                    conflict.other.lat,
+                    conflict.other.lon,
+                    conflict.other.ele,
+                    conflict.metres,
+                    conflict.decision,
+                    row.imported_at,
+                ],
+            )?;
+        }
+
+        transaction.commit()
+    }
+
+    /// Forget a track and the fixes still attributed to it.
+    ///
+    /// Points a later file also contained are attributed to whichever import
+    /// first contributed them, so this can remove a position another stored
+    /// file also attests to. The GPX text of both is kept, which makes that
+    /// recoverable by re-importing — a deliberate limit, chosen over a table of
+    /// attestations, because every fix here comes from one phone.
+    pub fn delete_track(&self, id: &str) -> SqlResult<usize> {
+        let transaction = self.conn.unchecked_transaction()?;
+        let removed = transaction.execute("DELETE FROM track_points WHERE track_id = ?1", [id])?;
+        transaction.execute("DELETE FROM point_conflicts WHERE track_id = ?1", [id])?;
+        transaction.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+        transaction.commit()?;
+        Ok(removed)
+    }
+
+    /// Every disagreement recorded against a track, oldest instant first.
+    pub fn conflicts_for_track(&self, id: &str) -> SqlResult<Vec<TrackConflictRecord>> {
+        let mut statement = self.conn.prepare(
+            "SELECT at, kept_lat, kept_lon, kept_ele, other_lat, other_lon, other_ele,
+                    metres, decision
+               FROM point_conflicts WHERE track_id = ?1 ORDER BY at",
+        )?;
+        let rows = statement.query_map([id], |row| {
+            let at: i64 = row.get(0)?;
+            Ok(TrackConflictRecord {
+                at,
+                kept: TrackPoint {
+                    at,
+                    lat: row.get(1)?,
+                    lon: row.get(2)?,
+                    ele: row.get(3)?,
+                },
+                other: TrackPoint {
+                    at,
+                    lat: row.get(4)?,
+                    lon: row.get(5)?,
+                    ele: row.get(6)?,
+                },
+                metres: row.get(7)?,
+                decision: row.get(8)?,
+            })
+        })?;
+        rows.collect()
+    }
 
     pub fn set_setting(&self, key: &str, value: &str) -> SqlResult<()> {
         self.conn.execute(
@@ -1057,6 +1423,52 @@ mod tests {
             )
             .unwrap();
         assert_eq!(index_count, 1, "migration 2 should have added the index");
+    }
+
+    /// A database that predates the track library gains it, and the schema it
+    /// ends up with is the one a fresh database is created with.
+    ///
+    /// Comparing the whole of `sqlite_master` rather than looking for one
+    /// table: a migration that adds a table but forgets its index leaves two
+    /// databases that behave differently under load and identically under a
+    /// test that only checks the table exists.
+    #[test]
+    fn a_database_from_before_the_track_library_ends_up_with_the_same_schema_as_a_fresh_one() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let schema_of = |ledger: &Ledger| -> Vec<(String, String)> {
+            let mut statement = ledger
+                .inner()
+                .prepare(
+                    "SELECT name, COALESCE(sql, '') FROM sqlite_master
+                      WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
+                )
+                .unwrap();
+            let rows = statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        };
+
+        // A database as it stood before migration 7 was written.
+        let old = dir.path().join("old.sqlite3");
+        {
+            let conn = Connection::open(&old).unwrap();
+            for migration in &MIGRATIONS[..6] {
+                conn.execute_batch(migration).unwrap();
+            }
+            conn.execute_batch("PRAGMA user_version = 6").unwrap();
+        }
+
+        let migrated = Ledger::open(&old).unwrap();
+        let fresh = Ledger::open(dir.path().join("fresh.sqlite3")).unwrap();
+
+        assert_eq!(migrated.schema_version().unwrap(), MIGRATIONS.len() as i64);
+        assert_eq!(schema_of(&migrated), schema_of(&fresh));
+
+        // And the new tables work in the migrated one, not merely exist.
+        assert_eq!(migrated.tracks().unwrap(), vec![]);
+        assert_eq!(migrated.points_between(0, i64::MAX).unwrap(), vec![]);
     }
 
     /// Phase 1 acceptance: a round-trip test per table. All ten tables of

@@ -26,14 +26,14 @@ established from a machine with no camera, no Mac, no NAS and no Google account.
 
 | You need | Unblocks | Items |
 |---|---|---|
-| A Mac | 7, 8, 10.3, 13, 14 | 21 |
+| A Mac | 7, 8, 10.3, 13, 14, 15 | 34 |
 | A Google OAuth client | 12 | 7 |
 | A NAS and an SMB share | 11, 14 | 7 |
 | A physical SD card | 8 | 7 |
 | A Firebase project | 6.2 | 1 |
-| Real photographs, and your eyes | 2, 4, 9, 10 | 15 |
+| Real photographs, and your eyes | 2, 4, 9, 10, 15 | 28 |
 
-**51 checks in all, and all of them are actionable.** Four are done — MV-2.1, MV-7.1, MV-7.2 and
+**64 checks in all, and all of them are actionable.** Four are done — MV-2.1, MV-7.1, MV-7.2 and
 MV-7.3 — and **three of those four found defects**, which is the argument for doing the rest. The
 suggested order, and why, is in [`testing.md`](testing.md#5-suggested-order).
 
@@ -464,4 +464,109 @@ assembled into.
       was started.
       **Run:** on an amd64 NAS, pull or build the image and start it.
       **Pass:** as MV-14.2.
+      **Result:**
+
+## Geotag — needs a Mac, real photographs, and your own track
+
+The tab is new and outside the specification; the plan is in
+[`geotag-plan.md`](geotag-plan.md) and the report in
+[`phase-reports/geotag.md`](phase-reports/geotag.md).
+
+**Before any of these:** the `.gpx` has to sit under a configured root, because every path goes
+through G6's check. `docs/GPS/track.gpx` does not — copy it under one, or add the project folder to
+`ROOTS`. The refusal otherwise reads like a permissions error.
+
+- [ ] **MV-15.1 — A real export imports as the fixes it holds.**
+      The reader has only met the one specimen and the fixtures built from it.
+      **Run:** Geotag → Track file → the `.gpx` → **Read the track**, then **Import into the
+      library**.
+      **Pass:** 50 fixes for `track.gpx`, covering 2026-09-02 to 2026-09-05, and the sample under
+      *What will be written* reads `52.5099980 N 13.4199010 E · 2026:09:02 19:40:44 UTC`.
+      **Result:**
+
+- [ ] **MV-15.2 — The same export fed twice adds nothing.**
+      **Run:** read and import the same file again.
+      **Pass:** the preview says 0 new, 50 already held, and reports the date of the first import.
+      The library still lists one track and the fix count has not changed.
+      **Result:**
+
+- [ ] **MV-15.3 — A second export from the same phone overlapping the first raises no conflicts.**
+      This is the check that the 11 cm tolerance is right for *your* export pipeline. If a genuine
+      re-export produces a screenful of disagreements, the tolerance is wrong and the number moves —
+      see `SAME_POSITION_DEGREES`.
+      **Run:** export an overlapping period from OwnTracks again and read it.
+      **Pass:** the shared instants are counted as *already held*, not as disagreements.
+      **Result:**
+
+- [ ] **MV-15.4 — A disagreement is put to you, with a distance on it, and the decision holds.**
+      **Run:** copy the `.gpx`, change one `lat` by roughly 0.001 (about 111 m), read the copy.
+      **Pass:** exactly one disagreement, about 111 m apart, naming the track the existing fix came
+      from. Choosing **Library** leaves the timeline as it was; choosing **File** replaces it. Both
+      are recorded in `point_conflicts` — check with
+      `sqlite3 <db> 'select at, metres, decision from point_conflicts'`.
+      **Result:**
+
+- [ ] **MV-15.5 — The inventory tells you what you actually have.**
+      **Run:** point the Photographs field at a real folder and press **What do these already
+      have?**
+      **Pass:** the counts add up to the file count, phone photographs show *located* with a
+      coordinate, camera frames show *no location*, and any `.mov` shows *not supported*.
+      **Result:**
+
+- [ ] **MV-15.6 — The offset can be read off the photographs.**
+      **Run:** with the Berlin track imported and photographs from those days, leave the offset as
+      it is and press **Preview changes**.
+      **Pass:** the suggestion says `+02:00`, and says it is within a couple of minutes of a
+      recorded fix.
+      **Result:**
+
+- [ ] **MV-15.7 — A wrong offset is visible before anything is written.**
+      This is the failure the whole design is built around: an hour out is a kilometre away, and
+      nothing about the file looks wrong afterwards.
+      **Run:** set the offset to `+00:00` and preview.
+      **Pass:** far fewer matches, visibly larger gaps, and the suggestion still offers `+02:00`.
+      **Result:**
+
+- [ ] **MV-15.8 — A photograph taken overnight takes where the phone last was, and says how old
+      that is.**
+      The specimen records nothing between 20:27 on the 2nd and 06:47 on the 3rd — not missing
+      data, a phone that did not move. Nothing is ever computed between two fixes, so the only
+      question is whether the fix is too old to accept.
+      **Run:** a frame from that night, previewed at the default *Stop trusting a fix after* of
+      12 hours, then with it set to 0.5.
+      **Pass:** at 12 hours it takes the 20:27 fix verbatim and the **From a fix** column reads
+      about `3 h 30 min · carried forward`. At half an hour it is skipped, saying the track may
+      not cover it. It must never take the 06:47 fix, which is where you were the next morning.
+      **Result:**
+
+- [ ] **MV-15.9 — Written positions appear where they should on a map.**
+      The round trip is tested; what is not tested is whether the world agrees.
+      **Run:** apply to **copies**, then open one in Preview (⌘I → More Info) and in Photos.
+      **Pass:** the coordinate matches the preview row, and the map pin is where you were.
+      **Result:**
+
+- [ ] **MV-15.10 — A photograph that already knows where it was is left alone.**
+      **Run:** include a phone photograph in the folder and apply with *Overwrite* unticked.
+      **Pass:** listed as skipped, and its coordinate is unchanged afterwards. Tick *Overwrite* and
+      the preview shows what it would be written over.
+      **Result:**
+
+- [ ] **MV-15.11 — A RAW file is written in place and reads back.**
+      Only JPEG has been through this end to end. `exiftool` writes DNG, NEF, ARW and CR2; whether
+      it will write *your* camera's files is what this checks.
+      **Run:** apply to a copy of a NEF or ARW.
+      **Pass:** the row is counted as written, and re-scanning the folder shows it *located*. A
+      refusal from `exiftool` appears as a failure with its message, not as a silent skip.
+      **Result:**
+
+- [ ] **MV-15.12 — A video is declined rather than omitted.**
+      **Run:** include a `.mov` in the folder.
+      **Pass:** it appears in the skipped list saying a position in a video is a different format —
+      not missing from the listing.
+      **Result:**
+
+- [ ] **MV-15.13 — Google Photos shows the location.**
+      **Run:** publish a geotagged photograph through the Publish tab.
+      **Pass:** the media item shows its location in Google Photos. If it does not, the question is
+      whether Google reads `GPSDateStamp`/`GPSTimeStamp` as we write them.
       **Result:**

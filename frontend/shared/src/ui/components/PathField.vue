@@ -31,6 +31,14 @@ const props = defineProps<{
    */
   keepFileName?: boolean;
   /**
+   * File extensions, without the dot, that the picker may choose directly.
+   *
+   * With these, choosing a file *is* the answer and `keepFileName` never comes
+   * into it. Without them the picker offers folders only, which is right for an
+   * output path that does not exist yet.
+   */
+  selectable?: string[];
+  /**
    * The name to use when `keepFileName` is set and the field is still empty.
    *
    * Without it, choosing a folder into an empty file field yields the folder
@@ -44,8 +52,19 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 
 const picking = ref(false);
 
+/** Whether the picker handed back one of the file types this field accepts. */
+function isChosenFile(path: string): boolean {
+  const extensions = props.selectable ?? [];
+  if (!extensions.length) return false;
+  const name = path.split('/').pop() ?? '';
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 && extensions.includes(name.slice(dot + 1).toLowerCase());
+}
+
 function choose(path: string) {
-  if (props.keepFileName) {
+  // A chosen file is the whole answer: it exists, it is the right type, and
+  // there is no name left to keep.
+  if (props.keepFileName && !isChosenFile(path)) {
     const name = props.modelValue.split('/').pop()?.trim() || props.fileNameFallback;
     // With no name and no fallback the field is left alone rather than being
     // filled with a directory: a picker must not hand a tool a path it cannot
@@ -88,6 +107,7 @@ function choose(path: string) {
       :roots="props.roots"
       :list="props.list"
       :choose-label="props.chooseLabel"
+      :selectable="props.selectable"
       @choose="choose"
       @cancel="picking = false"
     />

@@ -15,13 +15,14 @@ cause: **the tools had only ever been exercised with typed file paths, and the f
 pointing at a folder the normal gesture.**
 
 The numbered checks in [`manual-verification.md`](docs/manual-verification.md) remain the
-structured half of that work — 51 of them, all actionable.
+structured half of that work — 64 of them, all actionable.
 
 | Read this | For |
 |---|---|
 | [`docs/testing.md`](docs/testing.md) | Setting up on the Mac, and the order to work through the checks |
 | [`docs/manual-verification.md`](docs/manual-verification.md) | The checks, each with a stable id like `MV-8.3` |
 | [`docs/known-gaps.md`](docs/known-gaps.md) | What is open **in the code**, as opposed to awaiting a human |
+| [`docs/geotag-plan.md`](docs/geotag-plan.md) | The Geotag tab: joining photographs to a phone's GPS track. Built; MV-15 awaits a Mac |
 | [`docs/deployment.md`](docs/deployment.md) | Deploying the server and the desktop app, and every environment variable |
 | [`docs/phase-reports/`](docs/phase-reports/) | One report per phase: what was delivered, what deviated, and why |
 
@@ -62,8 +63,8 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 504 passing
-cargo test -p phototools-core   # 423 passing — G2
+cargo test --workspace          # 628 passing
+cargo test -p phototools-core   # 547 passing — G2
 ```
 
 Front ends:
@@ -110,6 +111,9 @@ frontend/desktop   inside Tauri; card review and ingest
 
 `core` modules map to the specification's §2.5: `media` (the only module permitted to touch image
 bytes), `tools` (F1–F9), `ingest` (F10–F14, F16), `publish` (F15), `ledger`, `jobs`, `config`.
+
+`tools::geotag` is the one module with no F-number: the specification does not mention GPS at all,
+so inventing one would misrepresent it. See [`docs/geotag-plan.md`](docs/geotag-plan.md).
 
 ### The front-end boundary
 

@@ -136,6 +136,13 @@ fn main() {
             commands::remediate,
             commands::derive_raw,
             commands::hand_off_card,
+            commands::list_tracks,
+            commands::preview_track_import,
+            commands::import_track,
+            commands::delete_track,
+            commands::scan_geo,
+            commands::plan_geotag,
+            commands::apply_geotag,
             commands::get_launch_at_login,
             commands::set_launch_at_login,
         ])

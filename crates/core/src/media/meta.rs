@@ -116,7 +116,27 @@ impl Orientation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Where a file says it was taken.
+///
+/// Read so the geotagging tool can tell a photograph that already knows where
+/// it was from one that does not — writing over the first would replace a
+/// measurement taken at the time with one inferred afterwards.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GpsFix {
+    /// Signed decimal degrees, positive north.
+    pub lat: f64,
+    /// Signed decimal degrees, positive east.
+    pub lon: f64,
+    /// Signed metres. `None` where the file carries no altitude, which is not
+    /// the same as an altitude of zero.
+    pub altitude: Option<f64>,
+}
+
+/// `Eq` is deliberately absent: coordinates are floats, and two fixes being
+/// "the same" is a question about tolerance, not about bit patterns. The
+/// tolerance lives with the tool that has to answer it
+/// (`tools::geotag::same_position`).
+#[derive(Debug, Clone, PartialEq)]
 pub struct MediaMeta {
     pub width: u32,
     pub height: u32,
@@ -124,6 +144,18 @@ pub struct MediaMeta {
     pub capture_source: Option<TagSource>,
     pub camera: Option<String>,
     pub orientation: Orientation,
+    /// Where the file says it was taken, if it says.
+    pub gps: Option<GpsFix>,
+    /// The UTC offset the camera recorded alongside the capture time, in
+    /// minutes east of Greenwich.
+    ///
+    /// EXIF capture times are local wall-clock with no zone, which is why
+    /// `capture` is naive. `OffsetTimeOriginal` is the one tag that closes that
+    /// gap, and where a file carries it there is nothing to guess: it is the
+    /// difference between joining a photograph to a track and asking somebody
+    /// which hour they think they were in. Phones write it; most cameras do
+    /// not.
+    pub utc_offset_minutes: Option<i32>,
 }
 
 impl MediaMeta {
@@ -135,8 +167,30 @@ impl MediaMeta {
             capture_source: None,
             camera: None,
             orientation: Orientation::Normal,
+            gps: None,
+            utc_offset_minutes: None,
         }
     }
+}
+
+/// Parse an EXIF offset — `+02:00`, `-05:00`, `+05:45` — into minutes east.
+///
+/// Returned in minutes rather than hours because three populated time zones
+/// are not on a whole hour, and a reader that rounded them would put every
+/// photograph taken in one of them half an hour's travel from where it was.
+pub fn parse_utc_offset(raw: &str) -> Option<i32> {
+    let raw = raw.trim().trim_matches('"').trim();
+    let (sign, body) = match raw.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, raw.strip_prefix('+').unwrap_or(raw)),
+    };
+    let (hours, minutes) = body.split_once(':')?;
+    let hours: i32 = hours.trim().parse().ok()?;
+    let minutes: i32 = minutes.trim().parse().ok()?;
+    if !(0..=14).contains(&hours) || !(0..60).contains(&minutes) {
+        return None;
+    }
+    Some(sign * (hours * 60 + minutes))
 }
 
 /// The sentinel exiftool writes for "no date". Counts as absent (F1).
@@ -249,7 +303,7 @@ fn read_image_meta_from_memory(path: &Path) -> MediaMeta {
     };
     let mut parser = MediaParser::new();
     match parser.parse_exif(source) {
-        Ok(iter) => collect_exif(iter),
+        Ok(iter) => collect_image(iter),
         Err(_) => MediaMeta::empty(),
     }
 }
@@ -279,7 +333,35 @@ fn read_image_meta(path: &Path) -> MediaMeta {
         Err(_) => return read_image_meta_from_memory(path),
     };
 
-    collect_exif(iter)
+    collect_image(iter)
+}
+
+/// Everything an image's EXIF says, from the one iterator.
+///
+/// The GPS block is asked for **before** the entries are walked, because
+/// walking consumes the iterator and the block is a sub-IFD the walk flattens.
+/// It is read here rather than inside `collect_exif` so that function stays a
+/// pure fold over entries, and its tests keep working from a list of tags with
+/// no file behind them.
+fn collect_image(iter: nom_exif::ExifIter) -> MediaMeta {
+    let gps = iter.parse_gps().ok().flatten().and_then(to_fix);
+
+    let mut meta = collect_exif(iter);
+    meta.gps = gps;
+    meta
+}
+
+/// A parsed GPS block, if it holds a position at all.
+///
+/// A block with a hemisphere and no coordinate is not a position, and reporting
+/// it as one would tell the geotagging tool to leave a photograph alone that
+/// has nothing to leave alone.
+fn to_fix(info: nom_exif::GPSInfo) -> Option<GpsFix> {
+    Some(GpsFix {
+        lat: info.latitude_decimal()?,
+        lon: info.longitude_decimal()?,
+        altitude: info.altitude_meters(),
+    })
 }
 
 /// Walk an EXIF iterator into a [`MediaMeta`].
@@ -293,6 +375,8 @@ fn collect_exif(iter: impl IntoIterator<Item = nom_exif::ExifIterEntry>) -> Medi
     let mut meta = MediaMeta::empty();
     let mut fallback_width = 0u32;
     let mut fallback_height = 0u32;
+    // Which offset tag the current value came from; see the match arm below.
+    let mut offset_rank = -1i8;
 
     for entry in iter {
         let Some(tag) = entry.tag().tag() else {
@@ -309,6 +393,24 @@ fn collect_exif(iter: impl IntoIterator<Item = nom_exif::ExifIterEntry>) -> Medi
             }
             ExifTag::Model => {
                 meta.camera = Some(value.to_string().trim_matches('"').trim().to_string());
+            }
+            // Three tags can carry the offset, and they are not interchangeable:
+            // `OffsetTimeOriginal` belongs to the moment the shutter opened,
+            // which is the moment a track is joined on. The others are taken
+            // only when it is absent, and never over it — which is why this
+            // records the tag as well as the value.
+            ExifTag::OffsetTimeOriginal | ExifTag::OffsetTimeDigitized | ExifTag::OffsetTime => {
+                let rank = match tag {
+                    ExifTag::OffsetTimeOriginal => 2,
+                    ExifTag::OffsetTimeDigitized => 1,
+                    _ => 0,
+                };
+                if let Some(minutes) = parse_utc_offset(&value.to_string()) {
+                    if rank >= offset_rank {
+                        offset_rank = rank;
+                        meta.utc_offset_minutes = Some(minutes);
+                    }
+                }
             }
             ExifTag::Orientation => {
                 if let Some(v) = as_u32(value) {
@@ -366,6 +468,11 @@ fn read_video_meta(path: &Path) -> MediaMeta {
     if let Some(v) = track.get(TrackInfoTag::Height).and_then(as_u32) {
         meta.height = v;
     }
+
+    // A phone films with the GPS on, so a video knows where it was even though
+    // this tool will not write to one. The inventory says what a file carries;
+    // it does not get to be silent about a thing it can see.
+    meta.gps = track.gps_info().cloned().and_then(to_fix);
 
     let (capture, source) = best_date(&candidates);
     meta.capture = capture;
@@ -618,6 +725,23 @@ impl ExifWriter {
         ])
     }
 
+    /// Apply several tag assignments to one file in a single `-execute`.
+    ///
+    /// The assignments arrive already rendered (`-GPSLatitude=52.5315490`),
+    /// because what a tag *means* belongs to the tool that decided to write it,
+    /// not to the process driver. Writing a position is nine tags, and nine
+    /// round trips through the driver for one file would give up most of what
+    /// keeping the process alive was for (G4).
+    pub fn set_tags(&mut self, path: &Path, assignments: &[String]) -> Result<(), Error> {
+        if assignments.is_empty() {
+            return Ok(());
+        }
+        let mut args: Vec<String> = assignments.to_vec();
+        args.push("-overwrite_original".to_string());
+        args.push(path.display().to_string());
+        self.execute(&args)
+    }
+
     /// Shut the process down cleanly and wait for it to exit.
     pub fn close(mut self) -> Result<(), Error> {
         self.shutdown();
@@ -786,5 +910,47 @@ mod tests {
         assert!(is_video(Path::new("clip.mp4")));
         assert!(!is_video(Path::new("frame.jpg")));
         assert!(!is_video(Path::new("noext")));
+    }
+}
+
+#[cfg(test)]
+mod geo_tests {
+    use super::*;
+
+    #[test]
+    fn an_offset_is_read_as_minutes_east_of_greenwich() {
+        assert_eq!(parse_utc_offset("+02:00"), Some(120));
+        assert_eq!(parse_utc_offset("-05:00"), Some(-300));
+        assert_eq!(parse_utc_offset("+00:00"), Some(0));
+    }
+
+    #[test]
+    fn a_zone_that_is_not_on_a_whole_hour_keeps_its_minutes() {
+        // Kathmandu, Adelaide and the Chatham Islands are not rounding errors.
+        assert_eq!(parse_utc_offset("+05:45"), Some(345));
+        assert_eq!(parse_utc_offset("+09:30"), Some(570));
+        assert_eq!(parse_utc_offset("-03:30"), Some(-210));
+    }
+
+    #[test]
+    fn an_offset_arrives_quoted_from_exif_and_is_read_anyway() {
+        assert_eq!(parse_utc_offset("\"+02:00\""), Some(120));
+        assert_eq!(parse_utc_offset("  +02:00  "), Some(120));
+    }
+
+    #[test]
+    fn something_that_is_not_an_offset_is_not_read_as_one() {
+        // The tag exists and is blank on plenty of cameras. A blank read as
+        // UTC would be a silent hour's error in every photograph.
+        for raw in ["", " ", "+", "02:00:00 ", "+15:00", "+02:99", "Z", "+aa:bb"] {
+            assert_eq!(parse_utc_offset(raw), None, "{raw:?} should not parse");
+        }
+    }
+
+    #[test]
+    fn a_file_with_no_gps_reports_no_gps_rather_than_a_position_at_null_island() {
+        // 0°N 0°E is in the Gulf of Guinea, and it is where every "absent means
+        // zero" bug puts a photograph.
+        assert_eq!(MediaMeta::empty().gps, None);
     }
 }

@@ -9,6 +9,7 @@ pub mod f6_transform;
 pub mod f7_border;
 pub mod f8_tiff;
 pub mod f9_browser;
+pub mod geotag;
 
 use crate::jobs::{Progress, ToolResult};
 

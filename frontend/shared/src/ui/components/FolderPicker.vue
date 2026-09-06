@@ -12,8 +12,12 @@
  * NAS share; the web's runs inside the container on the NAS and offers what is
  * mounted into it. Each shows what its own side can reach.
  *
- * Only directories are selectable. Files are shown, greyed, because a folder
- * with nothing in it looks identical to a wrong turn otherwise.
+ * Only directories are selectable by default. Files are shown, greyed, because
+ * a folder with nothing in it looks identical to a wrong turn otherwise.
+ *
+ * `selectable` turns named file types into choices too — a `.gpx` track is a
+ * *file*, and asking somebody to browse to its folder and then type its name is
+ * how the pickers came to exist in the first place.
  */
 import { ref, watch } from 'vue';
 import type { BrowserEntry } from '@phototools/shared';
@@ -25,6 +29,13 @@ const props = defineProps<{
   list: (path: string) => Promise<BrowserEntry[]>;
   /** Wording for the confirm button, e.g. "Use this folder". */
   chooseLabel?: string;
+  /**
+   * Extensions, without the dot, that may be chosen as well as folders.
+   *
+   * Empty or absent keeps the picker to directories, which is what every
+   * caller but the track loader wants.
+   */
+  selectable?: string[];
 }>();
 
 const emit = defineEmits<{
@@ -59,6 +70,15 @@ async function open(path: string) {
   } finally {
     loading.value = false;
   }
+}
+
+/** Whether this file is one of the types the caller will accept. */
+function isSelectable(name: string): boolean {
+  const extensions = props.selectable ?? [];
+  if (!extensions.length) return false;
+  const dot = name.lastIndexOf('.');
+  if (dot < 0) return false;
+  return extensions.includes(name.slice(dot + 1).toLowerCase());
 }
 
 /** The trail from the containing root to the current directory. */
@@ -130,6 +150,16 @@ watch(
             @click="open(entry.absolute_path)"
           >
             <span class="entry-icon" aria-hidden="true">/</span>
+            <span class="entry-name">{{ entry.name }}</span>
+          </button>
+          <button
+            v-else-if="isSelectable(entry.name)"
+            type="button"
+            class="entry"
+            data-testid="picker-file"
+            @click="emit('choose', entry.absolute_path)"
+          >
+            <span class="entry-icon" aria-hidden="true">·</span>
             <span class="entry-name">{{ entry.name }}</span>
           </button>
           <div v-else class="entry entry-file">

@@ -98,6 +98,8 @@ pub mod tag {
     pub const EXIF_OFFSET: u16 = 0x8769;
     pub const DATE_TIME_ORIGINAL: u16 = 0x9003;
     pub const CREATE_DATE: u16 = 0x9004;
+    pub const OFFSET_TIME: u16 = 0x9010;
+    pub const OFFSET_TIME_ORIGINAL: u16 = 0x9011;
     pub const LENS_MODEL: u16 = 0xA434;
     pub const PIXEL_X_DIMENSION: u16 = 0xA002;
     pub const PIXEL_Y_DIMENSION: u16 = 0xA003;

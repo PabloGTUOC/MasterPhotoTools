@@ -106,14 +106,6 @@ impl ExifPoint {
         }
         args
     }
-
-    /// The coordinate as one line, for a table a person reads.
-    pub fn coordinate(&self) -> String {
-        format!(
-            "{} {} {} {}",
-            self.latitude, self.latitude_ref, self.longitude, self.longitude_ref
-        )
-    }
 }
 
 #[cfg(test)]

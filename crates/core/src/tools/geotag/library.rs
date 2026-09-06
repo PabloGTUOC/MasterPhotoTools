@@ -148,31 +148,6 @@ pub struct TrackImportResult {
     pub already_imported: bool,
 }
 
-impl TrackImportResult {
-    /// The closing line, for a screen and for a job's summary.
-    pub fn describe(&self) -> String {
-        if self.added == 0 && self.took_new == 0 {
-            return format!(
-                "Nothing new: all {} fixes in {} were already in the library",
-                self.identical, self.name
-            );
-        }
-        let mut line = format!("{} fixes added from {}", self.added, self.name);
-        if self.identical > 0 {
-            line.push_str(&format!(", {} already known", self.identical));
-        }
-        if self.kept_existing + self.took_new > 0 {
-            line.push_str(&format!(
-                ", {} disagreement(s) settled ({} kept, {} replaced)",
-                self.kept_existing + self.took_new,
-                self.kept_existing,
-                self.took_new
-            ));
-        }
-        line
-    }
-}
-
 /// The three buckets, computed against the timeline as it stands.
 struct Diff {
     new: Vec<TrackPoint>,

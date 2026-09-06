@@ -15,6 +15,7 @@ import type {
   GeoScanRow,
   GeotagPreview,
   GeotagRequest,
+  RecordedConflict,
   Resolution,
   TrackImportPreview,
   TrackSummary,
@@ -36,6 +37,9 @@ const busy = ref(false);
 const tracks = ref<TrackSummary[]>([]);
 const trackPath = ref('');
 const pending = ref<TrackImportPreview | null>(null);
+
+/** The settled disagreements for one track, once somebody asks to see them. */
+const history = ref<{ id: string; conflicts: RecordedConflict[] } | null>(null);
 
 /**
  * What the library last did, or last could not do.
@@ -191,6 +195,15 @@ function describeImport(result: {
   return `${parts.join(', ')}.`;
 }
 
+async function showHistory(id: string) {
+  if (history.value?.id === id) {
+    history.value = null;
+    return;
+  }
+  const conflicts = await run(() => api.trackConflicts(id));
+  if (conflicts) history.value = { id, conflicts };
+}
+
 async function removeTrack(id: string) {
   const removed = await run(() => api.deleteTrack(id));
   if (removed === undefined) return;
@@ -336,7 +349,9 @@ const suggestionLine = computed(() => {
         :roots="roots"
         :list="list"
         :busy="busy"
+        :history="history"
         @preview="previewTrack"
+        @history="showHistory"
         @cancel="pending = null"
         @import="importTrack"
         @remove="removeTrack"

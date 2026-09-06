@@ -1310,6 +1310,26 @@ pub fn delete_track(id: String, state: State<'_, AppState>) -> CommandResult<usi
     guard.delete_track(&id).map_err(|e| describe(e.into()))
 }
 
+/// Every disagreement recorded against a track, and what was decided.
+///
+/// The audit rows exist so that a library which says something one of its own
+/// stored files does not can explain itself. Written and never read, they would
+/// have been reachable only by opening the database with `sqlite3`.
+#[tauri::command]
+pub fn track_conflicts(
+    id: String,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<geotag::RecordedConflict>> {
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    Ok(guard
+        .conflicts_for_track(&id)
+        .map_err(|e| describe(e.into()))?
+        .into_iter()
+        .map(geotag::RecordedConflict::from)
+        .collect())
+}
+
 /// The inventory. Synchronous, like the date scan: it writes nothing and the
 /// table is the answer.
 #[tauri::command]

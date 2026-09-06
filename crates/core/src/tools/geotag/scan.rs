@@ -31,23 +31,6 @@ pub enum GeoStatus {
     NotSupported,
 }
 
-impl GeoStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            GeoStatus::Ok => "ok",
-            GeoStatus::NoLocation => "no location",
-            GeoStatus::NoDate => "no date",
-            GeoStatus::NoDateOrLocation => "no date or location",
-            GeoStatus::NotSupported => "not supported",
-        }
-    }
-
-    /// Whether this tool can do anything for a file in this state.
-    pub fn is_actionable(&self) -> bool {
-        matches!(self, GeoStatus::NoLocation)
-    }
-}
-
 /// One file's row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GeoScanRow {
@@ -63,32 +46,6 @@ pub struct GeoScanRow {
     /// about to get one read alike.
     pub location: Option<ExifPoint>,
     pub status: GeoStatus,
-}
-
-/// The counts a screen puts above the table.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GeoScanSummary {
-    pub total: usize,
-    pub complete: usize,
-    pub missing_location: usize,
-    pub missing_date: usize,
-    pub unsupported: usize,
-}
-
-pub fn summarise(rows: &[GeoScanRow]) -> GeoScanSummary {
-    let mut summary = GeoScanSummary {
-        total: rows.len(),
-        ..Default::default()
-    };
-    for row in rows {
-        match row.status {
-            GeoStatus::Ok => summary.complete += 1,
-            GeoStatus::NoLocation => summary.missing_location += 1,
-            GeoStatus::NoDate | GeoStatus::NoDateOrLocation => summary.missing_date += 1,
-            GeoStatus::NotSupported => summary.unsupported += 1,
-        }
-    }
-    summary
 }
 
 /// The status a file's metadata puts it in.
@@ -216,25 +173,19 @@ mod tests {
 
     #[test]
     fn a_photograph_with_both_needs_nothing_from_this_tool() {
-        let status = status_of(&meta(true, true), false);
-        assert_eq!(status, GeoStatus::Ok);
-        assert!(!status.is_actionable());
+        assert_eq!(status_of(&meta(true, true), false), GeoStatus::Ok);
     }
 
     #[test]
     fn a_photograph_with_a_date_and_no_position_is_the_one_this_tool_is_for() {
-        let status = status_of(&meta(true, false), false);
-        assert_eq!(status, GeoStatus::NoLocation);
-        assert!(status.is_actionable());
+        assert_eq!(status_of(&meta(true, false), false), GeoStatus::NoLocation);
     }
 
     #[test]
     fn a_photograph_with_no_date_cannot_be_matched_and_says_so() {
         // Nothing to look up. The row exists so it is visible, not so it can be
         // acted on here — the Dates tab is where that starts.
-        let status = status_of(&meta(false, true), false);
-        assert_eq!(status, GeoStatus::NoDate);
-        assert!(!status.is_actionable());
+        assert_eq!(status_of(&meta(false, true), false), GeoStatus::NoDate);
     }
 
     #[test]
@@ -251,43 +202,5 @@ mod tests {
         // reads as a folder with fewer files in it than it has.
         assert_eq!(status_of(&meta(true, false), true), GeoStatus::NotSupported);
         assert_eq!(status_of(&meta(true, true), true), GeoStatus::NotSupported);
-        assert!(!status_of(&meta(true, false), true).is_actionable());
-    }
-
-    #[test]
-    fn the_summary_counts_every_row_exactly_once() {
-        let rows: Vec<GeoScanRow> = [
-            GeoStatus::Ok,
-            GeoStatus::NoLocation,
-            GeoStatus::NoLocation,
-            GeoStatus::NoDate,
-            GeoStatus::NoDateOrLocation,
-            GeoStatus::NotSupported,
-        ]
-        .iter()
-        .map(|status| GeoScanRow {
-            name: "x.jpg".into(),
-            path: PathBuf::from("x.jpg"),
-            capture: None,
-            tag: None,
-            utc_offset_minutes: None,
-            location: None,
-            status: *status,
-        })
-        .collect();
-
-        let summary = summarise(&rows);
-        assert_eq!(summary.total, 6);
-        assert_eq!(summary.complete, 1);
-        assert_eq!(summary.missing_location, 2);
-        assert_eq!(summary.missing_date, 2);
-        assert_eq!(summary.unsupported, 1);
-        assert_eq!(
-            summary.complete
-                + summary.missing_location
-                + summary.missing_date
-                + summary.unsupported,
-            summary.total
-        );
     }
 }

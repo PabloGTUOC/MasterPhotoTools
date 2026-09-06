@@ -140,6 +140,7 @@ fn main() {
             commands::preview_track_import,
             commands::import_track,
             commands::delete_track,
+            commands::track_conflicts,
             commands::scan_geo,
             commands::plan_geotag,
             commands::apply_geotag,

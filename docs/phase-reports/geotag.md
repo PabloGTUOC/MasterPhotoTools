@@ -197,8 +197,8 @@ absent, and that whether two fixes are "the same" is a question about tolerance 
 
 | | Before | After |
 |---|---|---|
-| `cargo test --workspace` | 504 | **628** |
-| `cargo test -p phototools-core` (G2) | 423 | **547** |
+| `cargo test --workspace` | 504 | **632** |
+| `cargo test -p phototools-core` (G2) | 423 | **551** |
 | `check:layout` | 9 routes | **10 routes**, `/geotag` included |
 
 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D warnings`, both front-end

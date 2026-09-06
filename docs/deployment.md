@@ -140,6 +140,7 @@ Two further traps:
 | `MAX_AGE_DAYS` | `90` | F12 rejects a capture date further than this from now. |
 | `MAX_MEGAPIXELS` | `0` | F12's resolution ceiling, in megapixels. **Zero means no ceiling**, which is the default: publishing is limited by file size, and a frame inside the byte cap is worth keeping whole. Set it to restore §F12's 10. |
 | `MAX_OUTPUT_BYTES` | `10485760` | F12's size ceiling, applied independently of the resolution one. |
+| `EXIFTOOL_PATH` | *unset* | The `exiftool` to run for every metadata write. Unset means: `PATH`, then the usual Homebrew, MacPorts and distribution locations. A value pointing at nothing is an error rather than a fallback. See [§6](#exiftool-and-where-the-bundle-looks-for-it). |
 
 A threshold that is set but unparseable is a **startup error**, not a silent
 fallback to the default (§9.2 invariant 6).
@@ -224,6 +225,29 @@ quarantine attribute with
 `xattr -dr com.apple.quarantine /Applications/MasterPhotoTools.app`. Giving it to
 somebody else needs an Apple Developer account for signing and notarisation.
 
+### `exiftool`, and where the bundle looks for it
+
+Every metadata **write** shells out to `exiftool` (§2.6): date repair (F1), the
+copy onto each RAW derivative (F14), and the position the Geotag tab writes.
+
+A `.app` launched from Finder does **not** inherit your shell. It gets launchd's
+environment, whose `PATH` is `/usr/gnu/bin:/usr/local/bin:/bin:/usr/bin:.` —
+Homebrew's `/opt/homebrew/bin` is not on it. An application that writes tags
+perfectly from `cargo tauri dev` can therefore fail at every write when
+double-clicked, which is a confusing way to discover this.
+
+So `phototools-core` looks in order:
+
+1. **`EXIFTOOL_PATH`**, if set. A value pointing at nothing is an error, not a
+   reason to fall back — somebody who set it meant it.
+2. `exiftool` on `PATH`. This is what a terminal, the container and CI all use.
+3. `/opt/homebrew/bin/exiftool`, `/usr/local/bin/exiftool`,
+   `/opt/local/bin/exiftool`, `/usr/bin/exiftool` — Homebrew on either
+   architecture, MacPorts, and a distribution package.
+
+A MacPorts or Homebrew install therefore needs no configuration. Anything else
+wants `EXIFTOOL_PATH`.
+
 ### Configure
 
 Settings live in `~/Library/Application Support/masterphototools/config.json`,
@@ -288,7 +312,8 @@ cannot be undone.
 
 ## 8. Backups
 
-Back up **`DATABASE_PATH`**. It is the ledger of everything published, and F16's
+Back up **`DATABASE_PATH`**. It holds every GPS track ever imported as well as
+the ledger of everything published, and F16's
 deduplication is keyed on it: losing it means the next publish cannot tell which
 photographs Google already has, and the API offers no way to remove the
 duplicates that follow.

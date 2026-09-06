@@ -31,6 +31,7 @@ import type {
   JobEvent,
   JobStatus,
   Plan,
+  RecordedConflict,
   RemediateRequest,
   RemediationPlan,
   RenameAction,
@@ -164,6 +165,10 @@ export class TauriApiClient implements ApiClient {
 
   deleteTrack(id: string): Promise<number> {
     return invoke<number>('delete_track', { id });
+  }
+
+  trackConflicts(id: string): Promise<RecordedConflict[]> {
+    return invoke<RecordedConflict[]>('track_conflicts', { id });
   }
 
   scanGeo(request: DatesScanRequest): Promise<GeoScanRow[]> {

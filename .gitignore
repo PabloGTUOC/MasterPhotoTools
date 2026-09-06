@@ -15,3 +15,6 @@ frontend/*/dist/
 
 # Frontend build output and verification artefacts
 frontend/web/layout-proof/
+
+# JetBrains IDEs
+.idea/

@@ -530,6 +530,75 @@ pub struct DateSet {
 /// How long to wait for a single `-execute` to come back before giving up.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Where `exiftool` is looked for when nothing says otherwise.
+///
+/// **A bare `exiftool` is not enough on macOS.** A `.app` launched from Finder
+/// inherits launchd's environment, whose `PATH` is
+/// `/usr/gnu/bin:/usr/local/bin:/bin:/usr/bin:.` — Homebrew's `/opt/homebrew/bin`
+/// is not on it, and neither is MacPorts'. The desktop application therefore
+/// starts fine from a terminal, where it inherits a developer's shell, and
+/// fails to write a single tag when double-clicked. That is not a Geotag
+/// problem: it is every date repair and every RAW derivative too.
+///
+/// The list is tried in order after `PATH` itself, which keeps the container
+/// (where `exiftool` is installed to `/usr/bin`) and the terminal on the same
+/// path they always took.
+const EXIFTOOL_LOCATIONS: [&str; 4] = [
+    // Homebrew on Apple Silicon, then on Intel.
+    "/opt/homebrew/bin/exiftool",
+    "/usr/local/bin/exiftool",
+    // MacPorts.
+    "/opt/local/bin/exiftool",
+    // A distribution package, and the Docker image.
+    "/usr/bin/exiftool",
+];
+
+/// The environment variable that overrides the search entirely.
+pub const EXIFTOOL_PATH_VAR: &str = "EXIFTOOL_PATH";
+
+/// Decide which `exiftool` to run.
+///
+/// `EXIFTOOL_PATH` wins outright, and is reported as missing rather than
+/// silently ignored: somebody who set it meant it, and falling back to a
+/// different binary would be answering a question they did not ask.
+pub fn exiftool_program() -> Result<String, Error> {
+    if let Ok(configured) = std::env::var(EXIFTOOL_PATH_VAR) {
+        let configured = configured.trim().to_string();
+        if !configured.is_empty() {
+            if !Path::new(&configured).exists() {
+                return Err(Error::Config(format!(
+                    "{EXIFTOOL_PATH_VAR} is set to {configured:?}, and there is nothing there."
+                )));
+            }
+            return Ok(configured);
+        }
+    }
+
+    // `PATH` first: it is what a terminal, a container and a CI runner all
+    // expect, and the only one of them that is ever wrong is a Finder launch.
+    if Command::new("exiftool")
+        .arg("-ver")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok()
+    {
+        return Ok("exiftool".to_string());
+    }
+
+    for candidate in EXIFTOOL_LOCATIONS {
+        if Path::new(candidate).exists() {
+            return Ok(candidate.to_string());
+        }
+    }
+
+    Err(Error::Config(format!(
+        "exiftool is required for metadata writing (specification §2.6) and was not found. \
+         Tried PATH and {}. Install it, or set {EXIFTOOL_PATH_VAR} to its full path.",
+        EXIFTOOL_LOCATIONS.join(", ")
+    )))
+}
+
 /// A single long-lived `exiftool -stay_open` process (G4).
 ///
 /// Starting one process per file costs 150–250 ms each regardless of file size,
@@ -553,7 +622,7 @@ impl ExifWriter {
     }
 
     pub fn start_with_timeout(timeout: Duration) -> Result<Self, Error> {
-        Self::start_with("exiftool", timeout)
+        Self::start_with(&exiftool_program()?, timeout)
     }
 
     /// Start against a specific program.

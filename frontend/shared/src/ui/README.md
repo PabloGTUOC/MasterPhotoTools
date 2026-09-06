@@ -40,6 +40,9 @@ application's own view, or by a test harness with no application at all.
 `ShotGrid` and `BulkActions` are used by the desktop alone and still live here,
 because being transport-free is what makes them measurable: `check:ingest`
 mounts them on their own and puts four hundred shots through them.
+`TrackLibrary` is here for the same reason: the conflict table is the one part
+of geotagging a person has to *judge*, and it can be put in front of a harness
+with no application around it.
 
 Some screens genuinely belong to one application, and those live in that
 application's `src/views/`:

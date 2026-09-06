@@ -14,6 +14,7 @@ import type {
   BrowserEntry,
   Decision,
   PointConflict,
+  RecordedConflict,
   Resolution,
   TrackImportPreview,
   TrackSummary,
@@ -28,6 +29,13 @@ const props = defineProps<{
   roots: string[];
   list: (path: string) => Promise<BrowserEntry[]>;
   busy?: boolean;
+  /**
+   * The disagreements already settled for one track, once asked for.
+   *
+   * Kept out here rather than fetched by this component, which has no client:
+   * props in, events out.
+   */
+  history?: { id: string; conflicts: RecordedConflict[] } | null;
 }>();
 
 const emit = defineEmits<{
@@ -36,6 +44,7 @@ const emit = defineEmits<{
   cancel: [];
   import: [resolution: Resolution, overrides: Decision[]];
   remove: [id: string];
+  history: [id: string];
 }>();
 
 /** The default for every disagreement this import turns up. */
@@ -125,16 +134,52 @@ function metres(value: number): string {
           </small>
         </span>
         <span class="row__act">
+          <button
+            v-if="track.points_conflicting > 0"
+            type="button"
+            class="ghost"
+            :disabled="props.busy"
+            @click="emit('history', track.id)"
+          >
+            {{ track.points_conflicting }} settled
+          </button>
           <button type="button" class="ghost" :disabled="props.busy" @click="emit('remove', track.id)">
             Forget
           </button>
         </span>
+      </div>
+
+      <!-- What was decided the last time this file disagreed with the library.
+           Without it the record exists and nobody can read it. -->
+      <div v-if="props.history" class="row row--history" role="row">
+        <span class="row__name">Settled disagreements</span>
+        <ul class="settled">
+          <li v-for="settled in props.history.conflicts" :key="settled.at">
+            {{ utc(settled.at) }} —
+            kept {{ coordinate(settled.kept) }}
+            <span class="muted">
+              over {{ coordinate(settled.other) }}, {{ metres(settled.metres) }} away,
+              {{ settled.decision === 'took-new' ? 'taking this file' : 'keeping the library' }}
+            </span>
+          </li>
+          <li v-if="!props.history.conflicts.length" class="muted">
+            Nothing recorded against this track.
+          </li>
+        </ul>
       </div>
     </div>
 
     <p v-else class="muted">
       No tracks yet. Load the <code>.gpx</code> your phone exported and every photograph taken
       while it was recording can be placed.
+    </p>
+
+    <!-- Each application keeps its own ledger, so each keeps its own timeline.
+         Without this, importing on the Mac and then opening the web UI looks
+         like the import having failed. -->
+    <p class="muted footnote">
+      This library belongs to this application. The desktop app and the server keep separate
+      ledgers, so a track loaded here is not visible in the other one.
     </p>
 
     <PathField
@@ -349,6 +394,22 @@ function metres(value: number): string {
   display: flex;
   gap: var(--space-1);
   flex-wrap: wrap;
+}
+
+.row--history {
+  display: block;
+  background: var(--bg-panel);
+}
+.settled {
+  list-style: none;
+  display: grid;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.footnote {
+  font-size: 12px;
 }
 
 .pending {

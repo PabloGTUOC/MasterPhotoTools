@@ -223,11 +223,29 @@ symlink into the card refused, two cards' `IMG_0001.JPG` not overwriting each ot
 not abandoning the other frames, and no `.partial-copy` left behind. `deliver_card` on the
 desktop copies only the shots that did not fail validation.
 
-### PB-4 — planning a folder publish
-`publish::folder::plan`: walk `Publishing`, decide what is publishable, check the byte-hash ledger,
+### PB-4 — planning a folder publish ✔
+`publish::folder`: walk `Publishing`, decide what is publishable, check the byte-hash ledger,
 produce a plan. Writes nothing.
-**Done when** a plan lists every file at any depth, marks bytes already uploaded, and a plan over
-an empty folder says so rather than reporting zero of zero.
+
+**The state machine is reused rather than rebuilt.** `Publisher` reads each file as
+`staging_dir.join(file_name)`, so a folder publish is that same publisher with `staging_dir`
+pointed at the publishing folder and `file_name` a path relative to it. Retries, resumption and the
+dry-run check come along unchanged; a second publisher would have drifted from the first.
+
+**The session id is a fact about the contents, not the folder** — stronger than this plan asked
+for. It hashes every file's relative path and content hash in order, which binds §9.2 rule 3's dry
+run to exactly what was reviewed: add a file afterwards, or geotag one (which rewrites it), and the
+id changes, the recorded dry run no longer matches, and publishing refuses until somebody looks
+again. A partial failure leaves the same files in place, so the same id, so a resumed run continues
+its own rows rather than doubling them.
+
+Migration 8 adds `published.key_kind` — `source` for F16's rows, `file` for these — so a later
+reader cannot mistake "these bytes were uploaded" for "this photograph was published". It also adds
+`sessions.folder`, rather than putting a folder path in a column called `card_id`.
+
+**Done:** twelve tests, including both dry-run invalidations, the two key kinds staying distinct,
+subfolders keeping their paths, non-photographs reported rather than uploaded, and 51 files needing
+two batchCreate calls (§6.1).
 
 ### PB-5 — publishing, and emptying
 The upload through the existing state machine, then the deletion under the four rules.

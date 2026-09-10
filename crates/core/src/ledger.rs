@@ -276,6 +276,30 @@ const MIGRATIONS: &[&str] = &[
 
     CREATE INDEX IF NOT EXISTS idx_track_points_track_id ON track_points (track_id);
     "#,
+    // 8 — which kind of key a `published` row is keyed on.
+    //
+    // F16's ledger answers "have I published this before?" against the **source**
+    // hash: the bytes the camera wrote, which nothing rewrites. Publishing a
+    // folder cannot use that key — the files in it have been through the tools,
+    // and geotagging in particular rewrites a file, so one photograph has a
+    // different hash after it is tagged than before.
+    //
+    // A folder publish therefore keys on the bytes it uploaded, which answers a
+    // weaker question: "have I uploaded exactly this file?" rather than "have I
+    // published this photograph?". Both rows live in one table because both
+    // answer "do not upload this again", and the column is what stops a later
+    // reader mistaking one guarantee for the other.
+    //
+    // Existing rows predate folder publishing and are all source-keyed.
+    //
+    // `sessions.folder` is the other half: a folder publish needs a session row
+    // because §9.2 rule 3's dry-run record hangs off one, but it has no card.
+    // Storing the path in `card_id` would be a lie in a column name that a
+    // later reader would believe.
+    r#"
+    ALTER TABLE published ADD COLUMN key_kind TEXT NOT NULL DEFAULT 'source';
+    ALTER TABLE sessions ADD COLUMN folder TEXT;
+    "#,
 ];
 
 /// One provider's stored authorisation.
@@ -1245,6 +1269,46 @@ impl Ledger {
         Ok(())
     }
 
+    /// Record a file published from a folder, keyed on the bytes uploaded.
+    ///
+    /// A weaker claim than [`record_published`] makes, and stored as such: this
+    /// says "these exact bytes went to Google", not "this photograph has been
+    /// published". The tools rewrite files — geotagging changes a photograph's
+    /// hash — so the same frame processed twice is two rows here.
+    pub fn record_published_file(
+        &self,
+        sha256: &str,
+        name: &str,
+        session_id: &str,
+        media_item_id: Option<&str>,
+    ) -> SqlResult<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO published
+                 (source_sha256, stem, derived_sha256, session_id, media_item_id,
+                  published_at, key_kind)
+             VALUES (?1, ?2, ?1, ?3, ?4, ?5, 'file')",
+            (
+                sha256,
+                name,
+                session_id,
+                media_item_id,
+                chrono::Utc::now().timestamp(),
+            ),
+        )?;
+        Ok(())
+    }
+
+    /// Which kind of key a `published` row carries: `source` or `file`.
+    pub fn published_key_kind(&self, sha256: &str) -> SqlResult<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT key_kind FROM published WHERE source_sha256 = ?1",
+                [sha256],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
     pub fn is_published(&self, source_sha256: &str) -> SqlResult<bool> {
         let found: Option<i64> = self
             .conn
@@ -1298,6 +1362,21 @@ impl Ledger {
     /// verify arrivals without what the first was promised. Storing it verbatim
     /// also means a server restarted between the two still knows what it agreed
     /// to (F17).
+    /// Open a session for publishing a folder.
+    ///
+    /// `INSERT OR IGNORE`, not `OR REPLACE`: the row carries the dry-run stamp
+    /// that §9.2 rule 3 requires, and replacing it would quietly clear the
+    /// record that somebody had looked — turning the safeguard into a
+    /// formality that any second call satisfies.
+    pub fn open_folder_session(&self, id: &str, folder: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, folder, state, created_at)
+             VALUES (?1, ?2, 'folder', ?3)",
+            (id, folder, chrono::Utc::now().timestamp()),
+        )?;
+        Ok(())
+    }
+
     pub fn open_session(
         &self,
         id: &str,

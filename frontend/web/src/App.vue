@@ -1,18 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { sharedToolLinks } from '@ui/routes';
 import { authReady, initAuth, isConfigured, signIn, signOutOfPhotoTools, user } from './auth';
 
 const links = [
   { to: '/', label: 'Home' },
   { to: '/publish', label: 'Publish' },
-  { to: '/dates', label: 'Dates' },
-  { to: '/rename', label: 'Rename' },
-  { to: '/geotag', label: 'Geotag' },
-  { to: '/split', label: 'Split' },
-  { to: '/contact-sheet', label: 'Sheet' },
-  { to: '/transform', label: 'Transform' },
-  { to: '/border', label: 'Border' },
-  { to: '/tiff-to-jpeg', label: 'TIFF' },
+  ...sharedToolLinks,
 ];
 
 /** The status bar's live clock (§5.8), monospaced and always two digits. */

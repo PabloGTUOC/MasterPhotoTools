@@ -7,18 +7,12 @@
  * when the NAS is off.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { sharedToolLinks } from '@ui/routes';
 import { desktop, type ServerStatus } from './api';
 
 const links = [
   { to: '/', label: 'Ingest' },
-  { to: '/dates', label: 'Dates' },
-  { to: '/rename', label: 'Rename' },
-  { to: '/geotag', label: 'Geotag' },
-  { to: '/split', label: 'Split' },
-  { to: '/contact-sheet', label: 'Sheet' },
-  { to: '/transform', label: 'Transform' },
-  { to: '/border', label: 'Border' },
-  { to: '/tiff-to-jpeg', label: 'TIFF' },
+  ...sharedToolLinks,
 ];
 
 const server = ref<ServerStatus | null>(null);

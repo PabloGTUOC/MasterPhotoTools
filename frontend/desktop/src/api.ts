@@ -197,6 +197,17 @@ export class TauriApiClient implements ApiClient {
   // Ingest — F11 to F14
   // -------------------------------------------------------------------------
 
+  /**
+   * Copy the frames that passed to a folder, keeping the camera's names.
+   *
+   * Desktop-only: the card reader is on this machine (§2.3), and this is the
+   * road off the card that leaves the photographs somewhere the tools can
+   * reach them.
+   */
+  deliverCard(path: string, destination: string): Promise<string> {
+    return invoke<string>('deliver_card', { args: { path, destination } });
+  }
+
   scanCard(path: string): Promise<string> {
     return invoke<string>('scan_card', { path });
   }

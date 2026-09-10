@@ -290,16 +290,30 @@ which is what a card is, but choosing what to publish means a folder *or* three 
 **Done:** both `check:transport` runs pass, both typechecks, and the desktop returns the same
 counts the server does rather than a summary sentence with fabricated numbers beside it.
 
-### PB-7 — the Ingest screen
-The destination folder, and the Location check in the card table.
-**Done when** the counts of what will be copied match what arrives.
+### PB-7 — the Ingest screen ✔
+A **Copy the photographs to** field and a *Copy to a folder* action beside the handover. The
+Location check needed nothing: the card table renders a rule's name from the wire.
 
-### PB-8 — the Publish screen
-Choose a folder to copy in, or publish what is already there. The dry run, the list, the summary of
-what was removed.
-**Publish is currently web-only** because the refresh token lives on the server. Folder publishing
-does not change that — it stays web-only, and the desktop's part is the copy in PB-3.
-**Done when** `check:layout` passes with the changed route.
+Copies the shots that did not *fail*. A warning — the odd frame with no coordinates — is something
+to see in the table and decide about, not a reason to leave a photograph behind.
+
+### PB-8 — the Publish screen ✔
+**Both roads on one screen**, at the user's choice: the publishing folder on top, filled and
+prominent, and the handed-over session below it, transparent and muted. Honest about the transition
+rather than retiring the old road by stealth — the plan retires it deliberately after MV-16.
+
+The folder panel reads the folder on opening the tab, because whatever is in it is what would be
+published however it got there. It states plainly that everything listed will be **removed from
+this folder** after a successful upload, which is the mitigation for the one case the code cannot
+prevent: somebody *moving* files in rather than copying them.
+
+**The dry run is bound to the bytes.** The screen holds the session id it reviewed, and compares it
+with the folder's current one; add a file, or geotag one, and it says the review no longer counts
+rather than letting the publish button stay lit.
+
+Publish stays web-only — the refresh token lives on one machine — so only `fillPublishing` is on
+`ApiClient`. **Done:** `check:layout` clean at 390 px with both roads, both builds, both transport
+checks.
 
 ### PB-9 — documents
 `known-gaps.md`, `phase-reports/publish-folder.md`, **MV-16**, and the test counts in `CLAUDE.md`.

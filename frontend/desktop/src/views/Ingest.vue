@@ -34,6 +34,18 @@ const cardPath = ref('');
 const derivedDir = ref('');
 const stagingDir = ref('');
 
+/**
+ * Where the frames that passed should be copied to.
+ *
+ * The other road off the card (`docs/publish-folder-plan.md`): instead of
+ * handing a session to the server, put the photographs somewhere the tools can
+ * work on them. Local when you intend to edit them, the NAS when you do not.
+ */
+const workingDir = ref('');
+
+/** What the last copy reported. */
+const copied = ref<string | null>(null);
+
 // The folders the pickers may offer, and the lister they walk with. A card
 // mounted under /Volumes only appears once /Volumes is a configured root —
 // G6 refuses it otherwise, and scan_card would refuse it too.
@@ -205,6 +217,34 @@ async function handOff() {
   });
 }
 
+/**
+ * Copy the frames that passed to a folder.
+ *
+ * **The card is never written to (G5).** `deliver_card` refuses a destination
+ * inside the folder being read before a byte is copied — this is the one
+ * operation whose destination somebody types, while looking at the card.
+ *
+ * Copies the shots that did not *fail*. A warning — the odd frame with no
+ * coordinates, say — is something to see in the table and decide about, not a
+ * reason to leave a photograph behind.
+ */
+async function copyToFolder() {
+  const destination = workingDir.value.trim();
+  if (!destination) {
+    failure.value = 'Choose a folder to copy the photographs to.';
+    return;
+  }
+
+  await guard(async () => {
+    copied.value = null;
+    const id = await desktop.deliverCard(cardPath.value.trim(), destination);
+    jobId.value = id;
+    await desktop.watchJob(id, (event) => {
+      if (event.message) copied.value = event.message;
+    });
+  });
+}
+
 const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
 </script>
 
@@ -237,9 +277,19 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
       />
 
       <PathField
+        v-model="workingDir"
+        label="Copy the photographs to"
+        placeholder="~/Pictures/2026/berlin"
+        hint="Where the frames that passed should land. Local if you mean to work on them, the NAS if you do not. The card itself is never written to."
+        :roots="roots"
+        :list="list"
+      />
+
+      <PathField
         v-model="stagingDir"
         label="Staging folder on the NAS share"
         placeholder="/Volumes/photos/staging"
+        hint="Only for handing a session to the server, which is the older road off the card."
         :roots="roots"
         :list="list"
       />
@@ -321,10 +371,15 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
         >
           Derive {{ awaitingDerivation }} RAW-only shot{{ awaitingDerivation === 1 ? '' : 's' }}
         </button>
-        <button type="button" class="primary" :disabled="busy" @click="handOff">
+        <button type="button" class="primary" :disabled="busy" @click="copyToFolder">
+          Copy to a folder
+        </button>
+        <button type="button" class="secondary" :disabled="busy" @click="handOff">
           Hand over to the server
         </button>
       </div>
+
+      <p v-if="copied" class="copied" role="status">{{ copied }}</p>
 
       <ul v-if="scan?.problems.length" class="problems">
         <li v-for="problem in scan.problems" :key="problem.rel_path" class="muted small">
@@ -370,6 +425,11 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
 }
 .limits > .muted {
   margin-bottom: var(--space-2);
+}
+
+.copied {
+  font-size: 13px;
+  color: var(--accent);
 }
 
 .page { display: grid; gap: 16px; padding: 16px; max-width: 1100px; }

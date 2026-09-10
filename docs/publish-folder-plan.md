@@ -193,7 +193,7 @@ oversight, and so nobody "tidies" the handoff away halfway through.
 
 ## Steps
 
-### PB-1 — `publishing_dir` in configuration
+### PB-1 — `publishing_dir` in configuration ✔
 The field, `PUBLISHING_DIR`, the `config.json` key, and a `Config::resolve_for_publishing` that
 canonicalises a path and admits it **only if it is exactly the configured folder or inside it**.
 **Done when** a symlink inside `Publishing` pointing outward is refused, `..` is refused, a

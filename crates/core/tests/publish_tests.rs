@@ -817,7 +817,15 @@ fn a_callback_whose_state_does_not_match_is_refused() {
         .complete("auth-code", "not-the-nonce")
         .unwrap_err();
 
-    assert!(matches!(err, Error::AccessDenied(_)), "got {err}");
+    // `Refused`, not `AccessDenied`: the server answers every `AccessDenied`
+    // with "Path is outside the configured library roots", so a mismatched
+    // nonce reported through that variant told the photographer their problem
+    // was a filesystem permission.
+    assert!(matches!(err, Error::Refused(_)), "got {err}");
+    assert!(
+        err.to_string().contains("did not match the request"),
+        "a refusal has to say what it refused: {err}"
+    );
     assert!(ledger.oauth_grant("google").unwrap().is_none());
 }
 

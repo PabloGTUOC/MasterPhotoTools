@@ -91,7 +91,7 @@ impl ApiError {
 
     fn status(&self) -> StatusCode {
         match self.code {
-            "path_not_allowed" => StatusCode::FORBIDDEN,
+            "path_not_allowed" | "refused" => StatusCode::FORBIDDEN,
             "not_found" => StatusCode::NOT_FOUND,
             "bad_request" => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -107,6 +107,11 @@ impl From<Error> for ApiError {
             Error::AccessDenied(_) => Self {
                 code: "path_not_allowed",
                 message: "Path is outside the configured library roots".into(),
+            },
+            // A refusal that is not about a path says why it refused.
+            Error::Refused(m) => Self {
+                code: "refused",
+                message: m,
             },
             Error::Config(m) => Self {
                 code: "bad_request",
@@ -1564,6 +1569,30 @@ use phototools_core::publish::{self, AccessTokens, Connector, OAuthConfig, Token
 /// server started before the credentials were set picks them up on the next
 /// attempt instead of needing a restart — and so a missing variable is reported
 /// to whoever is trying to connect, not buried in a startup log.
+/// Run blocking work off the async runtime.
+///
+/// **The Google connector talks to Google with `reqwest::blocking`**, which
+/// builds a Tokio runtime of its own. Constructing one inside an async handler
+/// and dropping it there panics the worker — *"Cannot drop a runtime in a
+/// context where blocking is not allowed"* — and axum turns that into a bare
+/// 500 with the real cause only in the log.
+///
+/// The publish job never hit this because it already runs on a spawned thread.
+/// These four handlers did not, so every one of them was a panic waiting for
+/// somebody to get far enough past authentication to reach it.
+async fn blocking<T, F>(work: F) -> Result<T, ApiError>
+where
+    F: FnOnce() -> Result<T, ApiError> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|e| ApiError {
+            code: "internal",
+            message: format!("The connector task did not finish: {e}"),
+        })?
+}
+
 fn connector_parts(state: &AppState) -> Result<(OAuthConfig, TokenCipher), ApiError> {
     let _ = state;
     Ok((OAuthConfig::from_env()?, TokenCipher::from_env()?))
@@ -1594,11 +1623,14 @@ async fn google_status(
         .into_response());
     };
 
-    let endpoint = publish::HttpTokenEndpoint::new();
-    let guard = lock(&ledger)?;
-    let connector = Connector::new(&guard, config, cipher, &endpoint);
+    let status = blocking(move || {
+        let endpoint = publish::HttpTokenEndpoint::new();
+        let guard = lock(&ledger)?;
+        Ok(Connector::new(&guard, config, cipher, &endpoint).status()?)
+    })
+    .await?;
 
-    Ok(Json(connector.status()?).into_response())
+    Ok(Json(status).into_response())
 }
 
 #[derive(Debug, Serialize)]
@@ -1612,13 +1644,14 @@ async fn google_connect(
     State(state): State<AppState>,
 ) -> Result<Response, ApiError> {
     let (config, cipher) = connector_parts(&state)?;
-    let endpoint = publish::HttpTokenEndpoint::new();
     let ledger = state.jobs.ledger();
 
-    let url = {
+    let url = blocking(move || {
+        let endpoint = publish::HttpTokenEndpoint::new();
         let guard = lock(&ledger)?;
-        Connector::new(&guard, config, cipher, &endpoint).begin()?
-    };
+        Ok(Connector::new(&guard, config, cipher, &endpoint).begin()?)
+    })
+    .await?;
 
     tracing::info!(uid = auth.uid(), "google photos consent started");
     Ok(Json(ConsentUrl { url }).into_response())
@@ -1642,8 +1675,21 @@ pub struct CallbackResult {
 }
 
 /// `GET /api/connectors/google/callback` (§6.2 steps 2–4).
+/// **Deliberately unauthenticated, and it cannot be otherwise.**
+///
+/// Google reaches this by redirecting the *browser* to it. A plain navigation
+/// carries no `Authorization` header, so an `Authenticated` extractor here — as
+/// there was until this was found — makes the flow impossible to complete: the
+/// consent succeeds at Google's end and the callback is refused with
+/// `missing_token`, leaving a grant nobody can finish.
+///
+/// What authenticates the callback is the **`state` parameter**, which is what
+/// it is for. `begin` generates it, stores it against the provider, and only
+/// the browser that started the flow ever sees it; `complete` refuses any
+/// callback whose state does not match the stored one (§6.2). Starting a flow
+/// still requires a signed-in, allow-listed account, so a valid state only
+/// exists because somebody authorised one.
 async fn google_callback(
-    _auth: Authenticated,
     State(state): State<AppState>,
     Query(query): Query<CallbackQuery>,
 ) -> Result<Response, ApiError> {
@@ -1661,13 +1707,15 @@ async fn google_callback(
         .ok_or_else(|| ApiError::bad_request("The callback carried no state parameter"))?;
 
     let (config, cipher) = connector_parts(&state)?;
-    let endpoint = publish::HttpTokenEndpoint::new();
     let ledger = state.jobs.ledger();
 
-    {
+    blocking(move || {
+        let endpoint = publish::HttpTokenEndpoint::new();
         let guard = lock(&ledger)?;
         Connector::new(&guard, config, cipher, &endpoint).complete(&code, &returned_state)?;
-    }
+        Ok(())
+    })
+    .await?;
 
     Ok(Json(CallbackResult {
         connected: true,
@@ -1682,13 +1730,15 @@ async fn google_disconnect(
     State(state): State<AppState>,
 ) -> Result<Response, ApiError> {
     let (config, cipher) = connector_parts(&state)?;
-    let endpoint = publish::HttpTokenEndpoint::new();
     let ledger = state.jobs.ledger();
 
-    {
+    blocking(move || {
+        let endpoint = publish::HttpTokenEndpoint::new();
         let guard = lock(&ledger)?;
         Connector::new(&guard, config, cipher, &endpoint).disconnect()?;
-    }
+        Ok(())
+    })
+    .await?;
 
     tracing::info!(uid = auth.uid(), "google photos disconnected");
     Ok(Json(CallbackResult {
@@ -1881,4 +1931,77 @@ fn sse_event(event: &JobEvent) -> Event {
         })
         .json_data(event)
         .unwrap_or_else(|_| Event::default().data("serialisation failed"))
+}
+
+#[cfg(test)]
+mod connector_tests {
+    use super::*;
+
+    /// The panic this guards against: `reqwest::blocking` builds a Tokio
+    /// runtime of its own, and building one inside an async context and
+    /// dropping it there aborts the worker with *"Cannot drop a runtime in a
+    /// context where blocking is not allowed"*. axum reports that as a bare
+    /// 500, with the cause only in the log.
+    ///
+    /// Every Google connector handler was doing exactly this from the day it
+    /// was written. Nothing caught it because reaching those handlers needs a
+    /// Firebase token *and* an allow-listed uid *and* a configured OAuth
+    /// client — so the first person to finish the setup was always going to be
+    /// the first person to see it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_token_endpoint_is_built_off_the_async_runtime() {
+        // Exactly what a handler now does. Before the fix, the equivalent line
+        // written inline here took the worker down with it.
+        let built = blocking(|| {
+            let _endpoint = publish::HttpTokenEndpoint::new();
+            Ok(())
+        })
+        .await;
+
+        assert!(
+            built.is_ok(),
+            "building the client must not panic the worker"
+        );
+    }
+
+    /// And the same on a single-threaded runtime, which is where the drop check
+    /// is strictest.
+    #[tokio::test]
+    async fn the_same_holds_on_a_current_thread_runtime() {
+        assert!(blocking(|| {
+            let _endpoint = publish::HttpTokenEndpoint::new();
+            Ok(())
+        })
+        .await
+        .is_ok());
+    }
+
+    /// The OAuth callback must not demand a bearer token.
+    ///
+    /// Google reaches it by redirecting the browser, which sends no
+    /// `Authorization` header. An `Authenticated` extractor there — as there
+    /// was — refuses every callback with `missing_token`, so consent succeeds
+    /// at Google and the grant can never be completed. The `state` parameter is
+    /// what protects this route (§6.2).
+    ///
+    /// Asserted against the source rather than by driving a request, because
+    /// standing up an `AppState` needs a ledger, an auth configuration and a
+    /// job runner — and the thing worth pinning is one line of a signature.
+    #[test]
+    fn the_oauth_callback_does_not_require_a_bearer_token() {
+        let source = include_str!("api.rs");
+        let signature = source
+            .split("async fn google_callback(")
+            .nth(1)
+            .expect("the callback handler should exist")
+            .split(')')
+            .next()
+            .expect("its argument list should be terminated");
+
+        assert!(
+            !signature.contains("Authenticated"),
+            "google_callback must stay unauthenticated; Google's redirect \
+             carries no Authorization header. Got: {signature}"
+        );
+    }
 }

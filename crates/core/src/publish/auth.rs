@@ -262,8 +262,10 @@ impl<'a> Connector<'a> {
         // Constant-time is overkill for a nonce that is used once and then
         // deleted, but the comparison must still happen before anything else.
         if state != expected {
-            return Err(Error::AccessDenied(
-                "the authorisation response did not match the request that started it".into(),
+            return Err(Error::Refused(
+                "the authorisation response did not match the request that started it. Start the \
+                 connection again."
+                    .into(),
             ));
         }
 

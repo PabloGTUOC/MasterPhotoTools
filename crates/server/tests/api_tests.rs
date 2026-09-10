@@ -827,15 +827,50 @@ async fn shots_are_awaiting_until_verification_has_run() {
 // Phase 12 — Google Photos (F15)
 // ---------------------------------------------------------------------------
 
+/// The OAuth callback must be reachable without a bearer token.
+///
+/// **This test replaces an assertion that said the opposite.** The callback was
+/// listed alongside the other connector routes as one that must answer 401
+/// anonymously, and it was written that way in the handler too — so consent
+/// succeeded at Google's end and the callback was refused with `missing_token`,
+/// leaving a grant nobody could finish. The flow could never complete, and the
+/// test agreed with the code that it should not.
+///
+/// What protects this route is the `state` parameter (§6.2): `begin` generates
+/// it, stores it, and only the browser that started the flow sees it;
+/// `complete` refuses any callback whose state does not match. Starting a flow
+/// still requires a signed-in, allow-listed account.
+#[tokio::test]
+async fn the_oauth_callback_is_reachable_without_a_token() {
+    let s = start().await;
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/api/connectors/google/callback?code=x&state=y",
+            s.base
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_ne!(
+        response.status(),
+        401,
+        "a browser redirect from Google carries no Authorization header"
+    );
+
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_ne!(body["code"], "missing_token", "got {body}");
+}
+
 #[tokio::test]
 async fn the_google_connector_routes_refuse_an_anonymous_request() {
     let s = start().await;
     let client = reqwest::Client::new();
 
-    for route in [
-        "/api/connectors/google/status",
-        "/api/connectors/google/callback?code=x&state=y",
-    ] {
+    // The callback is **not** in this list, and that is the point of the test
+    // below it: Google reaches it by redirecting a browser, which sends no
+    // Authorization header.
+    for route in ["/api/connectors/google/status"] {
         let response = client
             .get(format!("{}{route}", s.base))
             .send()

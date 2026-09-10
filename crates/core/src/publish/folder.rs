@@ -16,6 +16,7 @@ use crate::error::Error;
 use crate::ingest::scanner::hash_file;
 use crate::ledger::Ledger;
 use crate::publish::publisher::{PublishItem, PublishPlan, ResumeCounts, Skipped};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
@@ -216,6 +217,55 @@ pub fn dry_run_folder(dir: &Path, ledger: &Ledger) -> Result<PublishPlan, Error>
         .record_dry_run(&plan.session_id)
         .map_err(|e| Error::Internal(e.to_string()))?;
     Ok(plan)
+}
+
+/// Publish a folder and then empty it.
+///
+/// The two halves of the operation, in the only order they can happen in, with
+/// the deletion reading what the upload recorded rather than what it returned.
+/// That indirection is deliberate: the publish outcome is a summary of a run,
+/// and the deletion needs evidence about a *file*.
+///
+/// `Publisher::publish` refuses without a recorded dry run (§9.2 rule 3), so
+/// rule 4 of the deletion comes free — there is no path to here that skipped
+/// the review.
+///
+/// A failed upload does not stop the run. Three failures out of four hundred
+/// leave three files in the folder and publish the rest; halting would leave a
+/// half-published folder and no clear way to resume, and rule 2 already means a
+/// file that failed is never deleted.
+pub fn publish_folder(
+    dir: &Path,
+    config: &crate::config::Config,
+    ledger: &Ledger,
+    api: &dyn crate::publish::PhotosApi,
+    tokens: &dyn crate::publish::AccessTokens,
+    sleeper: &dyn crate::publish::Sleeper,
+    progress: &dyn crate::jobs::Progress,
+) -> Result<(crate::publish::PublishOutcome, EmptyReport), Error> {
+    // Refused before the first upload, not after: publishing to Google and
+    // then discovering the folder cannot be emptied would leave photographs
+    // uploaded that nobody can clear.
+    config.resolve_for_publishing(dir)?;
+
+    let plan = plan_folder(dir, ledger)?;
+
+    let publisher = crate::publish::Publisher {
+        ledger,
+        api,
+        tokens,
+        sleeper,
+        // The folder *is* the staging directory: `Publisher` reads each file as
+        // `staging_dir.join(file_name)`, and `file_name` is relative to here.
+        staging_dir: dir.to_path_buf(),
+        // The weaker claim, written at the moment the row is.
+        key_kind: "file",
+    };
+
+    let outcome = publisher.publish(&plan, progress)?;
+    let emptied = empty_published(dir, config, &plan, ledger)?;
+
+    Ok((outcome, emptied))
 }
 
 #[cfg(test)]
@@ -421,6 +471,53 @@ mod tests {
     }
 
     #[test]
+    fn publishing_a_folder_refuses_without_a_dry_run() {
+        // Rule 4 comes free, and this is the test that says so rather than
+        // assuming it: §9.2 rule 3 is checked against the database by
+        // `Publisher::publish`, and `publish_folder` cannot get past it.
+        use crate::config::Config;
+
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("Publishing");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("a.jpg"), b"one").unwrap();
+        let dir = dir.canonicalize().unwrap();
+
+        let config = Config {
+            publishing_dir: Some(dir.clone()),
+            ..Config::default()
+        };
+        let ledger = ledger();
+
+        // No dry run recorded for this set of bytes.
+        let err = publish_folder(
+            &dir,
+            &config,
+            &ledger,
+            &crate::publish::HttpPhotosApi::new(),
+            &NoTokens,
+            &crate::publish::RealSleeper,
+            &crate::jobs::InMemoryProgress::new(),
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("dry run"),
+            "the refusal should name what is missing: {err}"
+        );
+        assert!(dir.join("a.jpg").exists(), "and nothing was touched");
+    }
+
+    /// Never asked for a token: the refusal happens before any network work.
+    struct NoTokens;
+    impl crate::publish::AccessTokens for NoTokens {
+        fn access_token(&self) -> Result<String, Error> {
+            panic!("publishing must refuse before it asks for a token")
+        }
+        fn invalidate(&self) {}
+    }
+
+    #[test]
     fn fifty_one_photographs_need_two_batch_calls() {
         // §6.1's limit, which the session road already respects.
         let files: Vec<(String, Vec<u8>)> = (0..51)
@@ -435,5 +532,457 @@ mod tests {
         let plan = plan_folder(dir.path(), &ledger()).unwrap();
         assert_eq!(plan.items.len(), 51);
         assert_eq!(plan.batch_create_requests, 2);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Emptying the folder
+// ---------------------------------------------------------------------------
+
+/// A file that was uploaded and then removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Removed {
+    pub rel_path: String,
+    pub bytes: u64,
+    /// What Google called it. The evidence the deletion rests on.
+    pub media_item_id: String,
+}
+
+/// A file that stayed, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Kept {
+    pub rel_path: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmptyReport {
+    pub removed: Vec<Removed>,
+    pub kept: Vec<Kept>,
+    /// Subdirectories left with nothing in them, and tidied away.
+    pub directories_removed: usize,
+}
+
+impl EmptyReport {
+    pub fn describe(&self) -> String {
+        if self.removed.is_empty() {
+            return format!(
+                "Nothing removed from the publishing folder; {} file(s) stayed",
+                self.kept.len()
+            );
+        }
+        let bytes: u64 = self.removed.iter().map(|r| r.bytes).sum();
+        let mut line = format!(
+            "{} file(s) removed from the publishing folder ({:.1} MB)",
+            self.removed.len(),
+            bytes as f64 / 1_048_576.0
+        );
+        if !self.kept.is_empty() {
+            line.push_str(&format!(", {} kept", self.kept.len()));
+        }
+        line
+    }
+}
+
+/// Empty the publishing folder of everything Google confirmed it received.
+///
+/// The one irreversible step in the application, and irreversible in both
+/// directions — Google cannot un-publish, and a deleted file is gone. Four
+/// rules govern it, and each exists because of a specific way this could go
+/// wrong (`docs/publish-folder-plan.md`).
+///
+/// **1. Only the configured publishing folder is deleted from.** Every path
+/// goes through `Config::resolve_for_publishing`, which compares canonicalised
+/// paths — so a symlink inside the folder pointing at an archive resolves to
+/// the archive and is refused, and a `..` cannot climb out.
+///
+/// **2. A file is removed only when Google returned a media item id for it.**
+/// Per file, from the publish row, not from the run's outcome: "the job
+/// finished" is not evidence about any particular photograph. A file whose
+/// upload failed, or whose answer never arrived, stays.
+///
+/// **3. Everything here is a copy** — enforced by `resolve_for_create`
+/// refusing tool output into this folder — so removing it destroys nothing.
+///
+/// **4. A dry run came first**, which `Publisher::publish` already refuses
+/// without.
+///
+/// Anything in the folder that was not part of what was published stays, and
+/// is listed, because a file that quietly survives an "empty" is a file
+/// somebody will wonder about.
+pub fn empty_published(
+    dir: &Path,
+    config: &crate::config::Config,
+    plan: &PublishPlan,
+    ledger: &Ledger,
+) -> Result<EmptyReport, Error> {
+    // Rule 1, before anything else: is this the folder at all?
+    config.resolve_for_publishing(dir)?;
+
+    let mut report = EmptyReport::default();
+    let mut accounted: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for item in &plan.items {
+        accounted.insert(item.file_name.clone());
+        let path = dir.join(&item.file_name);
+
+        // Rule 2. The publish row is per photograph and says what Google said.
+        let row = ledger
+            .publish_row(&item.shot_id)
+            .map_err(|e| Error::Internal(e.to_string()))?;
+        let confirmed = row.as_ref().and_then(|r| {
+            (r.state == "created")
+                .then(|| r.media_item_id.clone())
+                .flatten()
+        });
+
+        let Some(media_item_id) = confirmed else {
+            report.kept.push(Kept {
+                rel_path: item.file_name.clone(),
+                reason: match row.as_ref().map(|r| r.state.as_str()) {
+                    Some("uploaded") => {
+                        "uploaded, but Google never confirmed it as a media item".into()
+                    }
+                    Some(state) => format!("not published: {state}"),
+                    None => "no record of it being published".into(),
+                },
+            });
+            continue;
+        };
+
+        // Rule 1 again, per file: the plan's names came from a walk of this
+        // folder, but a name is not a location until it is resolved.
+        let resolved = match config.resolve_for_publishing(&path) {
+            Ok(resolved) => resolved,
+            Err(e) => {
+                report.kept.push(Kept {
+                    rel_path: item.file_name.clone(),
+                    reason: e.to_string(),
+                });
+                continue;
+            }
+        };
+
+        let bytes = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
+        match std::fs::remove_file(&resolved) {
+            Ok(()) => report.removed.push(Removed {
+                rel_path: item.file_name.clone(),
+                bytes,
+                media_item_id,
+            }),
+            Err(e) => report.kept.push(Kept {
+                rel_path: item.file_name.clone(),
+                reason: format!("could not be removed: {e}"),
+            }),
+        }
+    }
+
+    // Everything else in the folder. Not an error — a `.txt` was never going to
+    // be published, and a file that arrived after the plan was made was never
+    // reviewed — but it is going to still be there, so it is said out loud.
+    for file in walk(dir)? {
+        if !accounted.contains(&file.rel_path) {
+            report.kept.push(Kept {
+                rel_path: file.rel_path,
+                reason: "not part of what was published".into(),
+            });
+        }
+    }
+    for name in unpublishable(dir)? {
+        report.kept.push(Kept {
+            rel_path: name,
+            reason: "not a photograph this uploads".into(),
+        });
+    }
+
+    report.directories_removed = remove_empty_subdirectories(dir);
+    Ok(report)
+}
+
+/// Tidy away subdirectories that are now empty, deepest first.
+///
+/// The publishing folder itself is never removed — it is configuration, and
+/// the next publish expects it to be there. A directory with anything still in
+/// it is left alone, because a file still in it is a file that did not publish.
+fn remove_empty_subdirectories(dir: &Path) -> usize {
+    let mut directories: Vec<PathBuf> = walkdir::WalkDir::new(dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_dir() && e.path() != dir)
+        .map(|e| e.path().to_path_buf())
+        .collect();
+
+    // Deepest first, so a directory holding only empty directories also goes.
+    directories.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
+
+    directories
+        .iter()
+        .filter(|path| std::fs::remove_dir(path).is_ok())
+        .count()
+}
+
+#[cfg(test)]
+mod emptying_tests {
+    use super::*;
+    use crate::config::Config;
+
+    /// A publishing folder, and a configuration that admits it.
+    fn publishing(files: &[(&str, &[u8])]) -> (tempfile::TempDir, Config, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("Publishing");
+        std::fs::create_dir(&dir).unwrap();
+        for (name, contents) in files {
+            let path = dir.join(name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&path, contents).unwrap();
+        }
+        let dir = dir.canonicalize().unwrap();
+        let config = Config {
+            publishing_dir: Some(dir.clone()),
+            ..Config::default()
+        };
+        (temp, config, dir)
+    }
+
+    /// Mark a planned item the way a confirmed upload would.
+    fn confirm(ledger: &Ledger, plan: &PublishPlan, file_name: &str, media_item_id: &str) {
+        let item = plan
+            .items
+            .iter()
+            .find(|i| i.file_name == file_name)
+            .expect("planned");
+        ledger
+            .queue_publish(
+                &item.shot_id,
+                &plan.session_id,
+                &item.stem,
+                &item.source_sha256,
+                &item.file_name,
+            )
+            .unwrap();
+        ledger.record_upload(&item.shot_id, "token").unwrap();
+        ledger
+            .record_created_and_published(
+                &item.shot_id,
+                media_item_id,
+                &item.source_sha256,
+                &item.stem,
+                &item.file_name,
+                "file",
+            )
+            .unwrap();
+    }
+
+    /// Queue an item and leave it uploaded but unconfirmed.
+    fn leave_unconfirmed(ledger: &Ledger, plan: &PublishPlan, file_name: &str) {
+        let item = plan
+            .items
+            .iter()
+            .find(|i| i.file_name == file_name)
+            .expect("planned");
+        ledger
+            .queue_publish(
+                &item.shot_id,
+                &plan.session_id,
+                &item.stem,
+                &item.source_sha256,
+                &item.file_name,
+            )
+            .unwrap();
+        ledger.record_upload(&item.shot_id, "token").unwrap();
+    }
+
+    #[test]
+    fn a_photograph_google_confirmed_is_removed() {
+        let (_t, config, dir) = publishing(&[("a.jpg", b"one")]);
+        let ledger = Ledger::open_in_memory().unwrap();
+        let plan = plan_folder(&dir, &ledger).unwrap();
+        confirm(&ledger, &plan, "a.jpg", "media-1");
+
+        let report = empty_published(&dir, &config, &plan, &ledger).unwrap();
+
+        assert_eq!(report.removed.len(), 1);
+        assert_eq!(report.removed[0].media_item_id, "media-1");
+        assert!(!dir.join("a.jpg").exists());
+    }
+
+    #[test]
+    fn a_photograph_whose_upload_failed_is_still_there_afterwards() {
+        // Rule 2, and the single most important test in this module: a failure
+        // must never be mistaken for a success by the thing that deletes.
+        let (_t, config, dir) = publishing(&[("a.jpg", b"one"), ("b.jpg", b"two")]);
+        let ledger = Ledger::open_in_memory().unwrap();
+        let plan = plan_folder(&dir, &ledger).unwrap();
+        confirm(&ledger, &plan, "a.jpg", "media-1");
+        // b.jpg never even got queued: its upload failed outright.
+
+        let report = empty_published(&dir, &config, &plan, &ledger).unwrap();
+
+        assert!(!dir.join("a.jpg").exists());
+        assert!(
+            dir.join("b.jpg").exists(),
+            "a failed upload must not be deleted"
+        );
+        assert_eq!(report.removed.len(), 1);
+        assert!(report.kept.iter().any(|k| k.rel_path == "b.jpg"));
+    }
+
+    #[test]
+    fn a_photograph_uploaded_but_never_confirmed_is_kept() {
+        // §9.2 invariant 6 at its most literal: what cannot be verified is not
+        // claimed, and here the claim would delete the only sensible copy to
+        // re-try from.
+        let (_t, config, dir) = publishing(&[("a.jpg", b"one")]);
+        let ledger = Ledger::open_in_memory().unwrap();
+        let plan = plan_folder(&dir, &ledger).unwrap();
+        leave_unconfirmed(&ledger, &plan, "a.jpg");
+
+        let report = empty_published(&dir, &config, &plan, &ledger).unwrap();
+
+        assert!(dir.join("a.jpg").exists());
+        assert_eq!(report.removed.len(), 0);
+        assert!(report.kept[0].reason.contains("never confirmed"));
+    }
+
+    #[test]
+    fn a_run_where_everything_failed_deletes_nothing() {
+        let (_t, config, dir) = publishing(&[("a.jpg", b"one"), ("b.jpg", b"two")]);
+        let ledger = Ledger::open_in_memory().unwrap();
+        let plan = plan_folder(&dir, &ledger).unwrap();
+
+        let report = empty_published(&dir, &config, &plan, &ledger).unwrap();
+
+        assert_eq!(report.removed.len(), 0);
+        assert!(dir.join("a.jpg").exists());
+        assert!(dir.join("b.jpg").exists());
+        assert!(
+            report.describe().contains("Nothing removed"),
+            "{}",
+            report.describe()
+        );
+    }
+
+    #[test]
+    fn a_file_that_arrived_after_the_plan_was_made_is_not_deleted() {
+        // It was never reviewed and never uploaded. Deleting it would destroy
+        // something nobody had looked at.
+        let (_t, config, dir) = publishing(&[("a.jpg", b"one")]);
+        let ledger = Ledger::open_in_memory().unwrap();
+        let plan = plan_folder(&dir, &ledger).unwrap();
+        confirm(&ledger, &plan, "a.jpg", "media-1");
+
+        std::fs::write(dir.join("late.jpg"), b"arrived after the plan").unwrap();
+        let report = empty_published(&dir, &config, &plan, &ledger).unwrap();
+
+        assert!(dir.join("late.jpg").exists());
+        assert!(report
+            .kept
+            .iter()
+            .any(|k| k.rel_path == "late.jpg" && k.reason.contains("not part of")));
+    }
+
+    #[test]
+    fn something_that_is_not_a_photograph_stays_and_is_said_out_loud() {
+        let (_t, config, dir) = publishing(&[("a.jpg", b"one"), ("notes.txt", b"keep me")]);
+        let ledger = Ledger::open_in_memory().unwrap();
+        let plan = plan_folder(&dir, &ledger).unwrap();
+        confirm(&ledger, &plan, "a.jpg", "media-1");
+
+        let report = empty_published(&dir, &config, &plan, &ledger).unwrap();
+
+        assert!(dir.join("notes.txt").exists());
+        assert!(report.kept.iter().any(|k| k.rel_path == "notes.txt"));
+    }
+
+    #[test]
+    fn the_publishing_folder_itself_survives_being_emptied() {
+        let (_t, config, dir) = publishing(&[("a.jpg", b"one")]);
+        let ledger = Ledger::open_in_memory().unwrap();
+        let plan = plan_folder(&dir, &ledger).unwrap();
+        confirm(&ledger, &plan, "a.jpg", "media-1");
+
+        empty_published(&dir, &config, &plan, &ledger).unwrap();
+
+        assert!(dir.exists(), "the folder is configuration, not content");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn an_emptied_subfolder_is_tidied_away_but_one_still_holding_a_file_is_not() {
+        let (_t, config, dir) = publishing(&[
+            ("borders/a.jpg", b"one"),
+            ("keep/b.jpg", b"two"),
+            ("keep/notes.txt", b"x"),
+        ]);
+        let ledger = Ledger::open_in_memory().unwrap();
+        let plan = plan_folder(&dir, &ledger).unwrap();
+        confirm(&ledger, &plan, "borders/a.jpg", "media-1");
+        confirm(&ledger, &plan, "keep/b.jpg", "media-2");
+
+        let report = empty_published(&dir, &config, &plan, &ledger).unwrap();
+
+        assert!(!dir.join("borders").exists(), "empty, so tidied away");
+        assert!(dir.join("keep").exists(), "still holds notes.txt");
+        assert_eq!(report.directories_removed, 1);
+    }
+
+    #[test]
+    fn a_folder_that_is_not_the_publishing_folder_is_refused_outright() {
+        // Rule 1. Nothing is examined, let alone deleted.
+        let (temp, config, dir) = publishing(&[("a.jpg", b"one")]);
+        let ledger = Ledger::open_in_memory().unwrap();
+        let plan = plan_folder(&dir, &ledger).unwrap();
+
+        let elsewhere = temp.path().join("Archive");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("precious.jpg"), b"do not touch").unwrap();
+
+        let err = empty_published(&elsewhere, &config, &plan, &ledger).unwrap_err();
+        assert!(matches!(err, Error::Refused(_)), "got {err}");
+        assert!(elsewhere.join("precious.jpg").exists());
+    }
+
+    #[test]
+    fn a_symlink_out_of_the_folder_is_not_followed() {
+        // Rule 1 per file. Without canonicalising, this path is textually
+        // inside the publishing folder and deleting it deletes an archive.
+        let (temp, config, dir) = publishing(&[]);
+        let archive = temp.path().join("archive");
+        std::fs::create_dir(&archive).unwrap();
+        std::fs::write(archive.join("precious.jpg"), b"do not touch").unwrap();
+        std::os::unix::fs::symlink(archive.join("precious.jpg"), dir.join("precious.jpg")).unwrap();
+
+        let ledger = Ledger::open_in_memory().unwrap();
+        // Plan by hand: `walk` does not follow links, so the planner would not
+        // have offered this file — the check is what happens if anything ever
+        // put it in front of the deleter.
+        let plan = PublishPlan {
+            session_id: "folder-test".into(),
+            items: vec![PublishItem {
+                shot_id: "folder-test:x".into(),
+                stem: "precious.jpg".into(),
+                source_sha256: "0".repeat(64),
+                file_name: "precious.jpg".into(),
+                bytes: 0,
+            }],
+            skipped: vec![],
+            total_bytes: 0,
+            upload_requests: 1,
+            batch_create_requests: 1,
+            resuming: ResumeCounts::default(),
+        };
+        confirm(&ledger, &plan, "precious.jpg", "media-1");
+
+        let report = empty_published(&dir, &config, &plan, &ledger).unwrap();
+
+        assert!(
+            archive.join("precious.jpg").exists(),
+            "the archive is untouched"
+        );
+        assert_eq!(report.removed.len(), 0);
+        assert!(report.kept[0].reason.contains("publishing folder"));
     }
 }

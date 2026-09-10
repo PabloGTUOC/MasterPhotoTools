@@ -254,6 +254,7 @@ impl Session {
             tokens,
             sleeper,
             staging_dir: self.staging.clone(),
+            key_kind: "source",
         }
     }
 }

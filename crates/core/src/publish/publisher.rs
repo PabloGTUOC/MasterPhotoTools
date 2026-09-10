@@ -305,6 +305,16 @@ pub struct Publisher<'a> {
     pub tokens: &'a dyn AccessTokens,
     pub sleeper: &'a dyn Sleeper,
     pub staging_dir: PathBuf,
+    /// Which question a `published` row will answer: `source` for a card
+    /// session, `file` for a folder.
+    ///
+    /// F16 keys on the bytes the camera wrote, so a row means "this photograph
+    /// has been published". A folder publish keys on the bytes it uploaded, so
+    /// its rows mean only "this file has been uploaded" — the tools rewrite
+    /// files, and geotagging changes a photograph's hash. Written at the moment
+    /// the row is, rather than corrected afterwards: a crash in between would
+    /// leave the weaker claim wearing the stronger label.
+    pub key_kind: &'static str,
 }
 
 impl Publisher<'_> {
@@ -513,6 +523,7 @@ impl Publisher<'_> {
                             &row.source_sha256,
                             &row.stem,
                             &row.file_name,
+                            self.key_kind,
                         )
                         .map_err(|e| e.to_string())?;
                     outcome.created += 1;

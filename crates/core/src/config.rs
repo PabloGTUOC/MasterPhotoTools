@@ -214,6 +214,51 @@ impl Config {
         )))
     }
 
+    /// Refuse a tool's output path that would land inside the publishing folder.
+    ///
+    /// **Nothing this application writes goes into that folder**, and the
+    /// deletion depends on it. Publishing empties the folder after a successful
+    /// upload, so everything in it must be a *copy* of something that still
+    /// exists elsewhere — otherwise emptying destroys the only copy of a
+    /// derivative somebody spent an afternoon on.
+    ///
+    /// The way in is copying, chosen deliberately at the start of a publish.
+    /// A tool writing its output straight there would make "everything here is
+    /// a copy" a habit rather than a fact, and habits do not survive somebody
+    /// typing a path in a hurry.
+    ///
+    /// What this cannot prevent is a person *moving* files in from a file
+    /// manager rather than copying them. The screen says what will be deleted
+    /// for exactly that reason.
+    fn refuse_publishing_output(&self, requested: &Path) -> Result<(), Error> {
+        let Some(publishing) = &self.publishing_dir else {
+            return Ok(());
+        };
+
+        // The path need not exist yet, so judge the nearest ancestor that does
+        // — the same approach `resolve_for_create` takes below, and for the
+        // same reason: a comparison against an unresolvable path means nothing.
+        let mut existing = requested.to_path_buf();
+        while !existing.exists() {
+            match existing.parent() {
+                Some(parent) => existing = parent.to_path_buf(),
+                None => return Ok(()),
+            }
+        }
+        let Ok(resolved) = existing.canonicalize() else {
+            return Ok(());
+        };
+
+        if resolved == *publishing || resolved.starts_with(publishing) {
+            return Err(Error::Refused(format!(
+                "{} is inside the publishing folder, which is emptied after a successful \
+                 upload. Write somewhere else and copy it in when you publish.",
+                requested.display()
+            )));
+        }
+        Ok(())
+    }
+
     /// G6, narrowed to the one folder publishing may empty.
     ///
     /// `resolve` asks *"is this inside somewhere I may touch?"*. This asks a
@@ -264,6 +309,8 @@ impl Config {
     /// roots, and re-appends the remainder. Any `..` in the remainder is
     /// rejected, so the check cannot be walked back out of afterwards.
     pub fn resolve_for_create(&self, requested: &Path) -> Result<PathBuf, Error> {
+        self.refuse_publishing_output(requested)?;
+
         if requested.exists() {
             return self.resolve(requested);
         }
@@ -539,6 +586,48 @@ mod tests {
         let climbed = publishing.join("..").join("archive");
         let err = config.resolve_for_publishing(&climbed).unwrap_err();
         assert!(matches!(err, Error::Refused(_)), "got {err}");
+    }
+
+    #[test]
+    fn a_tool_cannot_write_its_output_into_the_publishing_folder() {
+        // The invariant the deletion rests on: everything in that folder is a
+        // copy of something that still exists elsewhere. A tool writing there
+        // directly would put the only copy of a derivative in the one folder
+        // that gets emptied.
+        let (_temp, mut config, publishing) = with_publishing();
+        config.roots = vec![publishing.clone()];
+
+        let err = config
+            .resolve_for_create(&publishing.join("bordered.jpg"))
+            .unwrap_err();
+        assert!(matches!(err, Error::Refused(_)), "got {err}");
+        assert!(err.to_string().contains("copy it in"), "got {err}");
+    }
+
+    #[test]
+    fn a_tool_can_still_write_anywhere_else_inside_the_roots() {
+        let (temp, mut config, _) = with_publishing();
+        let work = temp.path().join("work");
+        std::fs::create_dir(&work).unwrap();
+        config.roots = vec![temp.path().canonicalize().unwrap()];
+
+        assert!(config
+            .resolve_for_create(&work.join("bordered.jpg"))
+            .is_ok());
+    }
+
+    #[test]
+    fn with_no_publishing_folder_configured_tool_output_is_unaffected() {
+        // The guard must not become a second way for an unconfigured
+        // installation to refuse everything.
+        let temp = tempfile::tempdir().unwrap();
+        let config = Config {
+            roots: vec![temp.path().canonicalize().unwrap()],
+            ..Config::default()
+        };
+        assert!(config
+            .resolve_for_create(&temp.path().join("out.jpg"))
+            .is_ok());
     }
 
     #[test]

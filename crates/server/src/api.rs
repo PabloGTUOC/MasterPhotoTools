@@ -1842,6 +1842,8 @@ async fn ingest_publish(
             tokens: &connector as &dyn AccessTokens,
             sleeper: &sleeper,
             staging_dir: staging,
+            // A card session: F16's key, and the stronger claim.
+            key_kind: "source",
         };
 
         Ok(publisher.publish(&publish_plan, progress)?.describe())

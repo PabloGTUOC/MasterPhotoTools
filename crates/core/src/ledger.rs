@@ -1172,6 +1172,7 @@ impl Ledger {
         source_sha256: &str,
         stem: &str,
         derived_file_name: &str,
+        key_kind: &str,
     ) -> SqlResult<()> {
         let tx = self.conn.unchecked_transaction()?;
 
@@ -1182,8 +1183,9 @@ impl Ledger {
         )?;
         tx.execute(
             "INSERT OR REPLACE INTO published
-                 (source_sha256, stem, derived_sha256, session_id, media_item_id, published_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 (source_sha256, stem, derived_sha256, session_id, media_item_id,
+                  published_at, key_kind)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             (
                 source_sha256,
                 stem,
@@ -1191,6 +1193,7 @@ impl Ledger {
                 shot_id,
                 media_item_id,
                 chrono::Utc::now().timestamp(),
+                key_kind,
             ),
         )?;
 

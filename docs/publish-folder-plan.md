@@ -24,7 +24,7 @@ So the road is being re-cut:
 |---|---|---|
 | **Ingest** | the only road to publishing: validate, derive, stage, hand off a session | reads a card (desktop) or a folder (web), checks each frame, **copies what passes to a folder you choose** — and ends there |
 | **The tools** | beside the road | on it: they work on that folder |
-| **Publish** | takes a handoff session id | takes **a folder**, or whatever is already in `Publishing` |
+| **Publish** | takes a handoff session id | copies a chosen folder or files into `Publishing`, or takes what is already there, uploads it and empties it |
 
 ## Standing against the specification
 
@@ -83,10 +83,15 @@ deletion. Anything that failed, or whose outcome is unknown because the answer n
 stays where it is. §9.2 invariant 6 in its most literal form: what cannot be verified is not
 claimed, and here the claim is destructive.
 
-**3. Copying into `Publishing` is a copy, never a move.** So the deletion removes the second copy
-and the first is still where you left it. The exception is a tool that wrote its output straight
-into `Publishing` — that derivative is the only copy and it *will* be gone. It can be regenerated
-from its original, and the screen says so before the run rather than after.
+**3. Everything in `Publishing` is a copy of something else** — so the deletion removes the second
+copy and the first is still where you left it. There is no exception, and it is **enforced rather
+than trusted**: `Config::resolve_for_create` refuses any tool output path inside the publishing
+folder, so borders, conversions and splits cannot write their only copy into the one folder that
+gets emptied. The way in is copying, chosen deliberately at the start of a publish, or dropped in
+from a file manager.
+
+The one thing this cannot prevent is somebody *moving* files in rather than copying them. That is
+why the screen states plainly that everything listed will be deleted after a successful upload.
 
 **4. Nothing is deleted without a dry run.** The list is shown, the upload runs, and the summary
 reports exactly which files were removed and which were kept, with the reason. Consistent with
@@ -247,10 +252,25 @@ reader cannot mistake "these bytes were uploaded" for "this photograph was publi
 subfolders keeping their paths, non-photographs reported rather than uploaded, and 51 files needing
 two batchCreate calls (§6.1).
 
-### PB-5 — publishing, and emptying
+### PB-5 — publishing, and emptying ✔
 The upload through the existing state machine, then the deletion under the four rules.
-**Done when** a file that failed to upload is still on disk afterwards, a file that succeeded is
-gone, the folder itself remains, and a run where *nothing* succeeded deletes nothing.
+
+`publish_folder` is the *same* `Publisher` with `staging_dir` pointed at the publishing folder and
+`key_kind: "file"`. Retries, resumption, rate-limit backoff and the mandatory dry-run check come
+along unchanged; the only thing that differs between publishing a card and publishing a folder is
+which question the resulting ledger row answers.
+
+Rule 1 is checked twice — once on the folder before anything is examined, and again **per file**,
+because a name from the plan is not a location until it is resolved. Rule 2 reads the **publish
+row** per file rather than the run's outcome: "the job finished" is not evidence about any
+particular photograph. Rule 4 comes free, and is tested rather than assumed — the token provider
+panics if it is ever asked, so the refusal demonstrably happens before any network work.
+
+**Done:** eleven tests on the deletion, including a run where everything failed deleting nothing, a
+file that arrived after the plan was made surviving, an uploaded-but-unconfirmed file surviving, and
+a symlink out of the folder not being followed — the archive it points at is untouched. Emptied
+subfolders are tidied away; one still holding a file is not; the publishing folder itself always
+survives, because it is configuration rather than content.
 
 ### PB-6 — the transports
 Routes and commands. Every path through `Config`; the publishing path through

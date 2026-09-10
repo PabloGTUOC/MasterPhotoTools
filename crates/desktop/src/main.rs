@@ -131,6 +131,7 @@ fn main() {
             commands::summarise_card,
             commands::scan_card,
             commands::stage_card,
+            commands::deliver_card,
             commands::read_card,
             commands::validate_card,
             commands::remediate,

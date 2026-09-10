@@ -731,6 +731,70 @@ pub fn scan_card(path: String, state: State<'_, AppState>) -> CommandResult<Stri
 ///
 /// **Never writes to the card** (G5); the staging directory is the only
 /// destination.
+#[derive(Debug, Deserialize)]
+pub struct DeliverArgs {
+    /// The card, or any folder being read.
+    pub path: String,
+    /// Where the frames that passed should land.
+    pub destination: String,
+    /// Copy only the shots that passed validation, rather than everything.
+    #[serde(default = "yes")]
+    pub only_passing: bool,
+}
+
+/// Copy the frames that passed to a folder, keeping the camera's names.
+///
+/// PB-3 of `docs/publish-folder-plan.md`: where ingest ends once it no longer
+/// hands a session to the server. The tools run on what lands here.
+///
+/// **The card is never written to (G5)** — `deliver_all` refuses a destination
+/// inside the folder being read before a byte is copied, which matters because
+/// this is the one operation whose destination somebody types, and the card is
+/// the folder they are looking at.
+#[tauri::command]
+pub fn deliver_card(args: DeliverArgs, state: State<'_, AppState>) -> CommandResult<String> {
+    let config = state.config();
+    let root = resolve_input(&config, &args.path)?;
+    let destination = resolve_output(&config, &args.destination)?;
+    let card = Card::at(&root).map_err(describe)?;
+
+    // Refused here as well as inside the job, so a mistyped destination is a
+    // red line under the field rather than a job that starts and then fails.
+    ingest::check_destination(&root, &destination).map_err(describe)?;
+
+    let only_passing = args.only_passing;
+    let thresholds = config.thresholds.clone();
+
+    state
+        .jobs
+        .spawn("card_deliver", 0, move |progress| {
+            let scan = ingest::scan_card(&card, progress)?;
+
+            let assets: Vec<_> = if only_passing {
+                let validation =
+                    ingest::validate(&scan.shots, chrono::Utc::now().naive_utc(), &thresholds);
+                let passing: std::collections::HashSet<&str> = validation
+                    .shots
+                    .iter()
+                    .filter(|s| !s.status().is_fail())
+                    .map(|s| s.stem.as_str())
+                    .collect();
+
+                scan.shots
+                    .iter()
+                    .filter(|shot| passing.contains(shot.stem.as_str()))
+                    .map(|shot| shot.candidate().clone())
+                    .collect()
+            } else {
+                scan.candidates().cloned().collect()
+            };
+
+            let result = ingest::deliver_all(&assets, &root, &destination, progress)?;
+            Ok(result.describe())
+        })
+        .map_err(describe)
+}
+
 #[tauri::command]
 pub fn stage_card(path: String, state: State<'_, AppState>) -> CommandResult<String> {
     let config = state.config();

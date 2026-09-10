@@ -6,6 +6,7 @@
 //! plan §6.3 requires and what makes Phases 8–13 testable without hardware.
 
 pub mod card;
+pub mod deliver;
 pub mod derivation;
 pub mod fingerprint;
 pub mod grouping;
@@ -17,6 +18,9 @@ pub mod validation;
 pub mod walk;
 
 pub use card::{Card, Origin};
+pub use deliver::{
+    check_destination, deliver_all, DeliveredFile, DeliveryFailure, DeliveryResult, DeliverySkip,
+};
 pub use fingerprint::Fingerprint;
 pub use grouping::{group_into_shots, Shot};
 pub use handoff::{

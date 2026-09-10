@@ -205,11 +205,23 @@ clean; the odd frame out warns; nothing ever fails, and no `FailureClass` is add
 bulk actions by failure class and no action on a card can add a location. The front end needed no
 change: it renders a rule's name from the wire.
 
-### PB-3 — check-and-copy
+### PB-3 — check-and-copy ✔
 `ingest::deliver`: take the frames that pass, copy them to a chosen folder, verify each by hash,
 report what landed and what did not. Never touches the card.
-**Done when** a card's passing frames arrive byte-identical, a failure is reported per file, and
-the card is unchanged (the MV-8.6 property, asserted here too).
+
+A sibling of `staging` rather than a reuse of it, for three reasons that turned out to matter:
+**the camera's filenames are kept** (a working folder is a place a person opens, and
+`a3f91c….jpg` is not a photograph anybody can find), which brings back the collision staging's
+content-hash names avoid — so **nothing is ever overwritten**: identical content already there is a
+frame already delivered and is skipped, and different content under the same name is reported and
+left alone. And **the destination is refused if it is inside the card**, checked on canonicalised
+paths before a byte is copied: this is the one operation whose destination somebody types, and the
+card is the folder they are looking at.
+
+**Done:** twelve tests, including the card hashed before and after (G5 asserted, not assumed), a
+symlink into the card refused, two cards' `IMG_0001.JPG` not overwriting each other, one failure
+not abandoning the other frames, and no `.partial-copy` left behind. `deliver_card` on the
+desktop copies only the shots that did not fail validation.
 
 ### PB-4 — planning a folder publish
 `publish::folder::plan`: walk `Publishing`, decide what is publishable, check the byte-hash ledger,

@@ -27,13 +27,13 @@ established from a machine with no camera, no Mac, no NAS and no Google account.
 | You need | Unblocks | Items |
 |---|---|---|
 | A Mac | 7, 8, 10.3, 13, 14, 15 | 34 |
-| A Google OAuth client | 12 | 7 |
-| A NAS and an SMB share | 11, 14 | 7 |
+| A Google OAuth client | 12, 16 | 15 |
+| A NAS and an SMB share | 11, 14, 16 | 15 |
 | A physical SD card | 8 | 7 |
 | A Firebase project | 6.2 | 1 |
 | Real photographs, and your eyes | 2, 4, 9, 10, 15 | 28 |
 
-**64 checks in all, and all of them are actionable.** Four are done — MV-2.1, MV-7.1, MV-7.2 and
+**72 checks in all, and all of them are actionable.** Four are done — MV-2.1, MV-7.1, MV-7.2 and
 MV-7.3 — and **three of those four found defects**, which is the argument for doing the rest. The
 suggested order, and why, is in [`testing.md`](testing.md#5-suggested-order).
 
@@ -569,4 +569,72 @@ through G6's check. `docs/GPS/track.gpx` does not — copy it under one, or add 
       **Run:** publish a geotagged photograph through the Publish tab.
       **Pass:** the media item shows its location in Google Photos. If it does not, the question is
       whether Google reads `GPSDateStamp`/`GPSTimeStamp` as we write them.
+      **Result:**
+
+## Publishing a folder — needs a NAS, a Google account, and real photographs
+
+The road that lets the tools run before anything is published; the plan is in
+[`publish-folder-plan.md`](publish-folder-plan.md) and the report in
+[`phase-reports/publish-folder.md`](phase-reports/publish-folder.md).
+
+**Before any of these:** `PUBLISHING_DIR` must be set to a folder that already exists. Unset, every
+one of these refuses — deliberately, because there is no safe default for a folder that gets
+emptied. **And work on copies for MV-16.3 onwards:** these checks upload to Google Photos, which
+cannot delete what it receives.
+
+- [ ] **MV-16.1 — A card's passing frames arrive byte-identical, and the card is unchanged.**
+      The copy is verified by hash in code; what this checks is a real card on a real reader, where
+      short reads happen.
+      **Run:** Ingest → scan a card → set **Copy the photographs to** → **Copy to a folder**.
+      **Pass:** the count matches the frames that did not fail, each opens, and the card's own
+      files are untouched — compare with `shasum` before and after, as MV-8.6 does.
+      **Result:**
+
+- [ ] **MV-16.2 — The Location check marks the right frames and fails none.**
+      **Run:** a card from a camera with no receiver, then one from a phone, then a mixed folder.
+      **Pass:** the no-receiver card shows `location` passing with the absence stated and stays a
+      clean card; on a mixed card, only the frames without coordinates warn.
+      **Result:**
+
+- [ ] **MV-16.3 — A folder publishes to Google Photos with its dates and locations.**
+      **§6.4: one photograph first.** The API cannot delete what it creates.
+      **Run:** copy **one** geotagged frame into `Publishing`, dry run, publish.
+      **Pass:** it appears in Google Photos with the right date *and* the location the Geotag tab
+      wrote. If the date is right and the location missing, the question is whether Google reads
+      `GPSDateStamp`/`GPSTimeStamp` as we write them.
+      **Result:**
+
+- [ ] **MV-16.4 — `Publishing` is empty afterwards, and the folder it was copied from is not.**
+      The deletion is the one irreversible step; this is the check that it removed the second copy.
+      **Run:** after MV-16.3.
+      **Pass:** `Publishing` holds nothing; the source folder still holds every file; the folder
+      itself still exists.
+      **Result:**
+
+- [ ] **MV-16.5 — A failed upload leaves that file in place and publishes the rest.**
+      Rule 2 in the field: a failure must never be mistaken for a success by the thing that
+      deletes.
+      **Run:** put three photographs in, and one file that Google will reject — a 0-byte `.jpg`
+      renamed from something else. Publish.
+      **Pass:** the three are in Google Photos and gone from the folder; the rejected one is still
+      in the folder, and the summary says which and why.
+      **Result:**
+
+- [ ] **MV-16.6 — Editing the folder after a dry run invalidates it.**
+      **Run:** dry run, then add a file, or geotag one already in there. Try to publish.
+      **Pass:** the screen says the folder has changed since the dry run, and the publish button is
+      unavailable until it is run again.
+      **Result:**
+
+- [ ] **MV-16.7 — A tool cannot write into `Publishing`.**
+      **Run:** in the Border or TIFF tab, set the output folder to `Publishing`.
+      **Pass:** refused, with a message saying to write elsewhere and copy it in.
+      **Result:**
+
+- [ ] **MV-16.8 — The whole way through, on one roll.**
+      The point of the change: card → folder → tools → `Publishing` → Google.
+      **Run:** ingest a card to a working folder; geotag it from a track; convert or border some of
+      it; copy the results into `Publishing`; publish.
+      **Pass:** what arrives in Google Photos is the edited version, dated and located, and the
+      working folder still holds everything.
       **Result:**

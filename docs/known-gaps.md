@@ -139,6 +139,41 @@ invented. Blocks **MV-14.1**.
 Recorded because a reader comparing the two should not have to work out which
 of them moved.
 
+### Publishing takes a folder, where §6.3 takes a card session
+
+The specification's road to Google Photos is one road: the desktop hands a
+card to the server as a session, and F15 publishes that session. `plan_publish`
+takes a manifest, a `SessionPlan` and an arrival report; `dry_run` records
+itself against a `session_id`; F16's ledger is keyed on the source hash carried
+in a manifest entry.
+
+Publishing now also takes **a folder**, because every tool this application has
+— geotag, TIFF to JPEG, borders, split — sat beside that road rather than on it,
+and there was nowhere in the pipeline to change a photograph before publishing
+it. With an API that cannot delete, publishing first and fixing afterwards is a
+duplicate rather than a recovery.
+
+Planned in [`publish-folder-plan.md`](publish-folder-plan.md) and reported in
+[`phase-reports/publish-folder.md`](phase-reports/publish-folder.md).
+`SPECIFICATION.md` was not edited (G9).
+
+Three consequences a reader comparing the two documents should know:
+
+- **Deduplication answers a weaker question on this road.** F16 keys on the
+  bytes the camera wrote, so a row means "this photograph has been published".
+  A folder holds files that have been through the tools — and geotagging
+  rewrites a file — so a folder publish can only key on the bytes it uploaded:
+  "this file has been uploaded". Migration 8's `published.key_kind` distinguishes
+  them, and what actually prevents double-publishing is that a successful
+  publish empties the folder.
+- **§7 lists neither `published.key_kind` nor `sessions.folder`**, as it lists
+  neither `published` nor `sessions` themselves (recorded separately below).
+- **Both roads are live.** The session road goes unused the moment Ingest stops
+  handing off, but it is not deleted until folder publishing has met real
+  photographs (MV-16). Two roads to publishing is a bad end state and a
+  deliberate intermediate one; the change that retires the session road also
+  retires the MV-11 items covering it.
+
 ### The Geotag tab is not in the specification at all
 
 `SPECIFICATION.md` mentions neither GPS, geotagging, GPX nor location. The whole

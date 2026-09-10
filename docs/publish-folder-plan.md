@@ -1,5 +1,10 @@
 # Publishing a folder — development plan
 
+> **Built.** PB-1 to PB-9 are done and the gates pass; eight checks await a NAS and a Google
+> account (MV-16). Where the build diverged from this plan the text says so, and the reasons are in
+> [`phase-reports/publish-folder.md`](phase-reports/publish-folder.md). The session road is still
+> live and is retired separately.
+
 Move publishing off the card-handoff session and onto a folder, so there is somewhere to edit a
 photograph between the card and Google Photos.
 
@@ -315,8 +320,13 @@ Publish stays web-only — the refresh token lives on one machine — so only `f
 `ApiClient`. **Done:** `check:layout` clean at 390 px with both roads, both builds, both transport
 checks.
 
-### PB-9 — documents
-`known-gaps.md`, `phase-reports/publish-folder.md`, **MV-16**, and the test counts in `CLAUDE.md`.
+### PB-9 — documents ✔
+`known-gaps.md` records the contradiction with §6.3 and its three consequences;
+`phase-reports/publish-folder.md` reports what was delivered and where the build diverged from this
+plan; **MV-16** adds eight checks, and `testing.md` gives them a session of their own.
+
+The plan is a placeholder no longer only in one respect: `PUBLISHING_DIR` still has no value
+anywhere, and publishing refuses until it does.
 
 ---
 

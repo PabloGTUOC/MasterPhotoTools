@@ -16,6 +16,8 @@ import {
   type DatesFixRequest,
   type DatesScanRequest,
   type DeriveRequest,
+  type FillResult,
+  type FolderPublishPlan,
   type GeoScanRow,
   type GeotagPreview,
   type GeotagRequest,
@@ -167,6 +169,21 @@ export interface ApiClient {
    */
   planGeotag(request: GeotagRequest): Promise<GeotagPreview>;
   applyGeotag(request: GeotagRequest): Promise<string>;
+
+  // Publishing a folder (`docs/publish-folder-plan.md`).
+  //
+  // Uploading is the server's alone — the Google refresh token lives on one
+  // machine (§2.3) — so only `fillPublishing` is on `ApiClient`; the three that
+  // publish live on the web client, where a view that needs them has to declare
+  // itself a web view.
+
+  /**
+   * Copy folders or files into the publishing folder.
+   *
+   * A copy, never a move: emptying that folder after a successful upload must
+   * remove a second copy, never the only one.
+   */
+  fillPublishing(paths: string[]): Promise<FillResult>;
 
   // F17 — jobs
   job(id: string): Promise<Job>;
@@ -391,6 +408,29 @@ export class HttpApiClient implements ApiClient {
 
   applyGeotag(request: GeotagRequest): Promise<string> {
     return this.startJob('/api/tools/geotag/apply', request);
+  }
+
+  fillPublishing(paths: string[]): Promise<FillResult> {
+    return this.post('/api/publish/folder/fill', { paths });
+  }
+
+  /** What is sitting in the publishing folder, and what would be uploaded. */
+  async publishingFolder(): Promise<FolderPublishPlan> {
+    const response = await this.send('/api/publish/folder');
+    return this.readJson<FolderPublishPlan>(response, 'the publishing folder');
+  }
+
+  /**
+   * The dry run §9.2 rule 3 requires, recorded against the exact bytes in the
+   * folder — change what is there and the review no longer counts.
+   */
+  planFolderPublish(): Promise<FolderPublishPlan> {
+    return this.post('/api/publish/folder/plan', {});
+  }
+
+  /** Upload the folder, then empty it of everything Google confirmed. */
+  publishFolder(): Promise<string> {
+    return this.startJob('/api/publish/folder/publish', {});
   }
 
   scanCard(path: string): Promise<string> {

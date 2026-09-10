@@ -1473,6 +1473,71 @@ pub fn apply_geotag(args: GeotagArgs, state: State<'_, AppState>) -> CommandResu
         .map_err(describe)
 }
 
+// ---------------------------------------------------------------------------
+// Publishing a folder — the desktop's half
+//
+// Uploading is the server's alone: the Google refresh token lives on exactly
+// one machine (§2.3). What the desktop can do is fill the folder, which is
+// copying — and copying is what this machine is for.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct FillArgs {
+    /// Folders or files to copy into the publishing folder.
+    pub paths: Vec<String>,
+}
+
+/// What a fill did, in the shape both transports answer with.
+#[derive(Debug, Serialize)]
+pub struct FillResult {
+    pub copied: usize,
+    pub already_there: usize,
+    pub failed: usize,
+    pub summary: String,
+}
+
+/// Copy folders or files into the publishing folder.
+///
+/// A copy, never a move: emptying that folder after a successful upload has to
+/// remove a second copy, never the only one.
+#[tauri::command]
+pub fn fill_publishing(args: FillArgs, state: State<'_, AppState>) -> CommandResult<FillResult> {
+    let config = state.config();
+    let Some(dir) = config.publishing_dir.clone() else {
+        return Err(
+            "No publishing folder is configured. Set PUBLISHING_DIR to the folder \
+                    publishing should draw from and empty."
+                .into(),
+        );
+    };
+
+    let sources = resolve_inputs(&config, &args.paths)?;
+    let progress = InMemoryProgress::new();
+    let mut result = ingest::DeliveryResult::default();
+
+    for source in &sources {
+        let scanned = ingest::scanner::scan_paths(std::slice::from_ref(source), &progress)
+            .map_err(describe)?;
+        let root = if source.is_dir() {
+            source.as_path()
+        } else {
+            source.parent().unwrap_or(source.as_path())
+        };
+
+        let one = ingest::deliver_all(&scanned.assets, root, &dir, &progress).map_err(describe)?;
+        result.delivered.extend(one.delivered);
+        result.skipped.extend(one.skipped);
+        result.failed.extend(one.failed);
+    }
+
+    Ok(FillResult {
+        copied: result.delivered.len(),
+        already_there: result.skipped.len(),
+        failed: result.failed.len(),
+        summary: result.describe(),
+    })
+}
+
 /// A poisoned ledger lock: an earlier panic left it unusable.
 fn poisoned() -> String {
     "The ledger lock was poisoned by an earlier failure".to_string()

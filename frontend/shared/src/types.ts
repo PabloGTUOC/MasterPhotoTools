@@ -654,6 +654,51 @@ export interface RecordedConflict {
   decision: string;
 }
 
+// ---------------------------------------------------------------------------
+// Publishing a folder
+//
+// Beyond the specification, which routes publishing through a card handoff
+// session (§6.3). See `docs/publish-folder-plan.md`.
+// ---------------------------------------------------------------------------
+
+/** One photograph a folder publish would upload. */
+export interface PublishItem {
+  shot_id: string;
+  stem: string;
+  source_sha256: string;
+  /** Relative to the publishing folder, so a file in a subfolder stays distinct. */
+  file_name: string;
+  bytes: number;
+}
+
+export interface PublishSkipped {
+  stem: string;
+  reason: string;
+}
+
+/**
+ * What publishing the folder would do.
+ *
+ * `session_id` is derived from the exact bytes in the folder, so it changes
+ * when anything is added, removed or edited — which is what binds the mandatory
+ * dry run to what was actually reviewed.
+ */
+export interface FolderPublishPlan {
+  session_id: string;
+  items: PublishItem[];
+  skipped: PublishSkipped[];
+  total_bytes: number;
+  upload_requests: number;
+  batch_create_requests: number;
+}
+
+export interface FillResult {
+  copied: number;
+  already_there: number;
+  failed: number;
+  summary: string;
+}
+
 export type GeoStatus =
   | 'Ok'
   | 'NoLocation'

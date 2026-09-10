@@ -61,6 +61,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/ingest/sessions/:id/ready", post(ingest_session_ready))
         .route("/api/ingest/sessions/:id/shots", get(ingest_session_shots))
         .route("/api/ingest/sessions/:id/publish", post(ingest_publish))
+        // Publishing a folder (docs/publish-folder-plan.md).
+        .route("/api/publish/folder", get(publish_folder_contents))
+        .route("/api/publish/folder/fill", post(publish_folder_fill))
+        .route("/api/publish/folder/plan", post(publish_folder_plan))
+        .route("/api/publish/folder/publish", post(publish_folder_run))
         // Google Photos connector — F15, specification §8.
         .route("/api/connectors/google/status", get(google_status))
         .route("/api/connectors/google/connect", post(google_connect))
@@ -1847,6 +1852,144 @@ async fn ingest_publish(
         };
 
         Ok(publisher.publish(&publish_plan, progress)?.describe())
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Publishing a folder
+//
+// Beyond the specification, which routes publishing through a card handoff
+// session (§6.3). See `docs/publish-folder-plan.md`.
+// ---------------------------------------------------------------------------
+
+/// The configured publishing folder, or the refusal explaining there is none.
+fn publishing_dir(state: &AppState) -> Result<PathBuf, ApiError> {
+    state.config.publishing_dir.clone().ok_or_else(|| ApiError {
+        code: "bad_request",
+        message: "No publishing folder is configured. Set PUBLISHING_DIR to the folder \
+                  publishing should draw from and empty."
+            .into(),
+    })
+}
+
+/// `GET /api/publish/folder` — what is sitting in the publishing folder.
+///
+/// The screen opens on this: whatever is there is what would be published, and
+/// what would be deleted afterwards.
+async fn publish_folder_contents(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+) -> Result<Response, ApiError> {
+    let dir = publishing_dir(&state)?;
+    let ledger = state.jobs.ledger();
+
+    let plan = {
+        let guard = lock(&ledger)?;
+        publish::folder::plan_folder(&dir, &guard)?
+    };
+    Ok(Json(plan).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FillRequest {
+    /// Folders or files to copy in. The only way in, other than a file manager.
+    pub paths: Vec<String>,
+}
+
+/// `POST /api/publish/folder/fill` — copy a folder or files into it.
+///
+/// A copy, never a move: emptying the publishing folder afterwards must remove
+/// a second copy, never the only one.
+async fn publish_folder_fill(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<FillRequest>,
+) -> Result<Response, ApiError> {
+    let dir = publishing_dir(&state)?;
+    let sources = resolve_inputs(&state.config, &request.paths)?;
+
+    // One source at a time, so each is checked against the destination on its
+    // own terms. The guard that matters here is a source that *contains* the
+    // publishing folder: copying a folder into a folder inside itself is a
+    // loop, and `deliver_all` refuses it before a byte moves.
+    let progress = InMemoryProgress::new();
+    let mut result = phototools_core::ingest::DeliveryResult::default();
+
+    for source in &sources {
+        let scanned =
+            phototools_core::ingest::scanner::scan_paths(std::slice::from_ref(source), &progress)?;
+        let root = if source.is_dir() {
+            source.as_path()
+        } else {
+            source.parent().unwrap_or(source.as_path())
+        };
+
+        let one = phototools_core::ingest::deliver_all(&scanned.assets, root, &dir, &progress)?;
+        result.delivered.extend(one.delivered);
+        result.skipped.extend(one.skipped);
+        result.failed.extend(one.failed);
+    }
+
+    Ok(Json(serde_json::json!({
+        "copied": result.delivered.len(),
+        "already_there": result.skipped.len(),
+        "failed": result.failed.len(),
+        "summary": result.describe(),
+    }))
+    .into_response())
+}
+
+/// `POST /api/publish/folder/plan` — the dry run §9.2 rule 3 requires.
+///
+/// Records that somebody looked, against a session id derived from the exact
+/// bytes in the folder: change what is there and the review no longer counts.
+async fn publish_folder_plan(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+) -> Result<Response, ApiError> {
+    let dir = publishing_dir(&state)?;
+    let ledger = state.jobs.ledger();
+
+    let plan = {
+        let guard = lock(&ledger)?;
+        publish::folder::dry_run_folder(&dir, &guard)?
+    };
+    Ok(Json(plan).into_response())
+}
+
+/// `POST /api/publish/folder/publish` — upload it, then empty it.
+async fn publish_folder_run(
+    auth: Authenticated,
+    State(state): State<AppState>,
+) -> Result<Response, ApiError> {
+    let dir = publishing_dir(&state)?;
+    let (config, cipher) = connector_parts(&state)?;
+    let database = state.config.database.clone();
+    let core_config = (*state.config).clone();
+
+    accept(&state, &auth, "publish_folder", 0, move |progress| {
+        let endpoint = publish::HttpTokenEndpoint::new();
+        let api = publish::HttpPhotosApi::new();
+        let sleeper = publish::RealSleeper;
+
+        // Its own connection, for the reason the session publish gives: this
+        // holds a `&Ledger` while reporting progress, and progress is written
+        // through the shared one.
+        let own = phototools_core::ledger::Ledger::open(&database)
+            .map_err(|e| Error::Internal(e.to_string()))?;
+
+        let connector = Connector::new(&own, config, cipher, &endpoint);
+        let (outcome, emptied) = publish::folder::publish_folder(
+            &dir,
+            &core_config,
+            &own,
+            &api,
+            &connector as &dyn AccessTokens,
+            &sleeper,
+            progress,
+        )?;
+
+        Ok(format!("{} — {}", outcome.describe(), emptied.describe()))
     })
 }
 

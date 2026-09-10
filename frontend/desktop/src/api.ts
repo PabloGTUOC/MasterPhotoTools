@@ -24,6 +24,7 @@ import type {
   DatesFixRequest,
   DatesScanRequest,
   DeriveRequest,
+  FillResult,
   GeoScanRow,
   GeotagPreview,
   GeotagRequest,
@@ -169,6 +170,10 @@ export class TauriApiClient implements ApiClient {
 
   trackConflicts(id: string): Promise<RecordedConflict[]> {
     return invoke<RecordedConflict[]>('track_conflicts', { id });
+  }
+
+  fillPublishing(paths: string[]): Promise<FillResult> {
+    return invoke<FillResult>('fill_publishing', { args: { paths } });
   }
 
   scanGeo(request: DatesScanRequest): Promise<GeoScanRow[]> {

@@ -223,6 +223,44 @@ fn scan_one(path: &Path, root: &Path) -> Result<ScannedAsset, ScanProblem> {
 
 /// Hex SHA-256 of a file's contents, read in chunks so a 60 MB RAW does not
 /// arrive in memory whole.
+/// Scan a mix of folders and individual files.
+///
+/// `scan_files` walks one root, which is what a card is. Somebody choosing what
+/// to publish picks a folder *or* three particular frames, and the difference
+/// between "everything under here" and "these three" is theirs to make rather
+/// than ours to flatten.
+///
+/// A path that is neither is reported as a problem rather than dropped: a
+/// selection of five that silently becomes four is worse than one that says
+/// which one it could not read.
+pub fn scan_paths(
+    paths: &[std::path::PathBuf],
+    progress: &dyn Progress,
+) -> Result<ScannedFiles, Error> {
+    let mut all = ScannedFiles {
+        assets: Vec::new(),
+        problems: Vec::new(),
+    };
+
+    for path in paths {
+        if path.is_dir() {
+            let scanned = scan_files(path, progress)?;
+            all.assets.extend(scanned.assets);
+            all.problems.extend(scanned.problems);
+            continue;
+        }
+
+        let parent = path.parent().unwrap_or(path);
+        match scan_one(path, parent) {
+            Ok(asset) => all.assets.push(asset),
+            Err(problem) => all.problems.push(problem),
+        }
+    }
+
+    all.assets.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+    Ok(all)
+}
+
 pub fn hash_file(path: &Path) -> Result<String, Error> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();

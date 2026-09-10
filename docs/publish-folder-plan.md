@@ -272,10 +272,23 @@ a symlink out of the folder not being followed — the archive it points at is u
 subfolders are tidied away; one still holding a file is not; the publishing folder itself always
 survives, because it is configuration rather than content.
 
-### PB-6 — the transports
-Routes and commands. Every path through `Config`; the publishing path through
-`resolve_for_publishing`.
-**Done when** both `check:transport` runs pass.
+### PB-6 — the transports ✔
+Four routes — `GET /api/publish/folder`, and `POST` for `fill`, `plan` and `publish` — plus
+`fill_publishing` on the desktop. Every path through `Config`; the publishing folder never typed,
+only read from configuration.
+
+**Only `fillPublishing` is on `ApiClient`.** Filling the folder is copying, which both machines do.
+Uploading is the server's alone — the refresh token lives on one machine (§2.3) — so the three that
+publish live on the web client, and a view that needs them has to declare itself a web view rather
+than discover at runtime that its transport cannot oblige.
+
+A fill checks **each source separately**: the hazard is a chosen folder that *contains* the
+publishing folder, and copying a folder into a folder inside itself is a loop `deliver_all` refuses
+before a byte moves. `ingest::scanner::scan_paths` is new for this — `scan_files` walks one root,
+which is what a card is, but choosing what to publish means a folder *or* three particular frames.
+
+**Done:** both `check:transport` runs pass, both typechecks, and the desktop returns the same
+counts the server does rather than a summary sentence with fabricated numbers beside it.
 
 ### PB-7 — the Ingest screen
 The destination folder, and the Location check in the card table.

@@ -34,7 +34,7 @@ has been added — it places photographs from a GPS track exported from a phone,
 It is outside the specification, which mentions neither GPS nor GPX; the reasoning is in
 [`docs/geotag-plan.md`](docs/geotag-plan.md).
 
-632 tests across the workspace, 551 of them in `phototools-core` with no binary crate present.
+647 tests across the workspace, 562 of them in `phototools-core` with no binary crate present.
 Both front ends typecheck and build; the web UI's layout and the ingest grid's performance are
 measured in a real browser rather than asserted. The server image builds and the container passes
 its health check — deploying it to the NAS is still a human step.

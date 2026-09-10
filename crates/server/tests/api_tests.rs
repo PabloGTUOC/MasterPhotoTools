@@ -40,6 +40,7 @@ async fn start() -> TestServer {
     let config = Config {
         roots: vec![root.canonicalize().unwrap()],
         staging_dir: staging,
+        publishing_dir: None,
         thresholds: Thresholds::default(),
         database: temp.path().join("ledger.sqlite3"),
     };

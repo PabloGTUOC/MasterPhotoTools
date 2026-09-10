@@ -140,6 +140,7 @@ Two further traps:
 | `MAX_AGE_DAYS` | `90` | F12 rejects a capture date further than this from now. |
 | `MAX_MEGAPIXELS` | `0` | F12's resolution ceiling, in megapixels. **Zero means no ceiling**, which is the default: publishing is limited by file size, and a frame inside the byte cap is worth keeping whole. Set it to restore §F12's 10. |
 | `MAX_OUTPUT_BYTES` | `10485760` | F12's size ceiling, applied independently of the resolution one. |
+| `PUBLISHING_DIR` | *unset* | The one folder publishing draws from and, on success, empties. **Unset refuses all publishing**, the way an empty `ROOTS` refuses every path: there is no safe default for a folder that may be deleted from. It must already exist — it is never created automatically. Canonicalised at load, so a symlink or a `..` inside it cannot walk the deletion out of it. |
 | `EXIFTOOL_PATH` | *unset* | The `exiftool` to run for every metadata write. Unset means: `PATH`, then the usual Homebrew, MacPorts and distribution locations. A value pointing at nothing is an error rather than a fallback. See [§6](#exiftool-and-where-the-bundle-looks-for-it). |
 
 A threshold that is set but unparseable is a **startup error**, not a silent

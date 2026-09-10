@@ -29,6 +29,7 @@ fn fixture() -> Fixture {
     let config = Config {
         roots: vec![root.canonicalize().unwrap()],
         staging_dir: temp.path().join("staging"),
+        publishing_dir: None,
         thresholds: Thresholds::default(),
         database: temp.path().join("ledger.sqlite3"),
     };

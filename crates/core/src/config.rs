@@ -80,6 +80,19 @@ impl Thresholds {
 pub struct Config {
     pub roots: Vec<PathBuf>,
     pub staging_dir: PathBuf,
+    /// The one folder publishing draws from and, on success, empties.
+    ///
+    /// **`None` means publishing is refused**, the way an empty `roots` refuses
+    /// every path. A default would be a guess at which folder may be deleted
+    /// from, and there is no safe guess: the deletion is the one irreversible
+    /// step in the application, and Google cannot un-publish what it received
+    /// either.
+    ///
+    /// Configured rather than typed, so the folder that may be emptied is a
+    /// decision taken once, in a file, rather than a string retyped before
+    /// every run.
+    #[serde(default)]
+    pub publishing_dir: Option<PathBuf>,
     pub thresholds: Thresholds,
     pub database: PathBuf,
 }
@@ -91,6 +104,7 @@ impl Default for Config {
             staging_dir: dirs::cache_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join("masterphototools/staging"),
+            publishing_dir: None,
             thresholds: Thresholds::default(),
             database: dirs::data_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
@@ -154,9 +168,27 @@ impl Config {
             std::env::var("DATABASE_PATH").unwrap_or_else(|_| "/tmp/phototools.db".to_string()),
         );
 
+        // Canonicalised at load like a root, and for the same reason: the
+        // check that follows is a prefix comparison, which means nothing
+        // against a path holding a symlink or a `..`.
+        let publishing_dir = match std::env::var("PUBLISHING_DIR") {
+            Ok(raw) if !raw.trim().is_empty() => {
+                let raw = raw.trim();
+                Some(PathBuf::from(raw).canonicalize().map_err(|e| {
+                    Error::Config(format!(
+                        "PUBLISHING_DIR {raw:?} cannot be resolved: {e}. It must exist and be \
+                         canonicalisable — publishing empties it, so it is never created \
+                         automatically."
+                    ))
+                })?)
+            }
+            _ => None,
+        };
+
         Ok(Self {
             roots,
             staging_dir,
+            publishing_dir,
             thresholds: Thresholds::from_env()?,
             database,
         })
@@ -179,6 +211,48 @@ impl Config {
         Err(Error::AccessDenied(format!(
             "Path resolves outside allowed roots: {}",
             canonical.display()
+        )))
+    }
+
+    /// G6, narrowed to the one folder publishing may empty.
+    ///
+    /// `resolve` asks *"is this inside somewhere I may touch?"*. This asks a
+    /// harder question — *"is this the folder I may delete from?"* — and the
+    /// difference matters because the answer authorises destruction.
+    ///
+    /// Both sides are canonicalised before they are compared, which is what
+    /// makes the comparison mean anything: a symlink inside the publishing
+    /// folder pointing somewhere else resolves to that somewhere else and is
+    /// refused, and so is any path holding a `..` that would climb back out.
+    /// A folder that merely *happens to be named* `Publishing` is refused too,
+    /// because the check is against the configured path, not against a name.
+    pub fn resolve_for_publishing(&self, requested: &Path) -> Result<PathBuf, Error> {
+        let Some(publishing) = &self.publishing_dir else {
+            return Err(Error::Config(
+                "No publishing folder is configured, so nothing can be published or deleted. \
+                 Set PUBLISHING_DIR to the folder publishing should draw from."
+                    .into(),
+            ));
+        };
+
+        let canonical = requested.canonicalize().map_err(|_| {
+            Error::AccessDenied(format!(
+                "Path does not exist or cannot be canonicalized: {}",
+                requested.display()
+            ))
+        })?;
+
+        if canonical == *publishing || canonical.starts_with(publishing) {
+            return Ok(canonical);
+        }
+
+        // The message names the rule rather than the folder: which directory
+        // may be emptied is configuration, and a refusal is not the place to
+        // publish it.
+        Err(Error::Refused(format!(
+            "{} is not inside the configured publishing folder. Only that folder is ever \
+             deleted from.",
+            requested.display()
         )))
     }
 
@@ -232,6 +306,15 @@ mod tests {
     use std::os::unix::fs::symlink;
     use tempfile::tempdir;
 
+    /// Serialises the tests that set a real environment variable.
+    ///
+    /// `cargo test` runs a module's tests on threads of one process, and the
+    /// environment is process-wide: two tests setting `PUBLISHING_DIR` would
+    /// each see the other's value about as often as their own. The other tests
+    /// here dodge this by using names of their own (`PT_TEST_*`); these two
+    /// cannot, because the name under test is the point.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_resolve_g6() {
         let temp = tempdir().unwrap();
@@ -253,6 +336,7 @@ mod tests {
         let config = Config {
             roots: vec![root.canonicalize().unwrap()],
             staging_dir: PathBuf::new(),
+            publishing_dir: None,
             thresholds: Thresholds::default(),
             database: PathBuf::new(),
         };
@@ -293,6 +377,7 @@ mod tests {
         let config = Config {
             roots: vec![root.canonicalize().unwrap()],
             staging_dir: PathBuf::new(),
+            publishing_dir: None,
             thresholds: Thresholds::default(),
             database: PathBuf::new(),
         };
@@ -335,5 +420,159 @@ mod tests {
 
         let err = result.expect_err("a typo must not quietly restore the default");
         assert!(matches!(err, Error::Config(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // The publishing folder (PB-1)
+    //
+    // Publishing empties this folder, so the question these answer is not "may
+    // I read here?" but "may I delete here?". Every one of them is a way the
+    // second question could be answered yes when it should be no.
+    // -----------------------------------------------------------------------
+
+    /// A configuration with a real publishing folder, and the temp dir that
+    /// owns it. macOS puts temp dirs behind `/private`, so the path is
+    /// canonicalised here exactly as `from_env` would.
+    fn with_publishing() -> (tempfile::TempDir, Config, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let publishing = temp.path().join("Publishing");
+        std::fs::create_dir(&publishing).unwrap();
+        let publishing = publishing.canonicalize().unwrap();
+
+        let config = Config {
+            publishing_dir: Some(publishing.clone()),
+            ..Config::default()
+        };
+        (temp, config, publishing)
+    }
+
+    #[test]
+    fn the_publishing_folder_itself_is_accepted() {
+        let (_temp, config, publishing) = with_publishing();
+        assert_eq!(
+            config.resolve_for_publishing(&publishing).unwrap(),
+            publishing
+        );
+    }
+
+    #[test]
+    fn a_file_inside_the_publishing_folder_is_accepted() {
+        let (_temp, config, publishing) = with_publishing();
+        let file = publishing.join("a.jpg");
+        std::fs::write(&file, b"x").unwrap();
+        assert_eq!(config.resolve_for_publishing(&file).unwrap(), file);
+    }
+
+    #[test]
+    fn a_file_at_any_depth_inside_it_is_accepted() {
+        // Subfolders are published and therefore emptied; a check that stopped
+        // at the top level would refuse to clear what it had just uploaded.
+        let (_temp, config, publishing) = with_publishing();
+        let deep = publishing.join("borders/2026");
+        std::fs::create_dir_all(&deep).unwrap();
+        let file = deep.join("a.jpg");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(config.resolve_for_publishing(&file).is_ok());
+    }
+
+    #[test]
+    fn a_sibling_folder_is_refused() {
+        let (temp, config, _) = with_publishing();
+        let elsewhere = temp.path().join("Archive");
+        std::fs::create_dir(&elsewhere).unwrap();
+
+        let err = config.resolve_for_publishing(&elsewhere).unwrap_err();
+        assert!(matches!(err, Error::Refused(_)), "got {err}");
+    }
+
+    #[test]
+    fn a_sibling_whose_name_merely_starts_the_same_is_refused() {
+        // `Publishing-old` is not inside `Publishing`, however much it looks
+        // like it as a string. `Path::starts_with` compares components rather
+        // than characters, and this is the test that says so — the roots check
+        // carries the same one, for the same reason.
+        let (temp, config, _) = with_publishing();
+        let sibling = temp.path().join("Publishing-old");
+        std::fs::create_dir(&sibling).unwrap();
+
+        let err = config.resolve_for_publishing(&sibling).unwrap_err();
+        assert!(matches!(err, Error::Refused(_)), "got {err}");
+    }
+
+    #[test]
+    fn a_different_folder_of_the_same_name_is_refused() {
+        // The check is against the configured path, not against a name. A
+        // second folder called Publishing is a different folder.
+        let (temp, config, _) = with_publishing();
+        let impostor = temp.path().join("other/Publishing");
+        std::fs::create_dir_all(&impostor).unwrap();
+
+        let err = config.resolve_for_publishing(&impostor).unwrap_err();
+        assert!(matches!(err, Error::Refused(_)), "got {err}");
+    }
+
+    #[test]
+    fn a_symlink_inside_it_pointing_out_of_it_is_refused() {
+        // The reason both sides are canonicalised. Without that, this path is
+        // textually inside the publishing folder and deleting it would delete
+        // somebody's archive.
+        let (temp, config, publishing) = with_publishing();
+        let outside = temp.path().join("archive");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("keep.jpg"), b"precious").unwrap();
+
+        let link = publishing.join("escape");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+        let err = config
+            .resolve_for_publishing(&link.join("keep.jpg"))
+            .unwrap_err();
+        assert!(matches!(err, Error::Refused(_)), "got {err}");
+    }
+
+    #[test]
+    fn a_path_climbing_back_out_with_dot_dot_is_refused() {
+        let (temp, config, publishing) = with_publishing();
+        let outside = temp.path().join("archive");
+        std::fs::create_dir(&outside).unwrap();
+
+        let climbed = publishing.join("..").join("archive");
+        let err = config.resolve_for_publishing(&climbed).unwrap_err();
+        assert!(matches!(err, Error::Refused(_)), "got {err}");
+    }
+
+    #[test]
+    fn nothing_at_all_is_publishable_when_no_folder_is_configured() {
+        // The default. A guess at which folder may be emptied is worse than a
+        // refusal, so there is no default and the message says what to set.
+        let temp = tempfile::tempdir().unwrap();
+        let config = Config::default();
+        assert_eq!(config.publishing_dir, None);
+
+        let err = config.resolve_for_publishing(temp.path()).unwrap_err();
+        assert!(matches!(err, Error::Config(_)), "got {err}");
+        assert!(err.to_string().contains("PUBLISHING_DIR"), "got {err}");
+    }
+
+    #[test]
+    fn a_publishing_folder_that_does_not_exist_is_a_startup_error() {
+        // It is never created automatically: creating a directory in order to
+        // empty it later is not a thing this should do on its own.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("PUBLISHING_DIR", "/definitely/not/a/real/folder");
+        let result = Config::from_env();
+        std::env::remove_var("PUBLISHING_DIR");
+
+        let err = result.expect_err("a missing publishing folder must not be ignored");
+        assert!(matches!(err, Error::Config(_)), "got {err}");
+        assert!(err.to_string().contains("PUBLISHING_DIR"), "got {err}");
+    }
+
+    #[test]
+    fn an_unset_publishing_folder_leaves_the_rest_of_the_configuration_working() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("PUBLISHING_DIR");
+        let config = Config::from_env().expect("the rest of the configuration is independent");
+        assert_eq!(config.publishing_dir, None);
     }
 }

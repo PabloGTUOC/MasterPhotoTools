@@ -100,6 +100,7 @@ The variables that matter on day one:
 | `MAX_MEGAPIXELS` | `0` | F12's resolution ceiling. **Zero means no ceiling** — the default. |
 | `MAX_OUTPUT_BYTES` | `10485760` | F12's size ceiling. |
 | `MAX_AGE_DAYS` | `90` | F12's capture-date window. |
+| `PUBLISHING_DIR` | *empty* | The folder publishing empties on success. Unset means publishing is refused — deliberately, since there is no safe guess at a folder that may be deleted from. |
 
 Server-only, and needed from Phase 11 onwards:
 

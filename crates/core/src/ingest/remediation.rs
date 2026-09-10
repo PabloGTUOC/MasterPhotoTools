@@ -515,6 +515,7 @@ mod tests {
                 height: h,
                 capture,
                 camera: Some("CANON EOS R6".into()),
+                has_location: false,
             }],
             needs_derivation: false,
         }

@@ -84,6 +84,7 @@ pub enum Rule {
     Date,
     Resolution,
     Size,
+    Location,
 }
 
 /// One rule's verdict on one shot.
@@ -271,6 +272,41 @@ pub fn check_date(
 }
 
 /// The resolution rule (F12): `width × height ≤ max_megapixels × 10⁶`.
+/// Does the frame already say where it was taken?
+///
+/// **Never fails, and warns only when the card disagrees with itself.** The
+/// same reasoning the date rule uses for an isolated out-of-range capture:
+/// what is worth flagging is the *odd one out*, not the norm.
+///
+/// A card from a camera with no receiver has no coordinates on any frame.
+/// That is not a finding, it is a fact about the camera, and warning on every
+/// row would put an amber mark on nearly every card this application will ever
+/// see — which is the same as putting it on none. So that card passes, with
+/// the absence stated so the review screen still shows it.
+///
+/// A card where most frames know where they were and a few do not is
+/// different: something happened — the receiver lost its fix indoors, or the
+/// frames came from two cameras — and those few are worth pointing at, because
+/// they are the ones that will look wrong in Google Photos beside the rest.
+///
+/// There is no `FailureClass` in either case, deliberately: F13 groups bulk
+/// actions by failure class, and no action available on a card can add a
+/// location. Only the Geotag tab can, afterwards, from a track.
+pub fn check_location(asset: &ScannedAsset, card_has_coordinates: bool) -> Check {
+    match (asset.has_location, card_has_coordinates) {
+        (true, _) => Check::pass(Rule::Location, "Has coordinates"),
+        (false, true) => Check::warn(
+            Rule::Location,
+            "No coordinates, though other frames on this card have them — the Geotag tab can \
+             add them from a track",
+        ),
+        (false, false) => Check::pass(
+            Rule::Location,
+            "No coordinates on this card — the Geotag tab can add them from a track",
+        ),
+    }
+}
+
 pub fn check_resolution(asset: &ScannedAsset, thresholds: &Thresholds) -> Check {
     // Zero means there is no resolution ceiling, so the rule has nothing to
     // decide. It passes with the measurement rather than a verdict: the number
@@ -430,6 +466,10 @@ pub fn validate(shots: &[Shot], now: NaiveDateTime, thresholds: &Thresholds) -> 
     let median = median_capture(&captures);
     let clock_offset = detect_clock_offset(&captures, now, thresholds);
 
+    // Whether *this card* records positions at all, which is what decides
+    // whether a frame without one is unremarkable or the odd one out.
+    let card_has_coordinates = shots.iter().any(|s| s.candidate().has_location);
+
     let validated = shots
         .iter()
         .map(|shot| {
@@ -451,6 +491,11 @@ pub fn validate(shots: &[Shot], now: NaiveDateTime, thresholds: &Thresholds) -> 
             } else {
                 check_size(candidate, thresholds)
             });
+
+            // Asked of the candidate rather than the derived JPEG, which does
+            // not exist yet: F14 copies the metadata across, so a RAW that
+            // knows where it was produces a JPEG that knows too.
+            checks.push(check_location(candidate, card_has_coordinates));
 
             ShotValidation {
                 stem: shot.stem.clone(),
@@ -497,6 +542,7 @@ mod tests {
             height,
             capture,
             camera: Some("CANON EOS R6".into()),
+            has_location: false,
         }
     }
 
@@ -821,5 +867,98 @@ mod tests {
         let result = validate(&shots, now(), &with_ceiling(10));
         assert_eq!(result.shots[0].status(), CheckStatus::Fail);
         assert!(!result.shots[0].passes());
+    }
+
+    // -----------------------------------------------------------------------
+    // The location rule (PB-2)
+    // -----------------------------------------------------------------------
+
+    fn located(width: u32, height: u32, bytes: u64) -> ScannedAsset {
+        let mut a = asset(width, height, bytes, Some(now()));
+        a.has_location = true;
+        a
+    }
+
+    #[test]
+    fn a_frame_that_knows_where_it_was_passes() {
+        let check = check_location(&located(4000, 3000, 2_000_000), true);
+        assert_eq!(check.status, CheckStatus::Pass);
+        assert_eq!(check.rule, Rule::Location);
+    }
+
+    #[test]
+    fn a_card_that_records_no_positions_at_all_is_not_a_finding() {
+        // Most cameras have no receiver. An amber mark on every row of nearly
+        // every card is the same as an amber mark on none.
+        let check = check_location(&asset(4000, 3000, 2_000_000, Some(now())), false);
+        assert_eq!(check.status, CheckStatus::Pass);
+        assert!(check.detail.contains("Geotag"), "got {}", check.detail);
+    }
+
+    #[test]
+    fn the_odd_frame_out_on_a_located_card_warns() {
+        // Something happened to this one: a lost fix indoors, or a second
+        // camera. It is the frame that will look wrong beside the others.
+        let check = check_location(&asset(4000, 3000, 2_000_000, Some(now())), true);
+        assert_eq!(check.status, CheckStatus::Warn);
+        assert!(
+            check.detail.contains("other frames"),
+            "the reason should say why this one stands out: {}",
+            check.detail
+        );
+    }
+
+    #[test]
+    fn a_missing_location_never_fails_a_frame() {
+        for card_has in [true, false] {
+            let check = check_location(&asset(4000, 3000, 2_000_000, Some(now())), card_has);
+            assert!(!check.status.is_fail());
+            assert_eq!(
+                check.failure, None,
+                "no FailureClass: F13 groups bulk actions by it, and no action \
+                 available on a card can add a location"
+            );
+        }
+    }
+
+    #[test]
+    fn every_shot_is_asked_the_location_question() {
+        let shots = vec![shot("A", asset(4000, 3000, 2_000_000, Some(now())))];
+        let validation = validate(&shots, now(), &Thresholds::default());
+
+        let rules: Vec<Rule> = validation.shots[0].checks.iter().map(|c| c.rule).collect();
+        assert!(rules.contains(&Rule::Location), "got {rules:?}");
+    }
+
+    #[test]
+    fn a_card_of_frames_without_coordinates_still_passes_validation() {
+        let shots = vec![
+            shot("A", asset(4000, 3000, 2_000_000, Some(at(2024, 5, 30)))),
+            shot("B", asset(4000, 3000, 2_000_000, Some(at(2024, 5, 31)))),
+        ];
+        let validation = validate(&shots, now(), &Thresholds::default());
+
+        assert_eq!(
+            validation.passing(),
+            2,
+            "a card with no receiver is a clean card"
+        );
+        assert_eq!(validation.failing(), 0);
+    }
+
+    #[test]
+    fn the_card_decides_whether_a_missing_location_is_worth_mentioning() {
+        // The same frame, twice: unremarkable on a card that records nothing,
+        // and the odd one out on a card that mostly does.
+        let shots = vec![
+            shot("A", located(4000, 3000, 2_000_000)),
+            shot("B", located(4000, 3000, 2_000_000)),
+            shot("C", asset(4000, 3000, 2_000_000, Some(at(2024, 5, 30)))),
+        ];
+        let validation = validate(&shots, now(), &Thresholds::default());
+
+        assert_eq!(validation.shots[0].status(), CheckStatus::Pass);
+        assert_eq!(validation.shots[2].status(), CheckStatus::Warn);
+        assert_eq!(validation.failing(), 0, "still nothing is blocked");
     }
 }

@@ -189,10 +189,21 @@ canonicalises a path and admits it **only if it is exactly the configured folder
 **Done when** a symlink inside `Publishing` pointing outward is refused, `..` is refused, a
 different folder of the same name is refused, and an unset `publishing_dir` refuses everything.
 
-### PB-2 — the Location check
-`Rule::Location`, warn-only, from the GPS fix `read_meta` already returns.
-**Done when** a frame with coordinates passes, one without warns, and no card fails validation
-because of it.
+### PB-2 — the Location check ✔
+`Rule::Location`, from the GPS fix `read_meta` already returns, carried on `ScannedAsset` as
+`has_location`.
+
+**Warns only on the odd one out.** The plan said warn-when-absent; measured against how the rule
+would actually read, that is an amber mark on nearly every card this application will see, since
+most cameras have no receiver — and a mark on every card is a mark on none. It follows the date
+rule's shape instead: a card recording no positions at all *passes* with the absence stated, and a
+frame with none on a card where the others have them *warns*, because that one is the odd frame out
+and the one that will look wrong in Google Photos beside the rest.
+
+**Done:** a located frame passes; a card with no coordinates anywhere passes and still counts as
+clean; the odd frame out warns; nothing ever fails, and no `FailureClass` is added — F13 groups
+bulk actions by failure class and no action on a card can add a location. The front end needed no
+change: it renders a rule's name from the wire.
 
 ### PB-3 — check-and-copy
 `ingest::deliver`: take the frames that pass, copy them to a chosen folder, verify each by hash,

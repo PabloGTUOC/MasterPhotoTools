@@ -99,6 +99,13 @@ pub struct ScannedAsset {
     pub height: u32,
     pub capture: Option<NaiveDateTime>,
     pub camera: Option<String>,
+    /// Whether the file already says where it was taken.
+    ///
+    /// Whether, not where: the review screen asks which frames will want the
+    /// Geotag tab, and a coordinate on a card row answers a question nobody
+    /// asked while costing a column. The coordinates themselves are read again
+    /// when something needs them.
+    pub has_location: bool,
 }
 
 impl ScannedAsset {
@@ -210,6 +217,7 @@ fn scan_one(path: &Path, root: &Path) -> Result<ScannedAsset, ScanProblem> {
         height: meta.height,
         capture: meta.capture,
         camera: meta.camera,
+        has_location: meta.gps.is_some(),
     })
 }
 
@@ -285,6 +293,7 @@ mod tests {
             height: 4000,
             capture: None,
             camera: None,
+            has_location: false,
         };
         assert!((asset.megapixels() - 24.0).abs() < 1e-9);
         assert!(!asset.dimensions_unknown());

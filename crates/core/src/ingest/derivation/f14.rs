@@ -262,6 +262,7 @@ mod tests {
             height: 4000,
             capture: None,
             camera: None,
+            has_location: false,
         }
     }
 

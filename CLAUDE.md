@@ -23,6 +23,7 @@ structured half of that work — 64 of them, all actionable.
 | [`docs/manual-verification.md`](docs/manual-verification.md) | The checks, each with a stable id like `MV-8.3` |
 | [`docs/known-gaps.md`](docs/known-gaps.md) | What is open **in the code**, as opposed to awaiting a human |
 | [`docs/geotag-plan.md`](docs/geotag-plan.md) | The Geotag tab: joining photographs to a phone's GPS track. Built; MV-15 awaits a Mac |
+| [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. **Not built** |
 | [`docs/deployment.md`](docs/deployment.md) | Deploying the server and the desktop app, and every environment variable |
 | [`docs/phase-reports/`](docs/phase-reports/) | One report per phase: what was delivered, what deviated, and why |
 

@@ -4,7 +4,7 @@ use crate::error::Error;
 use crate::jobs::{Outcome, Progress, ToolResult};
 use crate::media::image_ops;
 use crate::media::jpeg::JpegOptions;
-use crate::tools::{expand_inputs, Plan, Tool};
+use crate::tools::{carry_metadata, expand_inputs, Derived, Plan, Skip, Tool};
 use image::{DynamicImage, ImageBuffer};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -47,6 +47,14 @@ pub struct TiffToJpegAction {
 pub struct TiffToJpegSummary {
     pub written: Vec<PathBuf>,
     pub failures: Vec<(PathBuf, String)>,
+    /// Outputs written successfully whose metadata could not be carried over.
+    ///
+    /// Separate from `failures` because the image is there and usable — what is
+    /// missing is its date, camera and position. Reporting it as a failure
+    /// would say the conversion did not happen, which is not true; saying
+    /// nothing would let a photograph quietly lose the location somebody spent
+    /// an afternoon adding.
+    pub metadata_skipped: Vec<Skip>,
 }
 
 /// Name for page `index` of `pages` total.
@@ -179,6 +187,7 @@ impl Tool for TiffToJpegTool {
     ) -> ToolResult<Self::Summary> {
         let total = plan.actions.len() as u64;
         let mut summary = TiffToJpegSummary::default();
+        let mut derived: Vec<Derived> = Vec::new();
 
         for (done, action) in plan.actions.into_iter().enumerate() {
             if progress.cancelled() {
@@ -187,17 +196,35 @@ impl Tool for TiffToJpegTool {
             progress.report(done as u64, total, &action.source.to_string_lossy());
 
             match convert_one(&action) {
-                Ok(mut written) => summary.written.append(&mut written),
+                Ok(pages) => {
+                    // Every page of a multi-page scan comes from the same TIFF,
+                    // so every page inherits its metadata.
+                    for (target, width, height) in pages {
+                        derived.push(Derived {
+                            source: action.source.clone(),
+                            output: target.clone(),
+                            width,
+                            height,
+                        });
+                        summary.written.push(target);
+                    }
+                }
                 Err(e) => summary.failures.push((action.source, e.to_string())),
             }
         }
+
+        // **Not** upright: the TIFF decoder reads pages as they are stored, so
+        // an orientation tag still describes these pixels and is carried over
+        // rather than reset.
+        summary.metadata_skipped = carry_metadata(&derived, false);
 
         progress.report(total, total, "done");
         Ok(Outcome { data: summary })
     }
 }
 
-fn convert_one(action: &TiffToJpegAction) -> Result<Vec<PathBuf>, Error> {
+/// Convert every page, answering with each output and the size it was written at.
+fn convert_one(action: &TiffToJpegAction) -> Result<Vec<(PathBuf, u32, u32)>, Error> {
     if let Some(parent) = action.target_base.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -218,7 +245,7 @@ fn convert_one(action: &TiffToJpegAction) -> Result<Vec<PathBuf>, Error> {
             &target,
             &JpegOptions::distributable(action.quality),
         )?;
-        written.push(target);
+        written.push((target, capped.width(), capped.height()));
     }
 
     Ok(written)

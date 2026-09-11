@@ -139,6 +139,35 @@ invented. Blocks **MV-14.1**.
 Recorded because a reader comparing the two should not have to work out which
 of them moved.
 
+### The image tools discarded every tag until they were told not to
+
+F4, F6, F7 and F8 each decode a photograph, write a new one, and — until this
+was found — carried **no metadata at all** onto the output. Not the capture
+date, not the camera, not the GPS position. The specification does not say they
+must; F14's derivation is the only place it is spelled out, and that one always
+copied.
+
+It surfaced through Google Photos. A split frame published from the publishing
+folder was filed under the day it was uploaded, because a JPEG with no
+`DateTimeOriginal` leaves Google nothing else to date it by. The same silence
+had been discarding the positions the Geotag tab writes: geotag a photograph,
+border it, publish it, and the location was gone.
+
+`tools::carry_metadata` now runs after every such tool, through one `exiftool`
+for the batch (G4). Three tags are **not** copied verbatim, because they
+describe the pixels rather than the photograph: `Orientation` is reset for the
+tools that decode oriented (`f4`, `f6`, `f7`) and kept for the one that does not
+(`f8`); `ExifImageWidth`/`Height` are set to what was actually written; and the
+embedded thumbnail is dropped rather than carried, since it is a preview of the
+image before the tool ran.
+
+**The contact sheet (F5) is excluded on purpose.** It is made from dozens of
+photographs, so there is no single source to inherit from.
+
+A failure to copy is reported against that output rather than failing the run:
+the image is written and usable, and losing it because its metadata could not be
+carried would be the worse outcome.
+
 ### The two screens are the workflow, not the specification's pipeline
 
 §2.3 and Phase 13 describe an Ingest screen that scans, validates, remediates

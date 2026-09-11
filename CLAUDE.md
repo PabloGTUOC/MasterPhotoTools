@@ -65,8 +65,8 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 693 passing
-cargo test -p phototools-core   # 608 passing — G2
+cargo test --workspace          # 697 passing
+cargo test -p phototools-core   # 612 passing — G2
 ```
 
 Front ends:

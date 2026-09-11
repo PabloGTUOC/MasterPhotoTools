@@ -4,7 +4,7 @@ use crate::error::Error;
 use crate::jobs::{Outcome, Progress, ToolResult};
 use crate::media::image_ops;
 use crate::media::jpeg::JpegOptions;
-use crate::tools::{expand_inputs, Plan, Skip, Tool};
+use crate::tools::{carry_metadata, expand_inputs, Derived, Plan, Skip, Tool};
 use image::ImageFormat;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -99,6 +99,14 @@ pub struct TransformAction {
 pub struct TransformSummary {
     pub written: Vec<PathBuf>,
     pub failures: Vec<(PathBuf, String)>,
+    /// Outputs written successfully whose metadata could not be carried over.
+    ///
+    /// Separate from `failures` because the image is there and usable — what is
+    /// missing is its date, camera and position. Reporting it as a failure
+    /// would say the conversion did not happen, which is not true; saying
+    /// nothing would let a photograph quietly lose the location somebody spent
+    /// an afternoon adding.
+    pub metadata_skipped: Vec<Skip>,
 }
 
 pub struct TransformTool;
@@ -169,6 +177,7 @@ impl Tool for TransformTool {
     ) -> ToolResult<Self::Summary> {
         let total = plan.actions.len() as u64;
         let mut summary = TransformSummary::default();
+        let mut derived: Vec<Derived> = Vec::new();
 
         for (done, action) in plan.actions.into_iter().enumerate() {
             if progress.cancelled() {
@@ -177,17 +186,29 @@ impl Tool for TransformTool {
             progress.report(done as u64, total, &action.source.to_string_lossy());
 
             match transform_one(&action) {
-                Ok(()) => summary.written.push(action.target),
+                Ok((width, height)) => {
+                    derived.push(Derived {
+                        source: action.source.clone(),
+                        output: action.target.clone(),
+                        width,
+                        height,
+                    });
+                    summary.written.push(action.target);
+                }
                 Err(e) => summary.failures.push((action.source, e.to_string())),
             }
         }
+
+        // `decode_oriented`, so the output is already upright.
+        summary.metadata_skipped = carry_metadata(&derived, true);
 
         progress.report(total, total, "done");
         Ok(Outcome { data: summary })
     }
 }
 
-fn transform_one(action: &TransformAction) -> Result<(), Error> {
+/// Write the output, answering with the dimensions it was written at.
+fn transform_one(action: &TransformAction) -> Result<(u32, u32), Error> {
     if let Some(parent) = action.target.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -207,10 +228,13 @@ fn transform_one(action: &TransformAction) -> Result<(), Error> {
         img = image_ops::flatten_onto(&img, [255, 255, 255]);
     }
 
+    let written = (img.width(), img.height());
+
     if action.format == TargetFormat::Jpeg {
         let mut options = JpegOptions::deliverable(action.quality);
         options.optimise = action.optimise;
-        return image_ops::write_jpeg_with(&img, &action.target, &options);
+        image_ops::write_jpeg_with(&img, &action.target, &options)?;
+        return Ok(written);
     }
 
     image_ops::encode_to(
@@ -218,7 +242,8 @@ fn transform_one(action: &TransformAction) -> Result<(), Error> {
         &action.target,
         action.format.image_format(),
         action.quality,
-    )
+    )?;
+    Ok(written)
 }
 
 #[cfg(test)]

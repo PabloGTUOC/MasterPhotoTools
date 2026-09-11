@@ -785,6 +785,60 @@ impl ExifWriter {
         ])
     }
 
+    /// Carry a photograph's metadata onto an image derived from it.
+    ///
+    /// Not the same as [`copy_metadata`](Self::copy_metadata), because three
+    /// tags describe the *pixels* rather than the photograph, and a derivative
+    /// has different pixels:
+    ///
+    /// - **`Orientation`.** A tool that decoded with the orientation applied has
+    ///   already rotated the pixels upright. Copying `Rotate 90` onto that
+    ///   output tells every viewer to rotate it again, and a portrait frame
+    ///   comes out sideways. `upright` says which kind of tool this is: it
+    ///   resets the tag for one that rotated, and leaves it alone for one that
+    ///   did not.
+    /// - **`ExifImageWidth` / `ExifImageHeight`.** Stale the moment anything is
+    ///   cropped, split or resized. Set to what was actually written, because
+    ///   the tool is the only thing that knows.
+    /// - **The embedded thumbnail.** A preview of the photograph *before* the
+    ///   tool ran, which some viewers show in preference to the image. Dropped
+    ///   rather than carried, because a wrong preview is worse than none.
+    ///
+    /// Everything else comes across: the capture date, the camera, the lens, the
+    /// exposure, and — the reason this matters most — the GPS position, which is
+    /// otherwise lost the first time a geotagged photograph is bordered or split.
+    pub fn copy_metadata_to_derivative(
+        &mut self,
+        src: &Path,
+        dst: &Path,
+        width: u32,
+        height: u32,
+        upright: bool,
+    ) -> Result<(), Error> {
+        let mut args = vec![
+            "-TagsFromFile".to_string(),
+            src.display().to_string(),
+            "-all:all".to_string(),
+            // The thumbnail is of the original. `-all:all` would bring it.
+            "--ThumbnailImage".to_string(),
+            format!("-ExifImageWidth={width}"),
+            format!("-ExifImageHeight={height}"),
+        ];
+        if upright {
+            // `#` forces the numeric value. **`-Orientation=1` sets "Rotate
+            // 180"**: without it, exiftool reads the value as one of the tag's
+            // descriptive strings rather than as a number, and picks the wrong
+            // one. Every derivative would have carried a tag telling viewers to
+            // turn it upside down — worse than the missing metadata this method
+            // exists to fix.
+            args.push("-Orientation#=1".to_string());
+        }
+        args.push("-overwrite_original".to_string());
+        args.push(dst.display().to_string());
+
+        self.execute(&args)
+    }
+
     /// Set a single tag to a literal value.
     pub fn set_tag(&mut self, path: &Path, tag: &str, value: &str) -> Result<(), Error> {
         self.execute(&[

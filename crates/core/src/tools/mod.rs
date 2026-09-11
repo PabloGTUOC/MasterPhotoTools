@@ -93,6 +93,75 @@ pub fn summarise(
     line
 }
 
+/// One output, and the photograph it was made from.
+pub struct Derived {
+    pub source: std::path::PathBuf,
+    pub output: std::path::PathBuf,
+    /// What was actually written, for the pixel-dimension tags.
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Carry each output's metadata over from the photograph it came from.
+///
+/// **Every tool that writes a new image calls this**, because a derivative with
+/// no metadata is a photograph that has lost its date, its camera and its
+/// position — and the position is the one nobody notices until it is gone. A
+/// geotagged frame that goes through the border tool used to arrive at Google
+/// Photos with no location and no date, filed under the day it was uploaded.
+///
+/// `upright` says whether the tool decoded with the EXIF orientation applied. A
+/// tool that did has already rotated the pixels, so the tag must be reset or
+/// viewers rotate them again; a tool that did not must keep the tag it was
+/// given. `f4`, `f6` and `f7` decode oriented; `f8` reads TIFF pages as they
+/// are.
+///
+/// **One `exiftool` for the whole batch** (G4), started once here rather than
+/// per file. A failure to copy is reported as a [`Skip`] against that output
+/// and does not fail the run: the image was written and is usable, and losing
+/// it because its metadata could not be carried would be the worse outcome.
+/// Returning the skips rather than swallowing them is what lets a summary say
+/// so (G10).
+pub fn carry_metadata(derived: &[Derived], upright: bool) -> Vec<Skip> {
+    if derived.is_empty() {
+        return Vec::new();
+    }
+
+    let mut writer = match crate::media::ExifWriter::start() {
+        Ok(writer) => writer,
+        Err(e) => {
+            // Everything was written; only the metadata is missing. Say so once
+            // per output rather than pretending it succeeded.
+            return derived
+                .iter()
+                .map(|d| Skip {
+                    file: d.output.to_string_lossy().to_string(),
+                    reason: format!("metadata could not be carried over: {e}"),
+                })
+                .collect();
+        }
+    };
+
+    let mut skipped = Vec::new();
+    for item in derived {
+        if let Err(e) = writer.copy_metadata_to_derivative(
+            &item.source,
+            &item.output,
+            item.width,
+            item.height,
+            upright,
+        ) {
+            skipped.push(Skip {
+                file: item.output.to_string_lossy().to_string(),
+                reason: format!("metadata could not be carried over: {e}"),
+            });
+        }
+    }
+
+    let _ = writer.close();
+    skipped
+}
+
 /// Expand a mix of files and directories into the acceptable files among them.
 ///
 /// Anything rejected is reported as a [`Skip`] with a reason rather than

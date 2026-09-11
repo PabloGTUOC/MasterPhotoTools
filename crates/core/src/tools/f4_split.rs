@@ -8,7 +8,7 @@ use crate::error::Error;
 use crate::jobs::{Outcome, Progress, ToolResult};
 use crate::media::jpeg::JpegOptions;
 use crate::media::{image_ops, slices};
-use crate::tools::{expand_inputs, Plan, Tool};
+use crate::tools::{carry_metadata, expand_inputs, Derived, Plan, Skip, Tool};
 use image::DynamicImage;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -85,6 +85,14 @@ pub struct SplitAction {
 pub struct SplitSummary {
     pub written: Vec<PathBuf>,
     pub failures: Vec<(PathBuf, String)>,
+    /// Outputs written successfully whose metadata could not be carried over.
+    ///
+    /// Separate from `failures` because the image is there and usable — what is
+    /// missing is its date, camera and position. Reporting it as a failure
+    /// would say the conversion did not happen, which is not true; saying
+    /// nothing would let a photograph quietly lose the location somebody spent
+    /// an afternoon adding.
+    pub metadata_skipped: Vec<Skip>,
 }
 
 /// What a preview returns: the border-cropped whole image plus both halves,
@@ -349,6 +357,7 @@ impl Tool for SplitTool {
     ) -> ToolResult<Self::Summary> {
         let total = plan.actions.len() as u64;
         let mut summary = SplitSummary::default();
+        let mut derived: Vec<Derived> = Vec::new();
 
         for (done, action) in plan.actions.into_iter().enumerate() {
             if progress.cancelled() {
@@ -357,7 +366,21 @@ impl Tool for SplitTool {
             progress.report(done as u64, total, &action.source.to_string_lossy());
 
             match split_one(&action) {
-                Ok(()) => {
+                Ok((a, b)) => {
+                    // Both halves come from the same photograph, so both
+                    // inherit its date, camera and position.
+                    derived.push(Derived {
+                        source: action.source.clone(),
+                        output: action.target_a.clone(),
+                        width: a.0,
+                        height: a.1,
+                    });
+                    derived.push(Derived {
+                        source: action.source.clone(),
+                        output: action.target_b.clone(),
+                        width: b.0,
+                        height: b.1,
+                    });
                     summary.written.push(action.target_a);
                     summary.written.push(action.target_b);
                 }
@@ -365,12 +388,19 @@ impl Tool for SplitTool {
             }
         }
 
+        // `decode_oriented`, so the halves are already upright.
+        summary.metadata_skipped = carry_metadata(&derived, true);
+
         progress.report(total, total, "done");
         Ok(Outcome { data: summary })
     }
 }
 
-fn split_one(action: &SplitAction) -> Result<(), Error> {
+/// The size an output was written at, for its pixel-dimension tags.
+type Written = (u32, u32);
+
+/// Write both halves, answering with the dimensions each was written at.
+fn split_one(action: &SplitAction) -> Result<(Written, Written), Error> {
     if let Some(parent) = action.target_a.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -381,7 +411,11 @@ fn split_one(action: &SplitAction) -> Result<(), Error> {
     let options = JpegOptions::deliverable(QUALITY);
     image_ops::write_jpeg_with(&result.a, &action.target_a, &options)?;
     image_ops::write_jpeg_with(&result.b, &action.target_b, &options)?;
-    Ok(())
+
+    Ok((
+        (result.a.width(), result.a.height()),
+        (result.b.width(), result.b.height()),
+    ))
 }
 
 #[cfg(test)]

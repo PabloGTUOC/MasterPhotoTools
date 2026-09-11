@@ -37,8 +37,8 @@ machine, the problem is the environment, not the phase you are about to test.
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # expect 693 passed
-cargo test -p phototools-core   # expect 608 passed — G2, core in isolation
+cargo test --workspace          # expect 697 passed
+cargo test -p phototools-core   # expect 612 passed — G2, core in isolation
 ```
 
 Front ends:

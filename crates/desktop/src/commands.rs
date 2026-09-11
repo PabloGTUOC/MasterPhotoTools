@@ -436,6 +436,10 @@ pub fn split(args: SplitArgs, state: State<'_, AppState>) -> CommandResult<Strin
             // The plan is moved into `apply`, so its skips are taken first.
             let skipped = plan.skipped.clone();
             let summary = SplitTool.apply(plan, progress)?.data;
+            // A file whose metadata could not be carried is reported beside
+            // the ones that were never converted: both are things the run did
+            // not fully do.
+            let skipped = [skipped, summary.metadata_skipped.clone()].concat();
             Ok(tools::summarise(
                 summary.written.len(),
                 "halves written",
@@ -466,6 +470,10 @@ pub fn border(args: BorderArgs, state: State<'_, AppState>) -> CommandResult<Str
             // The plan is moved into `apply`, so its skips are taken first.
             let skipped = plan.skipped.clone();
             let summary = PrintBorderTool.apply(plan, progress)?.data;
+            // A file whose metadata could not be carried is reported beside
+            // the ones that were never converted: both are things the run did
+            // not fully do.
+            let skipped = [skipped, summary.metadata_skipped.clone()].concat();
             Ok(tools::summarise(
                 summary.written.len(),
                 "bordered",
@@ -498,6 +506,10 @@ pub fn tiff_to_jpeg(args: TiffArgs, state: State<'_, AppState>) -> CommandResult
             // The plan is moved into `apply`, so its skips are taken first.
             let skipped = plan.skipped.clone();
             let summary = TiffToJpegTool.apply(plan, progress)?.data;
+            // A file whose metadata could not be carried is reported beside
+            // the ones that were never converted: both are things the run did
+            // not fully do.
+            let skipped = [skipped, summary.metadata_skipped.clone()].concat();
             Ok(tools::summarise(
                 summary.written.len(),
                 "pages written",
@@ -594,6 +606,10 @@ pub fn transform(args: TransformArgs, state: State<'_, AppState>) -> CommandResu
             // The plan is moved into `apply`, so its skips are taken first.
             let skipped = plan.skipped.clone();
             let summary = TransformTool.apply(plan, progress)?.data;
+            // A file whose metadata could not be carried is reported beside
+            // the ones that were never converted: both are things the run did
+            // not fully do.
+            let skipped = [skipped, summary.metadata_skipped.clone()].concat();
             Ok(tools::summarise(
                 summary.written.len(),
                 "transformed",

@@ -4,13 +4,13 @@ mod fixtures;
 
 use fixtures::Fixtures;
 use phototools_core::jobs::InMemoryProgress;
-use phototools_core::media::image_ops;
+use phototools_core::media::{image_ops, read_meta};
 use phototools_core::tools::f4_split::{self, SplitParams, SplitSettings, SplitTool};
 use phototools_core::tools::f5_contact::{
     ContactSheetParams, ContactSheetTool, SheetBackground, SheetLayout,
 };
 use phototools_core::tools::f6_transform::{TargetFormat, TransformParams, TransformTool};
-use phototools_core::tools::f7_border::{self, PrintBorderParams, PrintBorderTool};
+use phototools_core::tools::f7_border::{self, BorderStyle, PrintBorderParams, PrintBorderTool};
 use phototools_core::tools::f8_tiff::{TiffToJpegParams, TiffToJpegTool};
 use phototools_core::tools::Tool;
 use sha2::{Digest, Sha256};
@@ -625,5 +625,230 @@ fn f8_writes_progressive_four_two_zero() {
     assert!(
         props.contains("Progressive"),
         "F8 specifies progressive encoding; got:\n{props}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Metadata survives the tools
+//
+// A derivative with no metadata is a photograph that has lost its date, its
+// camera and its position — and the position is the one nobody notices until it
+// is gone. Before this, a geotagged frame put through the border tool arrived
+// at Google Photos with no location and no date, filed under the day it was
+// uploaded.
+// ---------------------------------------------------------------------------
+
+/// A JPEG carrying a capture date, a camera and a GPS position.
+fn photograph_with_everything(f: &Fixtures, name: &str, w: u32, h: u32) -> PathBuf {
+    use phototools_core::media::ExifWriter;
+    use phototools_core::tools::geotag::{exif, TrackPoint};
+
+    let path = f.jpeg_with_exif(name, w, h, "2026:01:01 09:30:00", "PENTAX17");
+
+    let fix = TrackPoint {
+        at: 1_767_259_800,
+        lat: 52.531549,
+        lon: 3.460808,
+        ele: Some(36.4),
+    };
+    let mut writer = ExifWriter::start().unwrap();
+    writer
+        .set_tags(&path, &exif::render(&fix, true).args())
+        .unwrap();
+    writer.close().unwrap();
+
+    path
+}
+
+/// What a derivative must have inherited.
+fn assert_inherited(output: &std::path::Path, what: &str) {
+    let meta = read_meta(output).unwrap_or_else(|e| panic!("{what}: {e}"));
+
+    assert_eq!(
+        meta.capture,
+        Some(
+            chrono::NaiveDateTime::parse_from_str("2026:01:01 09:30:00", "%Y:%m:%d %H:%M:%S")
+                .unwrap()
+        ),
+        "{what} lost its capture date — Google Photos would file it under the day it was uploaded"
+    );
+    assert_eq!(
+        meta.camera.as_deref(),
+        Some("PENTAX17"),
+        "{what} lost its camera"
+    );
+
+    let fix = meta
+        .gps
+        .unwrap_or_else(|| panic!("{what} lost its position, which is the whole point of Geotag"));
+    assert!((fix.lat - 52.531549).abs() < 1e-5, "{what} moved: {fix:?}");
+    assert!((fix.lon - 3.460808).abs() < 1e-5, "{what} moved: {fix:?}");
+}
+
+#[test]
+fn a_bordered_print_keeps_the_date_camera_and_position() {
+    let f = Fixtures::new();
+    let source = photograph_with_everything(&f, "bordered.jpg", 900, 600);
+    let out = f.path().join("out");
+
+    let summary = PrintBorderTool
+        .apply(
+            PrintBorderTool
+                .plan(&PrintBorderParams {
+                    inputs: vec![source],
+                    out_dir: out.clone(),
+                    recursive: false,
+                    trim_dark_edges: false,
+                    style: BorderStyle::default(),
+                })
+                .unwrap()
+                .data,
+            &InMemoryProgress::new(),
+        )
+        .unwrap()
+        .data;
+
+    assert_eq!(summary.written.len(), 1, "{:?}", summary.failures);
+    assert!(
+        summary.metadata_skipped.is_empty(),
+        "{:?}",
+        summary.metadata_skipped
+    );
+    assert_inherited(&summary.written[0], "the bordered print");
+}
+
+#[test]
+fn both_halves_of_a_split_keep_the_date_camera_and_position() {
+    let f = Fixtures::new();
+    let (source, _) = f.half_frame_scan("scan.jpg", 340, 480, 60, 12);
+
+    // Give the scan a full metadata set, then split it.
+    use phototools_core::media::ExifWriter;
+    use phototools_core::tools::geotag::{exif, TrackPoint};
+    let mut writer = ExifWriter::start().unwrap();
+    writer
+        .set_tags(
+            &source,
+            &exif::render(
+                &TrackPoint {
+                    at: 1_767_259_800,
+                    lat: 52.531549,
+                    lon: 3.460808,
+                    ele: Some(36.4),
+                },
+                true,
+            )
+            .args(),
+        )
+        .unwrap();
+    writer
+        .set_tags(
+            &source,
+            &[
+                "-DateTimeOriginal=2026:01:01 09:30:00".to_string(),
+                "-Model=PENTAX17".to_string(),
+            ],
+        )
+        .unwrap();
+    writer.close().unwrap();
+
+    let out = f.path().join("halves");
+    let summary = SplitTool
+        .apply(
+            SplitTool
+                .plan(&SplitParams {
+                    inputs: vec![source],
+                    out_dir: out,
+                    recursive: false,
+                    settings: SplitSettings::default(),
+                })
+                .unwrap()
+                .data,
+            &InMemoryProgress::new(),
+        )
+        .unwrap()
+        .data;
+
+    assert_eq!(summary.written.len(), 2, "{:?}", summary.failures);
+    assert!(
+        summary.metadata_skipped.is_empty(),
+        "{:?}",
+        summary.metadata_skipped
+    );
+    for half in &summary.written {
+        assert_inherited(half, &format!("the half {}", half.display()));
+    }
+}
+
+#[test]
+fn a_resized_frame_keeps_its_metadata_and_reports_its_new_size() {
+    let f = Fixtures::new();
+    let source = photograph_with_everything(&f, "big.jpg", 1600, 1200);
+    let out = f.path().join("resized");
+
+    let summary = TransformTool
+        .apply(
+            TransformTool
+                .plan(&TransformParams {
+                    inputs: vec![source],
+                    out_dir: out,
+                    recursive: false,
+                    rotate_degrees: None,
+                    max_long_edge: Some(800),
+                    format: Some(TargetFormat::Jpeg),
+                    quality: 90,
+                    optimise: false,
+                })
+                .unwrap()
+                .data,
+            &InMemoryProgress::new(),
+        )
+        .unwrap()
+        .data;
+
+    assert_eq!(summary.written.len(), 1, "{:?}", summary.failures);
+    assert_inherited(&summary.written[0], "the resized frame");
+
+    // The pixel-dimension tags describe the output, not the original: a
+    // derivative claiming 1600×1200 when it is 800×600 is a small lie that
+    // some viewers believe.
+    let meta = read_meta(&summary.written[0]).unwrap();
+    assert_eq!((meta.width, meta.height), (800, 600));
+}
+
+#[test]
+fn a_rotated_frame_is_not_rotated_twice_by_the_viewer() {
+    // The tools decode with the EXIF orientation applied, so the pixels come
+    // out upright. Copying the original's `Orientation` onto that output tells
+    // every viewer to rotate it again, and a portrait frame arrives sideways.
+    let f = Fixtures::new();
+    let source = f.jpeg_with_orientation("sideways.jpg", 900, 600, 6);
+    let out = f.path().join("upright");
+
+    let summary = TransformTool
+        .apply(
+            TransformTool
+                .plan(&TransformParams {
+                    inputs: vec![source],
+                    out_dir: out,
+                    recursive: false,
+                    rotate_degrees: None,
+                    max_long_edge: None,
+                    format: Some(TargetFormat::Jpeg),
+                    quality: 90,
+                    optimise: false,
+                })
+                .unwrap()
+                .data,
+            &InMemoryProgress::new(),
+        )
+        .unwrap()
+        .data;
+
+    let meta = read_meta(&summary.written[0]).unwrap();
+    assert_eq!(
+        meta.orientation,
+        phototools_core::media::Orientation::Normal,
+        "the pixels are already upright, so the tag must say so"
     );
 }

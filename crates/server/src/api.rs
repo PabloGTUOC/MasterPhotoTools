@@ -397,6 +397,10 @@ async fn split(
         // The plan is moved into `apply`, so its skips are taken first.
         let skipped = plan.skipped.clone();
         let summary = f4_split::SplitTool.apply(plan, progress)?.data;
+        // A file whose metadata could not be carried is reported beside
+        // the ones that were never converted: both are things the run did
+        // not fully do.
+        let skipped = [skipped, summary.metadata_skipped.clone()].concat();
         Ok(tools::summarise(
             summary.written.len(),
             "halves written",
@@ -622,6 +626,10 @@ async fn transform(
         // The plan is moved into `apply`, so its skips are taken first.
         let skipped = plan.skipped.clone();
         let summary = f6_transform::TransformTool.apply(plan, progress)?.data;
+        // A file whose metadata could not be carried is reported beside
+        // the ones that were never converted: both are things the run did
+        // not fully do.
+        let skipped = [skipped, summary.metadata_skipped.clone()].concat();
         Ok(tools::summarise(
             summary.written.len(),
             "transformed",
@@ -654,6 +662,10 @@ async fn border(
         // The plan is moved into `apply`, so its skips are taken first.
         let skipped = plan.skipped.clone();
         let summary = f7_border::PrintBorderTool.apply(plan, progress)?.data;
+        // A file whose metadata could not be carried is reported beside
+        // the ones that were never converted: both are things the run did
+        // not fully do.
+        let skipped = [skipped, summary.metadata_skipped.clone()].concat();
         Ok(tools::summarise(
             summary.written.len(),
             "bordered",
@@ -688,6 +700,10 @@ async fn tiff_to_jpeg(
         // The plan is moved into `apply`, so its skips are taken first.
         let skipped = plan.skipped.clone();
         let summary = f8_tiff::TiffToJpegTool.apply(plan, progress)?.data;
+        // A file whose metadata could not be carried is reported beside the
+        // ones that were never converted: both are things the run did not
+        // fully do.
+        let skipped = [skipped, summary.metadata_skipped.clone()].concat();
         Ok(tools::summarise(
             summary.written.len(),
             "pages written",

@@ -1,5 +1,12 @@
 //! F5 — contact sheet.
 
+// **No metadata is carried onto a contact sheet, deliberately.** Every other
+// tool that writes an image derives it from one photograph, and the derivative
+// inherits that photograph's date, camera and position. A sheet is made from
+// dozens, so there is no "the" source to inherit from: stamping it with the
+// first frame's date and location would be a claim about a picture that is not
+// of that place or that moment.
+
 use crate::error::Error;
 use crate::jobs::{Outcome, Progress, ToolResult};
 use crate::media::jpeg::JpegOptions;

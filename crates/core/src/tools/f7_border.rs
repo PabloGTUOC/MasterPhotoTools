@@ -7,7 +7,7 @@ use crate::error::Error;
 use crate::jobs::{Outcome, Progress, ToolResult};
 use crate::media::jpeg::JpegOptions;
 use crate::media::{image_ops, slices};
-use crate::tools::{expand_inputs, Plan, Tool};
+use crate::tools::{carry_metadata, expand_inputs, Derived, Plan, Skip, Tool};
 use image::{DynamicImage, ImageBuffer, Rgb, RgbImage, Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -144,6 +144,14 @@ pub struct PrintBorderAction {
 pub struct PrintBorderSummary {
     pub written: Vec<PathBuf>,
     pub failures: Vec<(PathBuf, String)>,
+    /// Outputs written successfully whose metadata could not be carried over.
+    ///
+    /// Separate from `failures` because the image is there and usable — what is
+    /// missing is its date, camera and position. Reporting it as a failure
+    /// would say the conversion did not happen, which is not true; saying
+    /// nothing would let a photograph quietly lose the location somebody spent
+    /// an afternoon adding.
+    pub metadata_skipped: Vec<Skip>,
 }
 
 pub struct PrintBorderTool;
@@ -182,6 +190,7 @@ impl Tool for PrintBorderTool {
     ) -> ToolResult<Self::Summary> {
         let total = plan.actions.len() as u64;
         let mut summary = PrintBorderSummary::default();
+        let mut derived: Vec<Derived> = Vec::new();
 
         for (done, action) in plan.actions.into_iter().enumerate() {
             if progress.cancelled() {
@@ -190,17 +199,29 @@ impl Tool for PrintBorderTool {
             progress.report(done as u64, total, &action.source.to_string_lossy());
 
             match border_one(&action) {
-                Ok(()) => summary.written.push(action.target),
+                Ok((width, height)) => {
+                    derived.push(Derived {
+                        source: action.source.clone(),
+                        output: action.target.clone(),
+                        width,
+                        height,
+                    });
+                    summary.written.push(action.target);
+                }
                 Err(e) => summary.failures.push((action.source, e.to_string())),
             }
         }
+
+        // `decode_oriented`, so the print is already upright.
+        summary.metadata_skipped = carry_metadata(&derived, true);
 
         progress.report(total, total, "done");
         Ok(Outcome { data: summary })
     }
 }
 
-fn border_one(action: &PrintBorderAction) -> Result<(), Error> {
+/// Write the bordered print, answering with the canvas it was written at.
+fn border_one(action: &PrintBorderAction) -> Result<(u32, u32), Error> {
     if let Some(parent) = action.target.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -271,11 +292,13 @@ fn border_one(action: &PrintBorderAction) -> Result<(), Error> {
     }
 
     // Save at quality 95 with no chroma subsampling.
+    let written = (canvas.width(), canvas.height());
     image_ops::write_jpeg_with(
         &DynamicImage::ImageRgb8(canvas),
         &action.target,
         &JpegOptions::deliverable(QUALITY),
-    )
+    )?;
+    Ok(written)
 }
 
 /// Step 1: trim while more than 70% of a sampled band falls below luma 28, up to

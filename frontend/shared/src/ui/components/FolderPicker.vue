@@ -25,6 +25,15 @@ import type { BrowserEntry } from '@phototools/shared';
 const props = defineProps<{
   /** Directories the browse may start from. G6 refuses everything else. */
   roots: string[];
+  /**
+   * Why `roots` could not be had, when asking for them failed.
+   *
+   * An empty list means two different things — none are configured, or the
+   * question was refused — and they need opposite fixes. Without this the
+   * picker could only say the first, and sent somebody who had not signed in
+   * to edit a ROOTS that was fine.
+   */
+  rootsError?: string | null;
   /** Lists one directory. Rejects for anything outside a root. */
   list: (path: string) => Promise<BrowserEntry[]>;
   /** Wording for the confirm button, e.g. "Use this folder". */
@@ -111,8 +120,13 @@ watch(
 <template>
   <div class="picker" role="group" aria-label="Choose a folder">
     <p v-if="!props.roots.length" class="error" role="alert">
-      No folders are configured, so there is nothing to browse. Set ROOTS to the directories this
-      application may touch.
+      <template v-if="props.rootsError">
+        The folders could not be listed: {{ props.rootsError }}
+      </template>
+      <template v-else>
+        No folders are configured, so there is nothing to browse. Set ROOTS to the directories this
+        application may touch.
+      </template>
     </p>
 
     <template v-else>

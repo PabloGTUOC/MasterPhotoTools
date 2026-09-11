@@ -47,7 +47,7 @@ const copied = ref<string | null>(null);
 // The folders the pickers may offer, and the lister they walk with. A card
 // mounted under /Volumes only appears once /Volumes is a configured root —
 // G6 refuses it otherwise, and scan_card would refuse it too.
-const { roots } = useRoots();
+const { roots, failure: rootsError } = useRoots();
 
 /**
  * F12's two ceilings, for this card.
@@ -249,6 +249,7 @@ const ready = computed(
         placeholder="/Volumes/EOS_DIGITAL"
         hint="A card is only offered here if its mount point is one of the configured folders."
         :roots="roots"
+        :roots-error="rootsError"
         :list="list"
       />
 
@@ -259,6 +260,7 @@ const ready = computed(
         placeholder="~/Pictures/2026/berlin"
         hint="Where the frames that passed should land. Local if you mean to work on them, the NAS if you do not. The card itself is never written to."
         :roots="roots"
+        :roots-error="rootsError"
         :list="list"
       />
 

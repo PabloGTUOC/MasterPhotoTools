@@ -17,6 +17,8 @@ const props = defineProps<{
   modelValue: string;
   label: string;
   roots: string[];
+  /** Why `roots` could not be had, if asking failed; see FolderPicker. */
+  rootsError?: string | null;
   list: (path: string) => Promise<BrowserEntry[]>;
   placeholder?: string;
   rows?: number;
@@ -61,6 +63,7 @@ function add(path: string) {
     <FolderPicker
       v-if="picking"
       :roots="props.roots"
+      :roots-error="props.rootsError"
       :list="props.list"
       choose-label="Add this folder"
       @choose="add"

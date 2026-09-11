@@ -37,7 +37,7 @@ const failure = ref<string | null>(null);
 // both are here while this one is being verified against real photographs
 // (MV-16), and the older one is retired in a change of its own afterwards.
 
-const { roots } = useRoots();
+const { roots, failure: rootsError } = useRoots();
 const list = (path: string) => api.list(path);
 
 /** What is sitting in the publishing folder right now. */
@@ -238,6 +238,7 @@ onMounted(async () => {
           label="Copy folders or files in first (optional)"
           placeholder="/library/2026/berlin"
           :roots="roots"
+          :roots-error="rootsError"
           :list="list"
         />
 

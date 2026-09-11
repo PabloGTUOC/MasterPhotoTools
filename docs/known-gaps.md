@@ -85,6 +85,19 @@ This is the one thing standing between the handoff and working end to end, and i
 rather than code — see **MV-11.1**. When sign-in is wired, the same field carries the ID token and
 nothing else changes.
 
+### `check:ingest` fails at its third measurement, and has since `c960e68`
+
+Its part (3) — *Publish is unreachable until a dry run has been reviewed* — loads the built
+`/publish` and waits for a button named exactly `Publish`, then for `[data-testid="gate-explanation"]`.
+`c960e68` made the screen the publishing folder: the button became **Publish and empty** and the
+explanation lost its test id. The check times out after thirty seconds; parts (1) and (2), the
+shot grid and bulk actions, still pass and still print their numbers.
+
+Found on 2026-09-11 while running the gates for an unrelated front-end change, and confirmed
+pre-existing by running the check on the unmodified tree. The claim it guards is still worth
+measuring — the folder's gate is the same rule, §9.2 rule 3 — so the fix is to amend it to the
+folder screen, as `workflow-plan.md` says for exactly this case, **not** to delete part (3) (G7).
+
 ---
 
 ## Deliberate limits

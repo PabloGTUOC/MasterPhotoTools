@@ -28,7 +28,7 @@ import { useRoots } from '../useRoots';
 
 const page = useTemplateRef<InstanceType<typeof ToolPage>>('page');
 
-const { roots } = useRoots();
+const { roots, failure: rootsError } = useRoots();
 const list = (path: string) => api.list(path);
 
 const busy = ref(false);
@@ -360,6 +360,7 @@ const suggestionLine = computed(() => {
         :tracks="tracks"
         :preview="pending"
         :roots="roots"
+        :roots-error="rootsError"
         :list="list"
         :busy="busy"
         :history="history"
@@ -377,6 +378,7 @@ const suggestionLine = computed(() => {
         label="Photographs — folders or files, one per line"
         placeholder="/mnt/photos/2026/berlin"
         :roots="roots"
+        :roots-error="rootsError"
         :list="list"
       />
 

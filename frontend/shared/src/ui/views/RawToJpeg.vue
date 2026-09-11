@@ -37,7 +37,7 @@ const busy = ref(false);
 const maxMegapixels = ref(0);
 const maxOutputMb = ref(10);
 
-const { roots } = useRoots();
+const { roots, failure: rootsError } = useRoots();
 const list = (path: string) => api.list(path);
 
 async function apply() {
@@ -89,6 +89,7 @@ async function apply() {
         label="Folder holding the RAW files"
         placeholder="/mnt/photos/2026/berlin"
         :roots="roots"
+        :roots-error="rootsError"
         :list="list"
       />
 
@@ -98,6 +99,7 @@ async function apply() {
         placeholder="/mnt/photos/2026/berlin/derived"
         hint="The JPEGs land here. Nothing is written over."
         :roots="roots"
+        :roots-error="rootsError"
         :list="list"
       />
 

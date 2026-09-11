@@ -21,7 +21,7 @@ const confirmed = ref(false);
 const busy = ref(false);
 
 // The folders the pickers may offer, and the lister they walk with.
-const { roots } = useRoots();
+const { roots, failure: rootsError } = useRoots();
 const list = (path: string) => api.list(path);
 
 const inputList = computed(() =>
@@ -78,6 +78,7 @@ async function apply() {
         v-model="inputs"
         label="Inputs — files or folders, one per line"
         :roots="roots"
+        :roots-error="rootsError"
         :list="list"
       />
 
@@ -86,6 +87,7 @@ async function apply() {
         label="Output directory"
         placeholder="/mnt/photos/out"
         :roots="roots"
+        :roots-error="rootsError"
         :list="list"
       />
 

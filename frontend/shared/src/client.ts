@@ -258,12 +258,20 @@ export class HttpApiClient implements ApiClient {
   private async toError(response: Response): Promise<ApiError> {
     let code = 'unknown';
     let message = response.statusText || `Request failed (${response.status})`;
+    const text = await response.text().catch(() => '');
     try {
-      const body = await response.json();
+      const body = JSON.parse(text);
       if (typeof body?.code === 'string') code = body.code;
       if (typeof body?.message === 'string') message = body.message;
     } catch {
-      // A non-JSON error body is still an error; keep the status text.
+      // Not every refusal is the server's own JSON. A body its framework
+      // rejected before any handler ran — a field of the wrong shape, 422 —
+      // comes back as plain text saying exactly which field. Over HTTP/2, which
+      // is what a Cloudflare tunnel speaks, there is no status text either, so
+      // discarding that body left "Request failed (422)" and nothing to go on.
+      // Plain text only: a proxy's HTML error page is not a message.
+      const plain = (response.headers.get('content-type') ?? '').startsWith('text/plain');
+      if (plain && text.trim()) message = text.trim().slice(0, 500);
     }
     return new ApiError(response.status, code, message);
   }

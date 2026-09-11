@@ -1,7 +1,23 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { PUBLISH_STEP, sharedToolLinks, stepLabel } from '@ui/routes';
+import { refreshRoots } from '@ui/useRoots';
 import { authReady, initAuth, isConfigured, signIn, signOutOfPhotoTools, user } from './auth';
+
+/**
+ * Signing in or out changes the server's answer to "which folders?", and the
+ * view on screen asked before. Re-asked here, on the gesture, rather than by
+ * watching `user`: that also fires when a session is restored on load, where
+ * the view's own request already waited for it and a second one is waste.
+ */
+async function signInAndRefresh() {
+  await signIn();
+  refreshRoots();
+}
+async function signOutAndRefresh() {
+  await signOutOfPhotoTools();
+  refreshRoots();
+}
 
 /**
  * The bar reads as the workflow does, and the numbers are the workflow's own:
@@ -54,9 +70,9 @@ onUnmounted(() => window.clearInterval(ticking));
         </template>
         <template v-else-if="user">
           <span class="session__who">{{ user.email }}</span>
-          <button type="button" class="ghost" @click="signOutOfPhotoTools">Sign out</button>
+          <button type="button" class="ghost" @click="signOutAndRefresh">Sign out</button>
         </template>
-        <button v-else type="button" class="primary" @click="signIn">Sign in</button>
+        <button v-else type="button" class="primary" @click="signInAndRefresh">Sign in</button>
       </div>
     </header>
 

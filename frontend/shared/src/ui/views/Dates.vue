@@ -23,7 +23,7 @@ const scanned = ref<ScanResult[] | null>(null);
 const plan = ref<Plan<DateRepairAction> | null>(null);
 
 // The folders the pickers may offer, and the lister they walk with.
-const { roots } = useRoots();
+const { roots, failure: rootsError } = useRoots();
 const list = (path: string) => api.list(path);
 
 function pathList(): string[] {
@@ -33,10 +33,36 @@ function pathList(): string[] {
     .filter(Boolean);
 }
 
+/**
+ * The Manual date as the server reads it — `YYYY-MM-DDTHH:MM:SS` exactly — or
+ * `null` when what was typed cannot be made into one.
+ *
+ * The server's parser takes that form and nothing else, so `2013-05-01T12:00`
+ * was refused whole, and a person who had typed a perfectly clear date saw a
+ * 422. The two spellings people actually type are completed here: a space for
+ * the `T`, and a time without seconds. A date with no time is not guessed at —
+ * midnight would be an invented capture time written into the file.
+ */
+function manualValue(): string | null {
+  const typed = manualDate.value.trim().replace(/^(\d{4}-\d{2}-\d{2}) +/, '$1T');
+  const complete = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(typed) ? `${typed}:00` : typed;
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(complete) ? complete : null;
+}
+
+/** Why the form cannot be sent as it stands, or `null` when it can. */
+function formProblem(): string | null {
+  if (!pathList().length) return 'Add at least one path.';
+  if (mode.value === 'Manual' && manualValue() === null) {
+    return 'Enter the date to set as 2024-05-01T12:00:00 — the seconds may be left out, but not the time.';
+  }
+  return null;
+}
+
 function repairMode(): RepairMode {
   switch (mode.value) {
     case 'Manual':
-      return { Manual: manualDate.value };
+      // formProblem() has refused anything manualValue() cannot complete.
+      return { Manual: manualValue() ?? '' };
     case 'Shift':
       return { Shift: shiftDelta.value };
     case 'Sidecar':
@@ -66,8 +92,9 @@ function request(dryRun: boolean) {
  * which is not enough to judge a clock offset before applying it (MV-9.3).
  */
 async function preview() {
-  if (!pathList().length) {
-    page.value?.setFailure('Add at least one path.');
+  const problem = formProblem();
+  if (problem) {
+    page.value?.setFailure(problem);
     return;
   }
   busy.value = true;
@@ -84,8 +111,9 @@ async function preview() {
 }
 
 async function apply() {
-  if (!pathList().length) {
-    page.value?.setFailure('Add at least one path.');
+  const problem = formProblem();
+  if (problem) {
+    page.value?.setFailure(problem);
     return;
   }
   busy.value = true;
@@ -156,6 +184,7 @@ function stamp(value: string | null): string {
         label="Paths, one per line"
         placeholder="/mnt/photos/2024/roll-01.jpg"
         :roots="roots"
+        :roots-error="rootsError"
         :list="list"
       />
 
@@ -170,6 +199,7 @@ function stamp(value: string | null): string {
       <label v-if="mode === 'Manual'" class="field">
         <span>Date</span>
         <input v-model="manualDate" type="text" placeholder="2024-05-01T12:00:00" />
+        <small class="muted">Date and time, as 2024-05-01T12:00:00. Seconds may be left out.</small>
       </label>
 
       <label v-if="mode === 'Shift'" class="field">

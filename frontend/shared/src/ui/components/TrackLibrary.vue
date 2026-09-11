@@ -27,6 +27,8 @@ const props = defineProps<{
   preview: TrackImportPreview | null;
   path: string;
   roots: string[];
+  /** Why `roots` could not be had, if asking failed; see FolderPicker. */
+  rootsError?: string | null;
   list: (path: string) => Promise<BrowserEntry[]>;
   busy?: boolean;
   /**
@@ -191,6 +193,7 @@ function metres(value: number): string {
       choose-label="Use this folder"
       :selectable="['gpx']"
       :roots="props.roots"
+      :roots-error="props.rootsError"
       :list="props.list"
       @update:model-value="emit('update:path', $event)"
     />

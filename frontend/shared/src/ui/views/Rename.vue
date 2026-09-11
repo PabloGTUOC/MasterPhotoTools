@@ -19,7 +19,7 @@ const plan = ref<Plan<RenameAction> | null>(null);
 const busy = ref(false);
 
 // The folders the pickers may offer, and the lister they walk with.
-const { roots } = useRoots();
+const { roots, failure: rootsError } = useRoots();
 const list = (path: string) => api.list(path);
 
 function request() {
@@ -82,6 +82,7 @@ const leaf = (p: string) => p.split('/').pop() ?? p;
         v-model="paths"
         label="Paths, one per line"
         :roots="roots"
+        :roots-error="rootsError"
         :list="list"
       />
 

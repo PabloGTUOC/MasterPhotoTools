@@ -38,16 +38,39 @@ docker compose -f deploy/docker-compose.yml up -d
 ```
 
 Compose reads its values from the environment or from a `.env` file **beside
-`docker-compose.yml`** — that is `deploy/.env`, not the repository root. Four are
-required and the file refuses to start without them:
+`docker-compose.yml`** — that is `deploy/.env`, not the repository root. Copy
+[`deploy/.env.example`](../deploy/.env.example), which lists every variable with
+what it is for. **Five are required** and compose refuses to start without them:
 
 ```sh
 # deploy/.env
 LIBRARY_PATH=/volume1/photo
 DATA_PATH=/volume1/docker/phototools
+PUBLISHING_PATH=/volume1/docker/phototools/publishing
 FIREBASE_PROJECT_ID=your-project-id
 ALLOWED_UIDS=aBcDeFgHiJkLmNoPqRsTuVwXyZ12
 ```
+
+`PUBLISHING_PATH` is the folder publishing draws from and, on success, **empties**
+of everything Google confirmed receiving. It is required beside the volume that
+declares it rather than defaulted, because the server is the only machine that
+can publish — it holds the Google refresh token — and this folder is the only way
+in. A deployment that genuinely wants no publishing comments out the volume and
+`PUBLISHING_DIR` together.
+
+**It must not be the library, and must not contain it.** The server refuses to
+start if it is either, rather than discovering it at the moment of deletion:
+every other safeguard around the deletion compares against this path, so setting
+it wrongly does not trip them — it moves them. A folder *inside* the library is
+allowed; no tool may write into it, and only that folder is ever emptied.
+
+**The server refuses to start on a configuration it cannot use** — an
+unparseable threshold, a path that will not canonicalise, a publishing folder
+pointed at the library — and says which. It used to discard that error and start
+with an empty `ROOTS`, so every request was refused and the only clue was a
+warning about `ROOTS` being empty when `ROOTS` was fine and something else
+entirely was wrong. If the container exits immediately, `docker logs` has the
+reason on one line.
 
 Confirm it came up:
 

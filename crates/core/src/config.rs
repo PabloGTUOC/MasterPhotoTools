@@ -125,10 +125,59 @@ impl Config {
         let path = Self::config_path();
         if path.exists() {
             let data = std::fs::read_to_string(path).map_err(Error::Io)?;
-            serde_json::from_str(&data).map_err(|e| Error::Internal(e.to_string()))
+            let config: Self =
+                serde_json::from_str(&data).map_err(|e| Error::Internal(e.to_string()))?;
+            config.validate()?;
+            Ok(config)
         } else {
             Self::from_env()
         }
+    }
+
+    /// Refuse a configuration whose publishing folder could empty the library.
+    ///
+    /// `publish::folder::empty_published` deletes, and it is the only thing in
+    /// the system that does. Every safeguard around it compares against
+    /// `publishing_dir` — so a *mis-set* `publishing_dir` does not trip those
+    /// safeguards, it moves them. There is no later moment at which this is
+    /// caught: by the time anything is deleted, the deletion is authorised.
+    ///
+    /// Two placements are refused, at load:
+    ///
+    /// - **The publishing folder is a root.** Publishing would empty the photo
+    ///   library of everything Google confirmed receiving.
+    /// - **The publishing folder contains a root.** `walk` enumerates
+    ///   everything beneath it, so the whole library becomes publishable and,
+    ///   afterwards, deletable.
+    ///
+    /// A publishing folder *inside* a root is allowed. It is a reasonable thing
+    /// to want on a NAS, no tool may write into it, and what gets emptied is
+    /// still only that folder.
+    pub fn validate(&self) -> Result<(), Error> {
+        let Some(publishing) = &self.publishing_dir else {
+            return Ok(());
+        };
+
+        for root in &self.roots {
+            if publishing == root {
+                return Err(Error::Config(format!(
+                    "the publishing folder and the library root are both {}. Publishing \
+                     empties that folder after a successful upload, so this would delete \
+                     the library. Point PUBLISHING_DIR at a separate folder.",
+                    root.display()
+                )));
+            }
+            if root.starts_with(publishing) {
+                return Err(Error::Config(format!(
+                    "the publishing folder {} contains the library root {}. Everything \
+                     beneath the publishing folder is published and then deleted, which \
+                     here is the whole library. Point PUBLISHING_DIR at a separate folder.",
+                    publishing.display(),
+                    root.display()
+                )));
+            }
+        }
+        Ok(())
     }
 
     pub fn save(&self) -> Result<(), Error> {
@@ -185,13 +234,15 @@ impl Config {
             _ => None,
         };
 
-        Ok(Self {
+        let config = Self {
             roots,
             staging_dir,
             publishing_dir,
             thresholds: Thresholds::from_env()?,
             database,
-        })
+        };
+        config.validate()?;
+        Ok(config)
     }
 
     /// G6. Canonicalise and reject anything outside `roots`.
@@ -663,5 +714,78 @@ mod tests {
         std::env::remove_var("PUBLISHING_DIR");
         let config = Config::from_env().expect("the rest of the configuration is independent");
         assert_eq!(config.publishing_dir, None);
+    }
+
+    /// The one configuration mistake that deletes photographs.
+    ///
+    /// Every guard around the deletion compares against `publishing_dir`. Set
+    /// it to the library and the guards do not fire — they move, and what they
+    /// then authorise is emptying the library. There is no later moment to
+    /// catch this at, because by then the deletion is permitted.
+    #[test]
+    fn a_publishing_folder_that_is_the_library_is_refused_at_load() {
+        let temp = tempfile::tempdir().unwrap();
+        let library = temp.path().canonicalize().unwrap();
+
+        let config = Config {
+            roots: vec![library.clone()],
+            publishing_dir: Some(library),
+            ..Config::default()
+        };
+
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("delete the library"),
+            "it must say what would happen, not only that it is invalid: {err}"
+        );
+    }
+
+    #[test]
+    fn a_publishing_folder_holding_the_library_is_refused_at_load() {
+        let temp = tempfile::tempdir().unwrap();
+        let outer = temp.path().canonicalize().unwrap();
+        let library = outer.join("photos");
+        std::fs::create_dir(&library).unwrap();
+
+        let config = Config {
+            roots: vec![library],
+            publishing_dir: Some(outer),
+            ..Config::default()
+        };
+
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("the whole library"),
+            "the library sits beneath it, so everything in it would be published: {err}"
+        );
+    }
+
+    /// Allowed on purpose. A folder inside the library is a reasonable thing to
+    /// want on a NAS: no tool may write into it, and emptying reaches only that
+    /// folder.
+    #[test]
+    fn a_publishing_folder_inside_the_library_is_allowed() {
+        let temp = tempfile::tempdir().unwrap();
+        let library = temp.path().canonicalize().unwrap();
+        let publishing = library.join("Publishing");
+        std::fs::create_dir(&publishing).unwrap();
+
+        let config = Config {
+            roots: vec![library],
+            publishing_dir: Some(publishing),
+            ..Config::default()
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn no_publishing_folder_is_always_valid() {
+        let config = Config {
+            roots: vec![PathBuf::from("/tmp")],
+            publishing_dir: None,
+            ..Config::default()
+        };
+        assert!(config.validate().is_ok());
     }
 }

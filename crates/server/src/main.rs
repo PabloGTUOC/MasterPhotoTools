@@ -16,7 +16,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let config = Config::load().unwrap_or_else(|_| Config::default());
+    // A configuration error stops the server rather than being discarded.
+    //
+    // This used to be `unwrap_or_else(|_| Config::default())`, which threw the
+    // error away — not even logged — and started with empty roots. Every
+    // request was then refused, and the only clue was a warning about `ROOTS`
+    // being empty when `ROOTS` had in fact been set perfectly well and
+    // something else entirely was wrong: an unparseable threshold, a path that
+    // would not canonicalise, a publishing folder pointed at the library.
+    //
+    // Configuration is what an operator gets wrong at three in the morning on
+    // a NAS with no terminal. Refusing to start, loudly, is a better answer
+    // than running in a state where nothing works for reasons nobody can see
+    // (G10, §9.2 invariant 6).
+    let config = match Config::load() {
+        Ok(config) => config,
+        Err(e) => {
+            tracing::error!("Configuration is not usable, so the server will not start: {e}");
+            return Err(e.into());
+        }
+    };
+
     if config.roots.is_empty() {
         tracing::warn!(
             "ROOTS is empty, so every filesystem request will be refused. \

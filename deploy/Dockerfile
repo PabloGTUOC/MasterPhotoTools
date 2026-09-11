@@ -112,9 +112,17 @@ RUN useradd --system --uid 10001 --create-home --home-dir /home/phototools photo
 COPY --from=builder /build/target/release/phototools-server /usr/local/bin/phototools-server
 COPY --from=frontend /build/frontend/web/dist /srv/web
 
-# Both are mount points, created here so a container started without volumes
-# still has somewhere writable to put the ledger rather than failing at open.
-RUN mkdir -p /data /library && chown phototools:phototools /data /library
+# Mount points, created here so a container started without volumes still has
+# somewhere writable to put the ledger rather than failing at open.
+#
+# `/publishing` is a mount point and nothing more: `PUBLISHING_DIR` is
+# deliberately **not** set in this image. Publishing empties that folder, and a
+# folder that exists only inside the container would be emptied of files the
+# operator can no longer reach — or, worse, would strand them in a dead
+# container after a failed upload. Compose sets the variable in the same place
+# it declares the volume, so the two cannot be configured apart.
+RUN mkdir -p /data /library /publishing \
+    && chown phototools:phototools /data /library /publishing
 
 USER phototools
 ENV PORT=3000 \

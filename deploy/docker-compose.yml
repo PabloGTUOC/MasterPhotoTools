@@ -29,6 +29,19 @@ services:
       # the photographs, so that losing one cannot corrupt the other.
       - ${DATA_PATH:?set DATA_PATH to a directory for the ledger and staging}:/data
 
+      # The publishing folder. **This folder is emptied** of everything Google
+      # confirms receiving, so it must not be the library and must not contain
+      # it — the server refuses to start if it is either, rather than finding
+      # out at the moment of deletion.
+      #
+      # Required rather than defaulted, and required *here*, beside the
+      # environment variable that names it: the server is the only machine that
+      # can publish (it holds the Google refresh token), this folder is the only
+      # way in, and a server deployed without one has no publishing road at all.
+      # A deployment that genuinely wants none comments out this line and
+      # PUBLISHING_DIR together.
+      - ${PUBLISHING_PATH:?set PUBLISHING_PATH to a folder publishing may empty — not the library}:/publishing
+
     environment:
       # G6 — the only directories any request may reach. /library is the
       # container's view of LIBRARY_PATH above; a path outside it is refused
@@ -38,9 +51,20 @@ services:
       DATABASE_PATH: /data/phototools.db
       STAGING_DIR: /data/staging
 
-      # F12's thresholds. Left as the specification's defaults; override here
-      # rather than in the image so a change does not need a rebuild.
-      MAX_MEGAPIXELS: ${MAX_MEGAPIXELS:-10}
+      # The container's view of PUBLISHING_PATH above. Unset refuses all
+      # publishing, the way an empty ROOTS refuses every path: there is no safe
+      # default for a folder that gets deleted from.
+      PUBLISHING_DIR: /publishing
+
+      # F12's thresholds. Left at the code's defaults; override here rather than
+      # in the image so a change does not need a rebuild.
+      #
+      # MAX_MEGAPIXELS is 0 — no resolution ceiling — which is a deliberate
+      # divergence from §F12's 10, recorded in docs/known-gaps.md. This file
+      # used to default it to 10 and so quietly reimposed the ceiling on every
+      # deployment: a 24 MP frame would have failed validation on the NAS for a
+      # reason nobody had set, and passed on the Mac.
+      MAX_MEGAPIXELS: ${MAX_MEGAPIXELS:-0}
       MAX_OUTPUT_BYTES: ${MAX_OUTPUT_BYTES:-10485760}
       MAX_AGE_DAYS: ${MAX_AGE_DAYS:-90}
 

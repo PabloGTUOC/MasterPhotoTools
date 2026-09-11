@@ -202,3 +202,54 @@ means.
 Gates: `fmt`, `clippy -D warnings`, **705 workspace, 620 core**. Seven new tests, all of them
 asserting what a message says, because that is what broke.
 
+
+## Preparing the image for the NAS — 2026-09-11
+
+The Docker setup built and ran, and had never been told about the workflow that
+replaced the one it was written for. `PUBLISHING_DIR` appeared nowhere in the
+image or in `docker-compose.yml`, so a server deployed from this repository
+would have come up healthy, served every tool, and refused every publish —
+correctly, and for a reason the operator had not chosen. The compose file now
+declares the volume and the variable **together**, because configuring one
+without the other is the failure worth designing out.
+
+The image deliberately does **not** set `PUBLISHING_DIR` itself. It creates
+`/publishing` as a mount point and stops there: a publishing folder that exists
+only inside the container would be emptied of files nobody can reach, or strand
+them in a dead container after a failed upload.
+
+Three things this turned up, none of them about Docker.
+
+**The compose file quietly reimposed a ceiling nobody set.** It defaulted
+`MAX_MEGAPIXELS` to 10 while the code defaults it to 0, so a 24 MP frame would
+have failed validation on the NAS and passed on the Mac. A default in a second
+place is not a default, it is a disagreement.
+
+**A mis-set `PUBLISHING_DIR` moves the safeguards rather than tripping them.**
+Everything protecting the one deletion in this system compares against
+`publishing_dir`. Point it at the library and nothing refuses: the guards
+faithfully authorise emptying the library. `Config::validate` now refuses at
+load if the publishing folder **is** a root or **contains** one, and says what
+would have happened. A folder *inside* a root stays legal — plausible on a NAS,
+no tool may write into it, and only that folder is emptied.
+
+**The server threw its configuration errors away.** `Config::load()
+.unwrap_or_else(|_| Config::default())` — the error not even logged — started
+the server with empty roots, refusing everything, under a warning that `ROOTS`
+was empty when `ROOTS` was correct and a threshold or a path was not. That is
+G10 on the most operator-facing path there is, and it is what made the new
+refusal above invisible when it was first tried in a container. The server now
+declines to start and prints the reason.
+
+Verified by building and running the image, not by reading it: correct
+configuration comes up healthy; `PUBLISHING_DIR=/library` and a library nested
+inside the publishing folder are both refused by name; a `PUBLISHING_DIR` that
+does not exist is refused; no publishing folder at all starts and serves
+everything else. `docker compose config` refuses without `PUBLISHING_PATH` and
+renders `MAX_MEGAPIXELS: "0"`.
+
+One thing found while writing it down: `.dockerignore` excluded `.env` at the
+context root only, and the deployment instructions ask for `deploy/.env`. Those
+secrets would have been copied into the planner and builder stages by `COPY . .`
+and kept in the build cache. They never reached the final image — which is not
+the same as never leaving the machine.

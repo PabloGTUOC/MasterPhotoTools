@@ -19,6 +19,12 @@ crates/desktop/gen/
 
 *.md
 docs/
-.env
-.env.*
-!.env.example
+# Every .env at every depth, not only the one at the context root. The
+# deployment instructions ask for `deploy/.env`, and a bare `.env` pattern here
+# matches the root file alone — so the compose secrets would have been copied
+# into the planner and builder stages by `COPY . .` and kept in the build cache.
+# They never reached the final image; that is not the same as never leaving the
+# machine.
+**/.env
+**/.env.*
+!**/.env.example

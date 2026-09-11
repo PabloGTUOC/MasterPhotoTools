@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::path::PathBuf;
 use tokio_stream::wrappers::BroadcastStream;
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::StreamExt;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -2031,7 +2031,7 @@ async fn job_events(
     _auth: Authenticated,
     State(state): State<AppState>,
     UrlPath(id): UrlPath<String>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
+) -> Result<impl IntoResponse, ApiError> {
     let job = state.jobs.get(&id)?.ok_or(ApiError {
         code: "not_found",
         message: format!("No job {id}"),
@@ -2063,7 +2063,7 @@ async fn job_events(
 
     let stream = async_stream::stream! {
         if let Some(event) = replay {
-            yield Ok(sse_event(&event));
+            yield Ok::<Event, Infallible>(sse_event(&event));
             return;
         }
 
@@ -2072,7 +2072,7 @@ async fn job_events(
             while let Some(item) = stream.next().await {
                 let Ok(event) = item else { continue };
                 let terminal = event.terminal;
-                yield Ok(sse_event(&event));
+                yield Ok::<Event, Infallible>(sse_event(&event));
                 if terminal {
                     break;
                 }
@@ -2080,7 +2080,14 @@ async fn job_events(
         }
     };
 
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    // Behind nginx — nginx-proxy-manager, in front of a Cloudflare tunnel, is how
+    // this server is reached from outside — a response is buffered by default,
+    // so progress arrived all at once when the job ended. This header is nginx's
+    // own per-response switch; sent from here, no proxy needs configuring for it.
+    Ok((
+        [("x-accel-buffering", "no")],
+        Sse::new(stream).keep_alive(KeepAlive::default()),
+    ))
 }
 
 fn sse_event(event: &JobEvent) -> Event {

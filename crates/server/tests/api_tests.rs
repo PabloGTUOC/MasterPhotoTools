@@ -365,6 +365,16 @@ async fn a_job_streams_progress_and_ends_with_a_terminal_event() {
         .to_str()
         .unwrap()
         .starts_with("text/event-stream"));
+    // Behind nginx the stream is buffered to the end unless the response says
+    // otherwise, and a progress stream that arrives all at once is not one.
+    assert_eq!(
+        stream
+            .headers()
+            .get("x-accel-buffering")
+            .map(|v| v.to_str().unwrap()),
+        Some("no"),
+        "the event stream must tell a proxy not to buffer it"
+    );
 
     let text = tokio::time::timeout(Duration::from_secs(20), stream.text())
         .await

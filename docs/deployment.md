@@ -74,6 +74,26 @@ the compose file, the `.env`, and by default `data/` (the ledger) and
 user can write there, since a folder made in the OMV web UI or as root often
 cannot be.
 
+### Behind a reverse proxy
+
+Set `PROXY_NETWORK` in `deploy/deploy.env` to the Docker network the proxy
+(nginx-proxy-manager, say, in front of a Cloudflare tunnel) is on. The script
+then adds the service to that network as well as its own, and the proxy forwards
+to **`http://masterphototools:3000`** — the compose service name, which is an
+alias on every network the service joins, and the container's port rather than
+the host's. Unset joins nothing; `--check` lists the networks if the name is
+wrong.
+
+The job-progress stream sends `X-Accel-Buffering: no`, so nginx passes it
+through as it arrives; no proxy setting is needed for it.
+
+A public HTTPS hostname is also what the two sign-ins need. **Firebase** refuses
+to sign in from a domain not under *Authentication → Settings → Authorized
+domains*. **Google** accepts neither a raw IP nor plain `http` in a redirect URI
+other than `localhost`, so `GOOGLE_OAUTH_REDIRECT_URI` becomes
+`https://<hostname>/api/connectors/google/callback`, in `deploy/.env`, and the
+same string is registered on the OAuth client (MV-12.3).
+
 Every `.env` and `deploy/deploy.env` are gitignored. What the server needs is
 assembled from them and sent to the NAS as one `.env` with mode 600;
 `deploy/deploy.env` itself never leaves this machine.

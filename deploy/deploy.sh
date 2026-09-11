@@ -153,6 +153,20 @@ else
 fi
 ok "compose available as '$COMPOSE'"
 
+# The reverse proxy's network, if one fronts this server. A proxy container
+# reaches another by name only across a network they share, and compose puts
+# this service on a network of its own. Joined here rather than by publishing a
+# port for the proxy, so the route survives the NAS changing address. On that
+# network the server answers as `masterphototools:3000` — the service name,
+# lowercase, which compose registers as an alias on every network it joins.
+if [ -n "${PROXY_NETWORK:-}" ]; then
+    nas "docker network inspect '$PROXY_NETWORK' >/dev/null 2>&1" || {
+        printf '\n  %sNo docker network %s.%s Networks on the NAS:\n\n' "$BOLD" "$PROXY_NETWORK" "$RESET"
+        nas "docker network ls --format '    {{.Name}}'"
+        die "Set PROXY_NETWORK in $CONFIG to the network the reverse proxy is on, from the list above."
+    }
+    ok "joins network $PROXY_NETWORK — the proxy reaches it as http://masterphototools:3000"
+fi
 
 # ---------------------------------------------------------------------------
 # 2. The three directories, and who may write to them
@@ -396,6 +410,24 @@ scp -q "${SSH_OPTS[@]}" deploy/docker-compose.yml "$NAS_SSH:$REMOTE_DIR/docker-c
 scp -q "${SSH_OPTS[@]}" "$REMOTE_ENV" "$NAS_SSH:$REMOTE_DIR/.env"
 nas "chmod 600 '$REMOTE_DIR/.env'"
 
+# An override rather than a line in docker-compose.yml: an external network
+# must exist, and a deployment with no proxy has none to name. Compose merges
+# docker-compose.override.yml on its own; removing it takes the service back
+# off the proxy's network on the next deploy.
+if [ -n "${PROXY_NETWORK:-}" ]; then
+    nas "cat > '$REMOTE_DIR/docker-compose.override.yml'" <<EOF
+# Written by deploy/deploy.sh because PROXY_NETWORK is set in deploy/deploy.env.
+services:
+  masterphototools:
+    networks: [default, proxy]
+networks:
+  proxy:
+    external: true
+    name: $PROXY_NETWORK
+EOF
+else
+    nas "rm -f '$REMOTE_DIR/docker-compose.override.yml'"
+fi
 ok "compose file and environment in $REMOTE_DIR"
 
 # Piped rather than staged: a NAS is exactly the machine with no room for a

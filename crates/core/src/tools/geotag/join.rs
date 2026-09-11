@@ -192,18 +192,31 @@ fn within_edge(gap: i64, limits: &Limits) -> bool {
 }
 
 /// A span of seconds, as a person would say it.
+///
+/// Days above two, because with no ceiling on how old a fix may be this number
+/// is the *only* thing standing between a photograph and a confidently wrong
+/// position — and "2192 h" is not a number anybody reads as three months.
 fn duration(seconds: i64) -> String {
     let seconds = seconds.abs();
     match seconds {
         0..=119 => format!("{seconds} s"),
         120..=7199 => format!("{} min", seconds / 60),
-        _ => {
+        7200..=172_799 => {
             let hours = seconds / 3600;
             let minutes = (seconds % 3600) / 60;
             if minutes == 0 {
                 format!("{hours} h")
             } else {
                 format!("{hours} h {minutes} min")
+            }
+        }
+        _ => {
+            let days = seconds / 86_400;
+            let hours = (seconds % 86_400) / 3600;
+            if hours == 0 {
+                format!("{days} days")
+            } else {
+                format!("{days} days {hours} h")
             }
         }
     }
@@ -551,6 +564,18 @@ mod tests {
         // And it says how old the fix is, which is the whole safeguard: an
         // answer carried forward for ten hours has to look like one.
         assert_eq!(m.gap_seconds, 600 * 60);
+    }
+
+    #[test]
+    fn a_span_of_months_reads_as_months() {
+        // With no ceiling by default, this number is the only safeguard left,
+        // and it has to be legible at the scale where it matters most.
+        assert_eq!(duration(90), "90 s");
+        assert_eq!(duration(45 * 60), "45 min");
+        assert_eq!(duration(3 * 3600), "3 h");
+        assert_eq!(duration(47 * 3600), "47 h");
+        assert_eq!(duration(3 * 86_400), "3 days");
+        assert_eq!(duration(7_892_734), "91 days 8 h");
     }
 
     #[test]

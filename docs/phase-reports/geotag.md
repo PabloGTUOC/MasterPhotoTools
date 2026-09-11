@@ -125,6 +125,12 @@ What replaces it is **the age of the fix on every row**, with anything six hours
 the preview, so a position carried forward for two days cannot be mistaken for a fresh one. The
 setting remains for somebody who knows a track does not cover what they are matching.
 
+That safeguard was itself illegible at first. Running the real chain on a real photograph — a June
+frame against a September track — produced a fix **7,892,734 seconds old**, which the screen
+rendered as `2192 h`. Nobody reads that as three months, and with no ceiling this number is the
+only thing between a photograph and a confidently wrong position. Spans over two days now read
+`91 days 8 h`.
+
 ## Deviations from the plan, and why
 
 ### `ExifIter::find_tz_offset()` does not exist

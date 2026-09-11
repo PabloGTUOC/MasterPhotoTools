@@ -287,13 +287,24 @@ function stamp(value: string | null): string {
   return value ? value.replace('T', ' ').slice(0, 19) : '—';
 }
 
-/** A span of seconds, as a person would say it. */
+/**
+ * A span of seconds, as a person would say it.
+ *
+ * Days above two. With no ceiling on how old a fix may be, this number is the
+ * only thing between a photograph and a confidently wrong position, and
+ * `2192 h` is not a number anybody reads as three months.
+ */
 function gap(seconds: number): string {
   if (seconds < 120) return `${seconds} s`;
   if (seconds < 7200) return `${Math.round(seconds / 60)} min`;
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.round((seconds % 3600) / 60);
-  return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
+  if (seconds < 172800) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.round((seconds % 3600) / 60);
+    return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
+  }
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  return hours ? `${days} days ${hours} h` : `${days} days`;
 }
 
 /**

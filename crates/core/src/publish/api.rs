@@ -66,12 +66,38 @@ impl std::fmt::Display for ApiError {
         match self {
             ApiError::RateLimited { .. } => f.write_str("Google is rate-limiting this account"),
             ApiError::Unauthorized => f.write_str("the access token was refused"),
-            ApiError::NotSent(d) => write!(f, "could not reach Google: {d}"),
-            ApiError::NoAnswer(d) => write!(f, "Google did not answer: {d}"),
+            ApiError::NotSent(d) => write!(f, "could not reach Google: {}", one_line(d)),
+            ApiError::NoAnswer(d) => write!(f, "Google did not answer: {}", one_line(d)),
             ApiError::Refused { status, detail } => {
-                write!(f, "Google refused the request ({status}): {detail}")
+                write!(
+                    f,
+                    "Google refused the request ({status}): {}",
+                    one_line(detail)
+                )
             }
         }
+    }
+}
+
+/// Whatever came back, on one line and bounded.
+///
+/// These details are response bodies held verbatim, and Google pretty-prints
+/// its JSON. The string ends up in a job summary, which is a single line in
+/// both front ends, so a body with newlines in it breaks the line it is shown
+/// on — that is how `Payload must not be empty` arrived as three lines of
+/// JSON in the middle of a sentence.
+///
+/// Bounded for a different reason: when something between here and Google
+/// answers instead of Google — a proxy, a captive portal — the body is an HTML
+/// page. A whole page is not a summary.
+fn one_line(detail: &str) -> String {
+    const LIMIT: usize = 200;
+    let flat = detail.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > LIMIT {
+        let kept: String = flat.chars().take(LIMIT).collect();
+        format!("{kept}…")
+    } else {
+        flat
     }
 }
 
@@ -365,6 +391,36 @@ impl PhotosApi for HttpPhotosApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Found in the field: MV-16.5 put a 0-byte file in the publishing folder,
+    /// and Google's `Payload must not be empty` arrived as three lines of
+    /// pretty-printed JSON in the middle of a one-line job summary.
+    #[test]
+    fn googles_answer_is_flattened_onto_one_line() {
+        let error = ApiError::Refused {
+            status: 400,
+            detail: "{\n  \"code\": 3,\n  \"message\": \"Payload must not be empty\"\n}".into(),
+        };
+
+        let said = error.to_string();
+        assert!(!said.contains('\n'), "no newlines: {said:?}");
+        assert!(said.contains("Payload must not be empty"), "{said}");
+        assert!(said.contains("400"), "{said}");
+    }
+
+    /// A proxy or a captive portal answers with a page, not a JSON error.
+    #[test]
+    fn an_answer_that_is_a_whole_page_is_cut_short() {
+        let page = "<html>".to_string() + &"x".repeat(5_000) + "</html>";
+        let said = ApiError::NoAnswer(page).to_string();
+
+        assert!(
+            said.chars().count() < 300,
+            "cut short: {} chars",
+            said.chars().count()
+        );
+        assert!(said.ends_with('…'), "says it was cut: {said:?}");
+    }
 
     #[test]
     fn the_first_rate_limit_wait_is_the_documented_floor() {

@@ -134,20 +134,52 @@ impl PublishOutcome {
         }
         if !self.unconfirmed.is_empty() {
             parts.push(format!(
-                "{} unconfirmed — check Google Photos before republishing",
-                self.unconfirmed.len()
+                "{} unconfirmed ({}) — check Google Photos before republishing",
+                self.unconfirmed.len(),
+                name_a_few(&self.unconfirmed),
             ));
         }
         if !self.failed.is_empty() {
-            parts.push(format!("{} failed", self.failed.len()));
+            parts.push(format!(
+                "{} failed: {}",
+                self.failed.len(),
+                name_a_few(&self.failed),
+            ));
         }
         if !self.skipped.is_empty() {
+            // A count, deliberately: the ordinary skip is "already uploaded",
+            // it happens in bulk, and it asks nothing of anybody. The dry run
+            // names them one by one for whoever wants the list.
             parts.push(format!("{} skipped", self.skipped.len()));
         }
         if let Some(reason) = &self.halted {
             parts.push(format!("stopped: {reason}"));
         }
         parts.join(", ")
+    }
+}
+
+/// Name the files, not only how many there were.
+///
+/// A count says something went wrong. It does not say whether to retry the
+/// file, repair it or drop it, and that is the only decision anybody makes
+/// here. The publishing folder keeps what failed, so **which** is recoverable
+/// by looking in it — **why** is not recoverable at all: it is held in memory
+/// for the length of the job and then gone.
+///
+/// Capped at three. A run where everything failed has one cause, and a summary
+/// that lists four hundred of them is a summary nobody reads.
+fn name_a_few(who: &[Skipped]) -> String {
+    const SHOWN: usize = 3;
+    let named: Vec<String> = who
+        .iter()
+        .take(SHOWN)
+        .map(|s| format!("{} ({})", s.stem, s.reason))
+        .collect();
+    if who.len() > SHOWN {
+        format!("{}, and {} more", named.join(", "), who.len() - SHOWN)
+    } else {
+        named.join(", ")
     }
 }
 

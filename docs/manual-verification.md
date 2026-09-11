@@ -595,6 +595,14 @@ one of these refuses — deliberately, because there is no safe default for a fo
 emptied. **And work on copies for MV-16.3 onwards:** these checks upload to Google Photos, which
 cannot delete what it receives.
 
+> **Where this stands.** MV-16.3 to MV-16.7 were run on 2026-09-11 against the real server, the
+> real ledger and the connected Google account. **16.4, 16.5 and 16.7 pass.** 16.3 is half done —
+> the photograph was sent and confirmed, but nobody has looked in Google Photos to see the date and
+> the position it arrived with, which is the question the item exists to answer. 16.6's refusal
+> passes; its screen is unchecked. **16.1, 16.2 and 16.8 need a card in a reader** and have not
+> been attempted. Two defects came out of the run, both in what the software *says* rather than
+> what it does; both are fixed and covered by tests.
+
 - [ ] **MV-16.1 — A card's passing frames arrive byte-identical, and the card is unchanged.**
       The copy is verified by hash in code; what this checks is a real card on a real reader, where
       short reads happen.
@@ -615,14 +623,22 @@ cannot delete what it receives.
       **Pass:** it appears in Google Photos with the right date *and* the location the Geotag tab
       wrote. If the date is right and the location missing, the question is whether Google reads
       `GPSDateStamp`/`GPSTimeStamp` as we write them.
-      **Result:**
+      **Result:** *half done — the send is confirmed, the arrival is not.* One frame
+      (`mv16-3.jpg`, an ILCE-7RM5 file re-dated to `2026:09:09 18:00:00 +02:00`) was geotagged
+      through the app: it took a fix carried forward 4,218 s to 51.3856400 N, 2.7134650 W, 170.2 m,
+      with `GPSDateStamp 2026:09:09` and `GPSTimeStamp 14:49:42` — the UTC of the fix, not of the
+      frame, which is what the tag means. Dry run, then publish: `1 published — 1 file(s) removed
+      from the publishing folder (0.9 MB)`. **Whether Google shows that date and that position is
+      still unchecked**, and it is the whole point of this item.
 
 - [ ] **MV-16.4 — `Publishing` is empty afterwards, and the folder it was copied from is not.**
       The deletion is the one irreversible step; this is the check that it removed the second copy.
       **Run:** after MV-16.3.
       **Pass:** `Publishing` holds nothing; the source folder still holds every file; the folder
       itself still exists.
-      **Result:**
+      **Result:** **passes.** `~/Publishing` was empty afterwards and still a directory; the source
+      folder still held `mv16-3.jpg` and the other four files. The copy in was a copy, not a move,
+      so emptying removed the second copy — which is the whole reason `fill` copies.
 
 - [ ] **MV-16.5 — A failed upload leaves that file in place and publishes the rest.**
       Rule 2 in the field: a failure must never be mistaken for a success by the thing that
@@ -631,18 +647,37 @@ cannot delete what it receives.
       renamed from something else. Publish.
       **Pass:** the three are in Google Photos and gone from the folder; the rejected one is still
       in the folder, and the summary says which and why.
-      **Result:**
+      **Result:** **passes, after a fix.** Three frames plus a 0-byte `broken.jpg`:
+      `3 published, 1 failed — 3 file(s) removed from the publishing folder (3.7 MB), 1 kept`, and
+      `broken.jpg` was still there. The isolation was right the first time; **the reporting was
+      not** — `PublishOutcome::describe` counted the failures without naming them, so the one thing
+      that decides what to do next (retry, repair, drop) was held in memory for the length of the
+      job and then thrown away. It now reads `1 failed: broken.jpg (Google refused the request
+      (400): { "code": 3, "message": "Payload must not be empty" })`, capped at three names. Google
+      pretty-prints its JSON, so that body arrived as three lines inside a one-line summary until
+      `ApiError`'s `Display` was taught to flatten and bound it.
 
 - [ ] **MV-16.6 — Editing the folder after a dry run invalidates it.**
       **Run:** dry run, then add a file, or geotag one already in there. Try to publish.
       **Pass:** the screen says the folder has changed since the dry run, and the publish button is
       unavailable until it is run again.
-      **Result:**
+      **Result:** **the refusal passes; the screen is unchecked.** Dry run over one file, a second
+      copied in behind the app's back, publish: refused, nothing uploaded, both files still there.
+      The message needed work — the session id *is* the folder's contents, so the generic guard
+      said "this session has had no dry run" to somebody who had run one seconds earlier, which
+      reads as a broken safeguard rather than a working one. `publish_folder` now answers for
+      itself and offers the explanation that is actually true. **Not checked:** that the button
+      greys out in the browser. The code for it is there (`staleReview` in `Publish.vue`); nobody
+      has watched it happen.
 
 - [ ] **MV-16.7 — A tool cannot write into `Publishing`.**
       **Run:** in the Border or TIFF tab, set the output folder to `Publishing`.
       **Pass:** refused, with a message saying to write elsewhere and copy it in.
-      **Result:**
+      **Result:** **passes.** Border with `out_dir` set to `~/Publishing`: *"…is inside the
+      publishing folder, which is emptied after a successful upload. Write somewhere else and copy
+      it in when you publish."* Worth noting because it could have gone the other way: the
+      configured folder is **outside** the library roots, so a refusal for the wrong reason —
+      "outside the configured roots" — was there to be given. The publishing check runs first.
 
 - [ ] **MV-16.8 — The whole way through, on one roll.**
       The point of the change: card → folder → tools → `Publishing` → Google.

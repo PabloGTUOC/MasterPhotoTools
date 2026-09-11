@@ -16,8 +16,9 @@ use phototools_core::ledger::Ledger;
 use phototools_core::publish::api::MAX_RATE_LIMIT_RETRIES;
 use phototools_core::publish::{
     batch_count, dry_run, publishable, AccessTokens, ApiError, Connector, CreateResult,
-    HttpPhotosApi, NewMediaItem, OAuthConfig, PhotosApi, PublishPlan, Publisher, Sleeper,
-    TokenCipher, TokenEndpoint, TokenError, TokenResponse, MAX_BATCH, RATE_LIMIT_FLOOR,
+    HttpPhotosApi, NewMediaItem, OAuthConfig, PhotosApi, PublishOutcome, PublishPlan, Publisher,
+    Skipped, Sleeper, TokenCipher, TokenEndpoint, TokenError, TokenResponse, MAX_BATCH,
+    RATE_LIMIT_FLOOR,
 };
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -1154,4 +1155,90 @@ fn computing_a_plan_does_not_count_as_having_reviewed_one() {
 
     assert!(err.to_string().contains("no dry run"), "got {err}");
     assert_eq!(api.upload_count(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// What the summary says
+// ---------------------------------------------------------------------------
+
+fn refused(stem: &str, reason: &str) -> Skipped {
+    Skipped {
+        stem: stem.into(),
+        reason: reason.into(),
+    }
+}
+
+/// MV-16.5 asks for "which and why". A count answers neither.
+///
+/// The publishing folder keeps a file that failed, so **which** can be
+/// recovered by looking in it. **Why** cannot be recovered from anywhere: it
+/// lives in the outcome for the length of the job and is then gone, and it is
+/// the only thing that decides whether to retry the file, repair it or drop it.
+#[test]
+fn a_failed_photograph_is_named_with_its_reason() {
+    let outcome = PublishOutcome {
+        created: 3,
+        failed: vec![refused("broken.jpg", "the file is empty")],
+        ..PublishOutcome::default()
+    };
+
+    let said = outcome.describe();
+    assert!(said.contains("3 published"), "{said}");
+    assert!(said.contains("broken.jpg"), "names the file: {said}");
+    assert!(said.contains("the file is empty"), "says why: {said}");
+}
+
+/// A run where everything failed has one cause. Four hundred names is not a
+/// summary, so three are shown and the rest counted.
+#[test]
+fn a_great_many_failures_are_counted_rather_than_listed() {
+    let failed: Vec<Skipped> = (1..=10)
+        .map(|n| refused(&format!("frame-{n:02}.jpg"), "no answer"))
+        .collect();
+    let outcome = PublishOutcome {
+        failed,
+        ..PublishOutcome::default()
+    };
+
+    let said = outcome.describe();
+    assert!(said.contains("10 failed"), "{said}");
+    assert!(said.contains("frame-01.jpg"), "{said}");
+    assert!(said.contains("frame-03.jpg"), "{said}");
+    assert!(
+        !said.contains("frame-04.jpg"),
+        "the fourth is counted, not named: {said}"
+    );
+    assert!(said.contains("and 7 more"), "{said}");
+}
+
+/// Unconfirmed is the one that needs a person: F15 cannot delete, so the
+/// instruction to go and look must arrive with the name of what to look for.
+#[test]
+fn an_unconfirmed_photograph_is_named_too() {
+    let outcome = PublishOutcome {
+        created: 1,
+        unconfirmed: vec![refused("P9071308.jpg", "batchCreate answered short")],
+        ..PublishOutcome::default()
+    };
+
+    let said = outcome.describe();
+    assert!(said.contains("P9071308.jpg"), "{said}");
+    assert!(said.contains("check Google Photos"), "{said}");
+}
+
+/// Skipped stays a count on purpose: the ordinary skip is "already uploaded",
+/// it arrives in bulk, and it asks nothing of anybody.
+#[test]
+fn skipped_photographs_stay_a_count() {
+    let outcome = PublishOutcome {
+        skipped: vec![
+            refused("a.jpg", "already uploaded"),
+            refused("b.jpg", "already uploaded"),
+        ],
+        ..PublishOutcome::default()
+    };
+
+    let said = outcome.describe();
+    assert!(said.contains("2 skipped"), "{said}");
+    assert!(!said.contains("a.jpg"), "not named: {said}");
 }

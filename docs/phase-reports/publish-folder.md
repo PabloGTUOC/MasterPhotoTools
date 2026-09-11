@@ -153,3 +153,47 @@ that will look wrong in Google Photos beside the rest.
 - **Nothing has published a real photograph this way.** Every claim above is about the pipeline
   being faithful to its own rules. Whether Google receives what we think we sent is MV-16.3, and
   whether the folder empties correctly afterwards is MV-16.4.
+
+## MV-16 on the real thing — 2026-09-11
+
+Five of the eight run against the live server, the real ledger and the connected account.
+**16.4, 16.5 and 16.7 pass.** 16.3 sent a photograph and Google confirmed it; **nobody has looked
+in Google Photos to see what date and position it arrived with**, which is the only question that
+item asks. 16.6's refusal is confirmed, its screen is not. 16.1, 16.2 and 16.8 need a card in a
+reader.
+
+Both defects the run found are in what the software **says**, not in what it does. That is worth
+naming: every rule held. The failure was isolated, the folder was emptied of exactly what Google
+confirmed, the tool refused to write into `Publishing`, and the edited folder refused to publish.
+What was wrong each time was the sentence describing it.
+
+**A count is not a report.** MV-16.5's 0-byte file failed and was kept, correctly, and the summary
+said `1 failed`. It did not say which, or why. Which was recoverable — the failed file is the one
+still sitting in the folder. **Why was not recoverable from anywhere**: Google's reason lived in
+`PublishOutcome::failed` for the length of the job and was then dropped, and it is the only thing
+that decides whether to retry the file, repair it or give up on it. `describe` now names up to
+three with their reasons and counts the rest; a run where four hundred failed has one cause, and a
+summary listing all four hundred is not read.
+
+**Google's answer is a pretty-printed JSON document.** Named, the reason arrived as
+`broken.jpg (Google refused the request (400): {` — then two more lines — in the middle of a
+one-line job summary. `ApiError`'s `Display` now flattens whitespace and caps the body at 200
+characters. The cap is not for Google, whose errors are short: it is for the day a proxy or a
+captive portal answers instead, with an HTML page.
+
+**"No dry run" was true and useless.** A folder session id *is* a hash of the folder's contents, so
+editing the folder makes a session nobody reviewed — refused, correctly. But the refusal came from
+the generic `Publisher`, which said *"session folder-564fb… has had no dry run"* to somebody who
+had run one thirty seconds earlier. A safeguard that describes itself as a bug gets worked around.
+`publish_folder` now answers for itself and offers the explanation that is true nine times in ten:
+a file has been added, removed or edited since.
+
+One thing that passed for a reason worth recording. MV-16.7 refuses a tool writing into
+`Publishing` — and the configured folder is deliberately **outside** the library roots, so the
+refusal could have come from G6 with the message *"outside the configured library roots"*: true,
+unhelpful, and pointing at the wrong problem. The publishing check runs first, so it says what it
+means.
+
+Gates: `fmt`, `clippy -D warnings`, **705 workspace, 620 core**. Seven new tests, all of them
+asserting what a message says, because that is what broke.
+

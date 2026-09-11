@@ -250,6 +250,27 @@ pub fn publish_folder(
 
     let plan = plan_folder(dir, ledger)?;
 
+    // `Publisher` refuses a session with no dry run, and its message says
+    // exactly that. For a folder the session id *is* the folder's contents, so
+    // the usual way to arrive here is not "nobody reviewed it" but "somebody
+    // reviewed it and then the folder changed" — and being told there was no
+    // dry run, seconds after running one, reads as a bug rather than as the
+    // safeguard working. Say which it was while we still know.
+    if ledger
+        .dry_run_at(&plan.session_id)
+        .map_err(|e| Error::Internal(e.to_string()))?
+        .is_none()
+    {
+        return Err(Error::Config(
+            "the publishing folder has not been reviewed as it stands now. Google Photos \
+             cannot delete what it has created, so a mistaken publish is cleaned up by \
+             hand — run a dry run over the folder and read it before publishing \
+             (specification §9.2 rule 3). If you already ran one, a file has been added, \
+             removed or edited since."
+                .to_string(),
+        ));
+    }
+
     let publisher = crate::publish::Publisher {
         ledger,
         api,
@@ -506,6 +527,56 @@ mod tests {
             "the refusal should name what is missing: {err}"
         );
         assert!(dir.join("a.jpg").exists(), "and nothing was touched");
+    }
+
+    /// MV-16.6 in the field: review the folder, add a file, press publish.
+    ///
+    /// The session id is the folder's contents, so adding a file makes a
+    /// session nobody has reviewed — correct, and refused. What it must not do
+    /// is answer "this session has had no dry run" to somebody who ran one
+    /// thirty seconds ago; that reads as the safeguard being broken rather
+    /// than working.
+    #[test]
+    fn a_folder_edited_after_its_dry_run_is_told_why_it_was_refused() {
+        use crate::config::Config;
+
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("Publishing");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("a.jpg"), b"one").unwrap();
+        let dir = dir.canonicalize().unwrap();
+
+        let config = Config {
+            publishing_dir: Some(dir.clone()),
+            ..Config::default()
+        };
+        let ledger = ledger();
+
+        // Reviewed as it stood.
+        dry_run_folder(&dir, &ledger).unwrap();
+
+        // Then edited.
+        std::fs::write(dir.join("b.jpg"), b"two").unwrap();
+
+        let err = publish_folder(
+            &dir,
+            &config,
+            &ledger,
+            &crate::publish::HttpPhotosApi::new(),
+            &NoTokens,
+            &crate::publish::RealSleeper,
+            &crate::jobs::InMemoryProgress::new(),
+        )
+        .unwrap_err();
+
+        let said = err.to_string();
+        assert!(said.contains("dry run"), "{said}");
+        assert!(
+            said.contains("added, removed or edited"),
+            "it must offer the explanation that is actually true here: {said}"
+        );
+        assert!(dir.join("a.jpg").exists(), "and nothing was touched");
+        assert!(dir.join("b.jpg").exists());
     }
 
     /// Never asked for a token: the refusal happens before any network work.

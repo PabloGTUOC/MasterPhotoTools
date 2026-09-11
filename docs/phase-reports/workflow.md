@@ -102,6 +102,44 @@ MV-16 covers publishing end to end, and `check:layout` holds the arithmetic: **1
 changed**. Both typechecks, both builds, both `check:transport` runs, `check:layout` at 11 routes
 and `check:ingest` all pass.
 
+## WF-6 — the tabs in workflow order, numbered
+
+The screens were in the order they were built in. Dates and Rename led because they were first;
+Geotag sat where it had been appended; `Sheet` and `Transform` split the conversion tools from the
+tools that consume their output, so TIFF and RAW came *after* Border, which is the one order in
+which they are useless.
+
+They now read as the work is done, and they carry the step number:
+
+| | | |
+|---|---|---|
+| 01 | Ingest | desktop only — the card reader is on the Mac (§2.3) |
+| 02 | Dates | |
+| 03 | Rename | the name is built out of the date, so the date is fixed first |
+| 04 | Geotag | a position is matched on time, so the time must be right |
+| 05 | TIFF → JPEG | |
+| 06 | RAW → JPEG | the tools below only read JPEG |
+| 07 | Split | |
+| 08 | Border | a border drawn before the split would be cut in half by it |
+| 09 | Sheet | not a step: a sheet is made *from* a set, not applied to each |
+| 10 | Transform | not a step: the escape hatch for a one-off rotate or resize |
+| 11 | Publish | web only — the Google refresh token lives on one machine (§2.3) |
+
+**The number is the step, not the position in a menu.** Geotag is `04` on the Mac and `04` on a
+phone, even though the desktop sidebar begins at `01` and the web bar begins at `02`. The gap on
+the web is the point: somebody looking at a phone can see that step 01 is not there. `FIRST_SHARED_STEP`
+and `PUBLISH_STEP` in `routes.ts` are what make the two agree.
+
+Doing this found a second list. **The web dashboard's tool cards were hand-maintained**, and had
+drifted exactly as `routes.ts`'s own comment warns a copied list will: they were in a third order
+and were missing **Geotag and RAW to JPEG entirely** — two tabs that had been shipped, used and
+tested, and that nobody could reach from the screen that exists to list the tools. The cards are now
+built from `sharedToolLinks`, with only the longer name and the one-line note held locally, so the
+dashboard can no longer disagree with the tab bar about what exists.
+
+No Rust changed. `check:layout` re-run: **11 routes clean at 390 px**, its route list reordered too
+so the screenshots in `layout-proof/` read the way the navigation does.
+
 ## Not done, deliberately
 
 - **WF-5.** `ingest::handoff`, `ingest::staging`, `ingest::remediation`, `BulkActions.vue`, and the

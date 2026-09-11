@@ -31,8 +31,11 @@ large needs to cross the network.
 location, and says what needs doing and which tab does it. Then it copies the
 frames that passed to a folder you choose.
 
-**The tools** — dates, geotagging, RAW and TIFF conversion, borders, half-frame
-splitting, renaming — work on that folder.
+**The tools** work on that folder, and the tabs are numbered in the order the
+work is done: dates, then names, then geotagging, then TIFF and RAW conversion,
+then half-frame splitting, then borders. Step 01 is Ingest and lives on the Mac;
+the last step is Publish and lives on the web, so neither application shows the
+whole run.
 
 **Publish** takes one designated folder. Copy photographs into it, review what
 would go, and it uploads them to Google Photos and empties the folder of

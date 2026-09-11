@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { sharedToolLinks } from '@ui/routes';
+import { PUBLISH_STEP, sharedToolLinks, stepLabel } from '@ui/routes';
 import { authReady, initAuth, isConfigured, signIn, signOutOfPhotoTools, user } from './auth';
 
+/**
+ * The bar reads as the workflow does, and the numbers are the workflow's own:
+ * step 01 is Ingest, which happens on the Mac, so this bar starts at 02. The
+ * gap is the point — somebody looking at a phone can see that the first step
+ * is not here. Home is the dashboard rather than a step, so it carries no
+ * number.
+ */
 const links = [
-  { to: '/', label: 'Home' },
-  { to: '/publish', label: 'Publish' },
+  { to: '/', label: 'Home', step: '' },
   ...sharedToolLinks,
+  { to: '/publish', label: 'Publish', step: stepLabel(PUBLISH_STEP) },
 ];
 
 /** The status bar's live clock (§5.8), monospaced and always two digits. */
@@ -55,7 +62,7 @@ onUnmounted(() => window.clearInterval(ticking));
 
     <nav class="tabs" aria-label="Tools">
       <RouterLink v-for="link in links" :key="link.to" :to="link.to" class="tab">
-        {{ link.label }}
+        <span v-if="link.step" class="tab__step">{{ link.step }}</span>{{ link.label }}
       </RouterLink>
     </nav>
 
@@ -177,6 +184,14 @@ onUnmounted(() => window.clearInterval(ticking));
 }
 .tab:hover {
   color: var(--text);
+}
+
+/* The step number, not the label: dimmer than whatever it precedes, including
+   the active tab's accent, so the eye lands on the word first. */
+.tab__step {
+  margin-right: 0.5ch;
+  color: var(--text-disabled);
+  text-shadow: none;
 }
 .tab.router-link-exact-active {
   color: var(--accent);

@@ -42,9 +42,11 @@ const TYPES = {
   '.json': 'application/json',
 };
 
+// Workflow order, so the screenshots in `layout-proof/` read the way the
+// navigation bar does.
 const ROUTES = [
-  '/', '/publish', '/dates', '/rename', '/geotag',
-  '/split', '/contact-sheet', '/transform', '/border', '/raw-to-jpeg', '/tiff-to-jpeg',
+  '/', '/dates', '/rename', '/geotag', '/tiff-to-jpeg', '/raw-to-jpeg',
+  '/split', '/border', '/contact-sheet', '/transform', '/publish',
 ];
 
 if (!existsSync(DIST)) {

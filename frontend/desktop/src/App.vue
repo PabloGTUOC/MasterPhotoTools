@@ -14,10 +14,15 @@
  * it — a zone that can never change is not information.
  */
 import { onMounted, onUnmounted, ref } from 'vue';
-import { sharedToolLinks } from '@ui/routes';
+import { sharedToolLinks, stepLabel } from '@ui/routes';
 
+/**
+ * The sidebar reads as the workflow does. Ingest is step 01 because it is
+ * where a card enters, and the shared tools number on from there; publishing
+ * is the last step and is not offered here (`docs/workflow-plan.md`).
+ */
 const links = [
-  { to: '/', label: 'Ingest' },
+  { to: '/', label: 'Ingest', step: stepLabel(1) },
   ...sharedToolLinks,
 ];
 
@@ -45,7 +50,7 @@ onUnmounted(() => window.clearInterval(ticking));
 
       <nav>
         <RouterLink v-for="link in links" :key="link.to" :to="link.to" class="nav-item">
-          {{ link.label }}
+          <span class="nav-item__step">{{ link.step }}</span>{{ link.label }}
         </RouterLink>
       </nav>
 
@@ -123,6 +128,16 @@ nav {
 .nav-item:hover {
   color: var(--text);
   background: var(--bg-panel);
+}
+
+/* Fixed width so the labels line up in a column rather than stepping in and
+   out by a character. Dimmer than the label, including on the active item:
+   the number is an index, the word is the thing. */
+.nav-item__step {
+  display: inline-block;
+  width: 3ch;
+  color: var(--text-disabled);
+  text-shadow: none;
 }
 .nav-item.router-link-exact-active {
   color: var(--accent);

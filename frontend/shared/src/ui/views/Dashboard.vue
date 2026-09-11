@@ -1,19 +1,37 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { api } from '@host/api';
+import { sharedToolLinks } from '@ui/routes';
 
 const version = ref<string | null>(null);
 const reachable = ref<boolean | null>(null);
 
-const tools = [
-  { to: '/dates', name: 'Dates', note: 'Scan and repair capture dates' },
-  { to: '/rename', name: 'Rename', note: 'Batch rename to a sortable scheme' },
-  { to: '/split', name: 'Half-frame split', note: 'Separate two-up film scans' },
-  { to: '/contact-sheet', name: 'Contact sheet', note: 'Proof sheet from a folder' },
-  { to: '/transform', name: 'Transform', note: 'Rotate, resize, convert' },
-  { to: '/border', name: 'Print border', note: 'Place on a print canvas' },
-  { to: '/tiff-to-jpeg', name: 'TIFF to JPEG', note: 'Convert scanner output' },
-];
+/**
+ * The longer name and the one-line note, by path.
+ *
+ * Only this lives here. The cards themselves are built from `sharedToolLinks`,
+ * so the dashboard cannot disagree with the tab bar about what exists or what
+ * order it comes in — which it had: this list was hand-maintained, and by the
+ * time anybody looked it was missing Geotag and RAW to JPEG entirely.
+ */
+const DESCRIBED: Record<string, { name: string; note: string }> = {
+  '/dates': { name: 'Dates', note: 'Scan and repair capture dates' },
+  '/rename': { name: 'Rename', note: 'Batch rename to a sortable scheme' },
+  '/geotag': { name: 'Geotag', note: 'Place photographs from a GPS track' },
+  '/tiff-to-jpeg': { name: 'TIFF to JPEG', note: 'Convert scanner output' },
+  '/raw-to-jpeg': { name: 'RAW to JPEG', note: 'Develop camera raw files' },
+  '/split': { name: 'Half-frame split', note: 'Separate two-up film scans' },
+  '/border': { name: 'Print border', note: 'Place on a print canvas' },
+  '/contact-sheet': { name: 'Contact sheet', note: 'Proof sheet from a folder' },
+  '/transform': { name: 'Transform', note: 'Rotate, resize, convert' },
+};
+
+const tools = sharedToolLinks.map((link) => ({
+  to: link.to,
+  step: link.step,
+  name: DESCRIBED[link.to]?.name ?? link.label,
+  note: DESCRIBED[link.to]?.note ?? '',
+}));
 
 onMounted(async () => {
   try {
@@ -42,6 +60,7 @@ onMounted(async () => {
 
     <nav class="grid">
       <RouterLink v-for="tool in tools" :key="tool.to" :to="tool.to" class="card">
+        <span class="card-step">{{ tool.step }}</span>
         <span class="card-name">{{ tool.name }}</span>
         <span class="card-note">{{ tool.note }}</span>
       </RouterLink>
@@ -120,6 +139,13 @@ onMounted(async () => {
   box-shadow: var(--glow-phosphor);
 }
 
+/* The step, above the name: small type, so no glow. */
+.card-step {
+  font-family: var(--font-label);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--text-disabled);
+}
 .card-name {
   font-family: var(--font-label);
   font-size: 15px;

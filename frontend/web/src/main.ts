@@ -14,9 +14,10 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', component: Dashboard },
-    { path: '/publish', component: Publish },
     // The tabs both applications carry, defined once in `@ui/routes`.
     ...sharedToolRoutes,
+    // Last, as it is the last step of the workflow.
+    { path: '/publish', component: Publish },
   ],
 });
 

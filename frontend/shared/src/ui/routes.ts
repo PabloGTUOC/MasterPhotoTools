@@ -1,5 +1,5 @@
 /**
- * The tabs both applications carry, defined once.
+ * The tabs both applications carry, defined once — **in workflow order**.
  *
  * Every one of these screens is rendered twice, so its path, its label and —
  * for the four that are `ImageTool` with different props — its wording belong
@@ -7,6 +7,13 @@
  * only because nobody had edited one of them: a reworded blurb on the web
  * would have left the desktop describing the same tool differently, and
  * nothing would have failed.
+ *
+ * The order is the order the work is actually done in: dates before names
+ * because the renamer builds a name out of the date, both before geotagging
+ * because a position is matched on time, conversion before the tools that
+ * only read JPEG, and splitting before bordering because a border drawn on a
+ * half-frame scan would be cut in half by the split. It is not alphabetical
+ * and not the order these were built in.
  *
  * What is *not* here is each application's own screens. The web opens on a
  * dashboard and carries `Publish`, because the Google refresh token lives on
@@ -31,6 +38,23 @@ export const sharedToolRoutes = [
   { path: '/rename', component: Rename, meta: { label: 'Rename' } },
   { path: '/geotag', component: Geotag, meta: { label: 'Geotag' } },
   {
+    path: '/tiff-to-jpeg',
+    component: ImageTool,
+    meta: { label: 'TIFF' },
+    props: {
+      operation: 'tiffToJpeg',
+      title: 'TIFF to JPEG',
+      blurb:
+        'Convert scanner output to a distributable format. Multi-page TIFFs produce one numbered JPEG per page.',
+      applyLabel: 'Convert',
+    },
+  },
+  {
+    path: '/raw-to-jpeg',
+    component: RawToJpeg,
+    meta: { label: 'RAW' },
+  },
+  {
     path: '/split',
     component: ImageTool,
     meta: { label: 'Split' },
@@ -42,8 +66,6 @@ export const sharedToolRoutes = [
       applyLabel: 'Split scans',
     },
   },
-  { path: '/contact-sheet', component: ContactSheet, meta: { label: 'Sheet' } },
-  { path: '/transform', component: Transform, meta: { label: 'Transform' } },
   {
     path: '/border',
     component: ImageTool,
@@ -56,27 +78,35 @@ export const sharedToolRoutes = [
       applyLabel: 'Add borders',
     },
   },
-  {
-    path: '/raw-to-jpeg',
-    component: RawToJpeg,
-    meta: { label: 'RAW' },
-  },
-  {
-    path: '/tiff-to-jpeg',
-    component: ImageTool,
-    meta: { label: 'TIFF' },
-    props: {
-      operation: 'tiffToJpeg',
-      title: 'TIFF to JPEG',
-      blurb:
-        'Convert scanner output to a distributable format. Multi-page TIFFs produce one numbered JPEG per page.',
-      applyLabel: 'Convert',
-    },
-  },
+  // Neither of these is a step in the chain above — a contact sheet is made
+  // *from* a set of photographs rather than applied to each, and Transform is
+  // the general-purpose escape hatch for a one-off rotate or resize. They sit
+  // after the chain and before publishing so the numbered run reads straight
+  // through.
+  { path: '/contact-sheet', component: ContactSheet, meta: { label: 'Sheet' } },
+  { path: '/transform', component: Transform, meta: { label: 'Transform' } },
 ];
 
-/** The shared tabs as a navigation bar reads them: a path and a word. */
-export const sharedToolLinks = sharedToolRoutes.map((route) => ({
+/**
+ * Ingest is step 1 and belongs to the desktop, so the shared block starts at 2.
+ *
+ * The number is the step in the workflow, not the position in a menu, which is
+ * why it is computed here and not in either navigation bar: Geotag is 04 on the
+ * Mac and 04 on a phone, even though the two bars begin with different screens.
+ */
+export const FIRST_SHARED_STEP = 2;
+
+/** Publishing is the last step, and only the web application offers it. */
+export const PUBLISH_STEP = FIRST_SHARED_STEP + sharedToolRoutes.length;
+
+/** `2` → `'02'`. Two digits so the labels stay in one column. */
+export function stepLabel(step: number): string {
+  return String(step).padStart(2, '0');
+}
+
+/** The shared tabs as a navigation bar reads them: a path, a word, a step. */
+export const sharedToolLinks = sharedToolRoutes.map((route, index) => ({
   to: route.path,
   label: route.meta.label,
+  step: stepLabel(FIRST_SHARED_STEP + index),
 }));

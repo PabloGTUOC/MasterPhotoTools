@@ -596,9 +596,7 @@ emptied. **And work on copies for MV-16.3 onwards:** these checks upload to Goog
 cannot delete what it receives.
 
 > **Where this stands.** MV-16.3 to MV-16.7 were run on 2026-09-11 against the real server, the
-> real ledger and the connected Google account. **16.4, 16.5 and 16.7 pass.** 16.3 is half done —
-> the photograph was sent and confirmed, but nobody has looked in Google Photos to see the date and
-> the position it arrived with, which is the question the item exists to answer. 16.6's refusal
+> real ledger and the connected Google account. **16.3, 16.4, 16.5 and 16.7 pass.** 16.6's refusal
 > passes; its screen is unchecked. **16.1, 16.2 and 16.8 need a card in a reader** and have not
 > been attempted. Two defects came out of the run, both in what the software *says* rather than
 > what it does; both are fixed and covered by tests.
@@ -617,21 +615,26 @@ cannot delete what it receives.
       clean card; on a mixed card, only the frames without coordinates warn.
       **Result:**
 
-- [ ] **MV-16.3 — A folder publishes to Google Photos with its dates and locations.**
+- [x] **MV-16.3 — A folder publishes to Google Photos with its dates and locations.**
       **§6.4: one photograph first.** The API cannot delete what it creates.
       **Run:** copy **one** geotagged frame into `Publishing`, dry run, publish.
       **Pass:** it appears in Google Photos with the right date *and* the location the Geotag tab
       wrote. If the date is right and the location missing, the question is whether Google reads
       `GPSDateStamp`/`GPSTimeStamp` as we write them.
-      **Result:** *half done — the send is confirmed, the arrival is not.* One frame
-      (`mv16-3.jpg`, an ILCE-7RM5 file re-dated to `2026:09:09 18:00:00 +02:00`) was geotagged
-      through the app: it took a fix carried forward 4,218 s to 51.3856400 N, 2.7134650 W, 170.2 m,
-      with `GPSDateStamp 2026:09:09` and `GPSTimeStamp 14:49:42` — the UTC of the fix, not of the
-      frame, which is what the tag means. Dry run, then publish: `1 published — 1 file(s) removed
-      from the publishing folder (0.9 MB)`. **Whether Google shows that date and that position is
-      still unchecked**, and it is the whole point of this item.
+      **Result:** **passes, end to end.** One frame (`mv16-3.jpg`, an ILCE-7RM5 file re-dated to
+      `2026:09:09 18:00:00 +02:00`) was geotagged through the app: it took a fix carried forward
+      4,218 s to 51.3856400 N, 2.7134650 W, 170.2 m, with `GPSDateStamp 2026:09:09` and
+      `GPSTimeStamp 14:49:42` — the UTC of the *fix*, not of the frame, which is what the tag
+      means. Dry run, then publish: `1 published — 1 file(s) removed from the publishing folder
+      (0.9 MB)`. **Confirmed in Google Photos: the date and the location are both right.**
 
-- [ ] **MV-16.4 — `Publishing` is empty afterwards, and the folder it was copied from is not.**
+      That settles the open question behind this item. Google reads `GPSDateStamp`/`GPSTimeStamp`
+      as we write them, and it dates the item from `DateTimeOriginal` rather than from the upload —
+      which is what the earlier confusion was about, when files dated 2026-01-01 appeared under
+      today's date. The cause there was the metadata copy, not the upload: the tools were dropping
+      EXIF, so there was no date for Google to read.
+
+- [x] **MV-16.4 — `Publishing` is empty afterwards, and the folder it was copied from is not.**
       The deletion is the one irreversible step; this is the check that it removed the second copy.
       **Run:** after MV-16.3.
       **Pass:** `Publishing` holds nothing; the source folder still holds every file; the folder
@@ -640,7 +643,7 @@ cannot delete what it receives.
       folder still held `mv16-3.jpg` and the other four files. The copy in was a copy, not a move,
       so emptying removed the second copy — which is the whole reason `fill` copies.
 
-- [ ] **MV-16.5 — A failed upload leaves that file in place and publishes the rest.**
+- [x] **MV-16.5 — A failed upload leaves that file in place and publishes the rest.**
       Rule 2 in the field: a failure must never be mistaken for a success by the thing that
       deletes.
       **Run:** put three photographs in, and one file that Google will reject — a 0-byte `.jpg`
@@ -670,7 +673,7 @@ cannot delete what it receives.
       greys out in the browser. The code for it is there (`staleReview` in `Publish.vue`); nobody
       has watched it happen.
 
-- [ ] **MV-16.7 — A tool cannot write into `Publishing`.**
+- [x] **MV-16.7 — A tool cannot write into `Publishing`.**
       **Run:** in the Border or TIFF tab, set the output folder to `Publishing`.
       **Pass:** refused, with a message saying to write elsewhere and copy it in.
       **Result:** **passes.** Border with `out_dir` set to `~/Publishing`: *"…is inside the

@@ -157,10 +157,15 @@ that will look wrong in Google Photos beside the rest.
 ## MV-16 on the real thing — 2026-09-11
 
 Five of the eight run against the live server, the real ledger and the connected account.
-**16.4, 16.5 and 16.7 pass.** 16.3 sent a photograph and Google confirmed it; **nobody has looked
-in Google Photos to see what date and position it arrived with**, which is the only question that
-item asks. 16.6's refusal is confirmed, its screen is not. 16.1, 16.2 and 16.8 need a card in a
-reader.
+**16.3, 16.4, 16.5 and 16.7 pass.** 16.6's refusal is confirmed, its screen is not. 16.1, 16.2 and
+16.8 need a card in a reader.
+
+**16.3 is the one that mattered**, and it is now checked the only way it can be: by looking in
+Google Photos. The photograph arrived with the date the camera recorded and the position the
+Geotag tab wrote. So Google does read `GPSDateStamp`/`GPSTimeStamp` as we write them, and it does
+date an item from `DateTimeOriginal` rather than from the upload. The earlier scare — files dated
+2026-01-01 showing under today's date — was never the upload. The tools were dropping EXIF, so
+there was no date for Google to read; that is fixed, and this run is the proof at the far end.
 
 Both defects the run found are in what the software **says**, not in what it does. That is worth
 naming: every rule held. The failure was isolated, the folder was emptied of exactly what Google

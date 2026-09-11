@@ -82,9 +82,12 @@ What is left is more of that, plus the structured half: **72 numbered checks** n
 camera, a NAS, a Google account or somebody's judgement about how a photograph looks. Start at
 [`docs/testing.md`](docs/testing.md).
 
-**Nothing has been published through the new road yet.** Every claim about it is that the pipeline
-is faithful to its own rules — the deletion only removes what Google confirmed, an edited folder
-un-reviews itself. Whether Google receives what we think we sent is MV-16.3.
+**The new road has now carried photographs to Google Photos** — with the date the camera recorded
+and the position the Geotag tab wrote, both confirmed in Google Photos rather than inferred from
+our own logs (MV-16.3). The folder emptied afterwards and the folder it was copied from did not
+(MV-16.4), a file Google rejected stayed behind while the rest went (MV-16.5), and a tool pointed
+at the publishing folder is refused (MV-16.7). What still needs a card in a reader is MV-16.1,
+MV-16.2 and the whole-roll run, MV-16.8.
 
 ## Documents
 

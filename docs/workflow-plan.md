@@ -153,10 +153,16 @@ here.
 ### WF-5 — Retire the handoff, and F13's bulk remediation
 The desktop commands, the server routes, `ingest::handoff`, `ingest::staging`, the `sessions`
 table's card columns and the publish-by-session path — **and** `BulkActions.vue`, `remediate` and
-`ingest::remediation`, which WF-1 left with no caller.
+`ingest::remediation`, which WF-1 left with no caller. Also `hand_off_card`, `stage_card`,
+`ServerConnection`, `server_status` and the desktop's server-settings commands: nothing on that
+machine makes an HTTP request any more.
 
 Both are specification features being withdrawn, not dead code being swept up, so they go together
 in one change that says so.
+
+**The desktop's reachability banner went early**, because it was not code being retired but a
+warning being given for a dependency that no longer existed — and a false alarm teaches somebody to
+ignore the next real one.
 
 **Not before MV-16 passes.** Deleting a working subsystem before its replacement has published a
 real photograph is the wrong order; this step is written down so the intermediate state is

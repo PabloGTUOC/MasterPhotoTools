@@ -2,21 +2,24 @@
 /**
  * The desktop shell.
  *
- * Task 6 — graceful degradation: the server's reachability is shown, and
- * server-backed features disable with a clear indicator. Nothing local breaks
- * when the NAS is off.
+ * **Nothing here needs the server.** Reading a card, checking it, copying it to
+ * a folder and every tool tab call `core` directly on this machine; the one
+ * command that made an HTTP request was the card handoff, and no screen calls
+ * it any more (`docs/workflow-plan.md`).
+ *
+ * It used to carry a reachability probe and a `// SERVER UNREACHABLE //`
+ * banner. Warning about a dependency that no longer exists is worse than
+ * saying nothing: it trains somebody to ignore a warning that might one day
+ * matter. The probe, the banner and the LINKED/LOCAL zone indicator went with
+ * it — a zone that can never change is not information.
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { sharedToolLinks } from '@ui/routes';
-import { desktop, type ServerStatus } from './api';
 
 const links = [
   { to: '/', label: 'Ingest' },
   ...sharedToolLinks,
 ];
-
-const server = ref<ServerStatus | null>(null);
-let timer: number | undefined;
 
 /** The status bar's live clock (§5.8). */
 const clock = ref('');
@@ -25,32 +28,11 @@ function tick() {
   clock.value = new Date().toTimeString().slice(0, 8);
 }
 
-/** The zone dot follows the connection, which is what gates half the screens. */
-const zone = computed(() => (server.value?.reachable ? 'LINKED' : 'LOCAL'));
-
-async function probe() {
-  try {
-    server.value = await desktop.serverStatus();
-  } catch {
-    server.value = {
-      reachable: false,
-      base_url: '',
-      version: null,
-      detail: 'Could not ask about the server.',
-    };
-  }
-}
-
 onMounted(() => {
-  void probe();
-  timer = window.setInterval(probe, 15_000);
   tick();
   ticking = window.setInterval(tick, 1000);
 });
-onUnmounted(() => {
-  window.clearInterval(timer);
-  window.clearInterval(ticking);
-});
+onUnmounted(() => window.clearInterval(ticking));
 </script>
 
 <template>
@@ -68,30 +50,14 @@ onUnmounted(() => {
       </nav>
 
       <div class="spacer"></div>
-
-      <div class="server" :data-reachable="server?.reachable === true">
-        <span class="dot" aria-hidden="true">●</span>
-        <div class="server-text">
-          <strong>{{ server?.reachable ? 'SERVER LINKED' : 'SERVER OFFLINE' }}</strong>
-          <small>{{ server?.reachable ? server?.base_url : (server?.detail ?? 'Checking…') }}</small>
-        </div>
-      </div>
     </aside>
 
     <div class="main">
       <main class="content">
-        <p v-if="server && !server.reachable" class="degraded">
-          <span class="degraded__title">// SERVER UNREACHABLE //</span>
-          The NAS is not answering, so publishing and anything else the server owns is
-          unavailable. Local tools keep working normally.
-        </p>
         <RouterView />
       </main>
 
       <footer class="statusbar">
-        <span class="statusbar__zone" :data-reachable="server?.reachable === true">
-          ● ZONE: {{ zone }}
-        </span>
         <span class="statusbar__mid">PHOTOTOOLS v0.1.0</span>
         <span class="statusbar__right">{{ clock }}</span>
       </footer>
@@ -169,42 +135,6 @@ nav {
   flex: 1;
 }
 
-.server {
-  display: flex;
-  gap: var(--space-2);
-  align-items: flex-start;
-  padding: var(--space-3);
-  border: var(--border-hair);
-  border-radius: var(--radius-none);
-  font-family: var(--font-body);
-  font-size: 12px;
-}
-.server strong {
-  font-family: var(--font-label);
-  font-weight: 400;
-  letter-spacing: 0.08em;
-  color: var(--danger);
-}
-.server[data-reachable='true'] strong {
-  color: var(--accent);
-}
-.dot {
-  color: var(--danger);
-  line-height: 1.2;
-  flex: 0 0 auto;
-}
-.server[data-reachable='true'] .dot {
-  color: var(--accent);
-}
-.server-text {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-.server-text small {
-  color: var(--text-muted);
-  overflow-wrap: anywhere;
-}
 
 /* --- main column --------------------------------------------------------- */
 
@@ -220,22 +150,6 @@ nav {
   overflow-y: auto;
 }
 
-.degraded {
-  display: grid;
-  gap: var(--space-2);
-  border: 1px solid var(--accent-warm);
-  color: var(--text);
-  border-radius: var(--radius-none);
-  padding: var(--space-3);
-  margin-bottom: var(--space-5);
-  font-size: 13px;
-}
-.degraded__title {
-  font-family: var(--font-label);
-  letter-spacing: 0.1em;
-  color: var(--accent-warm);
-  text-shadow: var(--glow-amber);
-}
 
 /* --- status bar (§5.8) ---------------------------------------------------- */
 
@@ -253,11 +167,5 @@ nav {
   letter-spacing: 0.1em;
   color: var(--text-muted);
   white-space: nowrap;
-}
-.statusbar__zone {
-  color: var(--danger);
-}
-.statusbar__zone[data-reachable='true'] {
-  color: var(--accent);
 }
 </style>

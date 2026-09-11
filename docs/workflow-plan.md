@@ -134,10 +134,17 @@ off Ingest, and the status line now points at the RAW tab rather than at a butto
 fields did not line up at 390 px, because the earlier fix for this on the card screen reserved the
 *hint*'s line and not the *label*'s, and that screen is never measured at 390 px.
 
-### WF-4 — Publish is the folder, and only the folder
-Remove the session panel and its logic. The folder panel becomes the screen.
-**Done when** the tab reads the folder on opening, copies in, dry runs, publishes and empties, with
-no session anywhere.
+### WF-4 — Publish is the folder, and only the folder ✔
+The session panel, the plan-detail panel it rendered, the `sessionId`, `plan`, `reviewed` and
+`canPublish` state, the `dryRun`, `publish` and `onSessionChanged` functions, and the two style
+rules that framed one road against the other — all gone. With one road left there is nothing to
+distinguish it from, so the panel's own heading went too: the screen is the folder.
+
+The `publishDryRun` and `publish` methods stay on the web client. They are the transport for routes
+that are still live, and they are withdrawn with those routes in WF-5 rather than half-retired
+here.
+
+**Done:** typecheck, build, transport check, and 11 routes clean at 390 px.
 
 ### WF-5 — Retire the handoff, and F13's bulk remediation
 The desktop commands, the server routes, `ingest::handoff`, `ingest::staging`, the `sessions`

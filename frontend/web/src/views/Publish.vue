@@ -1,39 +1,34 @@
 <script setup lang="ts">
 /**
- * Publishing a session to Google Photos (Phase 13, task 4).
+ * Publishing the publishing folder to Google Photos.
  *
  * A web view, and deliberately not a shared one. The Google refresh token lives
  * on exactly one machine (§2.3), so publishing is something only a build
  * talking to the server can do.
  *
+ * **One folder, and only that folder.** Copy photographs in, review what would
+ * go, publish, and the folder is emptied of everything Google confirmed. The
+ * card-handoff session this screen used to publish is gone from it
+ * (`docs/workflow-plan.md`); the road it belonged to is retired separately.
+ *
  * **Publish is unreachable until a dry run has been reviewed.** That is §9.2
  * rule 3, and it is enforced on the server as well — the button is disabled
  * here because a disabled button is a better explanation than a rejection, not
- * because the server trusts this screen.
+ * because the server trusts this screen. The review is bound to the exact bytes
+ * in the folder, so editing it afterwards un-reviews it.
  */
 import { computed, onMounted, ref } from 'vue';
-import type { ConnectorStatus, FolderPublishPlan, PublishPlan } from '@phototools/shared';
+import type { ConnectorStatus, FolderPublishPlan } from '@phototools/shared';
 import JobProgress from '@ui/components/JobProgress.vue';
 import PathListField from '@ui/components/PathListField.vue';
 import { useRoots } from '@ui/useRoots';
 import { api } from '../api';
 import { server } from '../api';
 
-const sessionId = ref('');
 const connector = ref<ConnectorStatus | null>(null);
-const plan = ref<PublishPlan | null>(null);
 const jobId = ref<string | null>(null);
 const busy = ref(false);
 const failure = ref<string | null>(null);
-
-/**
- * The plan the person actually looked at.
- *
- * Reset whenever the session changes, because a dry run of one card says
- * nothing about another — and the whole safeguard is that somebody reviewed
- * *this* one.
- */
-const reviewed = ref(false);
 
 // --- publishing a folder (docs/publish-folder-plan.md) --------------------
 //
@@ -72,14 +67,6 @@ const canPublishFolder = computed(
     !folderChanged.value &&
     !busy.value &&
     (folder.value?.items.length ?? 0) > 0 &&
-    connector.value?.connected === true,
-);
-
-const canPublish = computed(
-  () =>
-    reviewed.value &&
-    !busy.value &&
-    (plan.value?.items.length ?? 0) > 0 &&
     connector.value?.connected === true,
 );
 
@@ -164,34 +151,6 @@ async function disconnect() {
   await refreshConnector();
 }
 
-async function dryRun() {
-  const id = sessionId.value.trim();
-  if (!id) {
-    failure.value = 'Enter the session the desktop reported when it handed the card over.';
-    return;
-  }
-  const result = await guard(() => server.publishDryRun(id));
-  if (result) {
-    plan.value = result;
-    reviewed.value = true;
-  }
-}
-
-async function publish() {
-  const id = await guard(() => server.publish(sessionId.value.trim()));
-  if (id) {
-    jobId.value = id;
-    // One dry run authorises one publish. Anything after this needs another
-    // look, because what is on the server has changed.
-    reviewed.value = false;
-  }
-}
-
-function onSessionChanged() {
-  plan.value = null;
-  reviewed.value = false;
-}
-
 function megabytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
@@ -238,9 +197,7 @@ onMounted(async () => {
 
     <!-- The folder road. Everything in the publishing folder is uploaded and
          then removed from it; the tools run on the way in. -->
-    <section class="road" aria-label="Publish a folder">
-      <h2 class="road__head">// THE PUBLISHING FOLDER //</h2>
-
+    <section class="road" aria-label="The publishing folder">
       <p v-if="!folder" class="muted small">Reading the folder…</p>
 
       <template v-else>
@@ -314,82 +271,7 @@ onMounted(async () => {
       </template>
     </section>
 
-    <!-- The session road: what the specification describes (§6.3). Still here
-         while folder publishing is being verified against real photographs. -->
-    <section class="road road--older" aria-label="Publish a handed-over session">
-      <h2 class="road__head">// A HANDED-OVER SESSION //</h2>
-      <p class="muted small">
-        The older road: the desktop hands a card to the server, and the session is published from
-        here. Unchanged, and still the one the specification describes.
-      </p>
-
-    <label class="field">
-      <span>Session</span>
-      <input
-        v-model="sessionId"
-        type="text"
-        placeholder="the id the desktop reported after handing over"
-        @input="onSessionChanged"
-      />
-    </label>
-
-    <div class="row">
-      <button type="button" class="secondary" :disabled="busy" @click="dryRun">
-        Dry run
-      </button>
-      <button type="button" class="primary" :disabled="!canPublish" @click="publish">
-        Publish
-      </button>
-    </div>
-
-    <p v-if="!reviewed" class="muted small" data-testid="gate-explanation">
-      Publish is unavailable until a dry run for this session has been reviewed.
-    </p>
-    </section>
-
     <p v-if="failure" class="error">{{ failure }}</p>
-
-    <section v-if="plan" class="plan" aria-live="polite">
-      <h2>{{ plan.items.length }} photograph{{ plan.items.length === 1 ? '' : 's' }}</h2>
-      <ul class="facts">
-        <li>{{ megabytes(plan.total_bytes) }} to upload</li>
-        <li>{{ plan.upload_requests }} upload request{{ plan.upload_requests === 1 ? '' : 's' }}</li>
-        <li>
-          {{ plan.batch_create_requests }} batch call{{ plan.batch_create_requests === 1 ? '' : 's' }}
-          <span class="muted">(fifty photographs each, at most)</span>
-        </li>
-      </ul>
-
-      <p v-if="plan.resuming.created" class="muted small">
-        {{ plan.resuming.created }} already published and will be left alone.
-      </p>
-
-      <p v-if="plan.resuming.unconfirmed" class="warning">
-        {{ plan.resuming.unconfirmed }} shot{{ plan.resuming.unconfirmed === 1 ? '' : 's' }}
-        were sent to Google without an answer coming back. They are not retried,
-        because a second attempt would duplicate any that succeeded and Google
-        Photos cannot delete. Look for them in the library before publishing
-        again.
-      </p>
-
-      <details v-if="plan.skipped.length">
-        <summary>{{ plan.skipped.length }} skipped</summary>
-        <ul class="skipped">
-          <li v-for="skip in plan.skipped" :key="skip.stem" class="small">
-            <strong>{{ skip.stem }}</strong> — {{ skip.reason }}
-          </li>
-        </ul>
-      </details>
-
-      <details v-if="plan.items.length">
-        <summary>What would be published</summary>
-        <ul class="items">
-          <li v-for="item in plan.items" :key="item.shot_id" class="small mono">
-            {{ item.stem }}
-          </li>
-        </ul>
-      </details>
-    </section>
 
     <JobProgress :job-id="jobId" />
   </section>
@@ -403,19 +285,6 @@ onMounted(async () => {
   border: var(--border-hair);
   background: var(--bg-panel);
   padding: var(--space-3);
-}
-/* Present, and visibly the secondary of the two. */
-.road--older {
-  background: transparent;
-}
-.road__head {
-  font-family: var(--font-label);
-  font-size: 13px;
-  letter-spacing: 0.1em;
-  color: var(--accent);
-}
-.road--older .road__head {
-  color: var(--text-muted);
 }
 .rows {
   border: var(--border-hair);

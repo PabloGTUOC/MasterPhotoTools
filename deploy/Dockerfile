@@ -71,6 +71,17 @@ RUN npm --prefix frontend/shared ci && npm --prefix frontend/web ci
 
 COPY frontend/ frontend/
 
+# The Firebase web configuration, compiled into the bundle. .dockerignore keeps
+# frontend/web/.env out of the context, so it arrives as build arguments —
+# deploy/deploy.sh passes them from that file. None is a secret: all four are
+# in the JavaScript every browser downloads. Declared here, after the installs,
+# so changing one rebuilds the bundle and not the dependencies. Vite reads
+# VITE_* from the process environment, which is what an ARG is to a RUN.
+ARG VITE_FIREBASE_API_KEY
+ARG VITE_FIREBASE_AUTH_DOMAIN
+ARG VITE_FIREBASE_PROJECT_ID
+ARG VITE_FIREBASE_APP_ID
+
 # The shared client is consumed as compiled output, so it is built first; the
 # web build resolves `@phototools/shared` to the dist this produces.
 RUN npm --prefix frontend/shared run build \

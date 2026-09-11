@@ -37,11 +37,21 @@ or the build leaves the network, and the only credential is the SSH key.
 
 ```sh
 cp deploy/deploy.env.example deploy/deploy.env   # set NAS_SSH
-cp deploy/.env.example deploy/.env               # Firebase, Google, thresholds
 
 ./deploy/deploy.sh --check     # looks, changes nothing
 ./deploy/deploy.sh             # builds, ships, starts, confirms
 ```
+
+**No configuration is typed twice.** The server's Firebase and Google values are
+taken from the repository-root `.env` the server already runs with on the Mac —
+only the keys that mean the same on both machines, never `ROOTS`, the database,
+the port or the redirect URI. The web UI's Firebase configuration comes from
+`frontend/web/.env` and goes into the build as arguments, because
+`.dockerignore` keeps every `.env` out of the build context; without them the
+image would ship a web UI nobody can sign in to. `--check` refuses if the two
+files name different Firebase projects — sign-in would succeed and the server
+would refuse every token. `deploy/.env` is optional and wins over both, for
+what must differ on the NAS: `GOOGLE_OAUTH_REDIRECT_URI` above all.
 
 **`--check` is how you find the paths**, rather than reading them off the NAS
 first: with `LIBRARY_PATH` unset it lists the shared folders it can see and asks
@@ -57,8 +67,16 @@ would delete photographs: a publishing folder that **is** the library, or one
 that **contains** it. The server refuses them too; finding out here costs a
 second instead of a whole image transfer.
 
-Both `deploy/.env` and `deploy/deploy.env` are gitignored. The first is sent to
-the NAS with mode 600; the second never leaves this machine.
+`REMOTE_DIR` in `deploy/deploy.env` is where the deployment lives on the NAS —
+the compose file, the `.env`, and by default `data/` (the ledger) and
+`publishing/` beneath it. On OMV it belongs beside the other services, in
+`/srv/dev-disk-by-uuid-…/docker-data/MasterPhotoTools`. `--check` confirms the SSH
+user can write there, since a folder made in the OMV web UI or as root often
+cannot be.
+
+Every `.env` and `deploy/deploy.env` are gitignored. What the server needs is
+assembled from them and sent to the NAS as one `.env` with mode 600;
+`deploy/deploy.env` itself never leaves this machine.
 
 ### Build and run by hand
 
@@ -396,4 +414,4 @@ Nothing prunes it, so it grows with every card
 | `/` is a 404, `/api/health` works | `WEB_ROOT` holds no `index.html`. The server logs which path it looked at. |
 | Connecting Google returns an error the logs never mention | The redirect URI does not match the OAuth client exactly. |
 | Publishing refuses to store the token | `GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY` unset or not 32 hex-encoded bytes. |
-| The container is `unhealthy` | The health check is `curl` against `/api/health` inside the container. `docker compose logs server` — a failed `Ledger::open` is the usual reason, and it means `/data` is not writable by uid 10001. |
+| The container is `unhealthy` | The health check is `curl` against `/api/health` inside the container. `docker compose logs masterphototools` — a failed `Ledger::open` is the usual reason, and it means `/data` is not writable by uid 10001. |

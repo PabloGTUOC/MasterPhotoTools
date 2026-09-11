@@ -19,7 +19,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 CONFIG="deploy/deploy.env"
-IMAGE="phototools-server"
+# Must agree with deploy/docker-compose.yml.
+IMAGE="masterphototools"
+CONTAINER="MasterPhotoTools"
 TAG="${PHOTOTOOLS_TAG:-latest}"
 
 # The NAS is x86-64; this Mac is ARM. buildx cross-builds, which works and is
@@ -60,10 +62,30 @@ set -a; . "./$CONFIG"; set +a
 [ -n "${NAS_SSH:-}" ] || die "NAS_SSH is not set in $CONFIG. It is anything ssh understands: pablo@nas.local, or a host from ~/.ssh/config."
 REMOTE_DIR="${REMOTE_DIR:-/srv/phototools}"
 
-# ConnectTimeout because the failure this guards against is a NAS that is
-# asleep or renamed, and ssh's own default is to sit there for two minutes
-# before saying so.
-nas() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$NAS_SSH" "$@"; }
+# One connection, reused by every ssh and scp below.
+#
+# A NAS reached by password is the normal case — OMV sets up an account, not a
+# key — and this script makes a dozen connections. Without multiplexing that is
+# a dozen password prompts, which is the kind of thing that makes people paste
+# their password into a script. The master is opened once, interactively, and
+# everything after it rides the same socket; a key, if one is installed, simply
+# means the prompt never appears.
+#
+# ConnectTimeout because the failure this guards against is a NAS that is asleep
+# or renamed, and ssh's own default is to sit there for two minutes before
+# saying so.
+CONTROL_DIR="$(mktemp -d)"
+SSH_OPTS=(-o "ControlPath=$CONTROL_DIR/cm" -o ConnectTimeout=10)
+
+REMOTE_ENV=""
+cleanup() {
+    [ -n "$REMOTE_ENV" ] && rm -f "$REMOTE_ENV"
+    ssh -o "ControlPath=$CONTROL_DIR/cm" -O exit "$NAS_SSH" 2>/dev/null || true
+    rm -rf "$CONTROL_DIR"
+}
+trap cleanup EXIT
+
+nas() { ssh "${SSH_OPTS[@]}" "$NAS_SSH" "$@"; }
 
 # ---------------------------------------------------------------------------
 # 1. Reach the NAS, and find out what it is
@@ -71,7 +93,22 @@ nas() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$NAS_SSH" "$@"; }
 
 step "The NAS"
 
-nas true 2>/dev/null || die "Cannot ssh to $NAS_SSH without a password. Check the host, or run ssh-copy-id."
+# Interactive, and the only place a password can be asked for. If one is
+# wanted, it is ssh asking — not this script, which never sees it.
+#
+# The master stays up until cleanup closes it, not for a fixed time. Between
+# the checks and the upload sits a cross-compile that runs far longer than any
+# timeout worth choosing, with no ssh traffic at all; a master that expired in
+# the middle would turn every remaining step into another password prompt.
+# The keepalive stops the NAS dropping a connection that idle.
+MASTER_OPTS=(-o ConnectTimeout=10 -o "ControlPath=$CONTROL_DIR/cm"
+             -o ControlMaster=yes -o ControlPersist=yes -o ServerAliveInterval=60)
+if ! ssh -o BatchMode=yes "${MASTER_OPTS[@]}" -fN "$NAS_SSH" 2>/dev/null; then
+    note "no key installed for $NAS_SSH, so ssh will ask for its password once"
+    ssh "${MASTER_OPTS[@]}" -fN "$NAS_SSH" \
+        || die "Cannot connect to $NAS_SSH. Check the host and the username."
+fi
+nas true || die "Connected to $NAS_SSH, but it will not run a command."
 ok "ssh $NAS_SSH"
 
 REMOTE_ARCH="$(nas 'uname -m')"
@@ -89,7 +126,22 @@ if [ "$PLATFORM" != "$REMOTE_PLATFORM" ]; then
 fi
 
 nas 'command -v docker >/dev/null' || die "No docker on the NAS. Install it (OMV: omv-extras → Docker) and try again."
+
+# Having the binary is not being allowed to use it. An OMV account is in
+# `users`, not `docker`, and without this the script would build for twenty
+# minutes and then fail at `docker load` with a socket permission error.
+nas 'docker info >/dev/null 2>&1' \
+    || die "$NAS_SSH has docker but may not use it. As root on the NAS: usermod -aG docker $(nas 'id -un'), then run this again."
 ok "docker $(nas 'docker version --format "{{.Server.Version}}"')"
+
+# A port already published by some other container makes `up -d` fail after
+# the whole build and transfer. Our own container holding it is a redeploy.
+#
+# PORT is a fact about the NAS, so it is set in deploy.env and nowhere else.
+PORT="${PORT:-3000}"
+HOLDER="$(nas "docker ps --filter publish=$PORT --format '{{.Names}}'" | grep -vx "$CONTAINER" || true)"
+[ -z "$HOLDER" ] || die "Port $PORT on the NAS is already published by $HOLDER. Set PORT in deploy/.env to a free one."
+ok "port $PORT is free"
 
 if nas 'docker compose version >/dev/null 2>&1'; then
     COMPOSE='docker compose'
@@ -101,6 +153,7 @@ else
 fi
 ok "compose available as '$COMPOSE'"
 
+
 # ---------------------------------------------------------------------------
 # 2. The three directories, and who may write to them
 # ---------------------------------------------------------------------------
@@ -111,6 +164,19 @@ ok "compose available as '$COMPOSE'"
 # first write — with a permission error nobody sees until they look for it.
 
 step "Directories"
+
+# The deployment's own folder — compose file, .env, and by default the ledger
+# and the publishing folder beneath it. Checked now rather than at the mkdir in
+# step 5: a folder made through the OMV web UI, or as root, is often not
+# writable by the SSH user, and finding that out after a cross-build wastes the
+# build.
+if nas "test -d '$REMOTE_DIR'"; then
+    nas "test -w '$REMOTE_DIR' || sudo -n true 2>/dev/null" \
+        || die "$NAS_SSH cannot write to $REMOTE_DIR and has no passwordless sudo. On the NAS: sudo chown $(nas 'id -un') '$REMOTE_DIR'"
+    ok "deployment   $REMOTE_DIR  (owned by $(nas "stat -c '%U:%G' '$REMOTE_DIR'"))"
+else
+    ok "deployment   $REMOTE_DIR  (will be created)"
+fi
 
 [ -n "${LIBRARY_PATH:-}" ] || {
     printf '\n  %sLIBRARY_PATH is not set.%s Shared folders on this NAS:\n\n' "$BOLD" "$RESET"
@@ -147,51 +213,123 @@ ok "publishing   $PUBLISHING_PATH"
 # Whose uid owns the library decides what the container must run as. The image
 # ships uid 10001; if the library belongs to somebody else, say so rather than
 # quietly writing as the wrong user.
-LIB_OWNER="$(nas "stat -c '%u:%g' '$LIBRARY_PATH'")"
+#
+# The owner of the *photographs*, not of the folder: on OMV a shared folder is
+# root's, and the files in it belong to whoever copied them in over SMB. The
+# tools rewrite those files, and a replacement written by another uid is a file
+# its owner can no longer edit from the Mac. A sample is enough — a library is
+# one person's files. The folder's owner is the fallback for an empty library.
+LIB_OWNER="$(nas "find '$LIBRARY_PATH' -type f ! -name '.*' 2>/dev/null | head -500 \
+                  | xargs -r -d '\n' stat -c '%u:%g' | sort | uniq -c | sort -rn \
+                  | awk 'NR==1 {print \$2}'")"
+[ -n "$LIB_OWNER" ] || LIB_OWNER="$(nas "stat -c '%u:%g' '$LIBRARY_PATH'")"
+LIB_OWNER_NAME="$(nas "getent passwd '${LIB_OWNER%%:*}' | cut -d: -f1")"
 RUN_AS="${PHOTOTOOLS_UID:-}:${PHOTOTOOLS_GID:-}"
 if [ "$RUN_AS" = ":" ]; then
+    # Root in the container is root on every file in the library, and the
+    # image drops privileges precisely so that nothing has to trust it.
+    [ "${LIB_OWNER%%:*}" != 0 ] \
+        || die "The photographs in $LIBRARY_PATH belong to root, and the container will not run as root. Set PHOTOTOOLS_UID and PHOTOTOOLS_GID in $CONFIG to the account that copies photographs in."
     RUN_AS="$LIB_OWNER"
-    note "no PHOTOTOOLS_UID set, so the container will run as the library's owner, $LIB_OWNER"
+    note "no PHOTOTOOLS_UID set, so the container will run as the photographs' owner, $LIB_OWNER (${LIB_OWNER_NAME:-no name})"
 elif [ "$RUN_AS" != "$LIB_OWNER" ]; then
     warn "container runs as $RUN_AS; the library is owned by $LIB_OWNER"
     note "the tools rewrite metadata in place — make sure $RUN_AS can write there"
 fi
 ok "runs as      $RUN_AS"
 
-if $CHECK_ONLY; then
-    step "Check only — nothing was built, sent or started"
-    printf '  Deploy with: %s./deploy/deploy.sh%s\n\n' "$BOLD" "$RESET"
-    exit 0
-fi
-
 # ---------------------------------------------------------------------------
-# 3. The environment the server will read
+# 3. The environment the server will read, and the one the web UI is built with
 # ---------------------------------------------------------------------------
+#
+# Nothing here is typed a second time. Every value the NAS needs already exists
+# on this Mac, in the files the server and the web UI run with locally:
+#
+#   .env               the server's identity and credentials. Only the keys
+#                      below are taken — ROOTS, the database, the port and the
+#                      redirect URI in it describe this Mac, not the NAS.
+#   frontend/web/.env  the Firebase web configuration, baked into the bundle.
+#   deploy/.env        optional. Anything that must differ on the NAS; it wins.
+#
+# The host paths, the port and the uid come from deploy.env and from what step
+# 2 found, and are written last so neither file can contradict them.
 
-step "Server configuration"
+step "Configuration"
 
-[ -f deploy/.env ] || die "No deploy/.env. Copy deploy/.env.example and fill it in — it holds the Firebase and Google values."
+SHARED_KEYS='FIREBASE_PROJECT_ID|ALLOWED_UIDS|ADMIN_TOKEN|GOOGLE_OAUTH_CLIENT_ID|GOOGLE_OAUTH_CLIENT_SECRET|GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY|MAX_MEGAPIXELS|MAX_OUTPUT_BYTES|MAX_AGE_DAYS|RUST_LOG'
+DEPLOY_OWNED='LIBRARY_PATH|DATA_PATH|PUBLISHING_PATH|PHOTOTOOLS_TAG|PHOTOTOOLS_USER|PORT'
 
-for required in FIREBASE_PROJECT_ID ALLOWED_UIDS; do
-    grep -qE "^${required}=.+" deploy/.env \
-        || die "$required is not set in deploy/.env. ALLOWED_UIDS empty means nobody can sign in."
-done
-ok "deploy/.env has the required values"
+[ -f .env ] || [ -f deploy/.env ] \
+    || die "Neither .env nor deploy/.env exists. The server's Firebase and Google values live in one of them."
 
-# Assembled here and sent with the deployment: the host paths belong to this
-# machine's view of the NAS, and the secrets belong to deploy/.env. Neither is
-# committed.
 REMOTE_ENV="$(mktemp)"
-trap 'rm -f "$REMOTE_ENV"' EXIT
+chmod 600 "$REMOTE_ENV"
 {
-    echo "# Written by deploy/deploy.sh — edit deploy/.env on the Mac, not this."
-    grep -vE '^(LIBRARY_PATH|DATA_PATH|PUBLISHING_PATH|PHOTOTOOLS_TAG)=' deploy/.env
+    echo "# Written by deploy/deploy.sh from .env and deploy/.env on the Mac — edit those, not this."
+    {
+        if [ -f .env ];        then grep -E "^($SHARED_KEYS)=" .env || true; fi
+        if [ -f deploy/.env ]; then grep -vE "^[[:space:]]*(#|$)|^($DEPLOY_OWNED)=" deploy/.env || true; fi
+    } | awk -F= '{ if (!($1 in v)) order[++n] = $1; v[$1] = $0 }
+                 END { for (i = 1; i <= n; i++) print v[order[i]] }'
     echo "LIBRARY_PATH=$LIBRARY_PATH"
     echo "DATA_PATH=$DATA_PATH"
     echo "PUBLISHING_PATH=$PUBLISHING_PATH"
     echo "PHOTOTOOLS_TAG=$TAG"
     echo "PHOTOTOOLS_USER=$RUN_AS"
+    echo "PORT=$PORT"
 } > "$REMOTE_ENV"
+
+# A value as the server will see it: the last assignment, quotes removed.
+server_value() { sed -n "s/^$1=//p" "$REMOTE_ENV" | tail -1 | sed -E 's/^"(.*)"$/\1/'; }
+
+for required in FIREBASE_PROJECT_ID ALLOWED_UIDS; do
+    [ -n "$(server_value "$required")" ] \
+        || die "$required is set in neither .env nor deploy/.env. Without it nobody can sign in."
+done
+ok "server: Firebase project $(server_value FIREBASE_PROJECT_ID), $(server_value ALLOWED_UIDS | tr ',' '\n' | grep -c .) allowed uid(s)"
+
+if [ -n "$(server_value GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY)" ] && [ -n "$(server_value GOOGLE_OAUTH_CLIENT_ID)" ]; then
+    ok "server: Google OAuth client and encryption key"
+else
+    warn "no Google OAuth client or encryption key — the server starts, and publishing cannot connect"
+fi
+
+# Deliberately not carried over from .env: the Mac's points at localhost, and
+# Google would send the NAS's sign-in back to whichever machine the browser is
+# on. It has to name the NAS, and be registered on the OAuth client.
+if [ -z "$(server_value GOOGLE_OAUTH_REDIRECT_URI)" ]; then
+    warn "GOOGLE_OAUTH_REDIRECT_URI is not set for the NAS — publishing cannot connect to Google until it is"
+    note "put it in deploy/.env; it must be registered on the OAuth client exactly (MV-12.3)"
+fi
+
+# The web UI's Firebase configuration is compiled into the bundle, so it goes
+# in as build arguments. .dockerignore keeps every .env out of the build
+# context, and rightly — this file included — so without these the image ships
+# a web UI whose sign-in screen lists four missing variables.
+#
+# Arguments rather than a build secret because none of the four is secret:
+# each is in the JavaScript every browser downloads. And an argument, unlike a
+# secret, invalidates the cached layer when it changes.
+[ -f frontend/web/.env ] || die "No frontend/web/.env — the web UI would be built without Firebase, and nobody could sign in."
+WEB_ARGS=()
+for key in VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_PROJECT_ID VITE_FIREBASE_APP_ID; do
+    value="$(set -a; . ./frontend/web/.env; printenv "$key" || true)"
+    [ -n "$value" ] || die "$key is not set in frontend/web/.env."
+    WEB_ARGS+=(--build-arg "$key=$value")
+done
+
+# Two projects is the failure that looks like everything working: sign-in
+# succeeds against one, and the server refuses every token as issued by another.
+WEB_PROJECT="$(set -a; . ./frontend/web/.env; printenv VITE_FIREBASE_PROJECT_ID)"
+[ "$WEB_PROJECT" = "$(server_value FIREBASE_PROJECT_ID)" ] \
+    || die "The web UI signs in to Firebase project $WEB_PROJECT, and the server accepts $(server_value FIREBASE_PROJECT_ID). They must be the same."
+ok "web UI: Firebase project $WEB_PROJECT, from frontend/web/.env"
+
+if $CHECK_ONLY; then
+    step "Check only — nothing was built, sent or started"
+    printf '  Deploy with: %s./deploy/deploy.sh%s\n\n' "$BOLD" "$RESET"
+    exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # 4. Build
@@ -211,6 +349,7 @@ docker buildx build \
     --builder "$BUILDER" \
     --platform "$PLATFORM" \
     -f deploy/Dockerfile \
+    "${WEB_ARGS[@]}" \
     -t "$IMAGE:$TAG" \
     --load \
     .
@@ -231,16 +370,32 @@ nas "mkdir -p '$REMOTE_DIR' '$DATA_PATH' '$PUBLISHING_PATH' 2>/dev/null \
     || die "Cannot create $REMOTE_DIR on the NAS. Make it by hand, or give $NAS_SSH write access to its parent."
 ok "directories exist"
 
+# Group-writable and setgid, the way every other folder in an OMV docker-data
+# is. The chown below needs root, which an ordinary SSH account does not have;
+# this is what still lets a container running as any member of `users` open
+# the ledger and empty the publishing folder when it fails.
+nas "chmod 2775 '$DATA_PATH' '$PUBLISHING_PATH' 2>/dev/null" || true
+
 # Owned by whoever the container runs as, or the ledger cannot be opened and
 # the publishing folder cannot be emptied. The library is left alone: it is the
 # user's, and changing its ownership is not this script's business.
-nas "chown '$RUN_AS' '$DATA_PATH' '$PUBLISHING_PATH' 2>/dev/null \
-     || sudo -n chown '$RUN_AS' '$DATA_PATH' '$PUBLISHING_PATH' 2>/dev/null" \
-    || warn "could not chown $DATA_PATH and $PUBLISHING_PATH to $RUN_AS — do it by hand if the server will not start"
+#
+# Giving a folder to another uid needs root, so an ordinary SSH account fails
+# here on every deploy. That is only a problem when the chmod above does not
+# cover it — when the container's group is not the folders' group.
+if ! nas "chown '$RUN_AS' '$DATA_PATH' '$PUBLISHING_PATH' 2>/dev/null \
+          || sudo -n chown '$RUN_AS' '$DATA_PATH' '$PUBLISHING_PATH' 2>/dev/null"; then
+    if [ "$(nas "stat -c '%g' '$DATA_PATH' '$PUBLISHING_PATH' | sort -u")" = "${RUN_AS#*:}" ]; then
+        note "data and publishing stay owned by $NAS_SSH; the container's group, ${RUN_AS#*:}, writes to them"
+    else
+        warn "could not chown $DATA_PATH and $PUBLISHING_PATH to $RUN_AS — do it by hand if the server will not start"
+    fi
+fi
 
-scp -q deploy/docker-compose.yml "$NAS_SSH:$REMOTE_DIR/docker-compose.yml"
-scp -q "$REMOTE_ENV" "$NAS_SSH:$REMOTE_DIR/.env"
+scp -q "${SSH_OPTS[@]}" deploy/docker-compose.yml "$NAS_SSH:$REMOTE_DIR/docker-compose.yml"
+scp -q "${SSH_OPTS[@]}" "$REMOTE_ENV" "$NAS_SSH:$REMOTE_DIR/.env"
 nas "chmod 600 '$REMOTE_DIR/.env'"
+
 ok "compose file and environment in $REMOTE_DIR"
 
 # Piped rather than staged: a NAS is exactly the machine with no room for a
@@ -256,15 +411,20 @@ step "Start"
 
 # `up -d` alone reports success for a container that starts and immediately
 # exits on a bad configuration, which is the whole failure mode worth catching.
-nas "cd '$REMOTE_DIR' && $COMPOSE up -d --remove-orphans"
+#
+# --no-build because the compose file's build context is `..`, which on the NAS
+# is whatever folder holds REMOTE_DIR — a docker-data folder full of other
+# services' data. The image was loaded a moment ago; if it somehow is not
+# there, failing is right and tarring up the neighbours is not.
+nas "cd '$REMOTE_DIR' && $COMPOSE up -d --no-build --remove-orphans"
 
-PORT="$(grep -E '^PORT=' deploy/.env | cut -d= -f2- || true)"
-PORT="${PORT:-3000}"
 HOST="${NAS_SSH#*@}"
 
+# Asked from the NAS itself, so on the host port compose published, not the
+# container's 3000.
 printf '  waiting for /api/health'
 for _ in $(seq 1 30); do
-    if HEALTH="$(nas "curl -sf --max-time 2 http://127.0.0.1:3000/api/health" 2>/dev/null)"; then
+    if HEALTH="$(nas "curl -sf --max-time 2 http://127.0.0.1:$PORT/api/health" 2>/dev/null)"; then
         printf '\n'
         ok "$HEALTH"
         step "Deployed"

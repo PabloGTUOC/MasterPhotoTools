@@ -7,12 +7,17 @@
 # of the repository, so this file names them and supplies none.
 
 services:
-  server:
-    image: phototools-server:${PHOTOTOOLS_TAG:-latest}
+  # On the NAS the deployment is MasterPhotoTools: the service, the image and
+  # the container all carry that name, so it is never confused with the earlier
+  # `phototools` container it replaces. The binary inside stays
+  # `phototools-server`, the name specification §2.2 gives it. Image names must
+  # be lowercase; container names need not be.
+  masterphototools:
+    image: masterphototools:${PHOTOTOOLS_TAG:-latest}
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    container_name: phototools-server
+    container_name: MasterPhotoTools
     restart: unless-stopped
 
     # Who the process is, as the NAS sees it.

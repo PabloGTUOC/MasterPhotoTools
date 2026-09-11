@@ -7,10 +7,11 @@
  * where the card reader is — the server has no card to read, so a shared view
  * would be a view one of its two builds could not honestly render.
  *
- * The shape of the work is: look → scan → review → decide in bulk → derive →
- * hand over. The last step is the one this screen has to be clear about,
- * because after it the desktop has nothing left to do and everything that
- * happens next happens somewhere else.
+ * **This screen reports; the tools act.** The shape of the work is: look →
+ * scan → read the verdicts → copy to a folder. What is wrong with a frame is
+ * said here and fixed in the tab that fixes it — a card screen that both
+ * diagnosed and repaired duplicated the Dates tab, and now the Geotag tab as
+ * well (`docs/workflow-plan.md`).
  */
 import { computed, ref } from 'vue';
 import type {
@@ -20,7 +21,6 @@ import type {
   ShotVerdict,
   ThresholdOverrides,
 } from '@phototools/shared';
-import BulkActions from '@ui/components/BulkActions.vue';
 import JobProgress from '@ui/components/JobProgress.vue';
 import PathField from '@ui/components/PathField.vue';
 import ShotGrid from '@ui/components/ShotGrid.vue';
@@ -28,11 +28,19 @@ import { useRoots } from '@ui/useRoots';
 import { desktop } from '../api';
 
 /** Where the desktop is in the card's life. */
-type Stage = 'idle' | 'reviewing' | 'handed-over';
+type Stage = 'idle' | 'reviewing';
 
 const cardPath = ref('');
+
+/**
+ * Where derived JPEGs are written.
+ *
+ * Temporary: WF-3 moves RAW to JPEG to a tool tab of its own, pointed at a
+ * folder rather than a card, and this field goes with it. Kept until then so
+ * the capability is never unreachable — a RAW-only shot has no JPEG to
+ * publish, and nothing else in the application derives one.
+ */
 const derivedDir = ref('');
-const stagingDir = ref('');
 
 /**
  * Where the frames that passed should be copied to.
@@ -81,8 +89,6 @@ const busy = ref(false);
 const failure = ref<string | null>(null);
 const jobId = ref<string | null>(null);
 const stage = ref<Stage>('idle');
-/** The session the server now holds, once the handoff has finished. */
-const sessionId = ref<string | null>(null);
 
 const verdicts = computed<Record<string, ShotVerdict>>(() => {
   const out: Record<string, ShotVerdict> = {};
@@ -137,40 +143,6 @@ async function review() {
   });
 }
 
-/** One action, applied to every shot sharing one failure (F13). */
-async function applyBulk(request: {
-  failure: string;
-  action: string;
-  date: string | null;
-}) {
-  const out = derivedDir.value.trim();
-  if (!out) {
-    failure.value = 'Set an output folder — remediation writes new files, never over the originals.';
-    return;
-  }
-
-  await guard(async () => {
-    const result = await desktop.remediate({
-      path: cardPath.value.trim(),
-      failure: request.failure,
-      action: request.action,
-      date: request.date,
-      out_dir: out,
-      dry_run: false,
-      thresholds: thresholds(),
-    });
-    if (typeof result === 'string') jobId.value = result;
-
-    // The card has changed underneath the verdicts, so they are re-read rather
-    // than patched: a resize alters dimensions, which alters two of the three
-    // rules.
-    validation.value = await desktop.validateCard({
-      path: cardPath.value.trim(),
-      thresholds: thresholds(),
-    });
-  });
-}
-
 /** F14 — derive JPEGs for the RAW-only shots. */
 async function derive() {
   const out = derivedDir.value.trim();
@@ -189,43 +161,17 @@ async function derive() {
 }
 
 /**
- * Hand the derivatives to the server (F16).
- *
- * The point at which the desktop's work ends. The screen says so afterwards,
- * because "nothing is happening here any more" is otherwise indistinguishable
- * from "something has gone quiet".
- */
-async function handOff() {
-  const out = derivedDir.value.trim();
-  const staging = stagingDir.value.trim();
-  if (!out || !staging) {
-    failure.value = 'Set both the derived folder and the staging folder on the NAS share.';
-    return;
-  }
-
-  await guard(async () => {
-    const id = await desktop.handOffCard(cardPath.value.trim(), out, staging);
-    jobId.value = id;
-
-    let last = '';
-    await desktop.watchJob(id, (event) => (last = event.message));
-
-    // The session id is the only handle anybody has on this card once the
-    // server owns it, and publishing is addressed by session.
-    sessionId.value = last.match(/session (\S+)/)?.[1] ?? null;
-    stage.value = 'handed-over';
-  });
-}
-
-/**
  * Copy the frames that passed to a folder.
+ *
+ * Where the card's contents go, and where the desktop's work ends. The tools
+ * run on what lands here.
  *
  * **The card is never written to (G5).** `deliver_card` refuses a destination
  * inside the folder being read before a byte is copied — this is the one
  * operation whose destination somebody types, while looking at the card.
  *
  * Copies the shots that did not *fail*. A warning — the odd frame with no
- * coordinates, say — is something to see in the table and decide about, not a
+ * coordinates — is something to see in the table and decide about, not a
  * reason to leave a photograph behind.
  */
 async function copyToFolder() {
@@ -285,14 +231,6 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
         :list="list"
       />
 
-      <PathField
-        v-model="stagingDir"
-        label="Staging folder on the NAS share"
-        placeholder="/Volumes/photos/staging"
-        hint="Only for handing a session to the server, which is the older road off the card."
-        :roots="roots"
-        :list="list"
-      />
 
       <fieldset class="field limits">
         <legend>Limits for this card</legend>
@@ -348,16 +286,9 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
         Every date on this card sits about {{ validation.clock_offset.median_age_days }} days
         from now, within a {{ validation.clock_offset.spread_days }}-day spread — a camera
         clock that was never set, not {{ validation.clock_offset.affected }} separate mistakes.
-        One bulk shift of <code>{{ validation.clock_offset.shift }}</code> corrects all of them.
+        A shift of <code>{{ validation.clock_offset.shift }}</code> in the Dates tab corrects all
+        of them at once.
       </p>
-
-      <BulkActions
-        :groups="validation?.groups ?? []"
-        :filter="filter"
-        :busy="busy"
-        @filter="filter = $event"
-        @apply="applyBulk"
-      />
 
       <ShotGrid :shots="shots" :verdicts="verdicts" :filter="filter" />
 
@@ -374,9 +305,6 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
         <button type="button" class="primary" :disabled="busy" @click="copyToFolder">
           Copy to a folder
         </button>
-        <button type="button" class="secondary" :disabled="busy" @click="handOff">
-          Hand over to the server
-        </button>
       </div>
 
       <p v-if="copied" class="copied" role="status">{{ copied }}</p>
@@ -388,24 +316,6 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
       </ul>
     </template>
 
-    <!-- Task 5: the moment the desktop's work ends has to be unmistakable. -->
-    <section v-if="stage === 'handed-over'" class="handover" aria-live="polite">
-      <h2>The server has taken over</h2>
-      <p>
-        The derivatives are on the NAS and verified by hash. Nothing further
-        happens on this machine — you can close the lid.
-      </p>
-      <p v-if="sessionId" class="session">
-        Session <code>{{ sessionId }}</code>
-      </p>
-      <p class="muted small">
-        Publishing happens on the server, from the web interface, and needs a dry
-        run reviewed first.
-      </p>
-      <button type="button" class="ghost" @click="stage = 'reviewing'">
-        Back to the review
-      </button>
-    </section>
   </section>
 </template>
 
@@ -466,21 +376,6 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
   font-size: 14px;
 }
 .problems { list-style: none; display: grid; gap: 4px; }
-.handover {
-  display: grid;
-  gap: 10px;
-  justify-items: start;
-  padding: 16px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-none);
-  background: var(--bg-panel);
-}
-.handover h2 {
-  font-family: var(--font-label);
-  font-size: 18px;
-  letter-spacing: 0.1em;
-  color: var(--accent);
-}
 .session { font-family: var(--font-body); font-size: 13px; word-break: break-all; }
 .small { font-size: 13px; }
 </style>

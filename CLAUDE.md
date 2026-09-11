@@ -77,7 +77,7 @@ npm --prefix frontend/shared run build     # the shared client, consumed as comp
 npm --prefix frontend/web run typecheck
 npm --prefix frontend/web run build
 npm --prefix frontend/web run check:transport   # no view reaches the network directly
-npm --prefix frontend/web run check:layout      # 10 routes clean at 390 px
+npm --prefix frontend/web run check:layout      # 11 routes clean at 390 px
 npm --prefix frontend/web run check:ingest      # Phase 13 acceptance, measured in a browser
 
 npm --prefix frontend/desktop run typecheck

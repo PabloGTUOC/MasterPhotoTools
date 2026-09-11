@@ -22,6 +22,7 @@ import ContactSheet from './views/ContactSheet.vue';
 import Dates from './views/Dates.vue';
 import Geotag from './views/Geotag.vue';
 import ImageTool from './views/ImageTool.vue';
+import RawToJpeg from './views/RawToJpeg.vue';
 import Rename from './views/Rename.vue';
 import Transform from './views/Transform.vue';
 
@@ -54,6 +55,11 @@ export const sharedToolRoutes = [
         'Place an image on a fixed white print canvas with rounded corners, sized for print and for platforms that crop unpredictably.',
       applyLabel: 'Add borders',
     },
+  },
+  {
+    path: '/raw-to-jpeg',
+    component: RawToJpeg,
+    meta: { label: 'RAW' },
   },
   {
     path: '/tiff-to-jpeg',

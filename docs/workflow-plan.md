@@ -116,11 +116,23 @@ it, which is worse than showing nothing.
 The RAW line points at *Derive, below* until WF-3 gives it a tab. Pointing at a tab that does not
 exist yet would be a promise the screen cannot keep.
 
-### WF-3 — RAW to JPEG as a tool
-Per the decision above: a route, a view, and the existing `deriveRaw` behind it, pointed at a
-folder rather than a card.
-**Done when** a folder of RAW files produces JPEGs beside them, and `check:layout` passes with the
-new route.
+### WF-3 — RAW to JPEG as a tool ✔
+Option A. A shared view, a route in `sharedToolRoutes` so both applications get the tab, and the
+existing `deriveRaw` behind it.
+
+**No new machinery was needed.** `Card::at` accepts any directory — it is what makes "no DCIM
+folder; treating it as a plain directory" work on the card screen — so the command already derived
+from a folder. The change is a view and a route.
+
+Shared rather than desktop-only because a decode and an encode are something both transports
+genuinely do, and `deriveRaw` was already on `ApiClient`.
+
+With the tab in place, the Derive button, its output-folder field and the `derive` function came
+off Ingest, and the status line now points at the RAW tab rather than at a button.
+
+**Done:** `check:layout` clean at **11 routes**. One defect fixed on the way — the two ceiling
+fields did not line up at 390 px, because the earlier fix for this on the card screen reserved the
+*hint*'s line and not the *label*'s, and that screen is never measured at 390 px.
 
 ### WF-4 — Publish is the folder, and only the folder
 Remove the session panel and its logic. The folder panel becomes the screen.

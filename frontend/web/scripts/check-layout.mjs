@@ -44,7 +44,7 @@ const TYPES = {
 
 const ROUTES = [
   '/', '/publish', '/dates', '/rename', '/geotag',
-  '/split', '/contact-sheet', '/transform', '/border', '/tiff-to-jpeg',
+  '/split', '/contact-sheet', '/transform', '/border', '/raw-to-jpeg', '/tiff-to-jpeg',
 ];
 
 if (!existsSync(DIST)) {

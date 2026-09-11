@@ -33,16 +33,6 @@ type Stage = 'idle' | 'reviewing';
 const cardPath = ref('');
 
 /**
- * Where derived JPEGs are written.
- *
- * Temporary: WF-3 moves RAW to JPEG to a tool tab of its own, pointed at a
- * folder rather than a card, and this field goes with it. Kept until then so
- * the capability is never unreachable — a RAW-only shot has no JPEG to
- * publish, and nothing else in the application derives one.
- */
-const derivedDir = ref('');
-
-/**
  * Where the frames that passed should be copied to.
  *
  * The other road off the card (`docs/publish-folder-plan.md`): instead of
@@ -143,23 +133,6 @@ async function review() {
   });
 }
 
-/** F14 — derive JPEGs for the RAW-only shots. */
-async function derive() {
-  const out = derivedDir.value.trim();
-  if (!out) {
-    failure.value = 'Set an output folder for the derived JPEGs.';
-    return;
-  }
-  const id = await guard(() =>
-    desktop.deriveRaw({
-      path: cardPath.value.trim(),
-      out_dir: out,
-      thresholds: thresholds(),
-    }),
-  );
-  if (id) jobId.value = id;
-}
-
 /**
  * Copy the frames that passed to a folder.
  *
@@ -248,8 +221,7 @@ const needed = computed<Needed[]>(() => {
     {
       count: awaitingDerivation.value,
       what: 'are RAW with no JPEG beside them',
-      // WF-3 gives this its own tab; until then the button is on this screen.
-      where: 'Derive, below',
+      where: 'RAW tab',
     },
   ].filter((line) => line.count > 0);
 });
@@ -280,14 +252,6 @@ const ready = computed(
         :list="list"
       />
 
-      <PathField
-        v-model="derivedDir"
-        label="Output folder for new files"
-        placeholder="~/Pictures/ingest/2024-05-01"
-        hint="Remediation and derivation write here. Originals are never modified."
-        :roots="roots"
-        :list="list"
-      />
 
       <PathField
         v-model="workingDir"
@@ -370,15 +334,6 @@ const ready = computed(
       <ShotGrid :shots="shots" :verdicts="verdicts" :filter="filter" />
 
       <div class="row">
-        <button
-          v-if="awaitingDerivation"
-          type="button"
-          class="secondary"
-          :disabled="busy"
-          @click="derive"
-        >
-          Derive {{ awaitingDerivation }} RAW-only shot{{ awaitingDerivation === 1 ? '' : 's' }}
-        </button>
         <button type="button" class="primary" :disabled="busy" @click="copyToFolder">
           Copy to a folder
         </button>

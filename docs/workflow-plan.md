@@ -101,10 +101,20 @@ removing it is a decision of its own rather than a tidy-up — **folded into WF-
 retires a subsystem on the same terms. `check:ingest` still passes: it mounts those components in
 its own harness and never depended on the screen using them.
 
-### WF-2 — The status list
-The summary above, each line naming the tab that fixes it, computed from the verdicts already
-returned.
-**Done when** the numbers add up to the frame count and each line's count matches the table.
+### WF-2 — The status list ✔
+Built from the verdicts already returned, in the order somebody would act on it. Lines with no
+frames behind them are dropped — a list of zeroes reads as work outstanding.
+
+**Ready** counts frames with nothing *failing*, so the location warning does not hold a card up.
+
+One thing worth recording because it would have failed silently: the wire carries
+`FailureClass::as_str()` — `date_out_of_range`, not the serde name `date_out_of_range_isolated` —
+and `Rule` arrives as its lowercased `Debug`. Both were checked against the transports rather than
+assumed; a mismatch would have shown a confident **0** for a line that should have had frames in
+it, which is worse than showing nothing.
+
+The RAW line points at *Derive, below* until WF-3 gives it a tab. Pointing at a tab that does not
+exist yet would be a promise the screen cannot keep.
 
 ### WF-3 — RAW to JPEG as a tool
 Per the decision above: a route, a view, and the existing `deriveRaw` behind it, pointed at a

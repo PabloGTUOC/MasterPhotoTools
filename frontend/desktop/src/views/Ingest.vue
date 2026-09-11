@@ -192,6 +192,73 @@ async function copyToFolder() {
 }
 
 const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
+
+/** One thing that needs doing, how many frames need it, and where it is done. */
+interface Needed {
+  count: number;
+  what: string;
+  where: string;
+}
+
+/**
+ * What the card needs, in the order somebody would act on it.
+ *
+ * The counts alone say a card is imperfect; this says what to do about it. Each
+ * line names the tab that does the job, because this screen reports and the
+ * tools act — and a person reading "12 have no location" should not have to
+ * work out which tab that means.
+ *
+ * Lines with no frames behind them are dropped: a list of zeroes reads as work
+ * outstanding.
+ */
+const needed = computed<Needed[]>(() => {
+  const rows = Object.values(verdicts.value);
+  const failed = (verdict: ShotVerdict, ...classes: string[]) =>
+    verdict.checks.some((c) => c.failure !== null && classes.includes(c.failure));
+  const warns = (verdict: ShotVerdict, rule: string) =>
+    verdict.checks.some((c) => c.rule === rule && c.status === 'warn');
+  const count = (fn: (v: ShotVerdict) => boolean) => rows.filter(fn).length;
+
+  return [
+    {
+      count: count((v) => failed(v, 'no_date')),
+      what: 'have no capture date',
+      where: 'Dates tab',
+    },
+    {
+      count: count((v) => failed(v, 'date_out_of_range', 'date_out_of_range_batch')),
+      what: 'have a capture date outside the window',
+      where: 'Dates tab',
+    },
+    {
+      count: count((v) => warns(v, 'location')),
+      what: 'have no location, where others on this card do',
+      where: 'Geotag tab',
+    },
+    {
+      count: count((v) => failed(v, 'too_many_pixels')),
+      what: 'are above the resolution ceiling',
+      where: 'Transform tab',
+    },
+    {
+      count: count((v) => failed(v, 'too_large')),
+      what: 'are larger than the size limit',
+      where: 'Transform tab',
+    },
+    {
+      count: awaitingDerivation.value,
+      what: 'are RAW with no JPEG beside them',
+      // WF-3 gives this its own tab; until then the button is on this screen.
+      where: 'Derive, below',
+    },
+  ].filter((line) => line.count > 0);
+});
+
+/** Frames with nothing *failing*. A warning is worth seeing, not a blockage. */
+const ready = computed(
+  () => (validation.value?.shots.length ?? 0) - (validation.value?.failing ?? 0),
+);
+
 </script>
 
 <template>
@@ -274,12 +341,22 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
     <JobProgress :job-id="jobId" />
 
     <template v-if="stage === 'reviewing'">
-      <section v-if="validation" class="counts">
-        <span class="pill" data-tone="ok">{{ validation.passing }} passing</span>
-        <span class="pill" data-tone="bad">{{ validation.failing }} failing</span>
-        <span v-if="awaitingDerivation" class="pill">
-          {{ awaitingDerivation }} awaiting derivation
-        </span>
+      <section v-if="validation" class="status" aria-live="polite">
+        <h2 class="status__head">
+          // {{ validation.shots.length }} FRAME{{ validation.shots.length === 1 ? '' : 'S' }}
+          // {{ ready }} READY //
+        </h2>
+
+        <!-- What to do, not just what is wrong. Each line names the tab. -->
+        <ul v-if="needed.length" class="needs">
+          <li v-for="line in needed" :key="line.what">
+            <strong>{{ line.count }}</strong> {{ line.what }}
+            <span class="needs__where">→ {{ line.where }}</span>
+          </li>
+        </ul>
+        <p v-else class="muted small">
+          Nothing needs attention. Copy them to a folder and carry on.
+        </p>
       </section>
 
       <p v-if="validation?.clock_offset" class="notice">
@@ -335,6 +412,34 @@ const awaitingDerivation = computed(() => scan.value?.awaiting_derivation ?? 0);
 }
 .limits > .muted {
   margin-bottom: var(--space-2);
+}
+
+.status {
+  display: grid;
+  gap: var(--space-2);
+}
+.status__head {
+  font-family: var(--font-label);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+.needs {
+  list-style: none;
+  display: grid;
+  gap: var(--space-1);
+  font-size: 13px;
+}
+.needs strong {
+  /* The number is what the eye lands on; the sentence explains it. */
+  display: inline-block;
+  min-width: 2.5em;
+  text-align: right;
+  color: var(--text-heading);
+  font-variant-numeric: tabular-nums;
+}
+.needs__where {
+  color: var(--accent-warm);
 }
 
 .copied {

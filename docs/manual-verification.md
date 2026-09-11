@@ -33,7 +33,9 @@ established from a machine with no camera, no Mac, no NAS and no Google account.
 | A Firebase project | 6.2 | 1 |
 | Real photographs, and your eyes | 2, 4, 9, 10, 15 | 28 |
 
-**72 checks in all, and all of them are actionable.** Four are done — MV-2.1, MV-7.1, MV-7.2 and
+**72 checks in all.** Two are being retired rather than done — MV-13.3 and MV-13.4, whose subjects
+the workflow change removed — and MV-11's five cover a road that WF-5 withdraws once MV-16 has
+confirmed its replacement. The rest are actionable. Four are done — MV-2.1, MV-7.1, MV-7.2 and
 MV-7.3 — and **three of those four found defects**, which is the argument for doing the rest. The
 suggested order, and why, is in [`testing.md`](testing.md#5-suggested-order).
 
@@ -296,6 +298,11 @@ be tested is how the results *look*, and the two rungs below it.
 
 ## Phase 11 — Handoff and ledger · needs a NAS
 
+> **This whole section covers a road being retired.** Publishing now takes a folder
+> (`docs/workflow-plan.md`), and WF-5 withdraws the handoff once MV-16 has confirmed the
+> replacement against real photographs. These items are worth doing only if you intend to use the
+> session road before then.
+
 Every test in this phase writes to a local temporary directory. The real staging directory is an SMB
 share, which is a different filesystem with different guarantees — three of these five are about
 exactly that.
@@ -343,8 +350,10 @@ No test reaches Google: the API is a trait, and the one test of the real HTTP cl
 
 - [ ] **MV-12.1 — Publish ONE photograph and confirm its capture date survives and it is filed under
       the correct day.** *(specification §6.4 — do this **before** any bulk run)*
-      The staged file is uploaded byte for byte — nothing in Phase 12 rewrites EXIF — so this is
-      really a check on what Phases 9 and 10 preserved, arriving at the one place that matters.
+      The file is uploaded byte for byte — nothing in Phase 12 rewrites EXIF — so this is really a
+      check on what everything before it preserved, arriving at the one place that matters.
+      **Do it through the publishing folder** (MV-16.3), which is the road that stays; the session
+      version of this check retires with WF-5.
       **Result:**
 
 - [ ] **MV-12.2 — Confirm the consent screen is "In production", not Testing.**
@@ -393,11 +402,12 @@ bulk press and the publish gate. What cannot be checked here is the screen those
 assembled into.
 
 - [ ] **MV-13.1 — Look at the Ingest screen on the Mac.**
-      The one part of this phase never rendered. `ShotGrid` and `BulkActions` are measured on their
-      own against four hundred shots, and the web build's `/publish` route is driven for real — but
-      `Ingest.vue` composes them with the Tauri transport, and Tauri needs macOS.
-      **Pass:** the flow (look → scan → review → decide → derive → hand over) makes sense with a card
-      in the reader.
+      The one part of this phase never rendered. `ShotGrid` is measured on its own against four
+      hundred shots, and the web build's `/publish` route is driven for real — but `Ingest.vue`
+      composes it with the Tauri transport, and Tauri needs macOS.
+      **Pass:** the flow — look → scan → read what needs doing → copy to a folder — makes sense with
+      a card in the reader, and the status list names tabs that exist and do what it says
+      (`docs/workflow-plan.md`).
       **Result:**
 
 - [ ] **MV-13.2 — Re-take the 400-shot measurement in WKWebView.**
@@ -406,18 +416,20 @@ assembled into.
       and **the grid's windowing is the part most likely to behave differently.**
       **Result:**
 
-- [ ] **MV-13.3 — Time a real bulk resize.**
-      One press requests a resize of every oversized shot — 360 of 400 in the fixture. Whether that
-      is thirty seconds or five minutes on real 24 MP files, and whether the progress bar makes the
-      wait tolerable, is unmeasured.
+- [ ] **MV-13.3 — Time a real bulk resize.** *(no longer reachable from the card screen)*
+      One press requested a resize of every oversized shot — 360 of 400 in the fixture. **WF-1
+      removed bulk remediation from Ingest**: that screen reports and the tools act. The
+      measurement still matters for the Transform tab over a folder, which is where the work went;
+      it is retired outright when WF-5 withdraws F13.
       **Result:**
 
-- [ ] **MV-13.4 — Decide whether the session hand-off between the two screens is good enough.**
-      The desktop reports the session id in its handover panel; a person copies it into the web
-      publish screen. §8 lists no endpoint that enumerates sessions, so this is the seam as
-      specified — but it is a UUID typed by hand. Only somebody using it can say whether that is
-      acceptable. See [`known-gaps.md`](known-gaps.md#no-session-discovery).
-      **Result:**
+- [ ] **MV-13.4 — ~~Decide whether the session hand-off between the two screens is good enough.~~**
+      **Answered by being removed.** A UUID typed by hand from one screen into another was the seam
+      §8 specified, and the answer turned out to be "no": the workflow now goes card → folder →
+      tools → publishing folder, with nothing to carry between screens. Retired with the handoff at
+      WF-5; kept here, struck through, because the question was real and the answer is a decision
+      somebody should be able to find.
+      **Result:** not good enough — replaced rather than improved.
 
 - [ ] **MV-13.5 — Check the chips at arm's length.**
       Each carries a mark as well as a colour — ✓, ✕ or ! — because a review screen whose whole

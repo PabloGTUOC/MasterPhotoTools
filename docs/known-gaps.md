@@ -139,6 +139,33 @@ invented. Blocks **MV-14.1**.
 Recorded because a reader comparing the two should not have to work out which
 of them moved.
 
+### The two screens are the workflow, not the specification's pipeline
+
+§2.3 and Phase 13 describe an Ingest screen that scans, validates, remediates
+in bulk, derives and hands a session to the server, and a Publish screen that
+takes that session. Both now do less, and something else does the rest
+(`docs/workflow-plan.md`):
+
+- **Ingest reports and copies.** It checks size, resolution, date and location,
+  says what needs doing and which tab does it, and copies the frames that
+  passed to a folder. Bulk remediation (F13) came off it: a screen that both
+  diagnosed and repaired duplicated the Dates tab, and now the Geotag tab too.
+- **RAW to JPEG (F14) is a tool tab.** It was a button on the card screen and
+  the only way in the application to derive a JPEG; it is now pointed at a
+  folder, which is where the photographs are by the time anybody wants one.
+- **Publish is the publishing folder.** The session field is gone.
+
+**The code for both withdrawn features is still here** — `ingest::handoff`,
+`ingest::staging`, `ingest::remediation`, `BulkActions.vue`, and the routes and
+commands behind them. WF-5 removes them once MV-16 has confirmed folder
+publishing against real photographs. Deleting a working subsystem before its
+replacement has published anything is the wrong order; the intermediate state
+is deliberate and is recorded here so it is not mistaken for neglect.
+
+MV-13.3 and MV-13.4 are retired rather than done: their subjects no longer
+exist. MV-13.4 asked whether typing a session id between two screens was good
+enough, and the answer was no.
+
 ### Publishing takes a folder, where §6.3 takes a card session
 
 The specification's road to Google Photos is one road: the desktop hands a

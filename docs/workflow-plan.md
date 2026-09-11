@@ -1,5 +1,9 @@
 # Two screens — development plan
 
+> **Built**, except WF-5. WF-1 to WF-4 and WF-6 are done and the gates pass; WF-5 withdraws two
+> specification features and is gated on MV-16 confirming folder publishing against real
+> photographs. The report is [`phase-reports/workflow.md`](phase-reports/workflow.md).
+
 Cut the Ingest and Publish screens down to what the workflow actually is, and remove what belonged
 to the road being retired.
 
@@ -158,8 +162,16 @@ in one change that says so.
 real photograph is the wrong order; this step is written down so the intermediate state is
 deliberate. It also retires MV-11 and the session half of MV-12.
 
-### WF-6 — Documents
-`known-gaps.md`, a phase report, MV-16 amended for the changed screens, and the test counts.
+### WF-6 — Documents ✔
+`known-gaps.md` records both withdrawn features and why their code is still present;
+`phase-reports/workflow.md` reports what was built and the two defects found on the way.
+
+MV-13.1 is rewritten for the screen that now exists. **MV-13.3 and MV-13.4 are retired rather than
+done** — their subjects no longer exist, and MV-13.4's question ("is typing a session id between
+two screens good enough?") is answered by the removal. MV-11 gains a note saying it covers a road
+being retired. MV-12.1 points at the publishing folder.
+
+Test counts are unchanged: no Rust changed in WF-1 to WF-4.
 
 ---
 

@@ -291,13 +291,22 @@ const MIGRATIONS: &[&str] = &[
     // reader mistaking one guarantee for the other.
     //
     // Existing rows predate folder publishing and are all source-keyed.
-    //
-    // `sessions.folder` is the other half: a folder publish needs a session row
-    // because §9.2 rule 3's dry-run record hangs off one, but it has no card.
-    // Storing the path in `card_id` would be a lie in a column name that a
-    // later reader would believe.
     r#"
     ALTER TABLE published ADD COLUMN key_kind TEXT NOT NULL DEFAULT 'source';
+    "#,
+    // 9 — where a folder publish's session row records its folder.
+    //
+    // A folder publish needs a session row because §9.2 rule 3's dry-run record
+    // hangs off one, but it has no card. Storing the path in `card_id` would be
+    // a lie in a column name a later reader would believe.
+    //
+    // **This belongs to migration 8 and is a separate entry because 8 had
+    // already run.** Adding it to 8 after the fact left every database that had
+    // seen 8 without the column, at `user_version = 8`, and therefore never
+    // catching up — which is precisely what the warning at the top of this list
+    // is about. The cost of getting it wrong is a table that exists with a
+    // column missing, and an error that names neither cause nor remedy.
+    r#"
     ALTER TABLE sessions ADD COLUMN folder TEXT;
     "#,
 ];
@@ -1507,15 +1516,22 @@ mod tests {
         assert_eq!(index_count, 1, "migration 2 should have added the index");
     }
 
-    /// A database that predates the track library gains it, and the schema it
-    /// ends up with is the one a fresh database is created with.
+    /// A database at **any** earlier version catches up to exactly the schema a
+    /// fresh one is created with.
+    ///
+    /// Every version, not a chosen one. The check used to start at migration 6,
+    /// and the bug it missed was a line appended to migration 8 *after* 8 had
+    /// already run: databases that had seen the old 8 stayed at
+    /// `user_version = 8` for ever and never gained the column, while a fresh
+    /// database got it on creation. Nothing failed until something read the
+    /// column, and the error named neither the cause nor the remedy.
     ///
     /// Comparing the whole of `sqlite_master` rather than looking for one
-    /// table: a migration that adds a table but forgets its index leaves two
+    /// table: a migration that adds a table and forgets its index leaves two
     /// databases that behave differently under load and identically under a
     /// test that only checks the table exists.
     #[test]
-    fn a_database_from_before_the_track_library_ends_up_with_the_same_schema_as_a_fresh_one() {
+    fn a_database_at_any_version_catches_up_to_a_fresh_one() {
         let dir = tempfile::tempdir().unwrap();
 
         let schema_of = |ledger: &Ledger| -> Vec<(String, String)> {
@@ -1532,25 +1548,40 @@ mod tests {
             rows.map(|r| r.unwrap()).collect()
         };
 
-        // A database as it stood before migration 7 was written.
-        let old = dir.path().join("old.sqlite3");
-        {
-            let conn = Connection::open(&old).unwrap();
-            for migration in &MIGRATIONS[..6] {
-                conn.execute_batch(migration).unwrap();
-            }
-            conn.execute_batch("PRAGMA user_version = 6").unwrap();
-        }
-
-        let migrated = Ledger::open(&old).unwrap();
         let fresh = Ledger::open(dir.path().join("fresh.sqlite3")).unwrap();
+        let expected = schema_of(&fresh);
 
-        assert_eq!(migrated.schema_version().unwrap(), MIGRATIONS.len() as i64);
-        assert_eq!(schema_of(&migrated), schema_of(&fresh));
+        for version in 1..MIGRATIONS.len() {
+            let path = dir.path().join(format!("at-{version}.sqlite3"));
+            {
+                let conn = Connection::open(&path).unwrap();
+                for migration in &MIGRATIONS[..version] {
+                    conn.execute_batch(migration).unwrap();
+                }
+                conn.execute_batch(&format!("PRAGMA user_version = {version}"))
+                    .unwrap();
+            }
 
-        // And the new tables work in the migrated one, not merely exist.
-        assert_eq!(migrated.tracks().unwrap(), vec![]);
-        assert_eq!(migrated.points_between(0, i64::MAX).unwrap(), vec![]);
+            let migrated = Ledger::open(&path).unwrap();
+            assert_eq!(
+                migrated.schema_version().unwrap(),
+                MIGRATIONS.len() as i64,
+                "a database at version {version} should catch up"
+            );
+            assert_eq!(
+                schema_of(&migrated),
+                expected,
+                "a database at version {version} ended up with a different schema \
+                 from a fresh one"
+            );
+
+            // And the tables work, rather than merely existing.
+            assert_eq!(migrated.tracks().unwrap(), vec![]);
+            assert_eq!(migrated.points_between(0, i64::MAX).unwrap(), vec![]);
+            migrated
+                .open_folder_session(&format!("folder-{version}"), "/Publishing")
+                .unwrap();
+        }
     }
 
     /// Phase 1 acceptance: a round-trip test per table. All ten tables of

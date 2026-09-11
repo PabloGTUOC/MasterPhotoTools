@@ -113,6 +113,7 @@ that will look wrong in Google Photos beside the rest.
 |---|---|
 | **The desktop lied to the type system** | `fillPublishing` returned the real summary sentence with three fabricated zeroes beside it, because the counts were the server's shape. The command now returns the same shape. |
 | **A duplicate helper broke the running app** | A second `fn yes()` in `commands.rs`; the desktop dev session died rebuilding on it. Caught by the build, but only after it had killed a session somebody was using. |
+| **A shipped migration was edited** | `sessions.folder` was appended to migration 8 *after* 8 had run, so every database that had seen the old 8 stayed at `user_version = 8` and never gained the column — while a fresh one got it on creation. The warning against exactly this is written at the top of the migration list. It surfaced as `table sessions has no column named folder` the first time somebody published a folder: an error naming neither cause nor remedy. Split into migration 9, and the schema-equality test now walks **every** version rather than starting at 6, which is what would have caught it. |
 
 ## Acceptance
 

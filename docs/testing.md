@@ -4,7 +4,9 @@ Phases 0–14 are built and pass their gates. What is left is everything a machi
 Mac, no NAS and no Google account could not settle — the numbered checks in
 [`manual-verification.md`](manual-verification.md).
 
-**51 checks in all, and all of them are actionable.**
+**72 checks in all.** Two are retired rather than done — MV-13.3 and MV-13.4, whose subjects the
+workflow change removed — and MV-11's five cover a road being withdrawn once MV-16 confirms its
+replacement. The rest are actionable.
 
 This file gets you to the point where you can start them.
 
@@ -35,8 +37,8 @@ machine, the problem is the environment, not the phase you are about to test.
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # expect 504 passed
-cargo test -p phototools-core   # expect 423 passed — G2, core in isolation
+cargo test --workspace          # expect 692 passed
+cargo test -p phototools-core   # expect 607 passed — G2, core in isolation
 ```
 
 Front ends:
@@ -47,7 +49,7 @@ npm --prefix frontend/web ci
 npm --prefix frontend/web run typecheck
 npm --prefix frontend/web run build
 npm --prefix frontend/web run check:transport   # no view reaches the network directly
-npm --prefix frontend/web run check:layout      # 10 routes at 390 px
+npm --prefix frontend/web run check:layout      # 11 routes at 390 px
 npm --prefix frontend/web run check:ingest      # Phase 13 acceptance, measured
 
 npm --prefix frontend/desktop ci
@@ -96,7 +98,7 @@ The variables that matter on day one:
 |---|---|---|
 | `ROOTS` | *empty* | Colon-separated directories the app may touch. Each entry is canonicalised at load, so each must exist — see the warning below. |
 | `DATABASE_PATH` | `/tmp/phototools.db` | The SQLite ledger. Put it somewhere that survives a reboot. |
-| `STAGING_DIR` | `/tmp/phototools-staging` | Local scratch for F11's copy off the card. **Not** the NAS staging directory — that one is typed into the Ingest screen. |
+| `STAGING_DIR` | `/tmp/phototools-staging` | Local scratch for F11's copy off the card. Only the card-handoff road uses it, and that road is being withdrawn (`docs/workflow-plan.md`). |
 | `MAX_MEGAPIXELS` | `0` | F12's resolution ceiling. **Zero means no ceiling** — the default. |
 | `MAX_OUTPUT_BYTES` | `10485760` | F12's size ceiling. |
 | `MAX_AGE_DAYS` | `90` | F12's capture-date window. |

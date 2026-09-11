@@ -114,8 +114,17 @@ frontend/desktop   inside Tauri; card review and ingest
 `core` modules map to the specification's §2.5: `media` (the only module permitted to touch image
 bytes), `tools` (F1–F9), `ingest` (F10–F14, F16), `publish` (F15), `ledger`, `jobs`, `config`.
 
-`tools::geotag` is the one module with no F-number: the specification does not mention GPS at all,
-so inventing one would misrepresent it. See [`docs/geotag-plan.md`](docs/geotag-plan.md).
+Two things sit outside that map, both deliberately and both with no F-number, because inventing
+one would make the code look as though the specification had asked for something it never did:
+
+- **`tools::geotag`** — the specification does not mention GPS at all
+  ([plan](docs/geotag-plan.md)).
+- **`publish::folder`** and **`ingest::deliver`** — publishing a folder, and copying a card's
+  passing frames to one. §6.3 publishes a handed-over session
+  ([plan](docs/publish-folder-plan.md)).
+
+`ingest::handoff`, `ingest::staging` and `ingest::remediation` are **still present and unused by any
+screen**. They are withdrawn at WF-5, once MV-16 confirms the replacement — not before.
 
 ### The front-end boundary
 

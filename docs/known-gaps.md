@@ -379,7 +379,14 @@ the shots sit as unconfirmed for a person to check — §9.2 invariant 6 applied
 
 ## Not yet built
 
-Nothing. Phases 0–14 are built.
+**One step, held back on purpose: WF-5.** The card handoff
+(`ingest::handoff`, `ingest::staging`), F13's bulk remediation
+(`ingest::remediation`, `BulkActions.vue`) and the publish-by-session path are
+still present and no longer reachable from any screen. They are withdrawn once
+**MV-16** has confirmed folder publishing against real photographs — deleting a
+working subsystem before its replacement has published anything is the wrong
+order. See [`workflow-plan.md`](workflow-plan.md).
 
-What remains is [`manual-verification.md`](manual-verification.md) — the checks
-needing a Mac, a camera, a NAS, a Google account or somebody's judgement.
+Everything else is built. What remains is
+[`manual-verification.md`](manual-verification.md) — the checks needing a Mac, a
+camera, a NAS, a Google account or somebody's judgement.

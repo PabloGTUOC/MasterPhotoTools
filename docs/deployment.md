@@ -3,7 +3,7 @@
 Two things get deployed, and they are independent of each other: a **server** in
 Docker on the NAS, and a **desktop application** on the Mac. The server can run
 without the desktop; the desktop's local tools work without the server, and only
-the handoff and publishing need it.
+publishing needs it.
 
 Read this in order the first time. The two sections that catch people are
 [roots](#3-roots-the-one-that-refuses-everything) and
@@ -158,7 +158,7 @@ that file is absent.
 | `WEB_ROOT` | *unset* | Directory holding the built web front end. Set to `/srv/web` in the image. Unset means the server serves API only. A path with no `index.html` is logged and ignored. |
 | `FIREBASE_PROJECT_ID` | *unset* | Token `iss` must equal `https://securetoken.google.com/<id>` and `aud` must equal the id exactly. |
 | `ALLOWED_UIDS` | *empty* | Comma-separated Firebase uids permitted to use the system. **Firebase authenticates any Google account in existence; this list is the only thing restricting access to the library** (§5.3). Empty means nobody. |
-| `ADMIN_TOKEN` | *unset* | Break-glass token for when Firebase is unreachable (§5.3). Also what the desktop handoff currently authenticates with — see §6. Empty is treated as unset. |
+| `ADMIN_TOKEN` | *unset* | Break-glass token for when Firebase is unreachable (§5.3). Also what the desktop handoff authenticates with — a road being withdrawn once folder publishing is confirmed (`docs/workflow-plan.md`), after which this is break-glass only. Empty is treated as unset. |
 | `RUST_LOG` | `phototools_server=info,tower_http=info` | Tracing filter. |
 
 ### Server only, for publishing
@@ -256,6 +256,11 @@ written by the application's own settings screen. It takes precedence over the
 environment.
 
 ### Point it at the server
+
+> **The handoff is being withdrawn.** Ingest now copies to a folder and the web
+> application publishes that folder (`docs/workflow-plan.md`); WF-5 removes this
+> road once MV-16 confirms the replacement. What follows describes it while it
+> is still here.
 
 The handoff authenticates with the **`ADMIN_TOKEN`**, set in the desktop's server
 settings as `auth_token`. This is §5.3's break-glass path, used because the

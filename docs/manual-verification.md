@@ -544,11 +544,12 @@ through G6's check. `docs/GPS/track.gpx` does not — copy it under one, or add 
       The specimen records nothing between 20:27 on the 2nd and 06:47 on the 3rd — not missing
       data, a phone that did not move. Nothing is ever computed between two fixes, so the only
       question is whether the fix is too old to accept.
-      **Run:** a frame from that night, previewed at the default *Stop trusting a fix after* of
-      12 hours, then with it set to 0.5.
-      **Pass:** at 12 hours it takes the 20:27 fix verbatim and the **From a fix** column reads
-      about `3 h 30 min · carried forward`. At half an hour it is skipped, saying the track may
-      not cover it. It must never take the 06:47 fix, which is where you were the next morning.
+      **Run:** a frame from that night, previewed at the default (no limit), then with *Stop
+      trusting a fix after* set to 0.5.
+      **Pass:** by default it takes the 20:27 fix verbatim and the **From a fix** column reads
+      about `3 h 30 min · carried forward`, marked as an old fix. At half an hour it is skipped,
+      naming the number you set. It must never take the 06:47 fix, which is where you were the
+      next morning.
       **Result:**
 
 - [ ] **MV-15.9 — Written positions appear where they should on a map.**

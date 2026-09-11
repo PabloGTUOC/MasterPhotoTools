@@ -63,7 +63,7 @@ quietly:
 What each contradicts in the specification is in
 [`docs/known-gaps.md`](docs/known-gaps.md); `SPECIFICATION.md` itself is not edited.
 
-692 tests across the workspace, 607 of them in `phototools-core` with no binary crate present.
+693 tests across the workspace, 608 of them in `phototools-core` with no binary crate present.
 Both front ends typecheck and build; the web UI's layout and the ingest grid's performance are
 measured in a real browser rather than asserted. The server image builds and the container passes
 its health check — deploying it to the NAS is still a human step.

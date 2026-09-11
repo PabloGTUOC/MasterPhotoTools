@@ -278,15 +278,20 @@ For each photograph with a date and no location, converted to UTC, against the t
 | Beyond the limit | Skipped: this track probably does not cover the photograph, and the reason says so |
 | Already has GPS, and overwrite is off | Skipped, reason says so |
 
-**The age limit is not about the fix going stale.** A movement tracker is right however long it
-has been silent — the silence *is* the evidence that nobody moved. What the limit guards is the
-other case: a photograph from a day this track does not cover, which would otherwise take the last
-fix of a different trip and look exactly like a real answer.
+**There is no age limit by default, and that is deliberate.** A ceiling contradicts the premise
+carrying forward rests on: the position is right *because* silence means nobody moved. A ceiling
+says that after some number of hours the silence stops meaning that. Both cannot be true, and for a
+tracker that reports on movement it is the first one that is.
 
-It defaults to **twelve hours** — longer than any silence within a day the tracker was running, a
-night at home included; short enough to refuse a frame from another journey. **Zero means no
-limit**, the convention `max_megapixels` already uses. Every row reports the age of the fix it
-used, so an answer carried forward for six hours says so.
+**An old position is better than no position.** A photographer who spent three days at home without
+their phone reporting anything should get the place they were, not a refusal — and only they know
+whether the silence was that or a dead battery. What the tool owes them is not a judgement but
+**the age of the fix**, on every row, before anything is written. The preview marks anything six
+hours or older, so a position carried forward for two days cannot be mistaken for a fresh one.
+
+The setting remains, and **zero — the default — means no limit**, the convention `max_megapixels`
+already uses. Set it when you know a track does not cover what you are matching: a frame from March
+against a September track will otherwise take September's last fix.
 
 `Nearest` remains a mode, for a tracker that samples continuously — where the interval really is
 just a sampling rate and the nearer fix really is the better one. Against a movement-triggered

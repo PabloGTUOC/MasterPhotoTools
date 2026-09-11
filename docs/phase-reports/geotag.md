@@ -110,14 +110,20 @@ its owner walked, and 14 over 10m17s running to 21 hours. Ten minutes sat in the
 between them. That was a better ceiling than the thirty minutes originally proposed, and it was
 still a ceiling on a thing that should not have been happening.
 
-What survives is the **age limit** — and what it means changed with it. It is not about a fix
-going stale: a movement tracker is right however long it stays quiet, because the silence is the
-evidence. It guards the other case, a photograph from a day the track does not cover, which would
-otherwise take the last fix of a different trip and look exactly like a real answer. Half an hour
-was the wrong shape of number for that job — it refused the café afternoon the rule exists to
-answer — so the default is **twelve hours**: longer than any silence within a running day, short
-enough to refuse another journey. **Zero means no limit.** Every row reports the age of the fix it
-used, which is the whole safeguard: an answer carried forward for six hours has to look like one.
+What survives is the **age limit**, and it took two goes to get right. Half an hour refused the
+café afternoon the rule exists to answer. Twelve hours fixed that and then refused photographs
+taken three days after a track ended, by somebody who had not left the city — which the user found
+on the first real folder.
+
+The second correction went further than the number: **the ceiling now defaults to off**, because it
+contradicts the premise the whole mode rests on. Carrying a position forward is right *because*
+silence means nobody moved; a ceiling says the silence stops meaning that after some number of
+hours. An old position is better than no position, and only the photographer knows whether three
+silent days were a holiday at home or a dead battery.
+
+What replaces it is **the age of the fix on every row**, with anything six hours or older marked in
+the preview, so a position carried forward for two days cannot be mistaken for a fresh one. The
+setting remains for somebody who knows a track does not cover what they are matching.
 
 ## Deviations from the plan, and why
 

@@ -66,15 +66,17 @@ const offset = ref('+02:00');
 const clockCorrection = ref(0);
 const mode = ref<'CarriedForward' | 'Nearest'>('CarriedForward');
 /**
- * How old a fix may be before the answer is "this track does not know", in
- * hours.
+ * How old a fix may be and still be used, in hours. **0 — the default — means
+ * no limit.**
  *
- * Hours rather than minutes because that is the scale the question lives on: a
- * movement tracker is right however long it has been silent, so the number is
- * not about staleness but about a photograph falling outside what the track
- * covers at all.
+ * Off by default because a ceiling contradicts the reason carrying forward
+ * works: silence means nobody moved. An old position is better than no
+ * position, and the age of the fix is on every row, so nobody is taking one
+ * unknowingly.
+ *
+ * Worth setting when you know a track does not cover what you are matching.
  */
-const oldestFixHours = ref(12);
+const oldestFixHours = ref(0);
 const overwriteExisting = ref(false);
 const writeAltitude = ref(true);
 const preview = ref<GeotagPreview | null>(null);
@@ -463,12 +465,12 @@ const suggestionLine = computed(() => {
             <span>Stop trusting a fix after (hours)</span>
             <input v-model.number="oldestFixHours" type="number" min="0" step="1" />
             <small class="muted">
-              Not about the fix going stale — a tracker that reports on movement is right however
-              long it stays quiet, because the silence <em>is</em> the evidence that you did not
-              move. This is for the other case: a photograph from a day this track knows nothing
-              about, which would otherwise take the last fix of a different trip and look exactly
-              like a real answer. 0 removes the limit; every row reports the age of the fix it
-              used.
+              <strong>0 means no limit</strong>, which is the default: a tracker that reports on
+              movement is right however long it stays quiet, because the silence <em>is</em> the
+              evidence that you did not move. Every row reports how old its fix was, so an old
+              position is offered rather than hidden. Set a number when you know a track does not
+              cover what you are matching — a frame from March against a September track would
+              otherwise take September's last fix.
             </small>
           </label>
         </div>
@@ -532,7 +534,9 @@ const suggestionLine = computed(() => {
             </span>
             <!-- How far the answer is from an observation. The whole measure of
                  how much to trust the row, so it is a column and not a note. -->
-            <span class="scan__date">
+            <!-- With no ceiling by default, this column *is* the safeguard: a
+                 position carried forward for two days has to look like one. -->
+            <span class="scan__date" :data-stale="action.gap_seconds >= 6 * 3600">
               {{ gap(action.gap_seconds) }}
               <small class="muted">{{ action.method.toLowerCase() }}</small>
             </span>
@@ -632,6 +636,11 @@ const suggestionLine = computed(() => {
 }
 .scan__date small {
   font-size: 11px;
+}
+/* A fix hours old is still a real fix and still worth using — but it should
+   never be mistaken for a fresh one at a glance. */
+.scan__date[data-stale='true'] {
+  color: var(--accent-warm);
 }
 .scan__state {
   display: inline-flex;

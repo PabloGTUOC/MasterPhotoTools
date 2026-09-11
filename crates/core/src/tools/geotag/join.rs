@@ -55,20 +55,24 @@ pub enum Mode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Limits {
     pub mode: Mode,
-    /// How old a fix may be and still be used.
+    /// How old a fix may be and still be used. **Zero, the default, means no
+    /// limit** — the convention `max_megapixels` already uses.
     ///
-    /// **This is not about the fix going stale.** A tracker that reports on
-    /// movement is *right* however long it has been silent — silence is the
-    /// evidence that nobody moved, so a six-hour-old fix is as true as a
-    /// six-second-old one.
+    /// It defaults to off because a ceiling contradicts the premise the rest of
+    /// this module rests on. Carrying a position forward is right *because*
+    /// silence means nobody moved; a ceiling says that after some number of
+    /// hours the silence stops meaning that. Both cannot be true, and for a
+    /// tracker that reports on movement it is the first one that is.
     ///
-    /// What it guards is the other case entirely: a photograph from a day this
-    /// track does not cover. Without a limit, a frame shot in March against a
-    /// September track takes the last fix of September — confidently, silently,
-    /// and wrong by a continent. The limit is the line past which the honest
-    /// answer is "this track does not know".
+    /// An old position is better than no position, and it is the photographer
+    /// who knows whether their phone was off or they were simply at home for
+    /// three days. What the tool owes them is not a refusal but **the age of
+    /// the fix**, on every row, before anything is written — which
+    /// [`Match::gap_seconds`] carries and the plan shows.
     ///
-    /// **Zero means no limit**, the convention `max_megapixels` already uses.
+    /// Set it when you know a track does not cover what you are matching: a
+    /// frame from March against a September track will otherwise take
+    /// September's last fix, confidently and wrongly.
     pub max_edge_seconds: i64,
 }
 
@@ -76,15 +80,11 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             mode: Mode::CarriedForward,
-            // Twelve hours: longer than any silence within a day the tracker
-            // was running — a night at home is ten — and short enough that a
-            // photograph from a trip this track knows nothing about is refused
-            // rather than given the last fix of a different journey.
-            //
-            // Half an hour, which this was, is the wrong shape of number: it
-            // refuses the café afternoon that the whole carry-forward rule
-            // exists to answer.
-            max_edge_seconds: 12 * 3600,
+            // No limit. Twelve hours, which this was, refused photographs taken
+            // three days after a track ended by somebody who had not left the
+            // city — and "no position" is not a better answer than "the
+            // position you were last at, 47 hours ago, and here is that number".
+            max_edge_seconds: 0,
         }
     }
 }
@@ -161,9 +161,9 @@ pub fn match_at(points: &[TrackPoint], at: i64, limits: &Limits) -> Result<Match
 
     // The refusal names the number that caused it, so a limit can be raised
     // deliberately rather than by trial and error.
+    // Only reachable when a ceiling was set deliberately: the default is none.
     let raise = format!(
-        " — this track may not cover it. Raise \"stop trusting a fix after\" above {}, or set it \
-         to 0 for no limit",
+        " — this is past the {} you set for how old a fix may be",
         duration(limits.max_edge_seconds)
     );
 
@@ -511,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_ceiling_accepts_a_whole_afternoon_of_sitting_still() {
+    fn the_default_accepts_a_whole_afternoon_of_sitting_still() {
         // The case the carry-forward rule exists for. A ceiling that refuses
         // this is the wrong shape of number, whatever it is set to.
         let m = match_at(&cafe(), 120 * 60, &Limits::default()).unwrap();
@@ -520,11 +520,26 @@ mod tests {
     }
 
     #[test]
-    fn the_default_ceiling_refuses_a_photograph_from_another_trip() {
-        // The case it exists for. A frame from a fortnight away must not take
-        // the last fix of this track and look exactly like a real answer.
-        let error = match_at(&cafe(), 14 * 86_400, &Limits::default()).unwrap_err();
-        assert!(error.contains("may not cover it"), "got {error}");
+    fn by_default_a_photograph_days_after_the_track_still_gets_a_position() {
+        // What the default is *for*. A tracker that reports on movement says
+        // nothing for the three days its owner spent at home, and refusing
+        // those photographs gives them no position at all — which is not a
+        // better answer than the position they were last at.
+        let m = match_at(&cafe(), 3 * 86_400, &Limits::default()).unwrap();
+        assert_eq!(m.method, Method::CarriedForward);
+        assert_eq!(m.point.lat, 52.600);
+
+        // And the age is on the row, which is the safeguard that replaces the
+        // ceiling: an answer carried forward for three days must look like one.
+        assert_eq!(m.gap_seconds, 3 * 86_400 - 180 * 60);
+    }
+
+    #[test]
+    fn a_ceiling_set_deliberately_still_refuses() {
+        // Somebody who knows a track does not cover what they are matching can
+        // still say so, and the refusal names the number they set.
+        let error = match_at(&cafe(), 14 * 86_400, &oldest(30)).unwrap_err();
+        assert!(error.contains("30 min you set"), "got {error}");
     }
 
     #[test]
@@ -552,12 +567,11 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_names_the_setting_that_would_accept_it() {
-        // The limit is the user's to raise, so the refusal says which one and
-        // how to turn it off rather than leaving them to find it.
+    fn a_refusal_names_the_number_that_caused_it() {
+        // Only reachable when somebody set a ceiling, so the refusal points at
+        // their own number rather than at a default they never chose.
         let error = match_at(&track(), -7200, &oldest(30)).unwrap_err();
-        assert!(error.contains("stop trusting a fix after"), "got {error}");
-        assert!(error.contains("set it to 0"), "got {error}");
+        assert!(error.contains("30 min you set"), "got {error}");
     }
 
     #[test]

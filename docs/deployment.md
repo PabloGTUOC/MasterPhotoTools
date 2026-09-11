@@ -28,7 +28,39 @@ else, which needs an Apple Developer account for signing.
 
 ## 2. The server
 
-### Build and run
+### From the Mac, in one command
+
+[`deploy/deploy.sh`](../deploy/deploy.sh) builds here, pipes the image over SSH,
+sends the compose file and the environment, starts the container and waits until
+`/api/health` actually answers. There is no registry: nothing about the library
+or the build leaves the network, and the only credential is the SSH key.
+
+```sh
+cp deploy/deploy.env.example deploy/deploy.env   # set NAS_SSH
+cp deploy/.env.example deploy/.env               # Firebase, Google, thresholds
+
+./deploy/deploy.sh --check     # looks, changes nothing
+./deploy/deploy.sh             # builds, ships, starts, confirms
+```
+
+**`--check` is how you find the paths**, rather than reading them off the NAS
+first: with `LIBRARY_PATH` unset it lists the shared folders it can see and asks
+you to pick one. It also reports the architecture, the docker and compose
+versions, free space, and **who owns the library** — which is the thing that
+quietly breaks an OMV deployment. The archive tools rewrite metadata *in place*,
+so a container running as a uid that cannot write to a shared folder comes up
+healthy, accepts a job, and fails on the first file. With `PHOTOTOOLS_UID` unset
+the script reads the library's owner off the NAS and runs the container as that.
+
+`--check` refuses, before anything is built or sent, on the two placements that
+would delete photographs: a publishing folder that **is** the library, or one
+that **contains** it. The server refuses them too; finding out here costs a
+second instead of a whole image transfer.
+
+Both `deploy/.env` and `deploy/deploy.env` are gitignored. The first is sent to
+the NAS with mode 600; the second never leaves this machine.
+
+### Build and run by hand
 
 The build context is the repository root, not `deploy/`:
 

@@ -15,6 +15,17 @@ services:
     container_name: phototools-server
     restart: unless-stopped
 
+    # Who the process is, as the NAS sees it.
+    #
+    # The image ships a fixed uid 10001 so a bind mount can be given matching
+    # ownership once. On OMV that is the wrong answer: shared folders belong to
+    # whoever created them, and the archive tools rewrite metadata **in place**
+    # in the library — so a process that cannot write there comes up healthy,
+    # accepts a job, and fails on the first file. `deploy/deploy.sh` reads the
+    # library's owner off the NAS and writes it here. Unset keeps the image's
+    # own uid.
+    user: "${PHOTOTOOLS_USER:-10001:10001}"
+
     ports:
       - "${PORT:-3000}:3000"
 

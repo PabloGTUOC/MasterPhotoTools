@@ -566,6 +566,8 @@ export interface TrackSummary {
   name: string;
   source_path: string;
   creator: string | null;
+  /** What kind of claim this track's positions are. */
+  source: PointSource;
   imported_at: number;
   point_count: number;
   points_added: number;
@@ -574,6 +576,88 @@ export interface TrackSummary {
   first_fix: number | null;
   last_fix: number | null;
   bounds: Bounds | null;
+}
+
+/**
+ * `phototools_core::tools::geotag::PointSource` — what kind of claim a position
+ * is.
+ *
+ * A fix off a phone is an observation; a point placed on the map is the
+ * photographer's word for where they were; a Google place visit is an
+ * inference. All three are worth having and each is worth exactly what its kind
+ * is worth, so the kind is shown wherever a position is.
+ */
+export type PointSource = 'recorded' | 'placed' | 'inferred';
+
+/** A fix with where it came from — the timeline as a map draws it. */
+export interface SourcedPoint extends TrackPoint {
+  track_id: string;
+  track_name: string;
+  source: PointSource;
+}
+
+/** How many fixes a day holds. One entry per day that holds any. */
+export interface DayCoverage {
+  /** Unix seconds at the start of that day, in the offset that was asked for. */
+  day: number;
+  fixes: number;
+}
+
+/** A window of the timeline, and the days around it that hold fixes. */
+export interface TimelineView {
+  points: SourcedPoint[];
+  coverage: DayCoverage[];
+  /** The first and last instant the library holds anything for, if any. */
+  extent: [number, number] | null;
+}
+
+export interface TimelineRequest {
+  from: number;
+  to: number;
+  /** Minutes east of UTC, for grouping coverage into the days somebody lived. */
+  offset_minutes: number;
+  /**
+   * Whether the fixes themselves are wanted, or only the day counts.
+   *
+   * The coverage strip spans a month and needs counts; the map draws one day
+   * and needs the fixes. Defaults to true when absent.
+   */
+  include_points?: boolean;
+}
+
+/**
+ * A place somebody says they were, and for how long.
+ *
+ * `from === to` is an instant. A longer span stores **two** points, one at each
+ * end, and nothing in between: the claim is about its endpoints, and the
+ * matcher reads the silence between them as somebody who had not moved.
+ */
+export interface PlacedStop {
+  name: string;
+  lat: number;
+  lon: number;
+  /** Unix seconds, UTC. The screen does the offset arithmetic. */
+  from: number;
+  to: number;
+}
+
+export interface PlacePointsRequest {
+  stops: PlacedStop[];
+  resolution: Resolution;
+  overrides: Decision[];
+}
+
+export interface ExportTimelineRequest {
+  from: number;
+  to: number;
+  /** Where to write it. Canonicalised against the roots, like any other write. */
+  path: string;
+  name: string;
+}
+
+export interface ExportedTimeline {
+  path: string;
+  points: number;
 }
 
 /** A point in a GPX file that cannot be used, and why. */

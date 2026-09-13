@@ -14,8 +14,16 @@ use serde::{Deserialize, Serialize};
 /// used one from three hours earlier" are different claims and a table that
 /// showed them the same way would be lying by omission.
 ///
-/// **Every position this tool writes was recorded by the phone.** Nothing is
-/// computed, averaged or drawn between two points — see [`Mode`].
+/// **Every position this tool writes is one somebody recorded or asserted.**
+/// Nothing is computed, averaged or drawn between two points — see [`Mode`].
+///
+/// This read "recorded by the phone" until the Timeline tab began placing
+/// points by hand (`docs/timeline-plan.md`). A pin is the photographer's word
+/// for where they were, which is a claim worth having and not an observation —
+/// so the *kind* of claim travels with the fix, in
+/// [`PointSource`](super::PointSource), and every screen that shows a position
+/// shows it. What has not changed is the arithmetic: a span is stored as two
+/// real points and this function still has no way to invent a third.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Method {
     /// A fix recorded at that very second.

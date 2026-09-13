@@ -23,6 +23,7 @@ structured half of that work — 72 of them, all actionable.
 | [`docs/manual-verification.md`](docs/manual-verification.md) | The checks, each with a stable id like `MV-8.3` |
 | [`docs/known-gaps.md`](docs/known-gaps.md) | What is open **in the code**, as opposed to awaiting a human |
 | [`docs/geotag-plan.md`](docs/geotag-plan.md) | The Geotag tab: joining photographs to a phone's GPS track. Built; MV-15 awaits a Mac |
+| [`docs/timeline-plan.md`](docs/timeline-plan.md) | The Timeline tab: the track library on a map, and points placed by hand. Stage A built; MV-17 awaits a browser. Google's location history is Stages B–C, not built |
 | [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
 | [`docs/deployment.md`](docs/deployment.md) | Deploying the server and the desktop app, and every environment variable |
@@ -65,8 +66,8 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 709 passing
-cargo test -p phototools-core   # 624 passing — G2
+cargo test --workspace          # 731 passing
+cargo test -p phototools-core   # 646 passing — G2
 ```
 
 Front ends:
@@ -77,7 +78,7 @@ npm --prefix frontend/shared run build     # the shared client, consumed as comp
 npm --prefix frontend/web run typecheck
 npm --prefix frontend/web run build
 npm --prefix frontend/web run check:transport   # no view reaches the network directly
-npm --prefix frontend/web run check:layout      # 11 routes clean at 390 px
+npm --prefix frontend/web run check:layout      # 12 routes clean at 390 px
 npm --prefix frontend/web run check:ingest      # Phase 13 acceptance, measured in a browser
 
 npm --prefix frontend/desktop run typecheck
@@ -118,7 +119,9 @@ Two things sit outside that map, both deliberately and both with no F-number, be
 one would make the code look as though the specification had asked for something it never did:
 
 - **`tools::geotag`** — the specification does not mention GPS at all
-  ([plan](docs/geotag-plan.md)).
+  ([plan](docs/geotag-plan.md)), and `tools::geotag::place` puts points on the timeline that no
+  device recorded, which is why a fix carries whether it was **recorded**, **placed** or
+  **inferred** ([plan](docs/timeline-plan.md)).
 - **`publish::folder`** and **`ingest::deliver`** — publishing a folder, and copying a card's
   passing frames to one. §6.3 publishes a handed-over session
   ([plan](docs/publish-folder-plan.md)).

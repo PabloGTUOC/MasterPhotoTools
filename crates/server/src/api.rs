@@ -46,6 +46,12 @@ pub fn router() -> Router<AppState> {
         .route("/api/tracks/import", post(track_import))
         .route("/api/tracks/:id", axum::routing::delete(track_delete))
         .route("/api/tracks/:id/conflicts", get(track_conflicts))
+        // The timeline, as the Timeline tab reads and adds to it
+        // (`docs/timeline-plan.md`).
+        .route("/api/timeline", post(timeline))
+        .route("/api/timeline/place/preview", post(place_preview))
+        .route("/api/timeline/place", post(place_commit))
+        .route("/api/timeline/export", post(timeline_export))
         .route("/api/tools/geotag/scan", post(geotag_scan))
         .route("/api/tools/geotag/plan", post(geotag_plan))
         .route("/api/tools/geotag/apply", post(geotag_apply))
@@ -782,6 +788,140 @@ async fn track_import(
         chrono::Utc::now().timestamp(),
     )?;
     Ok(Json(result).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TimelineRequest {
+    /// Unix seconds, inclusive. A window is required: a decade of fixes is a
+    /// million rows and no map can draw them.
+    pub from: i64,
+    pub to: i64,
+    /// Minutes east of UTC, for grouping the coverage into the days the person
+    /// was living rather than the days UTC was having.
+    #[serde(default)]
+    pub offset_minutes: i32,
+    /// Whether to return the fixes themselves, or only the day counts.
+    ///
+    /// The coverage strip spans a month and needs counts; the map draws one day
+    /// and needs the fixes. Asking for a month of fixes to draw a strip of
+    /// thirty dots would be megabytes for a number.
+    #[serde(default = "yes")]
+    pub include_points: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PlaceRequest {
+    pub stops: Vec<geotag::gpx::PlacedStop>,
+    pub resolution: geotag::library::Resolution,
+    #[serde(default)]
+    pub overrides: Vec<geotag::library::Decision>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TimelineExportRequest {
+    pub from: i64,
+    pub to: i64,
+    /// Where to write it. Canonicalised against the roots like any other path
+    /// this server writes to (G6).
+    pub path: String,
+    pub name: String,
+}
+
+/// The timeline a map draws: the fixes in a window, and the days around it that
+/// hold any.
+async fn timeline(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<TimelineRequest>,
+) -> Result<Response, ApiError> {
+    let offset = i64::from(request.offset_minutes) * 60;
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    Ok(Json(serde_json::json!({
+        "points": if request.include_points {
+            guard
+                .points_with_source(request.from, request.to)
+                .map_err(Error::Sqlite)?
+        } else {
+            Vec::new()
+        },
+        "coverage": guard
+            .coverage(request.from, request.to, offset)
+            .map_err(Error::Sqlite)?,
+        "extent": guard.timeline_extent().map_err(Error::Sqlite)?,
+    }))
+    .into_response())
+}
+
+/// What placing these points would do. Writes nothing.
+///
+/// A pin takes the road a `.gpx` takes — written, parsed, diffed — so that an
+/// instant the library already holds is put to the user rather than overwritten
+/// by whoever clicked last.
+async fn place_preview(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(stops): Json<Vec<geotag::gpx::PlacedStop>>,
+) -> Result<Response, ApiError> {
+    let file = geotag::place::build(&stops)?;
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    Ok(Json(geotag::library::preview_import(&guard, &file)?).into_response())
+}
+
+/// Store the placed points, applying the decisions. One transaction.
+async fn place_commit(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<PlaceRequest>,
+) -> Result<Response, ApiError> {
+    let file = geotag::place::build(&request.stops)?;
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    let result = geotag::library::commit_import(
+        &guard,
+        &file,
+        request.resolution,
+        &request.overrides,
+        chrono::Utc::now().timestamp(),
+    )?;
+    Ok(Json(result).into_response())
+}
+
+/// Write a window of the timeline out as a `.gpx`.
+///
+/// A library that cannot be got out of is a trap, and the file is the form
+/// every other tool in the world reads.
+async fn timeline_export(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<TimelineExportRequest>,
+) -> Result<Response, ApiError> {
+    let path = resolve_output(&state.config, &request.path)?;
+    let ledger = state.jobs.ledger();
+    let points = {
+        let guard = ledger.lock().map_err(|_| poisoned())?;
+        guard
+            .points_between(request.from, request.to)
+            .map_err(Error::Sqlite)?
+    };
+    if points.is_empty() {
+        return Err(ApiError {
+            code: "empty",
+            message: "there are no fixes in that window to export".into(),
+        });
+    }
+    let text = geotag::gpx::write(&request.name, geotag::gpx::CREATOR, &points)?;
+    std::fs::write(&path, text).map_err(Error::Io)?;
+    Ok(Json(serde_json::json!({
+        "path": path.display().to_string(),
+        "points": points.len(),
+    }))
+    .into_response())
 }
 
 async fn track_delete(

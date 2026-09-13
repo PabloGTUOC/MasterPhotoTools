@@ -267,6 +267,46 @@ Two consequences a reader comparing the two documents should know:
   because that is where the archive operations live, and it behaves like one:
   the same `Tool` trait, the same plan-then-apply, the same job.
 
+### The Timeline tab, and points that were never recorded
+
+`SPECIFICATION.md` mentions neither maps nor location, so the Timeline tab is
+outside it on the same terms as Geotag: planned in
+[`timeline-plan.md`](timeline-plan.md) before any code, no F-number invented, the
+specification not edited (G9, G11).
+
+It adds migration 10 (`tracks.source`), three ledger queries, four server routes,
+four Tauri commands, four `ApiClient` methods, and the `/timeline` route in both
+front ends.
+
+**The part worth a reader's attention is not the tab; it is what it puts in the
+library.** `join.rs` promised that every position it writes was *recorded by the
+phone*. A point placed on a map is not a recording — it is the photographer
+asserting where they were — and that promise is why the module could be trusted.
+Rather than quietly break it, the claim is now stored per import and shown
+wherever a position is shown: **recorded**, **placed by hand**, or **inferred**
+(Google's place visits, which Stage B will import). `join.rs`'s doc comment is
+amended to the accurate version: every position is one somebody recorded or
+asserted, and none is computed.
+
+The arithmetic prohibition is untouched. A span becomes two real points, one at
+each end, and nothing between them is interpolated.
+
+**Stages B and C of that plan are not built**: importing Google's location
+history is not in this build, and the plan says what is still unknown about its
+format.
+
+### Leaflet, and the one outbound request in this application
+
+[G8] `leaflet` (~40 KB gzipped, MIT) is bundled into both front ends for the map.
+It is the first dependency beyond §2.6 in the front end, and the reason is in
+[`phase-reports/timeline.md`](phase-reports/timeline.md).
+
+**Map tiles are the only thing either application fetches from a third party.**
+They come from OpenStreetMap, attributed on the screen, and `VITE_TILE_URL`
+overrides the host. Tiles that will not load are a state and not an error: a grey
+map, a notice, and every coordinate field still works — which is what makes the
+tab usable on a Mac with no network, the condition MV-7.3 already cares about.
+
 ### The resolution ceiling defaults to off, where §F12 sets 10 MP
 
 §F12 gives two independent ceilings — `max_megapixels` (10) and

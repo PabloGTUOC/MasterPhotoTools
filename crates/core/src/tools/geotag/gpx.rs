@@ -190,6 +190,157 @@ fn stamp(at: i64) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+/// What this application writes into a file's `creator`, so a file that came
+/// back out of the library says where it was made.
+pub const CREATOR: &str = "PhotoTools";
+
+/// What a hand-placed track says it is, in the one field every GPX reader
+/// shows. Lightroom will not display "placed by hand"; this is the sentence it
+/// can carry.
+pub const PLACED_CREATOR: &str = "PhotoTools — placed by hand";
+
+/// An instant as GPX writes them: UTC, to the second, with the `Z`.
+fn gpx_time(at: i64) -> Result<String, Error> {
+    DateTime::from_timestamp(at, 0)
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .ok_or_else(|| Error::Config(format!("{at} is not an instant a GPX file can hold")))
+}
+
+/// XML-escape text going into an element body.
+///
+/// A place called `Bar & Grill` is otherwise a file this crate's own reader
+/// refuses, which would be a fine way to discover that a writer and a reader
+/// live in the same module for a reason.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Write fixes as a single-segment GPX track.
+///
+/// The export half of this module. Beside `parse` because the two have to agree
+/// about what a point is, and a writer somewhere else drifts from the reader
+/// that has to accept it — which the round-trip test asserts.
+pub fn write(name: &str, creator: &str, points: &[TrackPoint]) -> Result<String, Error> {
+    let mut out = String::with_capacity(points.len() * 96 + 256);
+    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    out.push_str(&format!(
+        "<gpx version=\"1.1\" creator=\"{}\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n",
+        escape(creator)
+    ));
+    out.push_str(&format!(
+        "  <trk>\n    <name>{}</name>\n    <trkseg>\n",
+        escape(name)
+    ));
+    for point in points {
+        out.push_str(&format!(
+            "      <trkpt lat=\"{:.7}\" lon=\"{:.7}\">\n",
+            point.lat, point.lon
+        ));
+        if let Some(ele) = point.ele {
+            out.push_str(&format!("        <ele>{ele:.2}</ele>\n"));
+        }
+        out.push_str(&format!(
+            "        <time>{}</time>\n      </trkpt>\n",
+            gpx_time(point.at)?
+        ));
+    }
+    out.push_str("    </trkseg>\n  </trk>\n</gpx>\n");
+    Ok(out)
+}
+
+/// A place somebody says they were, and for how long.
+///
+/// `from == to` is an instant. Anything longer is **two** points, one at each
+/// end, and nothing in between: the span is a claim about its endpoints, and
+/// `join::Mode::CarriedForward` reads the silence between them exactly as it
+/// reads a phone that sat still.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlacedStop {
+    /// What to call it. "Alexanderplatz", or whatever the person typed.
+    pub name: String,
+    pub lat: f64,
+    pub lon: f64,
+    /// Unix seconds, UTC. The screen does the offset arithmetic.
+    pub from: i64,
+    pub to: i64,
+}
+
+/// Write hand-placed stops as a GPX document, or say why they are not one.
+///
+/// Refusals happen here rather than at the database, because a file that cannot
+/// be defended is not worth writing: an impossible coordinate, a span that ends
+/// before it starts, or two stops claiming one instant — which the parser would
+/// otherwise report after the fact as a file disagreeing with itself.
+pub fn write_placed(stops: &[PlacedStop]) -> Result<String, Error> {
+    if stops.is_empty() {
+        return Err(Error::Config("no places to write".into()));
+    }
+
+    for stop in stops {
+        if !(-90.0..=90.0).contains(&stop.lat) || !(-180.0..=180.0).contains(&stop.lon) {
+            return Err(Error::Config(format!(
+                "{} is at {:.5}, {:.5}, which is not a place on Earth",
+                stop.name, stop.lat, stop.lon
+            )));
+        }
+        if stop.to < stop.from {
+            return Err(Error::Config(format!(
+                "{} ends before it starts",
+                stop.name
+            )));
+        }
+    }
+
+    let mut ordered: Vec<&PlacedStop> = stops.iter().collect();
+    ordered.sort_by_key(|s| s.from);
+    for pair in ordered.windows(2) {
+        if pair[1].from < pair[0].to {
+            return Err(Error::Config(format!(
+                "{} and {} overlap in time, and one instant has one position",
+                pair[0].name, pair[1].name
+            )));
+        }
+    }
+
+    let mut out = String::new();
+    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    out.push_str(&format!(
+        "<gpx version=\"1.1\" creator=\"{}\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n",
+        escape(PLACED_CREATOR)
+    ));
+    for stop in ordered {
+        out.push_str(&format!(
+            "  <trk>\n    <name>{}</name>\n    <trkseg>\n",
+            escape(&stop.name)
+        ));
+        // One point for an instant, two for a span. Never a third: a position
+        // between them would be computed, which is the one thing this module
+        // does not do.
+        let instants = if stop.to == stop.from {
+            vec![stop.from]
+        } else {
+            vec![stop.from, stop.to]
+        };
+        for at in instants {
+            out.push_str(&format!(
+                "      <trkpt lat=\"{:.7}\" lon=\"{:.7}\">\n        <time>{}</time>\n      </trkpt>\n",
+                stop.lat,
+                stop.lon,
+                gpx_time(at)?
+            ));
+        }
+        out.push_str("    </trkseg>\n  </trk>\n");
+    }
+    out.push_str("</gpx>\n");
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
 // The scanner
 // ---------------------------------------------------------------------------
 
@@ -710,5 +861,77 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(track.points[0].lat, 52.5);
+    }
+
+    #[test]
+    fn what_the_writer_writes_the_reader_reads_back_unchanged() {
+        let points = vec![
+            TrackPoint {
+                at: 1_367_402_400,
+                lat: 52.521918,
+                lon: 13.413215,
+                ele: Some(36.5),
+            },
+            TrackPoint {
+                at: 1_367_406_000,
+                lat: 48.858370,
+                lon: 2.294481,
+                ele: None,
+            },
+        ];
+
+        let text = write("A day", CREATOR, &points).unwrap();
+        let back = parse(&text).unwrap();
+
+        assert_eq!(back.creator.as_deref(), Some(CREATOR));
+        assert_eq!(back.rejected, vec![]);
+        assert_eq!(back.points, points, "a round trip must change nothing");
+    }
+
+    #[test]
+    fn an_exported_day_can_be_imported_again_by_this_very_reader() {
+        // The claim MV-17.7 makes with real files, asserted here on the pair
+        // that has to agree: a writer elsewhere would drift from this reader.
+        let placed = write_placed(&[PlacedStop {
+            name: "Alexanderplatz".into(),
+            lat: 52.521918,
+            lon: 13.413215,
+            from: 1_367_416_800,
+            to: 1_367_431_200,
+        }])
+        .unwrap();
+
+        let first = parse(&placed).unwrap();
+        let second = parse(&write("A day", PLACED_CREATOR, &first.points).unwrap()).unwrap();
+        assert_eq!(first.points, second.points);
+    }
+
+    #[test]
+    fn a_name_with_markup_in_it_is_escaped_rather_than_breaking_the_file() {
+        let text = write("Bar & <Grill>", CREATOR, &[]).unwrap();
+        assert!(text.contains("Bar &amp; &lt;Grill&gt;"));
+        assert!(parse(&text).is_ok());
+    }
+
+    #[test]
+    fn an_altitude_that_was_never_known_is_absent_rather_than_zero() {
+        let text = write(
+            "No altitude",
+            CREATOR,
+            &[TrackPoint {
+                at: 10,
+                lat: 1.0,
+                lon: 2.0,
+                ele: None,
+            }],
+        )
+        .unwrap();
+        assert!(!text.contains("<ele>"));
+        assert_eq!(parse(&text).unwrap().points[0].ele, None);
+    }
+
+    #[test]
+    fn writing_no_places_at_all_is_refused() {
+        assert!(write_placed(&[]).is_err());
     }
 }

@@ -45,7 +45,7 @@ const TYPES = {
 // Workflow order, so the screenshots in `layout-proof/` read the way the
 // navigation bar does.
 const ROUTES = [
-  '/', '/dates', '/rename', '/geotag', '/tiff-to-jpeg', '/raw-to-jpeg',
+  '/', '/dates', '/rename', '/timeline', '/geotag', '/tiff-to-jpeg', '/raw-to-jpeg',
   '/split', '/border', '/contact-sheet', '/transform', '/publish',
 ];
 
@@ -82,11 +82,20 @@ for (const route of ROUTES) {
   await page.waitForTimeout(150);
 
   const report = await page.evaluate((width) => {
-    /** True if this element, or an ancestor, scrolls horizontally by design. */
+    /**
+     * True if an ancestor scrolls horizontally by design, or clips.
+     *
+     * `auto`/`scroll` is a deliberate strip — the tab bar, a wide table.
+     * `hidden` is a map: Leaflet lays a grid of 256px tiles across a pane far
+     * wider than the element that clips it, and those tiles can no more scroll
+     * the page than a strip's contents can. What is being asserted is that the
+     * **page** does not scroll sideways, and `documentWidth` below asserts it
+     * outright; this walk exists to name the element responsible when it does.
+     */
     const insideScroller = (el) => {
       for (let node = el; node && node !== document.body; node = node.parentElement) {
         const overflow = getComputedStyle(node).overflowX;
-        if (overflow === 'auto' || overflow === 'scroll') return true;
+        if (overflow === 'auto' || overflow === 'scroll' || overflow === 'hidden') return true;
       }
       return false;
     };

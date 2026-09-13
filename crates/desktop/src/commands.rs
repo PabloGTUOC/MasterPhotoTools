@@ -1383,6 +1383,138 @@ pub fn import_track(
     .map_err(describe)
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TimelineArgs {
+    /// Unix seconds, inclusive. A window is required: a decade of fixes is a
+    /// million rows and no map can draw them.
+    pub from: i64,
+    pub to: i64,
+    /// Minutes east of UTC, for grouping the coverage into the days the person
+    /// was living rather than the days UTC was having.
+    #[serde(default)]
+    pub offset_minutes: i32,
+    /// Whether to return the fixes themselves, or only the day counts.
+    ///
+    /// The coverage strip spans a month and needs counts; the map draws one day
+    /// and needs the fixes. Asking for a month of fixes to draw a strip of
+    /// thirty dots would be megabytes for a number.
+    #[serde(default = "yes")]
+    pub include_points: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TimelineView {
+    pub points: Vec<geotag::SourcedPoint>,
+    pub coverage: Vec<geotag::DayCoverage>,
+    pub extent: Option<(i64, i64)>,
+}
+
+/// The timeline a map draws: the fixes in a window, and the days that hold any.
+#[tauri::command]
+pub fn timeline(args: TimelineArgs, state: State<'_, AppState>) -> CommandResult<TimelineView> {
+    let offset = i64::from(args.offset_minutes) * 60;
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    Ok(TimelineView {
+        points: if args.include_points {
+            guard
+                .points_with_source(args.from, args.to)
+                .map_err(|e| describe(e.into()))?
+        } else {
+            Vec::new()
+        },
+        coverage: guard
+            .coverage(args.from, args.to, offset)
+            .map_err(|e| describe(e.into()))?,
+        extent: guard.timeline_extent().map_err(|e| describe(e.into()))?,
+    })
+}
+
+/// What placing these points would do. Writes nothing.
+///
+/// A pin takes the road a `.gpx` takes — written, parsed, diffed — so an instant
+/// the library already holds is put to the user rather than overwritten.
+#[tauri::command]
+pub fn preview_placed_points(
+    stops: Vec<geotag::gpx::PlacedStop>,
+    state: State<'_, AppState>,
+) -> CommandResult<geotag::library::TrackImportPreview> {
+    let file = geotag::place::build(&stops).map_err(describe)?;
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    geotag::library::preview_import(&guard, &file).map_err(describe)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PlacePointsArgs {
+    pub stops: Vec<geotag::gpx::PlacedStop>,
+    pub resolution: geotag::library::Resolution,
+    #[serde(default)]
+    pub overrides: Vec<geotag::library::Decision>,
+}
+
+/// Store the placed points, applying the decisions. One transaction.
+#[tauri::command]
+pub fn place_points(
+    args: PlacePointsArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<geotag::library::TrackImportResult> {
+    let file = geotag::place::build(&args.stops).map_err(describe)?;
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    geotag::library::commit_import(
+        &guard,
+        &file,
+        args.resolution,
+        &args.overrides,
+        chrono::Utc::now().timestamp(),
+    )
+    .map_err(describe)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExportTimelineArgs {
+    pub from: i64,
+    pub to: i64,
+    pub path: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportedTimeline {
+    pub path: String,
+    pub points: usize,
+}
+
+/// Write a window of the timeline out as a `.gpx`.
+///
+/// A library that cannot be got out of is a trap, and the file is the form every
+/// other tool in the world reads.
+#[tauri::command]
+pub fn export_timeline(
+    args: ExportTimelineArgs,
+    state: State<'_, AppState>,
+) -> CommandResult<ExportedTimeline> {
+    let config = state.config();
+    let resolved = resolve_output(&config, &args.path)?;
+    let ledger = state.jobs.ledger();
+    let points = {
+        let guard = ledger.lock().map_err(|_| poisoned())?;
+        guard
+            .points_between(args.from, args.to)
+            .map_err(|e| describe(e.into()))?
+    };
+    if points.is_empty() {
+        return Err("there are no fixes in that window to export".into());
+    }
+    let text = geotag::gpx::write(&args.name, geotag::gpx::CREATOR, &points).map_err(describe)?;
+    std::fs::write(&resolved, text).map_err(|e| describe(e.into()))?;
+    Ok(ExportedTimeline {
+        path: resolved.display().to_string(),
+        points: points.len(),
+    })
+}
+
 #[tauri::command]
 pub fn delete_track(id: String, state: State<'_, AppState>) -> CommandResult<usize> {
     let ledger = state.jobs.ledger();

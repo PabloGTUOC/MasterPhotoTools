@@ -10,6 +10,7 @@ pub mod exif;
 pub mod gpx;
 pub mod join;
 pub mod library;
+pub mod place;
 pub mod scan;
 pub mod tool;
 
@@ -17,6 +18,72 @@ pub use tool::preview;
 
 use crate::ledger::TrackRow;
 use serde::{Deserialize, Serialize};
+
+/// What kind of claim a position is.
+///
+/// `join.rs` may only use positions somebody recorded or asserted, never one it
+/// computed — and those two are not the same claim either. A fix off a phone is
+/// an observation; a point placed on a map is the photographer's word for where
+/// they were; a Google place visit is an inference from signals nobody can
+/// inspect. All three are worth having and each is worth exactly as much as its
+/// kind, so the kind travels with it to every screen that shows a position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PointSource {
+    /// A device recorded it.
+    #[default]
+    Recorded,
+    /// A person put it there, on a map, after the fact.
+    Placed,
+    /// Somebody's software concluded it. Google's place visits are these.
+    Inferred,
+}
+
+impl PointSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Placed => "placed",
+            Self::Inferred => "inferred",
+        }
+    }
+
+    /// Read one back from the database.
+    ///
+    /// Not `FromStr`: that trait returns a `Result`, and there is no failure
+    /// here by design — see below.
+    ///
+    /// An unknown string reads as `Recorded` rather than failing the row: this
+    /// column is a label on a position, and a library that will not open
+    /// because a newer build wrote a word this one has not heard of is a worse
+    /// outcome than a point described in the most conservative terms available.
+    pub fn from_label(value: &str) -> Self {
+        match value {
+            "placed" => Self::Placed,
+            "inferred" => Self::Inferred,
+            _ => Self::Recorded,
+        }
+    }
+}
+
+/// A fix, with where it came from — the timeline as a map draws it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SourcedPoint {
+    #[serde(flatten)]
+    pub point: TrackPoint,
+    pub track_id: String,
+    /// The track's name, for a label on the map.
+    pub track_name: String,
+    pub source: PointSource,
+}
+
+/// How many fixes a day holds. The coverage strip, one cell per entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DayCoverage {
+    /// Unix seconds at the start of the day, in the offset that was asked for.
+    pub day: i64,
+    pub fixes: i64,
+}
 
 /// One imported track, as a screen sees it.
 ///
@@ -29,6 +96,8 @@ pub struct TrackSummary {
     pub name: String,
     pub source_path: String,
     pub creator: Option<String>,
+    /// What kind of claim this track's positions are.
+    pub source: PointSource,
     pub imported_at: i64,
     pub point_count: i64,
     pub points_added: i64,
@@ -78,6 +147,7 @@ impl From<TrackRow> for TrackSummary {
             name: row.name,
             source_path: row.source_path,
             creator: row.creator,
+            source: row.source,
             imported_at: row.imported_at,
             point_count: row.point_count,
             points_added: row.points_added,

@@ -7,7 +7,7 @@
 
 use super::exif::{self, ExifPoint};
 use super::gpx::{self, ParsedTrack, RejectedPoint};
-use super::{metres_between, same_position, TrackPoint};
+use super::{metres_between, same_position, PointSource, TrackPoint};
 use crate::error::Error;
 use crate::ledger::{Ledger, TrackConflictRecord, TrackRow};
 use serde::{Deserialize, Serialize};
@@ -31,6 +31,9 @@ pub struct TrackFile {
     pub source_path: String,
     pub gpx: String,
     pub parsed: ParsedTrack,
+    /// What kind of claim these positions are. A file read off a disk is
+    /// `Recorded`; `place::build` is where the other kinds come from.
+    pub source: PointSource,
 }
 
 /// Read and parse a `.gpx`.
@@ -48,6 +51,7 @@ pub fn read_track(path: &Path) -> Result<TrackFile, Error> {
 
     Ok(TrackFile {
         id,
+        source: PointSource::Recorded,
         name: path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -286,6 +290,7 @@ pub fn commit_import(
     let bounds = file.parsed.bounds();
     let row = TrackRow {
         id: file.id.clone(),
+        source: file.source,
         name: file.name.clone(),
         source_path: file.source_path.clone(),
         creator: file.parsed.creator.clone(),
@@ -345,6 +350,7 @@ mod tests {
             source_path: format!("/tracks/{name}"),
             parsed: gpx::parse(&gpx).unwrap(),
             gpx,
+            source: PointSource::Recorded,
         }
     }
 
@@ -712,6 +718,7 @@ mod tests {
             source_path: "/tracks/partial.gpx".into(),
             parsed: gpx::parse(gpx).unwrap(),
             gpx: gpx.into(),
+            source: PointSource::Recorded,
         };
 
         let result = import(&ledger, &track);

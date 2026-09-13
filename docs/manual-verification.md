@@ -689,3 +689,69 @@ cannot delete what it receives.
       **Pass:** what arrives in Google Photos is the edited version, dated and located, and the
       working folder still holds everything.
       **Result:**
+
+---
+
+## MV-17 — the Timeline tab
+
+Stage A of [`timeline-plan.md`](timeline-plan.md): the map, the day, the pin, the export. Stages B
+and C — Google's location history — are not built, so nothing here tests them.
+
+Every item below needs a browser and a library with fixes in it. MV-17.5 also needs photographs.
+
+- [ ] **MV-17.1 — A day with a track shows its fixes, in order, labelled.**
+      **Run:** import a `.gpx` in Geotag, then open Timeline on a day it covers.
+      **Pass:** the fixes are on the map in time order, the list below gives each one's local time
+      and coordinates, and every row reads **recorded**.
+      **Result:**
+
+- [ ] **MV-17.2 — The month strip marks the days that hold fixes.**
+      **Run:** page the day across a month with partial coverage.
+      **Pass:** days holding fixes are lit, the rest are not, and the lit ones are the days the
+      track actually covers — not the day before or after, which is what an offset applied to the
+      wrong side of the query looks like.
+      **Result:**
+
+- [ ] **MV-17.3 — A pin stores two points, labelled as placed by hand.**
+      **Run:** a blank day. Search nothing; click Alexanderplatz on the map, or type
+      `52.521918, 13.413215`. Set 1 May 2013, 14:00 to 18:00, offset 120. Preview, then store.
+      **Pass:** two points, at `12:00:00Z` and `16:00:00Z` — the line under the fields says exactly
+      that before anything is stored — and both rows read **placed by hand**. The Geotag tab's
+      track list shows the placement with the same words.
+      **Result:**
+
+- [ ] **MV-17.4 — Aeroplane mode: no tiles, and everything else still works.**
+      **Run:** turn off the network. Reload the tab.
+      **Pass:** a grey map and *No map tiles*; typing coordinates and times still stores the same
+      two points. This is the desktop application's ordinary condition when travelling (MV-7.3).
+      **Result:**
+
+- [ ] **MV-17.5 — A frame from that afternoon takes the position.**
+      **Run:** in Geotag, match a folder of photographs from 1 May 2013 against the library, with
+      the same offset set there.
+      **Pass:** frames inside the span take the placed position; a frame from that morning is
+      offered it too, with the gap in time shown, because carrying forward is what a span means.
+      **Result:**
+
+- [ ] **MV-17.6 — Placing a point on an instant already held is put to you.**
+      **Run:** place a point at a second a `.gpx` already covers, at a different position.
+      **Pass:** the preview reports the conflict and says the library's own fix is kept; nothing is
+      overwritten by the click.
+      **Result:**
+
+- [ ] **MV-17.7 — Exporting a day and importing it back changes nothing.**
+      **Run:** *Export this day as a .gpx* into a folder, then import that file in Geotag.
+      **Pass:** every point is already held; nothing is added and nothing conflicts.
+      **Result:**
+
+- [ ] **MV-17.8 — The offset is believed, including the awkward one.**
+      **Run:** set the offset to 330 (UTC+05:30) and place a point at 00:15.
+      **Pass:** the UTC line reads the previous day at 18:45Z, and the strip lights the day you
+      typed rather than the UTC one.
+      **Result:**
+
+- [ ] **MV-17.9 — On a phone.**
+      **Run:** open the tab at 390px wide.
+      **Pass:** the map is usable with one thumb, the zoom controls are big enough to hit, and
+      nothing scrolls sideways. `check:layout` asserts the numbers; this is the judgement.
+      **Result:**

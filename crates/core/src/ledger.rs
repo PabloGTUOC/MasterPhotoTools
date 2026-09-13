@@ -1,7 +1,7 @@
 //! SQLite persistence
 
 use crate::jobs::{Job, JobStatus};
-use crate::tools::geotag::TrackPoint;
+use crate::tools::geotag::{DayCoverage, PointSource, SourcedPoint, TrackPoint};
 use rusqlite::{Connection, OptionalExtension, Result as SqlResult};
 use std::collections::HashMap;
 use std::path::Path;
@@ -43,6 +43,7 @@ fn track_row(row: &rusqlite::Row) -> SqlResult<TrackRow> {
             (Some(a), Some(b), Some(c), Some(d)) => Some((a, b, c, d)),
             _ => None,
         },
+        source: PointSource::from_label(&row.get::<_, String>(15)?),
     })
 }
 
@@ -309,6 +310,25 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE sessions ADD COLUMN folder TEXT;
     "#,
+    // 10 — where a fix came from (`docs/timeline-plan.md`).
+    //
+    // `join.rs` promises that every position it writes was *recorded*. Points
+    // placed by hand on the Timeline tab are not recordings — they are the
+    // photographer asserting where they were — and Google's place visits are an
+    // inference from signals nobody can see. All three are worth having and
+    // they are not the same claim, so the claim is stored rather than left to
+    // be guessed from a track's name.
+    //
+    // On `tracks` rather than on `track_points`: a point is attributed to the
+    // import that contributed it, so the column belongs to the import and a
+    // join answers for the point. One row per import instead of one per fix,
+    // and a timeline of a million points does not carry the word "recorded" a
+    // million times.
+    //
+    // Every existing row is a `.gpx` off a phone, which is exactly `recorded`.
+    r#"
+    ALTER TABLE tracks ADD COLUMN source TEXT NOT NULL DEFAULT 'recorded';
+    "#,
 ];
 
 /// One provider's stored authorisation.
@@ -342,6 +362,8 @@ pub struct TrackRow {
     pub first_fix: Option<i64>,
     pub last_fix: Option<i64>,
     pub bounds: Option<(f64, f64, f64, f64)>,
+    /// Recorded, placed by hand, or inferred — migration 10.
+    pub source: PointSource,
 }
 
 /// One row of the publish state machine (§6.3).
@@ -748,7 +770,7 @@ impl Ledger {
         let mut statement = self.conn.prepare(
             "SELECT id, name, source_path, creator, imported_at, point_count,
                     points_added, points_identical, points_conflicting,
-                    first_fix, last_fix, min_lat, min_lon, max_lat, max_lon
+                    first_fix, last_fix, min_lat, min_lon, max_lat, max_lon, source
                FROM tracks ORDER BY imported_at DESC, id",
         )?;
         let rows = statement.query_map([], track_row)?;
@@ -761,7 +783,7 @@ impl Ledger {
             .query_row(
                 "SELECT id, name, source_path, creator, imported_at, point_count,
                         points_added, points_identical, points_conflicting,
-                        first_fix, last_fix, min_lat, min_lon, max_lat, max_lon
+                        first_fix, last_fix, min_lat, min_lon, max_lat, max_lon, source
                    FROM tracks WHERE id = ?1",
                 [id],
                 track_row,
@@ -787,6 +809,81 @@ impl Ledger {
             })
         })?;
         rows.collect()
+    }
+
+    /// The fixes in a window, each with the import that contributed it.
+    ///
+    /// What `points_between` answers, plus what a map has to say about a point
+    /// before somebody trusts it: which file it came from, and whether it was
+    /// recorded, placed by hand or inferred (migration 10).
+    pub fn points_with_source(&self, from: i64, to: i64) -> SqlResult<Vec<SourcedPoint>> {
+        let mut statement = self.conn.prepare(
+            "SELECT p.at, p.lat, p.lon, p.ele, p.track_id, t.name, t.source
+               FROM track_points p
+               JOIN tracks t ON t.id = p.track_id
+              WHERE p.at BETWEEN ?1 AND ?2
+              ORDER BY p.at",
+        )?;
+        let rows = statement.query_map([from, to], |row| {
+            Ok(SourcedPoint {
+                point: TrackPoint {
+                    at: row.get(0)?,
+                    lat: row.get(1)?,
+                    lon: row.get(2)?,
+                    ele: row.get(3)?,
+                },
+                track_id: row.get(4)?,
+                track_name: row.get(5)?,
+                source: PointSource::from_label(&row.get::<_, String>(6)?),
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// How many fixes each day of a window holds.
+    ///
+    /// `offset_seconds` is east of UTC, and it is applied to the *grouping*
+    /// rather than to each row on the way out: a day is a day where the person
+    /// was, and a month of European evenings grouped by UTC days would report
+    /// the small hours of the next one. Counted in SQL, so a year answers with
+    /// 365 rows rather than a million.
+    ///
+    /// **Days with no fixes are absent, not zero** — the caller knows which days
+    /// it asked about, and a blank day is exactly what this is for.
+    pub fn coverage(&self, from: i64, to: i64, offset_seconds: i64) -> SqlResult<Vec<DayCoverage>> {
+        let mut statement = self.conn.prepare(
+            // Integer division truncates towards zero, so a negative offset
+            // before 1970 would bucket backwards; the floor is taken with the
+            // same arithmetic SQLite has, rather than a CAST that rounds.
+            "SELECT ((at + ?3) - ((at + ?3) % 86400)) / 86400 AS day, COUNT(*)
+               FROM track_points
+              WHERE at BETWEEN ?1 AND ?2
+              GROUP BY day ORDER BY day",
+        )?;
+        let rows = statement.query_map([from, to, offset_seconds], |row| {
+            let day: i64 = row.get(0)?;
+            Ok(DayCoverage {
+                day: day * 86400 - offset_seconds,
+                fixes: row.get(1)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// The first and last instant the library holds anything for.
+    ///
+    /// What a screen opens on: a library with fixes should not open on today
+    /// when today is blank and 2013 is where everything is.
+    pub fn timeline_extent(&self) -> SqlResult<Option<(i64, i64)>> {
+        let extent =
+            self.conn
+                .query_row("SELECT MIN(at), MAX(at) FROM track_points", [], |row| {
+                    Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?))
+                })?;
+        Ok(match extent {
+            (Some(first), Some(last)) => Some((first, last)),
+            _ => None,
+        })
     }
 
     /// The last fix at or before an instant, and the first at or after it.
@@ -886,8 +983,8 @@ impl Ledger {
             "INSERT OR REPLACE INTO tracks
                  (id, name, source_path, creator, imported_at, point_count,
                   points_added, points_identical, points_conflicting,
-                  first_fix, last_fix, min_lat, min_lon, max_lat, max_lon, gpx)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                  first_fix, last_fix, min_lat, min_lon, max_lat, max_lon, gpx, source)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             rusqlite::params![
                 row.id,
                 row.name,
@@ -905,6 +1002,7 @@ impl Ledger {
                 row.bounds.map(|b| b.2),
                 row.bounds.map(|b| b.3),
                 gpx,
+                row.source.as_str(),
             ],
         )?;
 
@@ -1949,5 +2047,156 @@ mod tests {
         let read = ledger.get_job("job-bad").unwrap().unwrap();
         assert_eq!(read.error.as_deref(), Some("disk full"));
         assert_eq!(read.summary.as_deref(), Some("disk full"));
+    }
+
+    /// A track and its fixes, for the timeline queries below.
+    fn store_track(ledger: &Ledger, id: &str, source: PointSource, fixes: &[(i64, f64, f64)]) {
+        let row = TrackRow {
+            id: id.into(),
+            name: format!("{id}.gpx"),
+            source_path: format!("/tracks/{id}.gpx"),
+            creator: Some("OwnTracks".into()),
+            imported_at: 1_700_000_000,
+            point_count: fixes.len() as i64,
+            points_added: fixes.len() as i64,
+            points_identical: 0,
+            points_conflicting: 0,
+            first_fix: fixes.first().map(|f| f.0),
+            last_fix: fixes.last().map(|f| f.0),
+            bounds: None,
+            source,
+        };
+        let points: Vec<TrackPoint> = fixes
+            .iter()
+            .map(|(at, lat, lon)| TrackPoint {
+                at: *at,
+                lat: *lat,
+                lon: *lon,
+                ele: None,
+            })
+            .collect();
+        ledger
+            .record_track_import(&row, "<gpx/>", &points, &[])
+            .unwrap();
+    }
+
+    #[test]
+    fn a_fix_carries_the_kind_of_claim_its_import_made() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        store_track(
+            &ledger,
+            "phone",
+            PointSource::Recorded,
+            &[(1_000, 52.5, 13.4)],
+        );
+        store_track(
+            &ledger,
+            "byhand",
+            PointSource::Placed,
+            &[(2_000, 48.85, 2.35)],
+        );
+
+        let points = ledger.points_with_source(0, 9_999).unwrap();
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].source, PointSource::Recorded);
+        assert_eq!(points[0].track_name, "phone.gpx");
+        assert_eq!(points[1].source, PointSource::Placed);
+        assert_eq!(points[1].track_id, "byhand");
+    }
+
+    #[test]
+    fn a_track_imported_before_provenance_existed_reads_as_recorded() {
+        // Migration 10 defaults the column, and what those rows are is exactly
+        // what the default says: fixes off a phone, in a .gpx.
+        let ledger = Ledger::open_in_memory().unwrap();
+        store_track(
+            &ledger,
+            "old",
+            PointSource::Recorded,
+            &[(1_000, 52.5, 13.4)],
+        );
+        ledger
+            .inner()
+            .execute_batch("UPDATE tracks SET source = 'recorded' WHERE id = 'old'")
+            .unwrap();
+
+        assert_eq!(ledger.tracks().unwrap()[0].source, PointSource::Recorded);
+    }
+
+    #[test]
+    fn a_word_this_build_has_never_heard_of_reads_as_recorded() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        store_track(
+            &ledger,
+            "future",
+            PointSource::Placed,
+            &[(1_000, 52.5, 13.4)],
+        );
+        ledger
+            .inner()
+            .execute_batch("UPDATE tracks SET source = 'triangulated' WHERE id = 'future'")
+            .unwrap();
+
+        // The library opens and the point is described in the most conservative
+        // terms available, rather than the read failing.
+        assert_eq!(ledger.tracks().unwrap()[0].source, PointSource::Recorded);
+    }
+
+    #[test]
+    fn coverage_counts_the_fixes_of_each_day_and_omits_the_empty_ones() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        // 2013-05-01 10:00Z, 11:00Z, and one on 2013-05-03.
+        store_track(
+            &ledger,
+            "berlin",
+            PointSource::Recorded,
+            &[
+                (1_367_402_400, 52.5, 13.4),
+                (1_367_406_000, 52.5, 13.4),
+                (1_367_575_200, 52.5, 13.4),
+            ],
+        );
+
+        let days = ledger.coverage(1_367_366_400, 1_367_625_600, 0).unwrap();
+        assert_eq!(
+            days.len(),
+            2,
+            "the blank day between them is absent, not zero"
+        );
+        assert_eq!(days[0].fixes, 2);
+        assert_eq!(days[1].fixes, 1);
+        assert_eq!(days[0].day, 1_367_366_400, "the start of 2013-05-01 UTC");
+    }
+
+    #[test]
+    fn coverage_groups_by_the_day_the_person_was_living_not_by_utc() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        // 2013-05-01 23:30 in Berlin (UTC+2) is 21:30Z — the same day there,
+        // and the day after in UTC if the offset is ignored.
+        store_track(
+            &ledger,
+            "evening",
+            PointSource::Recorded,
+            &[(1_367_443_800, 52.5, 13.4)],
+        );
+
+        let utc = ledger.coverage(0, i64::MAX, 0).unwrap();
+        let berlin = ledger.coverage(0, i64::MAX, 2 * 3600).unwrap();
+        assert_eq!(utc[0].day, 1_367_366_400, "2013-05-01 00:00Z");
+        assert_eq!(berlin[0].day, 1_367_359_200, "2013-05-01 00:00+02:00");
+    }
+
+    #[test]
+    fn the_extent_is_what_the_library_actually_holds() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        assert_eq!(ledger.timeline_extent().unwrap(), None);
+
+        store_track(
+            &ledger,
+            "t",
+            PointSource::Recorded,
+            &[(1_000, 52.5, 13.4), (9_000, 52.6, 13.5)],
+        );
+        assert_eq!(ledger.timeline_extent().unwrap(), Some((1_000, 9_000)));
     }
 }

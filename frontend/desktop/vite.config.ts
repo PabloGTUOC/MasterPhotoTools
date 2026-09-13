@@ -20,7 +20,7 @@ export default defineConfig({
   resolve: {
     // The shared views resolve `vue` from their own package; without this a
     // build would bundle two Vue runtimes and reactivity would silently break.
-    dedupe: ['vue', 'vue-router'],
+    dedupe: ['vue', 'vue-router', 'leaflet'],
     alias: [
       { find: /^@ui\//, replacement: `${ui}/` },
       { find: /^@host\//, replacement: `${host}/` },

@@ -37,6 +37,12 @@ import {
   type SplitPreviewRequest,
   type SplitRequest,
   type TiffRequest,
+  type ExportTimelineRequest,
+  type ExportedTimeline,
+  type PlacePointsRequest,
+  type PlacedStop,
+  type TimelineRequest,
+  type TimelineView,
   type TrackImportPreview,
   type TrackImportRequest,
   type TrackImportResult,
@@ -147,6 +153,31 @@ export interface ApiClient {
   commitTrackImport(request: TrackImportRequest): Promise<TrackImportResult>;
   /** Forget a track and the fixes still attributed to it. */
   deleteTrack(id: string): Promise<number>;
+
+  // The timeline as the Timeline tab reads it, and adds to it
+  // (`docs/timeline-plan.md`). Both transports hold a timeline of their own,
+  // which is what makes these `ApiClient` methods rather than one client's.
+
+  /**
+   * The fixes in a window, and which days around it hold any.
+   *
+   * A window is required rather than optional: a decade of five-minute fixes is
+   * a million rows, and a map that asked for all of them would be asking for a
+   * megabyte of JSON to draw one afternoon.
+   */
+  timeline(request: TimelineRequest): Promise<TimelineView>;
+  /**
+   * What placing these points would do. Writes nothing.
+   *
+   * A pin goes in by the road a `.gpx` goes in by, so it meets the same rule:
+   * an instant the library already holds is a disagreement to put to somebody,
+   * not something to overwrite because this click came later.
+   */
+  previewPlacedPoints(stops: PlacedStop[]): Promise<TrackImportPreview>;
+  /** Store the placed points, applying the decisions. One transaction. */
+  placePoints(request: PlacePointsRequest): Promise<TrackImportResult>;
+  /** Write a window of the timeline out as a `.gpx`. */
+  exportTimeline(request: ExportTimelineRequest): Promise<ExportedTimeline>;
   /**
    * The disagreements recorded against a track, and what was decided.
    *
@@ -399,6 +430,22 @@ export class HttpApiClient implements ApiClient {
     });
     const body = await this.readJson<{ points_removed: number }>(response, 'a deletion');
     return body.points_removed;
+  }
+
+  timeline(request: TimelineRequest): Promise<TimelineView> {
+    return this.post('/api/timeline', request);
+  }
+
+  previewPlacedPoints(stops: PlacedStop[]): Promise<TrackImportPreview> {
+    return this.post('/api/timeline/place/preview', stops);
+  }
+
+  placePoints(request: PlacePointsRequest): Promise<TrackImportResult> {
+    return this.post('/api/timeline/place', request);
+  }
+
+  exportTimeline(request: ExportTimelineRequest): Promise<ExportedTimeline> {
+    return this.post('/api/timeline/export', request);
   }
 
   async trackConflicts(id: string): Promise<RecordedConflict[]> {

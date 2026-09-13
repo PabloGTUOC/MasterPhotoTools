@@ -9,8 +9,10 @@
  * nothing would have failed.
  *
  * The order is the order the work is actually done in: dates before names
- * because the renamer builds a name out of the date, both before geotagging
- * because a position is matched on time, conversion before the tools that
+ * because the renamer builds a name out of the date, both before the timeline
+ * and geotagging because a position is matched on time, the timeline before
+ * geotagging because a fix has to be in the library before a frame can be
+ * matched to it, conversion before the tools that
  * only read JPEG, and splitting before bordering because a border drawn on a
  * half-frame scan would be cut in half by the split. It is not alphabetical
  * and not the order these were built in.
@@ -31,11 +33,16 @@ import Geotag from './views/Geotag.vue';
 import ImageTool from './views/ImageTool.vue';
 import RawToJpeg from './views/RawToJpeg.vue';
 import Rename from './views/Rename.vue';
+import Timeline from './views/Timeline.vue';
 import Transform from './views/Transform.vue';
 
 export const sharedToolRoutes = [
   { path: '/dates', component: Dates, meta: { label: 'Dates' } },
   { path: '/rename', component: Rename, meta: { label: 'Rename' } },
+  // Timeline before Geotag: a position has to be in the library before anything
+  // can be matched to it, and the tab that fills a blank day is the one you
+  // reach for when Geotag has nothing to offer a roll of film.
+  { path: '/timeline', component: Timeline, meta: { label: 'Timeline' } },
   { path: '/geotag', component: Geotag, meta: { label: 'Geotag' } },
   {
     path: '/tiff-to-jpeg',
@@ -91,8 +98,8 @@ export const sharedToolRoutes = [
  * Ingest is step 1 and belongs to the desktop, so the shared block starts at 2.
  *
  * The number is the step in the workflow, not the position in a menu, which is
- * why it is computed here and not in either navigation bar: Geotag is 04 on the
- * Mac and 04 on a phone, even though the two bars begin with different screens.
+ * why it is computed here and not in either navigation bar: Geotag is 05 on the
+ * Mac and 05 on a phone, even though the two bars begin with different screens.
  */
 export const FIRST_SHARED_STEP = 2;
 

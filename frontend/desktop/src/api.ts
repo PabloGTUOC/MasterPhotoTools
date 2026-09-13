@@ -42,6 +42,12 @@ import type {
   SplitPreviewRequest,
   SplitRequest,
   TiffRequest,
+  ExportTimelineRequest,
+  ExportedTimeline,
+  PlacePointsRequest,
+  PlacedStop,
+  TimelineRequest,
+  TimelineView,
   TrackImportPreview,
   TrackImportRequest,
   TrackImportResult,
@@ -166,6 +172,22 @@ export class TauriApiClient implements ApiClient {
 
   deleteTrack(id: string): Promise<number> {
     return invoke<number>('delete_track', { id });
+  }
+
+  timeline(request: TimelineRequest): Promise<TimelineView> {
+    return invoke<TimelineView>('timeline', { args: request });
+  }
+
+  previewPlacedPoints(stops: PlacedStop[]): Promise<TrackImportPreview> {
+    return invoke<TrackImportPreview>('preview_placed_points', { stops });
+  }
+
+  placePoints(request: PlacePointsRequest): Promise<TrackImportResult> {
+    return invoke<TrackImportResult>('place_points', { args: request });
+  }
+
+  exportTimeline(request: ExportTimelineRequest): Promise<ExportedTimeline> {
+    return invoke<ExportedTimeline>('export_timeline', { args: request });
   }
 
   trackConflicts(id: string): Promise<RecordedConflict[]> {

@@ -143,6 +143,7 @@ fn main() {
             commands::preview_placed_points,
             commands::place_points,
             commands::export_timeline,
+            commands::sync_timeline,
             commands::preview_track_import,
             commands::import_track,
             commands::delete_track,

@@ -52,6 +52,14 @@ pub fn router() -> Router<AppState> {
         .route("/api/timeline/place/preview", post(place_preview))
         .route("/api/timeline/place", post(place_commit))
         .route("/api/timeline/export", post(timeline_export))
+        // Sync, driven by the desktop (`docs/timeline-sync-plan.md`). The
+        // server is passive: it answers what it holds and accepts what it is
+        // given. Geopositions only — no card, shot, session or publish row
+        // crosses between the two machines.
+        .route("/api/timeline/inventory", get(timeline_inventory))
+        .route("/api/timeline/tracks/:id", get(timeline_track))
+        .route("/api/timeline/tracks", post(timeline_track_receive))
+        .route("/api/timeline/deletions", post(timeline_deletions))
         .route("/api/tools/geotag/scan", post(geotag_scan))
         .route("/api/tools/geotag/plan", post(geotag_plan))
         .route("/api/tools/geotag/apply", post(geotag_apply))
@@ -924,6 +932,71 @@ async fn timeline_export(
     .into_response())
 }
 
+/// What this side holds, for the machine that drives the sync
+/// (`docs/timeline-sync-plan.md`).
+///
+/// Cheap by design: stamps and tombstones, no points and no GPX text. The text
+/// is fetched only for the tracks that turn out to be missing.
+async fn timeline_inventory(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+) -> Result<Response, ApiError> {
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    Ok(Json(geotag::sync::inventory(&guard)?).into_response())
+}
+
+/// One track, with its text and the decisions recorded against it.
+async fn timeline_track(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    UrlPath(id): UrlPath<String>,
+) -> Result<Response, ApiError> {
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    Ok(Json(geotag::sync::transfer_of(&guard, &id)?).into_response())
+}
+
+/// Accept a track from the other machine.
+///
+/// By `commit_import`, like every other track: an instant already held is a
+/// disagreement to record, not something to overwrite because it arrived later.
+async fn timeline_track_receive(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(transfer): Json<geotag::sync::TrackTransfer>,
+) -> Result<Response, ApiError> {
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    let result = geotag::sync::receive(&guard, &transfer, chrono::Utc::now().timestamp())?;
+    Ok(Json(result).into_response())
+}
+
+/// Accept deletions from the other machine.
+///
+/// The tombstone's own date is written, not this server's clock: it is the
+/// moment somebody deleted the track, and it is what a later re-import has to
+/// beat.
+async fn timeline_deletions(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(tombstones): Json<Vec<geotag::sync::Tombstone>>,
+) -> Result<Response, ApiError> {
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+    let mut removed = 0usize;
+    for stone in &tombstones {
+        removed += guard
+            .delete_track(&stone.id, stone.deleted_at)
+            .map_err(Error::Sqlite)?;
+    }
+    Ok(Json(serde_json::json!({
+        "tracks": tombstones.len(),
+        "points_removed": removed,
+    }))
+    .into_response())
+}
+
 async fn track_delete(
     _auth: Authenticated,
     State(state): State<AppState>,
@@ -931,7 +1004,9 @@ async fn track_delete(
 ) -> Result<Response, ApiError> {
     let ledger = state.jobs.ledger();
     let guard = ledger.lock().map_err(|_| poisoned())?;
-    let removed = guard.delete_track(&id).map_err(Error::Sqlite)?;
+    let removed = guard
+        .delete_track(&id, chrono::Utc::now().timestamp())
+        .map_err(Error::Sqlite)?;
     Ok(Json(serde_json::json!({ "points_removed": removed })).into_response())
 }
 

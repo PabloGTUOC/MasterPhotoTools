@@ -8,6 +8,7 @@
 use phototools_core::error::Error;
 use phototools_core::ingest::{ArrivalReport, Manifest, SessionClient, SessionPlan};
 use phototools_core::jobs::{Job, JobStatus};
+use phototools_core::tools::geotag;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -345,6 +346,54 @@ impl HandoffClient {
             }
             std::thread::sleep(POLL_INTERVAL);
         }
+    }
+}
+
+/// The NAS's timeline, as `geotag::sync` needs to see it
+/// (`docs/timeline-sync-plan.md`).
+///
+/// The same blocking client the handoff uses, for the same reason: §8 keeps the
+/// desktop's HTTP on the Rust side, away from the webview's CORS and
+/// mixed-content rules. Nothing here decides anything — what moves is worked
+/// out in `core`, which is where it can be tested with neither machine present.
+impl geotag::sync::TimelineRemote for HandoffClient {
+    fn inventory(&self) -> Result<geotag::sync::Inventory, Error> {
+        let response = self
+            .authorise(self.client.get(self.url("/api/timeline/inventory")))
+            .send()
+            .map_err(|e| Error::Internal(format!("could not reach the server: {e}")))?;
+        Self::read(response, "the server's timeline inventory")
+    }
+
+    fn fetch(&self, id: &str) -> Result<geotag::sync::TrackTransfer, Error> {
+        let response = self
+            .authorise(
+                self.client
+                    .get(self.url(&format!("/api/timeline/tracks/{id}"))),
+            )
+            .send()
+            .map_err(|e| Error::Internal(format!("could not reach the server: {e}")))?;
+        Self::read(response, "a track from the server")
+    }
+
+    fn send(&self, transfer: &geotag::sync::TrackTransfer) -> Result<(), Error> {
+        let response = self
+            .authorise(self.client.post(self.url("/api/timeline/tracks")))
+            .json(transfer)
+            .send()
+            .map_err(|e| Error::Internal(format!("could not reach the server: {e}")))?;
+        let _: serde_json::Value = Self::read(response, "the server's answer")?;
+        Ok(())
+    }
+
+    fn delete(&self, tombstones: &[geotag::sync::Tombstone]) -> Result<(), Error> {
+        let response = self
+            .authorise(self.client.post(self.url("/api/timeline/deletions")))
+            .json(tombstones)
+            .send()
+            .map_err(|e| Error::Internal(format!("could not reach the server: {e}")))?;
+        let _: serde_json::Value = Self::read(response, "the server's answer")?;
+        Ok(())
     }
 }
 

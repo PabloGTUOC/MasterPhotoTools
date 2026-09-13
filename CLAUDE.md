@@ -23,6 +23,7 @@ structured half of that work — 72 of them, all actionable.
 | [`docs/manual-verification.md`](docs/manual-verification.md) | The checks, each with a stable id like `MV-8.3` |
 | [`docs/known-gaps.md`](docs/known-gaps.md) | What is open **in the code**, as opposed to awaiting a human |
 | [`docs/geotag-plan.md`](docs/geotag-plan.md) | The Geotag tab: joining photographs to a phone's GPS track. Built; MV-15 awaits a Mac |
+| [`docs/timeline-sync-plan.md`](docs/timeline-sync-plan.md) | Keeping the Mac's timeline and the NAS's the same. Built; MV-18 awaits both machines. **Geopositions only** |
 | [`docs/timeline-plan.md`](docs/timeline-plan.md) | The Timeline tab: the track library on a map, and points placed by hand. Stage A built; MV-17 awaits a browser. Google's location history is Stages B–C, not built |
 | [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
@@ -66,8 +67,8 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 731 passing
-cargo test -p phototools-core   # 646 passing — G2
+cargo test --workspace          # 757 passing
+cargo test -p phototools-core   # 669 passing — G2
 ```
 
 Front ends:

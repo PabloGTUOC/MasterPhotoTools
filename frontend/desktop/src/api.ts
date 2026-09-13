@@ -377,5 +377,31 @@ export class TauriApiClient implements ApiClient {
   }
 }
 
+/** What a timeline sync did (`docs/timeline-sync-plan.md`). */
+export interface SyncReport {
+  summary: string;
+  pulled: number;
+  pushed: number;
+  deleted_here: number;
+  deleted_there: number;
+  conflicts: number;
+  skipped: string[];
+}
+
+/**
+ * Sync this Mac's timeline with the server's.
+ *
+ * **Not on `ApiClient`**, and it never will be: the server cannot sync with
+ * itself, and a method one transport has to throw for is worse than one the
+ * type system never offered (`frontend/shared/src/ui/README.md`). The Mac
+ * drives, because a NAS cannot open a connection to a sleeping laptop.
+ *
+ * Geopositions only — tracks, their fixes, the decisions about them, and
+ * deletions.
+ */
+export function syncTimeline(): Promise<SyncReport> {
+  return invoke<SyncReport>('sync_timeline');
+}
+
 export const api: ApiClient = new TauriApiClient();
 export const desktop = api as TauriApiClient;

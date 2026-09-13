@@ -12,6 +12,7 @@ pub mod join;
 pub mod library;
 pub mod place;
 pub mod scan;
+pub mod sync;
 pub mod tool;
 
 pub use tool::preview;

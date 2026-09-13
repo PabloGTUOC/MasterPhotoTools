@@ -755,3 +755,63 @@ Every item below needs a browser and a library with fixes in it. MV-17.5 also ne
       **Pass:** the map is usable with one thumb, the zoom controls are big enough to hit, and
       nothing scrolls sideways. `check:layout` asserts the numbers; this is the judgement.
       **Result:**
+
+---
+
+## MV-18 — the timeline sync
+
+[`timeline-sync-plan.md`](timeline-sync-plan.md), built. Needs both machines: the desktop
+application on the Mac and the server on the NAS, with the desktop's server settings pointing at it
+and a token set.
+
+**Geopositions only.** If any of these turns up a card, shot, session or publish crossing between
+the two machines, that is a defect and not a feature.
+
+- [ ] **MV-18.1 — A track imported on the Mac reaches the NAS.**
+      **Run:** import a `.gpx` in the desktop Geotag tab, press **Sync timeline** in the sidebar,
+      then open the web Timeline tab on a day it covers.
+      **Pass:** the same fixes, at the same times, labelled **recorded**. The sidebar says what it
+      did — *sent 1 track(s)* — rather than "done".
+      **Result:**
+
+- [ ] **MV-18.2 — A point placed in the browser reaches the Mac.**
+      **Run:** place a point on the web Timeline, then sync from the desktop.
+      **Pass:** the Mac's Timeline shows it on that day, still labelled **placed by hand**.
+      **Result:**
+
+- [ ] **MV-18.3 — It syncs by itself at startup.**
+      **Run:** place a point in the browser, quit the desktop application, start it again.
+      **Pass:** the point is on the Mac's timeline without anybody pressing anything, and the
+      sidebar says what happened.
+      **Result:**
+
+- [ ] **MV-18.4 — A deletion travels, and stays travelled.**
+      **Run:** delete a track on one machine, sync, then sync again.
+      **Pass:** gone on both, and the second sync says *already in step* rather than putting it
+      back.
+      **Result:**
+
+- [ ] **MV-18.5 — Re-importing a deleted file keeps it.**
+      **Run:** delete a track, sync, import the same `.gpx` again, sync.
+      **Pass:** it is on both machines. The newer import beats the older deletion.
+      **Result:**
+
+- [ ] **MV-18.6 — The NAS being off is a sentence, not a failure.**
+      **Run:** stop the container, or take the Mac off the network, and start the desktop
+      application.
+      **Pass:** it opens normally, every tool works, and the sidebar says *server not reached*. No
+      dialog, no error screen, no wait.
+      **Result:**
+
+- [ ] **MV-18.7 — An interrupted sync leaves both sides consistent.**
+      **Run:** with several tracks to move, pull the network cable mid-sync. Reconnect and sync
+      again.
+      **Pass:** no half-imported track on either side, and the second run finishes the job.
+      **Result:**
+
+- [ ] **MV-18.8 — Two machines that disagree about an instant settle the same way.**
+      **Run:** import tracks giving different positions for one second, one on each machine, then
+      sync.
+      **Pass:** both machines report the disagreement, both keep the same fix, and the Geotag tab's
+      conflict history on each says the same thing.
+      **Result:**

@@ -1,6 +1,7 @@
 //! SQLite persistence
 
 use crate::jobs::{Job, JobStatus};
+use crate::tools::geotag::sync::{Tombstone, TrackStamp};
 use crate::tools::geotag::{DayCoverage, PointSource, SourcedPoint, TrackPoint};
 use rusqlite::{Connection, OptionalExtension, Result as SqlResult};
 use std::collections::HashMap;
@@ -328,6 +329,22 @@ const MIGRATIONS: &[&str] = &[
     // Every existing row is a `.gpx` off a phone, which is exactly `recorded`.
     r#"
     ALTER TABLE tracks ADD COLUMN source TEXT NOT NULL DEFAULT 'recorded';
+    "#,
+    // 11 — deletions, remembered (`docs/timeline-sync-plan.md`).
+    //
+    // The Mac and the NAS each hold a timeline and neither is the authority, so
+    // a sync that only added would resurrect: delete a bad track here, sync,
+    // and the other side hands it straight back. A deletion is a statement
+    // about a track and has to survive as one.
+    //
+    // Kept forever, and cheap to: a row is a hash and an integer, and somebody
+    // who has deleted a thousand tracks has a 60 KB table. Dropping old ones
+    // would reintroduce exactly the resurrection this exists to stop.
+    r#"
+    CREATE TABLE IF NOT EXISTS deleted_tracks (
+        id         TEXT PRIMARY KEY,
+        deleted_at INTEGER NOT NULL
+    );
     "#,
 ];
 
@@ -1014,6 +1031,12 @@ impl Ledger {
             )?;
         }
 
+        // A track being imported is the most recent statement about it, so any
+        // tombstone this side remembers is now out of date. Without this a
+        // re-imported file would be deleted again by the next sync, using a
+        // deletion its owner had already overruled.
+        transaction.execute("DELETE FROM deleted_tracks WHERE id = ?1", [&row.id])?;
+
         for conflict in conflicts {
             transaction.execute(
                 "INSERT OR REPLACE INTO point_conflicts
@@ -1046,13 +1069,67 @@ impl Ledger {
     /// file also attests to. The GPX text of both is kept, which makes that
     /// recoverable by re-importing — a deliberate limit, chosen over a table of
     /// attestations, because every fix here comes from one phone.
-    pub fn delete_track(&self, id: &str) -> SqlResult<usize> {
+    /// `now` is written as the tombstone's date, so a re-import afterwards can
+    /// be recognised as the later statement (`geotag::sync`).
+    pub fn delete_track(&self, id: &str, now: i64) -> SqlResult<usize> {
         let transaction = self.conn.unchecked_transaction()?;
         let removed = transaction.execute("DELETE FROM track_points WHERE track_id = ?1", [id])?;
         transaction.execute("DELETE FROM point_conflicts WHERE track_id = ?1", [id])?;
         transaction.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+        // In the same transaction as the deletion: a tombstone written
+        // separately could be lost by a crash between the two, leaving a
+        // deletion the other machine would undo on the next sync.
+        transaction.execute(
+            "INSERT OR REPLACE INTO deleted_tracks (id, deleted_at) VALUES (?1, ?2)",
+            rusqlite::params![id, now],
+        )?;
         transaction.commit()?;
         Ok(removed)
+    }
+
+    /// Every deletion this side remembers, for a sync inventory.
+    pub fn tombstones(&self) -> SqlResult<Vec<Tombstone>> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT id, deleted_at FROM deleted_tracks ORDER BY deleted_at")?;
+        let rows = statement.query_map([], |row| {
+            Ok(Tombstone {
+                id: row.get(0)?,
+                deleted_at: row.get(1)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// What this side holds, in the form a sync compares.
+    ///
+    /// No points and no GPX text — an inventory decides *which* tracks move,
+    /// and the fixes are fetched only for those.
+    pub fn track_stamps(&self) -> SqlResult<Vec<TrackStamp>> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, name, imported_at, point_count,
+                    gpx IS NOT NULL AND length(gpx) > 0
+               FROM tracks ORDER BY imported_at, id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(TrackStamp {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                imported_at: row.get(2)?,
+                point_count: row.get(3)?,
+                has_text: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// The stored GPX text of a track, for handing it to the other machine.
+    pub fn track_text(&self, id: &str) -> SqlResult<Option<String>> {
+        self.conn
+            .query_row("SELECT gpx FROM tracks WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .optional()
     }
 
     /// Every disagreement recorded against a track, oldest instant first.
@@ -2198,5 +2275,86 @@ mod tests {
             &[(1_000, 52.5, 13.4), (9_000, 52.6, 13.5)],
         );
         assert_eq!(ledger.timeline_extent().unwrap(), Some((1_000, 9_000)));
+    }
+
+    #[test]
+    fn deleting_a_track_is_remembered_so_a_sync_cannot_resurrect_it() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        store_track(
+            &ledger,
+            "doomed",
+            PointSource::Recorded,
+            &[(1_000, 52.5, 13.4)],
+        );
+
+        ledger.delete_track("doomed", 5_000).unwrap();
+
+        assert_eq!(ledger.tracks().unwrap().len(), 0);
+        assert_eq!(
+            ledger.tombstones().unwrap(),
+            vec![Tombstone {
+                id: "doomed".into(),
+                deleted_at: 5_000
+            }]
+        );
+    }
+
+    #[test]
+    fn importing_a_track_again_forgets_that_it_was_deleted() {
+        // The re-import is the later statement about the track, and a
+        // tombstone left behind would have the next sync delete it again.
+        let ledger = Ledger::open_in_memory().unwrap();
+        store_track(
+            &ledger,
+            "revived",
+            PointSource::Recorded,
+            &[(1_000, 52.5, 13.4)],
+        );
+        ledger.delete_track("revived", 5_000).unwrap();
+
+        store_track(
+            &ledger,
+            "revived",
+            PointSource::Recorded,
+            &[(1_000, 52.5, 13.4)],
+        );
+
+        assert_eq!(ledger.tracks().unwrap().len(), 1);
+        assert_eq!(ledger.tombstones().unwrap(), vec![]);
+    }
+
+    #[test]
+    fn an_inventory_says_what_is_held_without_carrying_any_of_it() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        store_track(
+            &ledger,
+            "one",
+            PointSource::Recorded,
+            &[(1_000, 52.5, 13.4)],
+        );
+
+        let stamps = ledger.track_stamps().unwrap();
+        assert_eq!(stamps.len(), 1);
+        assert_eq!(stamps[0].id, "one");
+        assert_eq!(stamps[0].point_count, 1);
+        assert!(stamps[0].has_text, "store_track wrote <gpx/>");
+        assert_eq!(ledger.track_text("one").unwrap().as_deref(), Some("<gpx/>"));
+    }
+
+    #[test]
+    fn a_track_whose_text_was_not_kept_says_so_rather_than_looking_sendable() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        store_track(
+            &ledger,
+            "huge",
+            PointSource::Recorded,
+            &[(1_000, 52.5, 13.4)],
+        );
+        ledger
+            .inner()
+            .execute_batch("UPDATE tracks SET gpx = '' WHERE id = 'huge'")
+            .unwrap();
+
+        assert!(!ledger.track_stamps().unwrap()[0].has_text);
     }
 }

@@ -1360,3 +1360,168 @@ async fn a_split_preview_of_an_empty_folder_explains_itself() {
         "the message names the cause rather than an errno: {message}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Timeline sync (`docs/timeline-sync-plan.md`)
+// ---------------------------------------------------------------------------
+
+/// A track document, for the sync tests below.
+fn sync_gpx(time: &str, lat: f64, lon: f64) -> String {
+    format!(
+        "<gpx creator=\"OwnTracks\"><trk><trkseg>\
+         <trkpt lat=\"{lat}\" lon=\"{lon}\"><time>{time}</time></trkpt>\
+         </trkseg></trk></gpx>"
+    )
+}
+
+/// The four sync endpoints, in the order the desktop calls them.
+///
+/// Asserts the claim the feature makes — that a track handed over is *held*
+/// afterwards, with its provenance — rather than that four routes answer 200.
+#[tokio::test]
+async fn a_track_handed_to_the_server_is_in_its_timeline_afterwards() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    // Empty to begin with, and it says so rather than erroring.
+    let inventory: Value = client
+        .get(format!("{}/api/timeline/inventory", s.base))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(inventory["tracks"].as_array().unwrap().len(), 0);
+    assert_eq!(inventory["deletions"].as_array().unwrap().len(), 0);
+
+    // The Mac hands over a track, with the provenance it carries.
+    let transfer = json!({
+        "name": "Alexanderplatz",
+        "source_path": "(placed on the map)",
+        "source": "placed",
+        "imported_at": 1_700_000_000_i64,
+        "gpx": sync_gpx("2013-05-01T12:00:00Z", 52.521918, 13.413215),
+        "decisions": [],
+    });
+    let accepted = client
+        .post(format!("{}/api/timeline/tracks", s.base))
+        .bearer_auth(good_token())
+        .json(&transfer)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), 200);
+    let result: Value = accepted.json().await.unwrap();
+    assert_eq!(result["added"], 1);
+
+    // It is held, it says where it came from, and the fix is on the timeline.
+    let tracks: Value = client
+        .get(format!("{}/api/tracks", s.base))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(tracks[0]["source"], "placed", "provenance is not laundered");
+    assert_eq!(
+        tracks[0]["imported_at"], 1_700_000_000_i64,
+        "dated as the origin dated it"
+    );
+
+    let id = tracks[0]["id"].as_str().unwrap().to_string();
+
+    // And it can be fetched back, text and all, for the other direction.
+    let fetched: Value = client
+        .get(format!("{}/api/timeline/tracks/{id}", s.base))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(fetched["source"], "placed");
+    assert!(fetched["gpx"].as_str().unwrap().contains("trkpt"));
+
+    // A deletion from the other machine removes it and is remembered, so the
+    // next sync cannot hand it back.
+    let deleted = client
+        .post(format!("{}/api/timeline/deletions", s.base))
+        .bearer_auth(good_token())
+        .json(&json!([{ "id": id, "deleted_at": 1_700_000_100_i64 }]))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), 200);
+
+    let after: Value = client
+        .get(format!("{}/api/timeline/inventory", s.base))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(after["tracks"].as_array().unwrap().len(), 0);
+    assert_eq!(after["deletions"][0]["id"], id);
+    assert_eq!(after["deletions"][0]["deleted_at"], 1_700_000_100_i64);
+}
+
+/// Sync carries geopositions and nothing else.
+#[tokio::test]
+async fn the_sync_endpoints_expose_the_timeline_and_nothing_else() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    let inventory: Value = client
+        .get(format!("{}/api/timeline/inventory", s.base))
+        .bearer_auth(good_token())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let keys: Vec<&str> = inventory
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|k| k.as_str())
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["deletions", "tracks"],
+        "an inventory is tracks and deletions — no cards, shots, sessions or publishes"
+    );
+}
+
+/// Every sync route refuses an unauthenticated request (§5.3).
+#[tokio::test]
+async fn the_sync_endpoints_are_behind_authentication() {
+    let s = start().await;
+    let client = reqwest::Client::new();
+
+    for (method, path) in [
+        ("GET", "/api/timeline/inventory"),
+        ("GET", "/api/timeline/tracks/whatever"),
+        ("POST", "/api/timeline/tracks"),
+        ("POST", "/api/timeline/deletions"),
+    ] {
+        let request = match method {
+            "GET" => client.get(format!("{}{path}", s.base)),
+            _ => client.post(format!("{}{path}", s.base)).json(&json!({})),
+        };
+        let response = request.send().await.unwrap();
+        assert_eq!(
+            response.status(),
+            401,
+            "{method} {path} must require a token"
+        );
+    }
+}

@@ -307,6 +307,36 @@ overrides the host. Tiles that will not load are a state and not an error: a gre
 map, a notice, and every coordinate field still works — which is what makes the
 tab usable on a Mac with no network, the condition MV-7.3 already cares about.
 
+### The two timelines are synced, and only the timeline is
+
+The Mac and the NAS each hold a library and neither is the authority. Sync
+(`docs/timeline-sync-plan.md`) carries **geopositions only**: tracks, the fixes
+they contribute, the decisions recorded about instants in dispute, and
+deletions. Cards, shots, sessions, publishes, jobs and settings stay where they
+were made, because they are records of *what one machine did*.
+
+Migration 11 adds `deleted_tracks`, without which sync resurrects: delete a bad
+track on one machine and the other hands it back on the next run.
+
+Three things a reader should know:
+
+- **The desktop drives.** A NAS cannot open a connection to a laptop that is
+  asleep or on another network, so the server is passive — it answers what it
+  holds and accepts what it is given. There is no sync button in the web
+  application and there should not be one.
+- **A track keeps the date the machine that first imported it gave it.** The
+  receiver does not stamp its own clock, because `imported_at` is what a
+  tombstone is compared against: two clocks a few seconds apart would otherwise
+  make a deletion read as older than the copy it is meant to remove, and that
+  deletion would silently never happen. Found by a test, not by reasoning.
+- **Conflicts stay conflicts.** A received track goes in through
+  `commit_import` like any file: an instant already held is recorded as a
+  disagreement, never overwritten because it arrived later. The origin's
+  decisions travel with it so both sides settle the same way.
+
+**Not built:** any automatic retry, a background timer, or three-way sync
+between more than two machines. Startup and a button cover the case.
+
 ### The resolution ceiling defaults to off, where §F12 sets 10 MP
 
 §F12 gives two independent ceilings — `max_megapixels` (10) and

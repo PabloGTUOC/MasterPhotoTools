@@ -1515,11 +1515,59 @@ pub fn export_timeline(
     })
 }
 
+#[derive(Debug, Serialize)]
+pub struct SyncReport {
+    /// What happened, in one sentence for the status line.
+    pub summary: String,
+    pub pulled: usize,
+    pub pushed: usize,
+    pub deleted_here: usize,
+    pub deleted_there: usize,
+    pub conflicts: usize,
+    pub skipped: Vec<String>,
+}
+
+/// Sync this Mac's timeline with the server's
+/// (`docs/timeline-sync-plan.md`).
+///
+/// **Geopositions only.** Tracks, their fixes, the decisions recorded about
+/// them, and deletions. No card, shot, session or publish row crosses between
+/// the two machines: those are records of what one machine did.
+///
+/// The Mac drives, because a NAS cannot open a connection to a laptop that is
+/// asleep or on somebody else's network. The work is decided in `core`; this
+/// holds the ledger and the HTTP client together and reports what happened.
+#[tauri::command]
+pub fn sync_timeline(state: State<'_, AppState>) -> CommandResult<SyncReport> {
+    let remote = state.server.session_client();
+
+    // A long job opens its own connection to the ledger rather than holding the
+    // shared mutex: `SinkProgress` locks the same non-reentrant mutex, and a
+    // sync of a hundred tracks is not something to hold a lock across.
+    let ledger = state.jobs.ledger();
+    let guard = ledger.lock().map_err(|_| poisoned())?;
+
+    let outcome =
+        geotag::sync::run(&guard, &remote, chrono::Utc::now().timestamp()).map_err(describe)?;
+
+    Ok(SyncReport {
+        summary: outcome.summary(),
+        pulled: outcome.pulled,
+        pushed: outcome.pushed,
+        deleted_here: outcome.deleted_here,
+        deleted_there: outcome.deleted_there,
+        conflicts: outcome.conflicts,
+        skipped: outcome.skipped,
+    })
+}
+
 #[tauri::command]
 pub fn delete_track(id: String, state: State<'_, AppState>) -> CommandResult<usize> {
     let ledger = state.jobs.ledger();
     let guard = ledger.lock().map_err(|_| poisoned())?;
-    guard.delete_track(&id).map_err(|e| describe(e.into()))
+    guard
+        .delete_track(&id, chrono::Utc::now().timestamp())
+        .map_err(|e| describe(e.into()))
 }
 
 /// Every disagreement recorded against a track, and what was decided.

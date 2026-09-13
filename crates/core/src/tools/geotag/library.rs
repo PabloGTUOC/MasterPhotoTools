@@ -36,6 +36,30 @@ pub struct TrackFile {
     pub source: PointSource,
 }
 
+impl TrackFile {
+    /// Build one from text rather than from a disk.
+    ///
+    /// What a track arriving from the other machine goes through
+    /// (`geotag::sync`), and what `place::build` uses for a pin. The id is the
+    /// hash of the text, so a file that reaches a machine by two roads — copied
+    /// by hand, and synced — is one track and not two.
+    pub fn from_text(
+        name: &str,
+        source_path: &str,
+        source: PointSource,
+        gpx: &str,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            id: crate::ingest::scanner::hex(&Sha256::digest(gpx.as_bytes())),
+            name: name.to_string(),
+            source_path: source_path.to_string(),
+            parsed: gpx::parse(gpx)?,
+            gpx: gpx.to_string(),
+            source,
+        })
+    }
+}
+
 /// Read and parse a `.gpx`.
 ///
 /// The path is expected to have been resolved against the configured roots
@@ -659,7 +683,7 @@ mod tests {
         let track = file("monday.gpx", &MONDAY);
         import(&ledger, &track);
 
-        let removed = ledger.delete_track(&track.id).unwrap();
+        let removed = ledger.delete_track(&track.id, 900).unwrap();
         assert_eq!(removed, 3);
         assert_eq!(ledger.points_between(0, i64::MAX).unwrap().len(), 0);
         assert_eq!(ledger.tracks().unwrap().len(), 0);
@@ -676,7 +700,7 @@ mod tests {
         import(&ledger, &monday);
         import(&ledger, &again); // adds nothing; every fix is already held
 
-        ledger.delete_track(&monday.id).unwrap();
+        ledger.delete_track(&monday.id, 900).unwrap();
         assert_eq!(ledger.points_between(0, i64::MAX).unwrap().len(), 0);
 
         let restored = import(&ledger, &again);

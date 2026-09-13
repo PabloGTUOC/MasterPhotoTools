@@ -21,7 +21,6 @@ use super::gpx::{self, PlacedStop};
 use super::library::TrackFile;
 use super::PointSource;
 use crate::error::Error;
-use sha2::{Digest, Sha256};
 
 /// Where a placed track says it came from, in the column that holds a path for
 /// an imported file. Not a path, and deliberately not shaped like one.
@@ -33,7 +32,6 @@ pub const PLACED_SOURCE_PATH: &str = "(placed on the map)";
 /// themselves, which is more use than a date they can read off the fixes.
 pub fn build(stops: &[PlacedStop]) -> Result<TrackFile, Error> {
     let text = gpx::write_placed(stops)?;
-    let parsed = gpx::parse(&text)?;
 
     let mut names: Vec<&str> = stops.iter().map(|s| s.name.trim()).collect();
     names.retain(|n| !n.is_empty());
@@ -44,18 +42,11 @@ pub fn build(stops: &[PlacedStop]) -> Result<TrackFile, Error> {
         _ => format!("{}, {} and {} more", names[0], names[1], names.len() - 2),
     };
 
-    Ok(TrackFile {
-        // The same hex helper every other id in this crate uses, over the text
-        // rather than over the struct: two placements that claim the same thing
-        // are the same import, whatever order the stops arrived in — they are
-        // sorted by time on the way into the document.
-        id: crate::ingest::scanner::hex(&Sha256::digest(text.as_bytes())),
-        name,
-        source_path: PLACED_SOURCE_PATH.to_string(),
-        gpx: text,
-        parsed,
-        source: PointSource::Placed,
-    })
+    // The id is the hash of the text, computed by `from_text` as it is for
+    // every other track: two placements that claim the same thing are the same
+    // import, whatever order the stops arrived in — they are sorted by time on
+    // the way into the document.
+    TrackFile::from_text(&name, PLACED_SOURCE_PATH, PointSource::Placed, &text)
 }
 
 #[cfg(test)]

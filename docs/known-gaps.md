@@ -131,6 +131,13 @@ container could not create a file in, with the `chown`/`chmod` that fixes it —
 the question is asked before a deploy rather than discovered by thirty-nine
 failed repairs.
 
+**Closed the same day.** The library was given to `pablo:users` with `2775` on
+its folders, and the repair then redated and verified every file. Nothing in
+the code was wrong about writing; three things were wrong about *saying what
+happened*, and all three are fixed: a refusal reported as success, a written-
+but-unconfirmed file counted as nothing, and a failure reported without its
+reason.
+
 ### `check:ingest` fails at its third measurement, and has since `c960e68`
 
 Its part (3) — *Publish is unreachable until a dry run has been reviewed* — loads the built

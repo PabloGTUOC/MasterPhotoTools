@@ -871,3 +871,60 @@ fn an_explicit_path_wins_over_the_search() {
     // An empty value is not a configuration: the search runs as usual.
     assert!(exiftool_program_with(Some("   ".into())).is_ok());
 }
+
+/// **A write exiftool refused must be a failure, not a success.**
+///
+/// Found on a deployed server: thirty-nine photographs were "redated", the
+/// files were untouched, and nothing anywhere said so. exiftool exits zero and
+/// carries on when it cannot write a file — it says `0 image files updated` on
+/// stdout and the reason on stderr — and the driver read past both on its way
+/// to `{ready}`, with stderr routed to `/dev/null` (§9.2 invariant 6, G10).
+#[test]
+fn a_file_exiftool_cannot_write_is_reported_rather_than_counted_as_written() {
+    let f = Fixtures::new();
+
+    // A file exiftool will not write: the bytes are not an image, so it has
+    // nowhere to put a date. The same refusal a permission would produce, in a
+    // form a test can create on any machine.
+    let path = f.path().join("not-really.jpg");
+    std::fs::write(&path, b"this is not a JPEG").unwrap();
+
+    let mut writer = ExifWriter::start().unwrap();
+    let result = writer.write_dates(
+        &path,
+        &DateSet {
+            date: Some(dt("2013:05:01 12:00:00")),
+        },
+    );
+    writer.close().unwrap();
+
+    let error = result.expect_err("exiftool wrote nothing, so this is not a success");
+    let text = error.to_string();
+    assert!(text.contains("not-really.jpg"), "says which file: {text}");
+    assert!(
+        text.contains("was not written"),
+        "and says it was not written: {text}"
+    );
+}
+
+/// The happy path still passes through the same confirmation.
+#[test]
+fn a_file_exiftool_did_write_is_not_reported_as_a_failure() {
+    let f = Fixtures::new();
+    let path = f.jpeg_without_exif("real.jpg", 40, 40);
+
+    let mut writer = ExifWriter::start().unwrap();
+    let result = writer.write_dates(
+        &path,
+        &DateSet {
+            date: Some(dt("2013:05:01 12:00:00")),
+        },
+    );
+    writer.close().unwrap();
+
+    assert!(result.is_ok(), "got: {result:?}");
+    assert_eq!(
+        read_meta(&path).unwrap().capture,
+        Some(dt("2013:05:01 12:00:00"))
+    );
+}

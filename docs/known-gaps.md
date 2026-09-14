@@ -101,17 +101,23 @@ that had been written. `f1_dates::report` now distinguishes them and both
 transports use it, so an unconfirmed write reads *"0 redated and verified, 39
 written but not confirmed (…)"* with the reason attached.
 
-**Open: why the confirmation failed there and not here.** The same folder,
-uppercase `.JPG`, no metadata, manual mode, works on the Mac — asserted in a
-test. On the NAS something in the read-back disagreed. The two candidates are
-the metadata not reading back through `nom-exif`, and the filesystem
-modification time not being settable: the container runs as the photographs'
-owner but a file whose owner differs cannot have its times set by a process that
-merely has write permission.
+**Also fixed: the write reported success having written nothing.** The job rows
+gave it away — `total=39, progress=39`, no failures, no skips — so all
+thirty-nine files were attempted and none was written. `ExifWriter` sent
+exiftool's stderr to `/dev/null` and waited for `{ready}`, reading past
+everything else. **exiftool exits zero and carries on when it refuses a file**:
+it prints `0 image files updated` on stdout and the reason on stderr, and both
+were discarded. Every refusal was therefore a success.
 
-**The fixed message is the diagnostic**: the next repair on that server will
-name which half failed. Until then this is recorded as unexplained rather than
-guessed at.
+The driver now frames stderr with `-echo4`, keeps what both streams said, and
+`confirm_written` turns "no file updated" into a failure carrying exiftool's own
+sentence. Asserted with a file exiftool will not write.
+
+**Still open: why that server's writes were refused.** The reason will now
+appear in the job summary — a permission, a format, a read-only mount — and
+until it has been read once, it is not known. The library's photographs are
+owned by root while the container runs as `pablo`, which is the first thing to
+look at.
 
 ### `check:ingest` fails at its third measurement, and has since `c960e68`
 

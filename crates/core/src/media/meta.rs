@@ -620,12 +620,58 @@ pub fn exiftool_program_with(configured: Option<String>) -> Result<String, Error
 /// Not `Sync`: it owns a pipe with request/response framing, so concurrent use
 /// would interleave commands. Parallel callers should do their CPU work in
 /// parallel and funnel metadata writes through one writer.
+/// What exiftool is asked to print on **stderr** when a command block is done.
+///
+/// `{ready}` frames stdout; this frames stderr, so a refusal written there
+/// belongs to the file that caused it rather than to whatever came next.
+const READY_ERR: &str = "{phototools-stderr-ready}";
+
 pub struct ExifWriter {
     child: Child,
     stdin: ChildStdin,
     lines: Receiver<std::io::Result<String>>,
     reader: Option<JoinHandle<()>>,
+    err_reader: Option<JoinHandle<()>>,
     timeout: Duration,
+}
+
+/// Whether a command block actually wrote the file, and what to say if not.
+///
+/// **exiftool exits zero and keeps going when it refuses a file.** It says so
+/// in its own words — `0 image files updated`, and a reason on stderr — and
+/// until this function existed both were read past on the way to `{ready}`.
+/// A NAS whose library it could not write to therefore reported every file as
+/// done, and the photographs were untouched (§9.2 invariant 6, G10).
+fn confirm_written(said: &[String], path: &Path) -> Result<(), Error> {
+    let mut updated: Option<u32> = None;
+    for line in said {
+        let trimmed = line.trim();
+        if let Some(count) = trimmed.strip_suffix(" image files updated") {
+            updated = count.trim().parse().ok();
+        } else if trimmed.ends_with(" image files unchanged") {
+            // "unchanged" is exiftool saying the tags already held these values.
+            // Nothing was written and nothing needed to be.
+            updated = updated.or(Some(1));
+        }
+    }
+
+    if updated.unwrap_or(0) > 0 {
+        return Ok(());
+    }
+
+    // The reason, in exiftool's words. Its own sentence is more use than any
+    // paraphrase: it names the permission, the format or the tag.
+    let reason = said
+        .iter()
+        .map(|l| l.trim())
+        .find(|l| l.starts_with("Error") || l.starts_with("Warning"))
+        .map(|l| l.to_string())
+        .unwrap_or_else(|| "exiftool reported no file updated and gave no reason".to_string());
+
+    Err(Error::Internal(format!(
+        "{} was not written: {reason}",
+        path.display()
+    )))
 }
 
 impl ExifWriter {
@@ -646,7 +692,11 @@ impl ExifWriter {
             .args(["-stay_open", "True", "-@", "-"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            // **Not `null`.** exiftool says why it refused a file on stderr, and
+            // discarding that is how a write that never happened came back as a
+            // success — thirty-nine photographs "redated" on a NAS, unchanged
+            // on disk, with nothing anywhere saying so (G10).
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
                 Error::Internal(format!(
@@ -663,12 +713,27 @@ impl ExifWriter {
             .stdout
             .take()
             .ok_or_else(|| Error::Internal("exiftool stdout unavailable".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| Error::Internal("exiftool stderr unavailable".into()))?;
 
-        // Read on a thread so a hung child surfaces as a timeout rather than a
-        // blocked caller.
+        // Read on threads so a hung child surfaces as a timeout rather than a
+        // blocked caller. Both streams feed one channel: what exiftool did is
+        // on stdout and why it refused is on stderr, and a caller needs both to
+        // say anything true about a file.
         let (tx, lines) = mpsc::channel();
+        let out_tx = tx.clone();
         let reader = std::thread::spawn(move || {
             let buf = BufReader::new(stdout);
+            for line in buf.lines() {
+                if out_tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let err_reader = std::thread::spawn(move || {
+            let buf = BufReader::new(stderr);
             for line in buf.lines() {
                 if tx.send(line).is_err() {
                     break;
@@ -681,6 +746,7 @@ impl ExifWriter {
             stdin,
             lines,
             reader: Some(reader),
+            err_reader: Some(err_reader),
             timeout,
         };
 
@@ -690,23 +756,42 @@ impl ExifWriter {
         Ok(writer)
     }
 
-    /// Send one command block and wait for its `{ready}` sentinel.
-    fn execute(&mut self, args: &[String]) -> Result<(), Error> {
+    /// Send one command block and collect everything it said.
+    ///
+    /// `-echo4` prints its text to **stderr** after the command is processed,
+    /// which is what makes the two streams framable: without it a message
+    /// exiftool wrote to stderr could arrive after `{ready}` had already been
+    /// seen on stdout, and be attributed to the next file or lost entirely.
+    fn execute(&mut self, args: &[String]) -> Result<Vec<String>, Error> {
         for arg in args {
             writeln!(self.stdin, "{arg}")?;
         }
+        writeln!(self.stdin, "-echo4")?;
+        writeln!(self.stdin, "{READY_ERR}")?;
         writeln!(self.stdin, "-execute")?;
         self.stdin.flush()?;
         self.wait_for_ready()
     }
 
-    fn wait_for_ready(&mut self) -> Result<(), Error> {
+    /// Everything said between this command and both of its sentinels.
+    fn wait_for_ready(&mut self) -> Result<Vec<String>, Error> {
+        let mut said = Vec::new();
+        let (mut stdout_done, mut stderr_done) = (false, false);
         loop {
+            if stdout_done && stderr_done {
+                return Ok(said);
+            }
             match self.lines.recv_timeout(self.timeout) {
                 Ok(Ok(line)) => {
-                    if line.contains("{ready}") {
-                        return Ok(());
+                    if line.contains(READY_ERR) {
+                        stderr_done = true;
+                        continue;
                     }
+                    if line.contains("{ready}") {
+                        stdout_done = true;
+                        continue;
+                    }
+                    said.push(line);
                 }
                 Ok(Err(e)) => return Err(Error::Internal(format!("exiftool read failed: {e}"))),
                 Err(RecvTimeoutError::Disconnected) => {
@@ -752,7 +837,7 @@ impl ExifWriter {
         args.push("-overwrite_original".to_string());
         args.push(path.display().to_string());
 
-        self.execute(&args)
+        confirm_written(&self.execute(&args)?, path)
     }
 
     /// Shift every date by a delta, e.g. `+1:0:0 0:0:0` for a camera clock that
@@ -783,18 +868,19 @@ impl ExifWriter {
         args.push("-overwrite_original".to_string());
         args.push(path.display().to_string());
 
-        self.execute(&args)
+        confirm_written(&self.execute(&args)?, path)
     }
 
     /// Copy every tag from `src` into `dst`.
     pub fn copy_metadata(&mut self, src: &Path, dst: &Path) -> Result<(), Error> {
-        self.execute(&[
+        let said = self.execute(&[
             "-TagsFromFile".to_string(),
             src.display().to_string(),
             "-all:all".to_string(),
             "-overwrite_original".to_string(),
             dst.display().to_string(),
-        ])
+        ])?;
+        confirm_written(&said, dst)
     }
 
     /// Carry a photograph's metadata onto an image derived from it.
@@ -848,16 +934,17 @@ impl ExifWriter {
         args.push("-overwrite_original".to_string());
         args.push(dst.display().to_string());
 
-        self.execute(&args)
+        confirm_written(&self.execute(&args)?, dst)
     }
 
     /// Set a single tag to a literal value.
     pub fn set_tag(&mut self, path: &Path, tag: &str, value: &str) -> Result<(), Error> {
-        self.execute(&[
+        let said = self.execute(&[
             format!("-{tag}={value}"),
             "-overwrite_original".to_string(),
             path.display().to_string(),
-        ])
+        ])?;
+        confirm_written(&said, path)
     }
 
     /// Apply several tag assignments to one file in a single `-execute`.
@@ -874,7 +961,7 @@ impl ExifWriter {
         let mut args: Vec<String> = assignments.to_vec();
         args.push("-overwrite_original".to_string());
         args.push(path.display().to_string());
-        self.execute(&args)
+        confirm_written(&self.execute(&args)?, path)
     }
 
     /// Shut the process down cleanly and wait for it to exit.
@@ -889,6 +976,9 @@ impl ExifWriter {
         let _ = self.stdin.flush();
         let _ = self.child.wait();
         if let Some(handle) = self.reader.take() {
+            let _ = handle.join();
+        }
+        if let Some(handle) = self.err_reader.take() {
             let _ = handle.join();
         }
     }

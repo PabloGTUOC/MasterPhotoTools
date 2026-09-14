@@ -831,14 +831,22 @@ MV-19.7 are not optional.
       look sooner in the server's log for *a day of reported positions became a track*.
       **Pass:** the web Timeline shows those fixes on that day, labelled **recorded**, in a track
       called `OwnTracks <date>`.
-      **Result:**
+      **Result:** **half done, 2026-09-14.** The phone was switched to HTTP mode and published; the
+      web Timeline reported *5 fix(es) reported by a phone, waiting for this day to end*. So the
+      whole road — phone, Cloudflare tunnel, nginx-proxy-manager, the container, the database —
+      carries a position. **The rollup itself is still unwitnessed**: it runs at 02:00 local, and
+      nobody has yet seen the track it makes.
 
 - [ ] **MV-19.2 — Without the token, nothing is accepted.**
       **Run:** `curl -X POST https://phototools.opinasdeque.es/api/timeline/owntracks -d '{"_type":"location","tst":1,"lat":0,"lon":0}'`
       **Pass:** `401`, and the answer says nothing about which half of the credential was wrong.
       Repeat with a Firebase token: also refused. That token opens every other route and must not
       open this one.
-      **Result:**
+      **Result:** **passes, 2026-09-14**, against the deployed server. No credential → `401`; the
+      right user with a wrong password → `401`; the admin bearer token, which opens every other
+      route → `401`; the real credential → `200` and `[]`. The last was sent as a `transition`
+      rather than a location, so the credential was proved without writing a position into the
+      library.
 
 - [ ] **MV-19.3 — A day of aeroplane mode lands on the right day.**
       **Run:** turn data off for a day, move around, then reconnect.

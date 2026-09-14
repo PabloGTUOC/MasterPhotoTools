@@ -1672,6 +1672,25 @@ async fn a_reported_position_is_stored_and_becomes_that_days_track() {
         .unwrap();
     assert_eq!(transition.status(), 200);
 
+    // The screen can see it before the day ends: a phone reporting perfectly
+    // and a phone reporting nothing look identical otherwise.
+    let view: Value = client
+        .post(format!("{}/api/timeline", s.base))
+        .bearer_auth(good_token())
+        .json(&json!({ "from": noon - 3_600, "to": noon + 7_200, "offset_minutes": 0 }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(view["pending"], 2, "two fixes waiting for the day to end");
+    assert_eq!(
+        view["points"].as_array().unwrap().len(),
+        0,
+        "and none in the timeline yet"
+    );
+
     // Nothing is in the timeline yet: the day is not over.
     let ledger = phototools_core::ledger::Ledger::open(&s.database).unwrap();
     assert_eq!(ledger.tracks().unwrap().len(), 0);

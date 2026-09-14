@@ -1407,6 +1407,10 @@ pub struct TimelineView {
     pub points: Vec<geotag::SourcedPoint>,
     pub coverage: Vec<geotag::DayCoverage>,
     pub extent: Option<(i64, i64)>,
+    /// Fixes reported by a phone that are not yet a track
+    /// (`docs/owntracks-plan.md`). Always zero here: a phone posts to the
+    /// server, not to this Mac.
+    pub pending: usize,
 }
 
 /// The timeline a map draws: the fixes in a window, and the days that hold any.
@@ -1427,6 +1431,10 @@ pub fn timeline(args: TimelineArgs, state: State<'_, AppState>) -> CommandResult
             .coverage(args.from, args.to, offset)
             .map_err(|e| describe(e.into()))?,
         extent: guard.timeline_extent().map_err(|e| describe(e.into()))?,
+        pending: guard
+            .device_fixes_between(args.from, args.to)
+            .map_err(|e| describe(e.into()))?
+            .len(),
     })
 }
 

@@ -48,6 +48,9 @@ const offsetMinutes = ref(-new Date().getTimezoneOffset());
 const day = ref(new Date().toISOString().slice(0, 10));
 
 const points = ref<SourcedPoint[]>([]);
+
+/** Fixes a phone has reported for this day that are not yet a track. */
+const waiting = ref(0);
 const coverage = ref<Map<string, number>>(new Map());
 const extent = ref<[number, number] | null>(null);
 
@@ -145,6 +148,7 @@ async function load() {
 
     coverage.value = new Map(days.coverage.map((entry) => [dayKey(entry.day), entry.fixes]));
     points.value = today.points;
+    waiting.value = today.pending ?? 0;
     extent.value = today.extent ?? days.extent;
   } catch (e) {
     page.value?.setFailure(e instanceof Error ? e.message : String(e));
@@ -324,7 +328,12 @@ function sourceWord(source: SourcedPoint['source']): string {
 
       <MapView :points="points" :selected="selected" @update:position="pickPosition" />
 
-      <p v-if="!points.length" class="note" role="status">
+      <p v-if="waiting" class="note" role="status">
+        {{ waiting }} fix(es) reported by a phone, waiting for this day to end. They become a track
+        two hours after local midnight.
+      </p>
+
+      <p v-else-if="!points.length" class="note" role="status">
         Nothing recorded this day. Click the map to say where you were.
       </p>
 

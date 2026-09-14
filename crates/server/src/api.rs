@@ -868,6 +868,14 @@ async fn timeline(
             .coverage(request.from, request.to, offset)
             .map_err(Error::Sqlite)?,
         "extent": guard.timeline_extent().map_err(Error::Sqlite)?,
+        // Fixes the phone has reported that are not yet a track, for the day
+        // being looked at. Without this a phone can be reporting perfectly and
+        // the screen shows nothing until the day ends — which is
+        // indistinguishable from a phone that is not reporting at all.
+        "pending": guard
+            .device_fixes_between(request.from, request.to)
+            .map_err(Error::Sqlite)?
+            .len(),
     }))
     .into_response())
 }
@@ -1075,8 +1083,17 @@ async fn owntracks(
     for report in &reports {
         match geotag::owntracks::read(report) {
             Ok(geotag::owntracks::Accepted::Fix { point, device }) => {
-                if let Err(e) = guard.record_device_fix(&point, device.as_deref(), now) {
-                    tracing::error!(error = %e, "could not store a reported position");
+                match guard.record_device_fix(&point, device.as_deref(), now) {
+                    // At info, and without the coordinates: somebody testing a
+                    // phone needs to see that a fix arrived, and a server log is
+                    // a worse place to keep a position than the database is.
+                    Ok(stored) => tracing::info!(
+                        at = point.at,
+                        device = device.as_deref().unwrap_or("unnamed"),
+                        new = stored,
+                        "a position was reported"
+                    ),
+                    Err(e) => tracing::error!(error = %e, "could not store a reported position"),
                 }
             }
             // Kept out of the logs at warn level: a phone reports geofence

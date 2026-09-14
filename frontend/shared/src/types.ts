@@ -609,6 +609,14 @@ export interface TimelineView {
   coverage: DayCoverage[];
   /** The first and last instant the library holds anything for, if any. */
   extent: [number, number] | null;
+  /**
+   * Fixes a phone has reported for this window that are not yet a track.
+   *
+   * They become one when the day ends (`docs/owntracks-plan.md`). Shown because
+   * a phone reporting perfectly and a phone reporting nothing look identical
+   * until then.
+   */
+  pending?: number;
 }
 
 export interface TimelineRequest {

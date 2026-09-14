@@ -857,6 +857,32 @@ fn files_written_but_unconfirmed_are_reported_as_such_not_as_nothing_matched() {
     );
 }
 
+/// A failure without its reason is a number somebody can do nothing with.
+#[test]
+fn a_repair_that_failed_says_why_it_failed() {
+    use phototools_core::tools::f1_dates::{report, DateRepairSummary};
+
+    let summary = DateRepairSummary {
+        outcomes: Vec::new(),
+        failures: (0..39)
+            .map(|i| {
+                (
+                    std::path::PathBuf::from(format!("/library/R1-02646-{i:04}.JPG")),
+                    "/library/R1-02646-0000.JPG was not written: Error: Writing not permitted"
+                        .to_string(),
+                )
+            })
+            .collect(),
+    };
+
+    let line = report(&summary, &[]);
+    assert!(line.contains("39 failed"), "got: {line}");
+    assert!(
+        line.contains("Writing not permitted"),
+        "and says why, once: {line}"
+    );
+}
+
 #[test]
 fn a_repair_that_confirmed_everything_says_so_plainly() {
     use phototools_core::tools::f1_dates::{report, DateRepairOutcome, DateRepairSummary};

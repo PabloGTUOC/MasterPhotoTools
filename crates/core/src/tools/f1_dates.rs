@@ -409,9 +409,10 @@ impl DateRepairSummary {
 /// Both transports call this rather than `tools::summarise` directly, so the
 /// Mac and the NAS cannot describe the same outcome differently.
 pub fn report(summary: &DateRepairSummary, skipped: &[Skip]) -> String {
-    // Nothing was written at all: the generic summary is right, and its advice
-    // about subfolders applies.
-    if summary.outcomes.is_empty() {
+    // Nothing was attempted at all: the generic summary is right, and its
+    // advice about subfolders applies. **Failures are attempts**, so a run that
+    // only failed does not come through here — it has a reason to report.
+    if summary.outcomes.is_empty() && summary.failures.is_empty() {
         return crate::tools::summarise(
             0,
             "redated and verified",
@@ -438,7 +439,11 @@ pub fn report(summary: &DateRepairSummary, skipped: &[Skip]) -> String {
         ));
     }
     if !summary.failures.is_empty() {
-        line.push_str(&format!(", {} failed", summary.failures.len()));
+        // With the reason, for the same purpose the unconfirmed ones carry
+        // theirs: "39 failed" tells somebody that something is wrong and
+        // nothing about what to do next, and the reason is right here.
+        let (_, first) = &summary.failures[0];
+        line.push_str(&format!(", {} failed ({first})", summary.failures.len()));
     }
     if !skipped.is_empty() {
         line.push_str(&format!(", {} skipped", skipped.len()));

@@ -276,7 +276,7 @@ UNWRITABLE="$(nas "find '$LIBRARY_PATH' -type d 2>/dev/null | head -200 \
             if (\$1 == uid && owner % 4 >= 2) writable = 1
             if (\$2 == gid && group % 4 >= 2) writable = 1
             if (other % 4 >= 2) writable = 1
-            if (!writable) { \$1=\$2=\$3=""; sub(/^ +/, ""); print; exit }
+            if (!writable) { \$1=\$2=\$3=blank; sub(/^ +/, blank); print; exit }
         }'")"
 
 if [ -n "$UNWRITABLE" ]; then

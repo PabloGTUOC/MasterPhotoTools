@@ -15,8 +15,8 @@
  */
 import { onMounted, onUnmounted, ref } from 'vue';
 import { sharedToolLinks, stepLabel } from '@ui/routes';
-import { desktop, syncTimeline } from './api';
-import { refreshRoots } from '@ui/useRoots';
+import { desktop } from './api';
+import { runSync } from './sync';
 
 /**
  * The sidebar reads as the workflow does. Ingest is step 01 because it is
@@ -36,35 +36,14 @@ function tick() {
 }
 
 /**
- * The timeline sync (`docs/timeline-sync-plan.md`).
+ * The timeline sync at startup (`docs/timeline-sync-plan.md`).
  *
- * The Mac drives it: a NAS cannot open a connection to a laptop that is asleep
- * or on somebody else's network. **Geopositions only** — tracks, their fixes,
- * the decisions recorded about them, and deletions. Nothing about cards, shots,
- * sessions or publishes crosses between the two machines.
+ * The Mac drives it — a NAS cannot open a connection to a laptop that is asleep
+ * or on another network — and only when the server answers its three-second
+ * probe: the application opens whether or not the NAS is there, and never waits
+ * for it. The button and the result live in the Timeline tab, where the
+ * server's address is set.
  */
-const syncing = ref(false);
-const syncNote = ref<string | null>(null);
-
-async function sync(automatic: boolean) {
-  if (syncing.value) return;
-  syncing.value = true;
-  try {
-    const report = await syncTimeline();
-    syncNote.value = report.summary;
-    // The tab on screen asked before the sync ran, and a pulled track changes
-    // what a picker and a map should show.
-    if (report.pulled || report.deleted_here) refreshRoots();
-  } catch (e) {
-    // A sync that failed says so; an automatic one says it quietly, because the
-    // NAS being off is the normal state of a laptop on a train, not a fault.
-    const message = e instanceof Error ? e.message : String(e);
-    syncNote.value = automatic ? 'server not reached' : message;
-  } finally {
-    syncing.value = false;
-  }
-}
-
 onMounted(async () => {
   tick();
   ticking = window.setInterval(tick, 1000);
@@ -72,7 +51,7 @@ onMounted(async () => {
   // At startup, and only if the server answers its three-second probe: the
   // application opens whether or not the NAS is there, and never waits for it.
   const status = await desktop.serverStatus().catch(() => null);
-  if (status?.reachable) await sync(true);
+  if (status?.reachable) await runSync(true);
 });
 onUnmounted(() => window.clearInterval(ticking));
 </script>
@@ -92,14 +71,6 @@ onUnmounted(() => window.clearInterval(ticking));
       </nav>
 
       <div class="spacer"></div>
-
-      <div class="sync">
-        <button type="button" class="ghost" :disabled="syncing" @click="sync(false)">
-          {{ syncing ? 'Syncing…' : 'Sync timeline' }}
-        </button>
-        <p v-if="syncNote" class="sync__note" role="status">{{ syncNote }}</p>
-        <p class="sync__what">Geopositions only</p>
-      </div>
     </aside>
 
     <div class="main">
@@ -131,24 +102,6 @@ onUnmounted(() => window.clearInterval(ticking));
   padding: var(--space-4) var(--space-3);
   border-right: var(--border-hair);
   background: var(--bg-elevated);
-}
-
-.sync {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  border-top: var(--border-hair);
-}
-.sync__note,
-.sync__what {
-  font-family: var(--font-body);
-  font-size: 11px;
-  color: var(--text-muted);
-  /* No glow: this is small type, where a glow smears the glyph. */
-  text-shadow: none;
-}
-.sync__what {
-  color: var(--text-disabled);
 }
 
 .brand {

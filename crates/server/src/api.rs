@@ -60,6 +60,13 @@ pub fn router() -> Router<AppState> {
         .route("/api/timeline/tracks/:id", get(timeline_track))
         .route("/api/timeline/tracks", post(timeline_track_receive))
         .route("/api/timeline/deletions", post(timeline_deletions))
+        // A phone posting where it was (`docs/owntracks-plan.md`). Its own
+        // credential, and a body cap: this is the one route reachable from the
+        // public internet without a Firebase session.
+        .route(
+            "/api/timeline/owntracks",
+            post(owntracks).layer(axum::extract::DefaultBodyLimit::max(64 * 1024)),
+        )
         .route("/api/tools/geotag/scan", post(geotag_scan))
         .route("/api/tools/geotag/plan", post(geotag_plan))
         .route("/api/tools/geotag/apply", post(geotag_apply))
@@ -995,6 +1002,96 @@ async fn timeline_deletions(
         "points_removed": removed,
     }))
     .into_response())
+}
+
+/// One or many reports. OwnTracks posts one; a catch-up may batch them.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum OwnTracksBody {
+    One(geotag::owntracks::Report),
+    Many(Vec<geotag::owntracks::Report>),
+}
+
+/// Where a phone posts its positions (`docs/owntracks-plan.md`).
+///
+/// **The second route Firebase does not guard**, `/api/health` being the first,
+/// because a phone has no Firebase session. So it carries its own credential
+/// and a deliberately tiny blast radius: it reads six fields out of a capped
+/// body, writes them to a staging table, and can do nothing else. No path, no
+/// filesystem, no query, nothing to read back. The worst a stolen token buys is
+/// false positions in the timeline.
+///
+/// Answers `[]`, which is what OwnTracks expects and means "no commands".
+async fn owntracks(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let Some(credential) = state.auth.device.as_ref() else {
+        // Not configured is not "allow": the route is reachable from the public
+        // internet and a feature nobody set up must be one nobody can use.
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": "not_configured" })),
+        )
+            .into_response();
+    };
+
+    let offered = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if !credential.matches(offered) {
+        // Says nothing about which half was wrong.
+        tracing::warn!("a position report was refused: the credential did not match");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "code": "unauthorized" })),
+        )
+            .into_response();
+    }
+
+    let reports = match serde_json::from_slice::<OwnTracksBody>(&body) {
+        Ok(OwnTracksBody::One(report)) => vec![report],
+        Ok(OwnTracksBody::Many(reports)) => reports,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "code": "bad_request", "message": e.to_string() })),
+            )
+                .into_response()
+        }
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    let ledger = state.jobs.ledger();
+    let Ok(guard) = ledger.lock() else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "code": "poisoned" })),
+        )
+            .into_response();
+    };
+
+    for report in &reports {
+        match geotag::owntracks::read(report) {
+            Ok(geotag::owntracks::Accepted::Fix { point, device }) => {
+                if let Err(e) = guard.record_device_fix(&point, device.as_deref(), now) {
+                    tracing::error!(error = %e, "could not store a reported position");
+                }
+            }
+            // Kept out of the logs at warn level: a phone reports geofence
+            // crossings and last-will messages as a matter of course, and a
+            // warning per message would bury the ones that matter.
+            Ok(geotag::owntracks::Accepted::Ignored { kind }) => {
+                tracing::debug!(kind = %kind, "a report that is not a location");
+            }
+            Err(e) => tracing::warn!(error = %e, "a location report could not be read"),
+        }
+    }
+
+    // OwnTracks reads the reply as a list of commands. An empty one is "carry
+    // on", and anything else would be this server telling a phone what to do.
+    Json(serde_json::json!([])).into_response()
 }
 
 async fn track_delete(

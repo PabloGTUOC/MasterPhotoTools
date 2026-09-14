@@ -73,6 +73,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         jobs: Arc::new(manager),
     };
 
+    // The clock that turns a day of reported positions into a track
+    // (`docs/owntracks-plan.md`).
+    //
+    // Hourly rather than at a fixed midnight: a NAS that was off at 02:00 must
+    // still write up yesterday when it comes back, and a task that fires at one
+    // moment quietly never does. Writing up a day that is already written up is
+    // a no-op, so running often costs nothing.
+    //
+    // Lifecycle belongs to the binary (G1); the rollup itself is a `core`
+    // function that a test drives with no server present.
+    if state.auth.device.is_some() {
+        let offset_minutes: i64 = std::env::var("TIMELINE_OFFSET_MINUTES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let rollup_state = state.clone();
+        tokio::spawn(async move {
+            let mut hourly = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                hourly.tick().await;
+                let ledger = rollup_state.jobs.ledger();
+                let now = chrono::Utc::now().timestamp();
+                let rolled = match ledger.lock() {
+                    Ok(guard) => phototools_core::tools::geotag::owntracks::roll_up_due(
+                        &guard,
+                        now,
+                        offset_minutes * 60,
+                        phototools_core::tools::geotag::owntracks::GRACE_SECONDS,
+                    ),
+                    Err(_) => {
+                        tracing::error!("the ledger mutex is poisoned; skipping this rollup");
+                        continue;
+                    }
+                };
+                match rolled {
+                    Ok(days) => {
+                        for day in days {
+                            tracing::info!(
+                                track = %day.name,
+                                fixes = day.fixes,
+                                added = day.added,
+                                "a day of reported positions became a track"
+                            );
+                        }
+                    }
+                    Err(e) => tracing::error!(error = %e, "could not write up reported positions"),
+                }
+            }
+        });
+        tracing::info!(
+            "accepting position reports at /api/timeline/owntracks; \
+             each day becomes a track {} hours after it ends",
+            phototools_core::tools::geotag::owntracks::GRACE_SECONDS / 3600
+        );
+    }
+
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
     let addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
 

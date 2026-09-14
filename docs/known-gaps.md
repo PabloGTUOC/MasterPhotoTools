@@ -337,6 +337,57 @@ Three things a reader should know:
 **Not built:** any automatic retry, a background timer, or three-way sync
 between more than two machines. Startup and a button cover the case.
 
+### A phone reports its own positions, through the one unguarded route
+
+`docs/owntracks-plan.md`, built. OwnTracks posts each fix to
+`POST /api/timeline/owntracks`; arrivals wait in `device_fixes` (migration 12)
+and become that day's track two hours after the local day ends.
+
+**It is the second route Firebase does not guard**, `/api/health` being the
+first, because a phone has no Firebase session. What that costs, and what holds
+it:
+
+- Its own credential — `OWNTRACKS_USER` and `OWNTRACKS_TOKEN`, sent as HTTP
+  Basic and compared in constant time. **Either unset refuses everything**, with
+  no default and no "allow when empty": the route is reachable from the public
+  internet through the Cloudflare tunnel.
+- A 64 KB body cap, six fields read, and nothing else it can do. No path, no
+  filesystem, no query, nothing to read back. **The worst a stolen token buys is
+  false positions in the timeline** — which is why arrivals stage rather than
+  joining the library directly, and why the credential is separate from the one
+  every other route uses.
+- A Firebase token is *not* accepted here, and this token is accepted nowhere
+  else. A test asserts both directions.
+
+Three decisions worth knowing:
+
+- **The instant is `tst`, when the fix was taken — never when it arrived.** A
+  week of catch-up after a phone was abroad lands on the right days.
+- **Nothing is dropped for being inaccurate.** OwnTracks reports the radius it
+  trusts a fix to; a poor fix is still where the phone believed it was, and the
+  matcher already shows the age of a fix rather than pretending to certainty. A
+  threshold nobody can choose in advance belongs on a screen, not in an importer.
+- **Which day a fix belongs to is local**, so it follows `TIMELINE_OFFSET_MINUTES`.
+  An evening in Berlin is the same day as that morning; UTC disagrees for two
+  hours of it.
+
+**Not built:** decrypting OwnTracks' end-to-end encrypted payloads (the
+connection is already HTTPS), more than one device, and any live "where are you
+now" view.
+
+### `EXIFTOOL_PATH` was set by a test, and raced every other test
+
+Fixed rather than recorded, and kept here because the shape recurs. A test set
+the process-wide `EXIFTOOL_PATH` to prove that a wrong path is reported rather
+than ignored. Every metadata write reads that variable, and the tests in that
+binary run in parallel — so about one run in ten, some *other* test failed with
+"EXIFTOOL_PATH is set to \"/nowhere/exiftool\"".
+
+`media::meta::exiftool_program_with` now takes the configured value as an
+argument and `exiftool_program` reads the environment and delegates, so the test
+asserts the same two claims with no global state. A flaky suite is worse than
+the bug it resembles: it teaches people that a red run means nothing.
+
 ### The resolution ceiling defaults to off, where §F12 sets 10 MP
 
 §F12 gives two independent ceilings — `max_megapixels` (10) and

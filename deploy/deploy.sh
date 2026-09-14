@@ -270,7 +270,7 @@ ok "runs as      $RUN_AS"
 
 step "Configuration"
 
-SHARED_KEYS='FIREBASE_PROJECT_ID|ALLOWED_UIDS|ADMIN_TOKEN|GOOGLE_OAUTH_CLIENT_ID|GOOGLE_OAUTH_CLIENT_SECRET|GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY|MAX_MEGAPIXELS|MAX_OUTPUT_BYTES|MAX_AGE_DAYS|RUST_LOG'
+SHARED_KEYS='FIREBASE_PROJECT_ID|ALLOWED_UIDS|ADMIN_TOKEN|GOOGLE_OAUTH_CLIENT_ID|GOOGLE_OAUTH_CLIENT_SECRET|GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY|MAX_MEGAPIXELS|MAX_OUTPUT_BYTES|MAX_AGE_DAYS|OWNTRACKS_USER|OWNTRACKS_TOKEN|TIMELINE_OFFSET_MINUTES|RUST_LOG'
 DEPLOY_OWNED='LIBRARY_PATH|DATA_PATH|PUBLISHING_PATH|PHOTOTOOLS_TAG|PHOTOTOOLS_USER|PORT'
 
 [ -f .env ] || [ -f deploy/.env ] \
@@ -301,6 +301,14 @@ for required in FIREBASE_PROJECT_ID ALLOWED_UIDS; do
         || die "$required is set in neither .env nor deploy/.env. Without it nobody can sign in."
 done
 ok "server: Firebase project $(server_value FIREBASE_PROJECT_ID), $(server_value ALLOWED_UIDS | tr ',' '\n' | grep -c .) allowed uid(s)"
+
+OFFSET_MINUTES="$(server_value TIMELINE_OFFSET_MINUTES)"
+if [ -n "$(server_value OWNTRACKS_USER)" ] && [ -n "$(server_value OWNTRACKS_TOKEN)" ]; then
+    ok "server: accepts position reports from a phone as $(server_value OWNTRACKS_USER)"
+    note "a day is counted at TIMELINE_OFFSET_MINUTES=${OFFSET_MINUTES:-0} minutes east of UTC — set it in deploy/.env if that is wrong"
+else
+    note "no OWNTRACKS_USER/OWNTRACKS_TOKEN, so the phone's position route refuses everything"
+fi
 
 if [ -n "$(server_value GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY)" ] && [ -n "$(server_value GOOGLE_OAUTH_CLIENT_ID)" ]; then
     ok "server: Google OAuth client and encryption key"

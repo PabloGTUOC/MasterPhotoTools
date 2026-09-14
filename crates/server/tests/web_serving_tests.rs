@@ -50,6 +50,7 @@ async fn start(with_web: bool) -> Fixture {
             // No test here presents a token, so the store is never consulted.
             // `offline` is the one that reaches no network to fill itself.
             keys: auth::KeyStore::offline(),
+            device: None,
         }),
         jobs: Arc::new(jobs::JobManager::new(ledger)),
     };

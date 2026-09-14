@@ -843,19 +843,18 @@ fn exiftool_is_found_without_help_on_a_machine_that_has_it() {
 
 #[test]
 fn an_explicit_path_wins_over_the_search() {
-    use phototools_core::media::meta::{exiftool_program, EXIFTOOL_PATH_VAR};
+    use phototools_core::media::meta::exiftool_program_with;
 
     let f = Fixtures::new();
     let stand_in = f.path().join("my-exiftool");
     std::fs::write(&stand_in, "#!/bin/sh\nexec exiftool \"$@\"\n").unwrap();
 
-    // Serialised by running both env-var cases in one test: the variable is
-    // process-wide, and two tests setting it would race.
-    let restore = std::env::var(EXIFTOOL_PATH_VAR).ok();
-
-    std::env::set_var(EXIFTOOL_PATH_VAR, &stand_in);
+    // Passed in rather than set in the environment. `EXIFTOOL_PATH` is
+    // process-wide and read by every metadata write, so a test that set it
+    // raced every other test in this binary that runs `exiftool` — and failed
+    // whichever one happened to be writing at that moment.
     assert_eq!(
-        exiftool_program().unwrap(),
+        exiftool_program_with(Some(stand_in.to_string_lossy().into())).unwrap(),
         stand_in.to_string_lossy(),
         "an explicit path should be used as given"
     );
@@ -863,13 +862,12 @@ fn an_explicit_path_wins_over_the_search() {
     // And a wrong one is reported rather than silently ignored: somebody who
     // set it meant it, and quietly running a different binary answers a
     // question they did not ask.
-    std::env::set_var(EXIFTOOL_PATH_VAR, "/nowhere/exiftool");
-    let error = exiftool_program().unwrap_err().to_string();
+    let error = exiftool_program_with(Some("/nowhere/exiftool".into()))
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("/nowhere/exiftool"), "got {error}");
     assert!(error.contains("nothing there"), "got {error}");
 
-    match restore {
-        Some(value) => std::env::set_var(EXIFTOOL_PATH_VAR, value),
-        None => std::env::remove_var(EXIFTOOL_PATH_VAR),
-    }
+    // An empty value is not a configuration: the search runs as usual.
+    assert!(exiftool_program_with(Some("   ".into())).is_ok());
 }

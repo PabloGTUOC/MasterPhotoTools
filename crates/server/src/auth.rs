@@ -129,6 +129,88 @@ pub struct AuthConfig {
     /// Break-glass token for when Firebase is unreachable (§5.3).
     pub admin_token: Option<String>,
     pub keys: KeyStore,
+    /// The credential a phone posts its positions with
+    /// (`docs/owntracks-plan.md`).
+    ///
+    /// **`None` refuses every request to that route**, the way an unset
+    /// `PUBLISHING_DIR` refuses all publishing. There is no default credential
+    /// and no "allow when empty": the route is reachable from the public
+    /// internet, and a feature nobody configured must be a feature nobody can
+    /// use.
+    pub device: Option<DeviceCredential>,
+}
+
+/// A device's username and token.
+#[derive(Debug, Clone)]
+pub struct DeviceCredential {
+    pub user: String,
+    pub token: String,
+}
+
+impl DeviceCredential {
+    /// Read one from the environment, or `None` where either half is missing.
+    pub fn from_env() -> Option<Self> {
+        Self::from_parts(
+            std::env::var("OWNTRACKS_USER").ok(),
+            std::env::var("OWNTRACKS_TOKEN").ok(),
+        )
+    }
+
+    /// The rule, apart from where the values come from: **both halves, or
+    /// nothing**. Half-configured is not configured, because the route this
+    /// guards is reachable from the public internet.
+    pub fn from_parts(user: Option<String>, token: Option<String>) -> Option<Self> {
+        let user = user?;
+        let token = token?;
+        (!user.trim().is_empty() && !token.trim().is_empty()).then_some(Self { user, token })
+    }
+
+    /// Whether an `Authorization: Basic …` header is this credential.
+    ///
+    /// **Compared in constant time.** A token checked with `==` returns as soon
+    /// as two bytes differ, and the time that takes tells a patient attacker
+    /// how much of their guess was right.
+    pub fn matches(&self, header: Option<&str>) -> bool {
+        let Some(value) = header.and_then(|h| h.strip_prefix("Basic ")) else {
+            return false;
+        };
+        let Ok(decoded) = base64_decode(value.trim()) else {
+            return false;
+        };
+        let Ok(pair) = String::from_utf8(decoded) else {
+            return false;
+        };
+        let Some((user, token)) = pair.split_once(':') else {
+            return false;
+        };
+        constant_time_eq(user.as_bytes(), self.user.as_bytes())
+            & constant_time_eq(token.as_bytes(), self.token.as_bytes())
+    }
+}
+
+/// Decode standard base64. Small enough to write; `Authorization: Basic` is the
+/// only place this crate needs it, and a dependency for it would need a better
+/// reason than that (G8).
+fn base64_decode(text: &str) -> Result<Vec<u8>, ()> {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    let mut buffer = 0u32;
+    let mut bits = 0u32;
+    for byte in text.bytes() {
+        if byte == b'=' {
+            break;
+        }
+        let Some(value) = ALPHABET.iter().position(|c| *c == byte) else {
+            return Err(());
+        };
+        buffer = (buffer << 6) | value as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+        }
+    }
+    Ok(out)
 }
 
 impl AuthConfig {
@@ -144,6 +226,7 @@ impl AuthConfig {
             project_id: std::env::var("FIREBASE_PROJECT_ID").unwrap_or_default(),
             allowed_uids,
             admin_token: std::env::var("ADMIN_TOKEN").ok().filter(|t| !t.is_empty()),
+            device: DeviceCredential::from_env(),
             keys: KeyStore::google(),
         }
     }
@@ -347,6 +430,7 @@ mod tests {
             allowed_uids: uids.iter().map(|s| s.to_string()).collect(),
             admin_token: None,
             keys: KeyStore::offline(),
+            device: None,
         };
         config
             .keys
@@ -537,5 +621,75 @@ mod tests {
         assert!(!constant_time_eq(b"abc", b"abd"));
         assert!(!constant_time_eq(b"abc", b"abcd"));
         assert!(constant_time_eq(b"", b""));
+    }
+
+    // -----------------------------------------------------------------------
+    // The phone's credential (`docs/owntracks-plan.md`)
+    // -----------------------------------------------------------------------
+
+    /// `Authorization: Basic`, built the way a client builds it.
+    fn basic(user: &str, token: &str) -> String {
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let raw = format!("{user}:{token}");
+        let mut encoded = String::new();
+        for chunk in raw.as_bytes().chunks(3) {
+            let bytes = [
+                chunk[0],
+                *chunk.get(1).unwrap_or(&0),
+                *chunk.get(2).unwrap_or(&0),
+            ];
+            let n = u32::from_be_bytes([0, bytes[0], bytes[1], bytes[2]]);
+            for (position, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+                if position <= chunk.len() {
+                    encoded.push(ALPHABET[((n >> shift) & 63) as usize] as char);
+                } else {
+                    encoded.push('=');
+                }
+            }
+        }
+        format!("Basic {encoded}")
+    }
+
+    fn credential() -> DeviceCredential {
+        DeviceCredential {
+            user: "phone".into(),
+            token: "a-long-random-token".into(),
+        }
+    }
+
+    #[test]
+    fn the_right_user_and_token_are_accepted() {
+        assert!(credential().matches(Some(&basic("phone", "a-long-random-token"))));
+    }
+
+    #[test]
+    fn everything_else_is_refused() {
+        let credential = credential();
+        for offered in [
+            basic("phone", "not-the-token"),
+            basic("someone", "a-long-random-token"),
+            basic("phone", "a-long-random-token-with-more"),
+            basic("phone", "a-long-random-toke"),
+            "Basic not-base64-at-all!!".into(),
+            // A bearer token is a different key; this route has one.
+            "Bearer a-long-random-token".into(),
+            String::new(),
+        ] {
+            assert!(
+                !credential.matches(Some(&offered)),
+                "should have refused {offered:?}"
+            );
+        }
+        assert!(!credential.matches(None), "and a request with no header");
+    }
+
+    #[test]
+    fn a_credential_needs_both_halves_to_be_real() {
+        let some = |s: &str| Some(s.to_string());
+        assert!(DeviceCredential::from_parts(some("phone"), None).is_none());
+        assert!(DeviceCredential::from_parts(None, some("token")).is_none());
+        assert!(DeviceCredential::from_parts(some("phone"), some("   ")).is_none());
+        assert!(DeviceCredential::from_parts(some(""), some("token")).is_none());
+        assert!(DeviceCredential::from_parts(some("phone"), some("token")).is_some());
     }
 }

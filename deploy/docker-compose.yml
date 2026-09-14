@@ -106,6 +106,18 @@ services:
       # storing it in the clear. 32 bytes, hex: openssl rand -hex 32
       GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY: ${GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY:-}
 
+      # The phone posting its own positions (`docs/owntracks-plan.md`).
+      # **Both unset means the route refuses everything**, which is the right
+      # default for the one road into this server that has no Firebase session:
+      # a feature nobody configured is one nobody can use.
+      OWNTRACKS_USER: ${OWNTRACKS_USER:-}
+      OWNTRACKS_TOKEN: ${OWNTRACKS_TOKEN:-}
+
+      # Which day a fix belongs to is a local question: minutes east of UTC.
+      # An evening in Berlin is the same day as that morning, and UTC disagrees
+      # for two hours of it. Also used by the Timeline tab's coverage strip.
+      TIMELINE_OFFSET_MINUTES: ${TIMELINE_OFFSET_MINUTES:-0}
+
       RUST_LOG: ${RUST_LOG:-phototools_server=info,tower_http=info}
 
     healthcheck:

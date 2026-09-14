@@ -346,6 +346,28 @@ const MIGRATIONS: &[&str] = &[
         deleted_at INTEGER NOT NULL
     );
     "#,
+    // 12 — fixes a phone reported, before they are a track
+    // (`docs/owntracks-plan.md`).
+    //
+    // Not written straight into `track_points`, for two reasons. Every position
+    // in the timeline came from a document whose text is stored beside it —
+    // that is what lets somebody ask where a coordinate came from — and a fix
+    // that arrives over HTTP has no document until the day it belongs to is
+    // complete. And `at` as the key makes a retry free: a phone that posts,
+    // loses the reply and posts again writes the same row twice with no
+    // consequence.
+    //
+    // Emptied a day at a time, as each day becomes a track.
+    r#"
+    CREATE TABLE IF NOT EXISTS device_fixes (
+        at          INTEGER PRIMARY KEY,
+        lat         REAL NOT NULL,
+        lon         REAL NOT NULL,
+        ele         REAL,
+        device      TEXT,
+        received_at INTEGER NOT NULL
+    );
+    "#,
 ];
 
 /// One provider's stored authorisation.
@@ -1085,6 +1107,88 @@ impl Ledger {
         )?;
         transaction.commit()?;
         Ok(removed)
+    }
+
+    /// Store a fix a device reported (`docs/owntracks-plan.md`).
+    ///
+    /// `INSERT OR IGNORE`: one position per instant, and a phone that posts the
+    /// same fix twice — because it never saw the first reply — says nothing
+    /// new. Returns whether this one was new, which is what the endpoint
+    /// reports and what a test asserts.
+    pub fn record_device_fix(
+        &self,
+        point: &TrackPoint,
+        device: Option<&str>,
+        received_at: i64,
+    ) -> SqlResult<bool> {
+        let changed = self.conn.execute(
+            "INSERT OR IGNORE INTO device_fixes (at, lat, lon, ele, device, received_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                point.at,
+                point.lat,
+                point.lon,
+                point.ele,
+                device,
+                received_at
+            ],
+        )?;
+        Ok(changed == 1)
+    }
+
+    /// The staged fixes in a window, in time order.
+    pub fn device_fixes_between(&self, from: i64, to: i64) -> SqlResult<Vec<TrackPoint>> {
+        let mut statement = self.conn.prepare(
+            "SELECT at, lat, lon, ele FROM device_fixes
+              WHERE at BETWEEN ?1 AND ?2 ORDER BY at",
+        )?;
+        let rows = statement.query_map([from, to], |row| {
+            Ok(TrackPoint {
+                at: row.get(0)?,
+                lat: row.get(1)?,
+                lon: row.get(2)?,
+                ele: row.get(3)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Which device reported in a window, for naming the day's track.
+    ///
+    /// The commonest name rather than all of them: two phones on one account is
+    /// not what this is for, and a track called "iPhone, iPad" would be a
+    /// guess dressed as a fact.
+    pub fn device_in(&self, from: i64, to: i64) -> SqlResult<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT device FROM device_fixes
+                  WHERE at BETWEEN ?1 AND ?2 AND device IS NOT NULL
+                  GROUP BY device ORDER BY COUNT(*) DESC LIMIT 1",
+                [from, to],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// The instants of the oldest and newest staged fix, if any are waiting.
+    pub fn device_fix_extent(&self) -> SqlResult<Option<(i64, i64)>> {
+        let extent =
+            self.conn
+                .query_row("SELECT MIN(at), MAX(at) FROM device_fixes", [], |row| {
+                    Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?))
+                })?;
+        Ok(match extent {
+            (Some(first), Some(last)) => Some((first, last)),
+            _ => None,
+        })
+    }
+
+    /// Forget the staged fixes of a window, once they are a stored track.
+    pub fn clear_device_fixes(&self, from: i64, to: i64) -> SqlResult<usize> {
+        self.conn.execute(
+            "DELETE FROM device_fixes WHERE at BETWEEN ?1 AND ?2",
+            [from, to],
+        )
     }
 
     /// Every deletion this side remembers, for a sync inventory.

@@ -29,6 +29,28 @@ struct TestServer {
     _temp: tempfile::TempDir,
 }
 
+// The phone's credential, when a test wants that route switched on. A
+// thread-local rather than an argument to `start()`, so the signature every
+// other test uses does not grow a parameter about a route they do not care
+// about.
+thread_local! {
+    static DEVICE: std::cell::RefCell<Option<auth::DeviceCredential>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn device_credential() -> Option<auth::DeviceCredential> {
+    DEVICE.with(|d| d.borrow().clone())
+}
+
+fn with_device(user: &str, token: &str) {
+    DEVICE.with(|d| {
+        *d.borrow_mut() = Some(auth::DeviceCredential {
+            user: user.into(),
+            token: token.into(),
+        })
+    });
+}
+
 async fn start() -> TestServer {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("library");
@@ -50,6 +72,7 @@ async fn start() -> TestServer {
         allowed_uids: vec![ALLOWED_UID.into()],
         admin_token: None,
         keys: auth::KeyStore::offline(),
+        device: device_credential(),
     };
     auth_config
         .keys
@@ -1524,4 +1547,147 @@ async fn the_sync_endpoints_are_behind_authentication() {
             "{method} {path} must require a token"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Positions reported by a phone (`docs/owntracks-plan.md`)
+// ---------------------------------------------------------------------------
+
+fn basic(user: &str, token: &str) -> String {
+    use std::fmt::Write;
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let raw = format!("{user}:{token}");
+    let mut encoded = String::new();
+    for chunk in raw.as_bytes().chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = u32::from_be_bytes([0, b[0], b[1], b[2]]);
+        let indices = [(n >> 18) & 63, (n >> 12) & 63, (n >> 6) & 63, n & 63];
+        for (position, index) in indices.iter().enumerate() {
+            if position <= chunk.len() {
+                let _ = write!(encoded, "{}", ALPHABET[*index as usize] as char);
+            } else {
+                encoded.push('=');
+            }
+        }
+    }
+    format!("Basic {encoded}")
+}
+
+/// A location report, as OwnTracks posts it.
+fn report(tst: i64, lat: f64, lon: f64) -> Value {
+    json!({ "_type": "location", "tst": tst, "lat": lat, "lon": lon, "tid": "pg", "batt": 84 })
+}
+
+/// **The security properties of the one route open to the internet.**
+#[tokio::test]
+async fn a_position_report_needs_the_device_credential() {
+    with_device("phone", "a-long-random-token");
+    let s = start().await;
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/timeline/owntracks", s.base);
+
+    // No credential.
+    let anonymous = client
+        .post(&url)
+        .json(&report(1, 52.5, 13.4))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), 401);
+
+    // The wrong token, and the right user.
+    let wrong = client
+        .post(&url)
+        .header("Authorization", basic("phone", "not-the-token"))
+        .json(&report(1, 52.5, 13.4))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), 401);
+
+    // A Firebase token is not this credential: the route has one key, and it is
+    // not the one every other route uses.
+    let firebase = client
+        .post(&url)
+        .bearer_auth(good_token())
+        .json(&report(1, 52.5, 13.4))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(firebase.status(), 401);
+}
+
+#[tokio::test]
+async fn with_no_credential_configured_the_route_refuses_everything() {
+    DEVICE.with(|d| *d.borrow_mut() = None);
+    let s = start().await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/timeline/owntracks", s.base))
+        .header("Authorization", basic("phone", "anything"))
+        .json(&report(1, 52.5, 13.4))
+        .send()
+        .await
+        .unwrap();
+
+    // Not configured is not "allow".
+    assert_eq!(response.status(), 404);
+}
+
+#[tokio::test]
+async fn a_reported_position_is_stored_and_becomes_that_days_track() {
+    with_device("phone", "a-long-random-token");
+    let s = start().await;
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/timeline/owntracks", s.base);
+
+    // 2026-09-13, noon and one in the afternoon UTC.
+    let noon = 1_789_300_800_i64;
+    for (offset, lat, lon) in [(0, 52.5, 13.4), (3_600, 52.6, 13.5)] {
+        let accepted = client
+            .post(&url)
+            .header("Authorization", basic("phone", "a-long-random-token"))
+            .json(&report(noon + offset, lat, lon))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), 200);
+        // OwnTracks reads the reply as commands; an empty list is "carry on".
+        let body: Value = accepted.json().await.unwrap();
+        assert_eq!(body, json!([]));
+    }
+
+    // Anything that is not a location is accepted and kept out of the timeline:
+    // refusing would have the phone retry forever.
+    let transition = client
+        .post(&url)
+        .header("Authorization", basic("phone", "a-long-random-token"))
+        .json(&json!({ "_type": "transition", "event": "enter", "desc": "home" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(transition.status(), 200);
+
+    // Nothing is in the timeline yet: the day is not over.
+    let ledger = phototools_core::ledger::Ledger::open(&s.database).unwrap();
+    assert_eq!(ledger.tracks().unwrap().len(), 0);
+    assert_eq!(ledger.device_fixes_between(0, i64::MAX).unwrap().len(), 2);
+
+    // Once it is, those fixes are a track like any other, with a document.
+    let rolled = phototools_core::tools::geotag::owntracks::roll_up_due(
+        &ledger,
+        noon + 2 * 86_400,
+        0,
+        phototools_core::tools::geotag::owntracks::GRACE_SECONDS,
+    )
+    .unwrap();
+
+    assert_eq!(rolled.len(), 1);
+    assert_eq!(rolled[0].name, "OwnTracks 2026-09-13");
+    assert_eq!(ledger.points_between(0, i64::MAX).unwrap().len(), 2);
+    assert!(ledger.track_text(&rolled[0].track_id).unwrap().is_some());
 }

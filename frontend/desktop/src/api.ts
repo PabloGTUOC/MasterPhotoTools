@@ -377,6 +377,21 @@ export class TauriApiClient implements ApiClient {
   }
 }
 
+/** Where the server is, and what to authenticate with (§5.2, §5.3). */
+export interface ServerSettings {
+  base_url: string;
+  /** Kept in the macOS Keychain, never in the settings file. */
+  auth_token: string | null;
+}
+
+export function getServerSettings(): Promise<ServerSettings> {
+  return invoke<ServerSettings>('get_server_settings');
+}
+
+export function setServerSettings(settings: ServerSettings): Promise<void> {
+  return invoke<void>('set_server_settings', { settings });
+}
+
 /** What a timeline sync did (`docs/timeline-sync-plan.md`). */
 export interface SyncReport {
   summary: string;

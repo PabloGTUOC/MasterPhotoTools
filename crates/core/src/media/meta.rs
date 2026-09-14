@@ -562,7 +562,19 @@ pub const EXIFTOOL_PATH_VAR: &str = "EXIFTOOL_PATH";
 /// silently ignored: somebody who set it meant it, and falling back to a
 /// different binary would be answering a question they did not ask.
 pub fn exiftool_program() -> Result<String, Error> {
-    if let Ok(configured) = std::env::var(EXIFTOOL_PATH_VAR) {
+    exiftool_program_with(std::env::var(EXIFTOOL_PATH_VAR).ok())
+}
+
+/// The same decision, as a function of what was configured.
+///
+/// Split out so it can be tested without setting a process-wide variable.
+/// `EXIFTOOL_PATH` is read by every metadata write, and a test that set it
+/// raced every other test running `exiftool` in the same binary — which failed
+/// about one run in ten, in whichever test happened to be writing at the time.
+/// A race in a test suite is worse than the bug it looks like: it teaches
+/// people that a red run means nothing.
+pub fn exiftool_program_with(configured: Option<String>) -> Result<String, Error> {
+    if let Some(configured) = configured {
         let configured = configured.trim().to_string();
         if !configured.is_empty() {
             if !Path::new(&configured).exists() {

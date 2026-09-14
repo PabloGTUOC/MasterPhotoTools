@@ -815,3 +815,53 @@ the two machines, that is a defect and not a feature.
       **Pass:** both machines report the disagreement, both keep the same fix, and the Geotag tab's
       conflict history on each says the same thing.
       **Result:**
+
+---
+
+## MV-19 — positions reported by the phone
+
+[`owntracks-plan.md`](owntracks-plan.md), built. Needs a phone with OwnTracks in **HTTP mode**, and
+`OWNTRACKS_USER` / `OWNTRACKS_TOKEN` set in `deploy/.env` and deployed.
+
+**This is the one route reachable from the internet without a Firebase session**, so MV-19.2 and
+MV-19.7 are not optional.
+
+- [ ] **MV-19.1 — A fix reported by the phone becomes that day's track.**
+      **Run:** configure the phone, go somewhere, and wait for the day to end plus two hours — or
+      look sooner in the server's log for *a day of reported positions became a track*.
+      **Pass:** the web Timeline shows those fixes on that day, labelled **recorded**, in a track
+      called `OwnTracks <date>`.
+      **Result:**
+
+- [ ] **MV-19.2 — Without the token, nothing is accepted.**
+      **Run:** `curl -X POST https://phototools.opinasdeque.es/api/timeline/owntracks -d '{"_type":"location","tst":1,"lat":0,"lon":0}'`
+      **Pass:** `401`, and the answer says nothing about which half of the credential was wrong.
+      Repeat with a Firebase token: also refused. That token opens every other route and must not
+      open this one.
+      **Result:**
+
+- [ ] **MV-19.3 — A day of aeroplane mode lands on the right day.**
+      **Run:** turn data off for a day, move around, then reconnect.
+      **Pass:** the queued fixes appear on **the day they happened**, not the day they arrived.
+      **Result:**
+
+- [ ] **MV-19.4 — The day boundary is the local one.**
+      **Run:** with `TIMELINE_OFFSET_MINUTES=120`, a fix at 23:30 local.
+      **Pass:** it belongs to that day's track, not the next one.
+      **Result:**
+
+- [ ] **MV-19.5 — The battery cost is acceptable.**
+      **Run:** a normal day with monitoring on *significant changes*.
+      **Pass:** a judgement, not a number — if the phone runs down noticeably, the mode is wrong for
+      this purpose and the plan's choice needs revisiting.
+      **Result:**
+
+- [ ] **MV-19.6 — The day reaches the Mac.**
+      **Run:** press **Sync now** in the desktop Timeline tab.
+      **Pass:** the same track, the same fixes, labelled **recorded**.
+      **Result:**
+
+- [ ] **MV-19.7 — With no credential configured the route is closed.**
+      **Run:** deploy with `OWNTRACKS_USER` and `OWNTRACKS_TOKEN` unset, and post to it.
+      **Pass:** `404`, and everything else about the server is unaffected.
+      **Result:**

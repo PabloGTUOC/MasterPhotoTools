@@ -149,8 +149,15 @@ curl -s http://nas.local:3000/api/health
 # {"status":"ok","version":"0.1.0"}
 ```
 
-`/api/health` is the only route that answers without a token (§5.3), which is
-what makes it usable as the container's health check. Everything else is `401`.
+`/api/health` is the only route that answers with **no credential at all**
+(§5.3), which is what makes it usable as the container's health check.
+Everything else is `401`.
+
+One route takes a *different* credential rather than a Firebase token:
+`POST /api/timeline/owntracks`, where a phone posts its positions — it has no
+Firebase session, so it carries `OWNTRACKS_USER` and `OWNTRACKS_TOKEN` as HTTP
+Basic instead. With either unset it refuses everything, and a Firebase token is
+refused there as firmly as a wrong password.
 
 ### Multi-architecture images
 
@@ -248,6 +255,8 @@ that file is absent.
 | Variable | Default | Meaning |
 |---|---|---|
 | `PORT` | `3000` | TCP port. |
+| `OWNTRACKS_USER`, `OWNTRACKS_TOKEN` | *unset* | The credential a phone posts its positions with (`docs/owntracks-plan.md`), sent as HTTP Basic. **Either unset refuses every request** to `/api/timeline/owntracks`, which is the one route reachable without a Firebase session. Make the token long and random: `openssl rand -hex 24`. |
+| `TIMELINE_OFFSET_MINUTES` | `0` | Minutes east of UTC. Which day a position belongs to is a local question — an evening in Berlin is the same day as that morning. `120` for CEST. |
 | `WEB_ROOT` | *unset* | Directory holding the built web front end. Set to `/srv/web` in the image. Unset means the server serves API only. A path with no `index.html` is logged and ignored. |
 | `FIREBASE_PROJECT_ID` | *unset* | Token `iss` must equal `https://securetoken.google.com/<id>` and `aud` must equal the id exactly. |
 | `ALLOWED_UIDS` | *empty* | Comma-separated Firebase uids permitted to use the system. **Firebase authenticates any Google account in existence; this list is the only thing restricting access to the library** (§5.3). Empty means nobody. |

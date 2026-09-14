@@ -10,6 +10,7 @@ pub mod exif;
 pub mod gpx;
 pub mod join;
 pub mod library;
+pub mod owntracks;
 pub mod place;
 pub mod scan;
 pub mod sync;

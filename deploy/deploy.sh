@@ -280,9 +280,20 @@ REMOTE_ENV="$(mktemp)"
 chmod 600 "$REMOTE_ENV"
 {
     echo "# Written by deploy/deploy.sh from .env and deploy/.env on the Mac — edit those, not this."
+    # Leading blanks and an `export` are stripped before anything is matched.
+    # A key anchored to the start of the line looks strict and is merely
+    # brittle: one indented `ADMIN_TOKEN` was dropped in silence, the server
+    # was deployed without a break-glass token, and everything that used it
+    # answered 401 for a reason nothing on either machine mentioned.
     {
-        if [ -f .env ];        then grep -E "^($SHARED_KEYS)=" .env || true; fi
-        if [ -f deploy/.env ]; then grep -vE "^[[:space:]]*(#|$)|^($DEPLOY_OWNED)=" deploy/.env || true; fi
+        if [ -f .env ]; then
+            sed -E 's/^[[:space:]]+//; s/^export[[:space:]]+//' .env \
+                | grep -E "^($SHARED_KEYS)=" || true
+        fi
+        if [ -f deploy/.env ]; then
+            sed -E 's/^[[:space:]]+//; s/^export[[:space:]]+//' deploy/.env \
+                | grep -vE "^[[:space:]]*(#|$)|^($DEPLOY_OWNED)=" || true
+        fi
     } | awk -F= '{ if (!($1 in v)) order[++n] = $1; v[$1] = $0 }
                  END { for (i = 1; i <= n; i++) print v[order[i]] }'
     echo "LIBRARY_PATH=$LIBRARY_PATH"
@@ -295,6 +306,12 @@ chmod 600 "$REMOTE_ENV"
 
 # A value as the server will see it: the last assignment, quotes removed.
 server_value() { sed -n "s/^$1=//p" "$REMOTE_ENV" | tail -1 | sed -E 's/^"(.*)"$/\1/'; }
+
+# The break-glass token is what the desktop authenticates its sync and handoff
+# with (`known-gaps.md`), so its absence is worth a word rather than a silence.
+if [ -z "$(server_value ADMIN_TOKEN)" ]; then
+    warn "no ADMIN_TOKEN — the desktop cannot sync with this server until Firebase sign-in reaches it"
+fi
 
 for required in FIREBASE_PROJECT_ID ALLOWED_UIDS; do
     [ -n "$(server_value "$required")" ] \

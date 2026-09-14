@@ -7,6 +7,7 @@
 //! recorded in `docs/known-gaps.md` (G9, G11).
 
 pub mod exif;
+pub mod google;
 pub mod gpx;
 pub mod join;
 pub mod library;

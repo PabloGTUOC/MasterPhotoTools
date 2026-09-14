@@ -167,7 +167,18 @@ route into our own library.
 
 ---
 
-# Stage B — Google place visits
+# Stage B — Google's Timeline export
+>
+> **Built 2026-09-14**, and not as this plan imagined it. The account's history
+> had already moved on-device, so Takeout returns settings and a note saying the
+> backups are encrypted; the data comes from the **phone's own export**, one JSON
+> array holding `visit`, `timelinePath` and `activity` segments. It arrives by
+> the road a `.gpx` takes — `library::read_track` detects which kind of document
+> it has — so there is no second import screen and no new endpoint. Every
+> position is `inferred`.
+>
+> What follows was written before that file existed; the shape below is the
+> Takeout shape, kept for the account that still produces it.
 
 Google's Timeline holds two different things, and the smaller, better one comes first.
 

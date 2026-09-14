@@ -186,12 +186,12 @@ function metres(value: number): string {
 
     <PathField
       :model-value="props.path"
-      label="Track file (.gpx)"
+      label="Track file (.gpx, or a Google Timeline .json)"
       placeholder="/mnt/photos/tracks/track.gpx"
       keep-file-name
       file-name-fallback="track.gpx"
       choose-label="Use this folder"
-      :selectable="['gpx']"
+      :selectable="['gpx', 'json']"
       :roots="props.roots"
       :roots-error="props.rootsError"
       :list="props.list"

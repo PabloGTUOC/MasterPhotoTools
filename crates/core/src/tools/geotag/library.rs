@@ -6,6 +6,7 @@
 //! the commit takes the decisions and applies them in one transaction.
 
 use super::exif::{self, ExifPoint};
+use super::google;
 use super::gpx::{self, ParsedTrack, RejectedPoint};
 use super::{metres_between, same_position, PointSource, TrackPoint};
 use crate::error::Error;
@@ -53,7 +54,7 @@ impl TrackFile {
             id: crate::ingest::scanner::hex(&Sha256::digest(gpx.as_bytes())),
             name: name.to_string(),
             source_path: source_path.to_string(),
-            parsed: gpx::parse(gpx)?,
+            parsed: parse_track_text(gpx)?,
             gpx: gpx.to_string(),
             source,
         })
@@ -66,24 +67,45 @@ impl TrackFile {
 /// already (G6); core tools take a path that has been through `Config`.
 pub fn read_track(path: &Path) -> Result<TrackFile, Error> {
     let bytes = std::fs::read(path)?;
-    // The same hex helper the ingest hashes use, so an id computed here and
-    // one computed there are the same string for the same bytes.
-    let id = crate::ingest::scanner::hex(&Sha256::digest(&bytes));
-    let gpx = String::from_utf8(bytes)
-        .map_err(|_| Error::Config("That file is not text, so it is not GPX".into()))?;
-    let parsed = gpx::parse(&gpx)?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        Error::Config("That file is not text, so it is neither GPX nor a Timeline export".into())
+    })?;
 
-    Ok(TrackFile {
-        id,
-        source: PointSource::Recorded,
-        name: path
+    TrackFile::from_text(
+        &path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "track.gpx".into()),
-        source_path: path.display().to_string(),
-        gpx,
-        parsed,
-    })
+        &path.display().to_string(),
+        // The kind of claim is decided by what the file is, not by the caller:
+        // a `.gpx` off a phone is a recording and a Google export is Google's
+        // reconstruction, and nothing else in the system can tell them apart
+        // afterwards.
+        source_of(&text),
+        &text,
+    )
+}
+
+/// What kind of claim a file's positions are, from the file itself.
+pub fn source_of(text: &str) -> PointSource {
+    if google::looks_like_google(text) {
+        PointSource::Inferred
+    } else {
+        PointSource::Recorded
+    }
+}
+
+/// Parse either kind of track document.
+///
+/// One road in: the Geotag tab's *Read* button, the sync's arriving track and a
+/// hand-placed pin all come through here, so a Timeline export imports exactly
+/// as a `.gpx` does — same preview, same conflict rules, same library.
+pub fn parse_track_text(text: &str) -> Result<ParsedTrack, Error> {
+    if google::looks_like_google(text) {
+        google::parse(text)
+    } else {
+        gpx::parse(text)
+    }
 }
 
 /// One instant where a file and the library disagree.

@@ -314,3 +314,79 @@ fn the_offset_can_be_read_off_the_photographs_themselves() {
     assert_eq!(suggestion.minutes, 120, "{suggestion:?}");
     assert!(suggestion.confident, "{suggestion:?}");
 }
+
+// ---------------------------------------------------------------------------
+// A Google Timeline export, imported like any other track
+// ---------------------------------------------------------------------------
+
+/// The whole road, with a real export's shapes: read the file, import it, and
+/// the library holds Google's positions **labelled as Google's**.
+#[test]
+fn a_timeline_export_imports_as_inferred_through_the_same_road_a_gpx_takes() {
+    use phototools_core::ledger::Ledger;
+    use phototools_core::tools::geotag::library::{self, Resolution, TrackFile};
+    use phototools_core::tools::geotag::PointSource;
+
+    let export = r#"[
+      {
+        "startTime": "2026-04-01T13:24:41.400+02:00",
+        "endTime": "2026-04-01T14:08:09.741+02:00",
+        "visit": {
+          "topCandidate": {
+            "semanticType": "Home",
+            "placeLocation": "geo:52.521918,13.413215"
+          }
+        }
+      },
+      {
+        "startTime": "2026-04-01T15:00:00.000+02:00",
+        "endTime": "2026-04-01T15:30:00.000+02:00",
+        "timelinePath": [
+          { "point": "geo:48.858370,2.294481", "durationMinutesOffsetFromStartTime": "0" },
+          { "point": "geo:48.860000,2.300000", "durationMinutesOffsetFromStartTime": "13" }
+        ]
+      }
+    ]"#;
+
+    let ledger = Ledger::open_in_memory().unwrap();
+    let file = TrackFile::from_text(
+        "Timeline.json",
+        "/Users/somebody/Desktop/Timeline.json",
+        library::source_of(export),
+        export,
+    )
+    .unwrap();
+
+    // The kind of claim comes from the file, not from the caller.
+    assert_eq!(file.source, PointSource::Inferred);
+    assert_eq!(file.parsed.creator.as_deref(), Some("Google Timeline"));
+
+    let preview = library::preview_import(&ledger, &file).unwrap();
+    assert_eq!(preview.new_points, 4);
+    assert!(preview.conflicts.is_empty());
+
+    library::commit_import(&ledger, &file, Resolution::KeepExisting, &[], 1_000).unwrap();
+
+    assert_eq!(ledger.points_between(0, i64::MAX).unwrap().len(), 4);
+    let held = ledger.points_with_source(0, i64::MAX).unwrap();
+    assert!(
+        held.iter().all(|p| p.source == PointSource::Inferred),
+        "Google's reconstruction must not read as a recorded fix"
+    );
+}
+
+/// A `.gpx` still reads as a recording through the same road.
+#[test]
+fn a_gpx_still_imports_as_recorded() {
+    use phototools_core::tools::geotag::library::{self, TrackFile};
+    use phototools_core::tools::geotag::PointSource;
+
+    let gpx = "<gpx creator=\"OwnTracks\"><trk><trkseg>\
+               <trkpt lat=\"52.5\" lon=\"13.4\"><time>2026-09-02T19:40:44Z</time></trkpt>\
+               </trkseg></trk></gpx>";
+
+    let file =
+        TrackFile::from_text("t.gpx", "/tracks/t.gpx", library::source_of(gpx), gpx).unwrap();
+    assert_eq!(file.source, PointSource::Recorded);
+    assert_eq!(file.parsed.points.len(), 1);
+}

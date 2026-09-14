@@ -358,6 +358,34 @@ each end, and nothing between them is interpolated.
 history is not in this build, and the plan says what is still unknown about its
 format.
 
+### Google's Timeline import reads one format, and the history it wants is elsewhere
+
+`tools::geotag::google` reads the **phone's** Timeline export: a JSON array of
+`visit`, `timelinePath` and `activity` segments. It arrives through
+`library::read_track`, which picks the reader by looking at the file, so a
+Timeline export imports exactly as a `.gpx` does — same preview, same conflict
+rules, same library, no second screen.
+
+Every position from it is **`inferred`**: Google's reconstruction, snapped and
+smoothed and probability-scored, not a fix a device recorded. `activity`
+segments are read past — their endpoints repeat moments a visit or a path
+already describes, at different rounding, so reading them would make one import
+disagree with itself at hundreds of instants.
+
+**Two limits, both about the data rather than the code:**
+
+- **Takeout's older shape is not read.** `Records.json` and
+  `Semantic Location History/` are what an account still holds server-side
+  produces; this account's were deleted in the December 2024 migration
+  (`timelineDeletionTime`), so there was nothing to test a reader against. The
+  detector refuses them by name rather than half-reading them.
+- **A phone's export holds what the phone holds.** The real one measured here
+  covers 1 April to 14 September 2026 — 11,490 positions across 167 days — while
+  the account's Timeline began in 2012. The rest sits in an end-to-end encrypted
+  backup that only a signed-in device can decrypt, and may no longer exist at
+  all. **Photographs older than the export still need a placed point**, which is
+  what the Timeline tab's pin is for.
+
 ### Leaflet, and the one outbound request in this application
 
 [G8] `leaflet` (~40 KB gzipped, MIT) is bundled into both front ends for the map.

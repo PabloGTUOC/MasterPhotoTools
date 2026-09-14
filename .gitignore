@@ -21,3 +21,11 @@ frontend/web/layout-proof/
 
 # Where the NAS is. Local to one machine, and names hosts on a private network.
 deploy/deploy.env
+
+# Location history. **Never commit this.** A Timeline export or a GPS track is a
+# record of where somebody has been — homes, workplaces, every night for months.
+# `docs/GPS/` is where exports are dropped for the tools to read; the reader is
+# in the repository and the data never is.
+docs/GPS/
+*.gpx
+Timeline.json

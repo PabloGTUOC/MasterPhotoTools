@@ -185,18 +185,28 @@ a manual build in `~/bin`, a Nix profile — is not found, and `EXIFTOOL_PATH` i
 the answer. Searching `~/bin` and the like was rejected as guessing at somebody
 else's machine. Documented in [`deployment.md`](deployment.md).
 
-### The application icons are placeholders
+### The application icon is real, and smaller than macOS wants
 
-`crates/desktop/icons/icon.icns` and `icon.ico` are **0-byte files** and `icon.png` is a single
-pixel. Referencing the empty `.icns` aborts the application at launch on macOS — Tauri sets the
-dock icon through `NSImage::initWithData(..).expect("creating icon")`, and a panic there cannot
-unwind — so `bundle.icon` lists only the three valid PNGs, which are blank but well-formed.
+`crates/desktop/icons/` held a 0-byte `icon.icns`, a 0-byte `icon.ico` and a
+single-pixel `icon.png`. Referencing the empty `.icns` aborts the application at
+launch — Tauri sets the dock icon through `NSImage::initWithData(..).expect(..)`
+and a panic there cannot unwind — so `bundle.icon` listed only the three blank
+PNGs, and **bundling failed outright**: `Failed to create app icon: CRC error`.
 
-That is enough to run and to bundle, and not enough to ship: a `.dmg` wants a real `.icns`, and the
-window and dock currently show nothing. Closing it needs a square source PNG — 1024×1024 — after
-which `cargo tauri icon <file>` regenerates the whole set. What the icon should *look* like is a
-decision about the product rather than a packaging task (G11), so it is recorded rather than
-invented. Blocks **MV-14.1**.
+Closed 2026-09-14 with an icon supplied by the user (`docs/Icon.png`), from
+which `cargo tauri icon` generated the set. The `.app` and the `.dmg` now build.
+
+Two things about that image are worth knowing rather than discovering:
+
+- **It is 292×292**, and the largest macOS slot is 1024. Everything is upscaled
+  from it, so Finder's icon view and Get Info show a soft icon. A 1024×1024
+  source and one command replace the whole set.
+- **It has no alpha channel.** A macOS icon is normally a rounded shape on
+  transparency; this is a full square with the rounded form drawn inside it, so
+  the Dock shows a square tile. That is a choice about how the application
+  looks, not a defect, and it is the user's to make.
+
+**MV-14.1** can now be run.
 
 ---
 

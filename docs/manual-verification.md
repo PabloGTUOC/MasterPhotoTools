@@ -148,8 +148,8 @@ suggested order, and why, is in [`testing.md`](testing.md#5-suggested-order).
       `vite.config.ts` files set `server.fs.allow` without the package root, so the dev server
       refused its own `index.html`. All fixed. `cargo tauri dev` has since opened the window
       reliably, dozens of times.
-      **Not covered:** `cargo tauri build` — the bundle path is MV-14.1 and is still blocked on a
-      real icon.
+      **Not covered:** `cargo tauri build` — the bundle path is MV-14.1, which is no longer
+      blocked: both bundles build as of 2026-09-14.
 
 - [x] **MV-7.2 — An F1 date scan through the running app.**
       The scan itself is tested headlessly; the `invoke` round trip and the rendering are not.
@@ -444,10 +444,11 @@ assembled into.
 
 ## Phase 14 — Packaging
 
-- [ ] **MV-14.1 — The `.dmg` installs and launches on macOS.** *(blocked: needs a real icon)*
-      **The application icons are 0-byte placeholders**
-      ([`known-gaps.md`](known-gaps.md#the-application-icons-are-placeholders)). Supply a square
-      1024×1024 PNG and run `cargo tauri icon <file>` first, or the bundle carries a blank icon.
+- [ ] **MV-14.1 — The `.dmg` installs and launches on macOS.**
+      **No longer blocked**: an icon was supplied on 2026-09-14 and both bundles build — the `.app`
+      (38 MB) and `MasterPhotoTools_0.1.0_aarch64.dmg` (16 MB). The icon is upscaled from 292×292
+      and has no alpha, so it is soft at large sizes and square in the Dock
+      ([`known-gaps.md`](known-gaps.md)).
       **The build is unsigned**, which §9.3 accepts for personal use, so macOS will refuse it on
       first launch. That refusal is expected; what is being checked is that the application works
       once past it.

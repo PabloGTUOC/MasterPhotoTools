@@ -113,11 +113,23 @@ The driver now frames stderr with `-echo4`, keeps what both streams said, and
 `confirm_written` turns "no file updated" into a failure carrying exiftool's own
 sentence. Asserted with a file exiftool will not write.
 
-**Still open: why that server's writes were refused.** The reason will now
-appear in the job summary — a permission, a format, a read-only mount — and
-until it has been read once, it is not known. The library's photographs are
-owned by root while the container runs as `pablo`, which is the first thing to
-look at.
+**Answered, 2026-09-14, by running exiftool in the container by hand:**
+
+```
+Error: Error creating file: …/R1-02646-0000.JPG_exiftool_tmp
+```
+
+**The folder, not the photograph.** Rewriting a tag writes `NAME_exiftool_tmp`
+beside the original and renames it over the top, so what decides is whether the
+container may *create a file in that directory*. The library's top level is
+`root:users` and group-writable; that subfolder and its files are `root:root`,
+left by a copy made as root, and uid 1000 cannot write there. Nothing about the
+library's own permissions said so.
+
+`--check` now samples the library's folders and names the first one the
+container could not create a file in, with the `chown`/`chmod` that fixes it —
+the question is asked before a deploy rather than discovered by thirty-nine
+failed repairs.
 
 ### `check:ingest` fails at its third measurement, and has since `c960e68`
 

@@ -247,10 +247,49 @@ if [ "$RUN_AS" = ":" ]; then
     RUN_AS="$LIB_OWNER"
     note "no PHOTOTOOLS_UID set, so the container will run as the photographs' owner, $LIB_OWNER (${LIB_OWNER_NAME:-no name})"
 elif [ "$RUN_AS" != "$LIB_OWNER" ]; then
-    warn "container runs as $RUN_AS; the library is owned by $LIB_OWNER"
-    note "the tools rewrite metadata in place — make sure $RUN_AS can write there"
+    warn "container runs as $RUN_AS; the photographs are owned by $LIB_OWNER"
 fi
 ok "runs as      $RUN_AS"
+
+# Can that user actually create a file in the library's folders?
+#
+# **Rewriting a tag creates a file.** exiftool writes `NAME_exiftool_tmp` beside
+# the original and renames it over the top, so a folder the container may read
+# but not write fails every repair — and the folder, not the photograph, is what
+# decides. A library whose top level is group-writable can easily hold subfolders
+# that are not: a copy made as root leaves root:root 755 behind, and nothing
+# about the library's own permissions says so.
+#
+# Sampled rather than exhaustive: a library is hundreds of thousands of files and
+# this question has the same answer for a whole tree, almost always.
+RUN_UID="${RUN_AS%%:*}"
+RUN_GID="${RUN_AS#*:}"
+UNWRITABLE="$(nas "find '$LIBRARY_PATH' -type d 2>/dev/null | head -200 \
+    | xargs -r -d '\n' stat -c '%u %g %a %n' 2>/dev/null \
+    | awk -v uid=$RUN_UID -v gid=$RUN_GID '
+        {
+            mode = \$3 + 0
+            owner = int(mode / 100) % 10
+            group = int(mode / 10) % 10
+            other = mode % 10
+            writable = 0
+            if (\$1 == uid && owner % 4 >= 2) writable = 1
+            if (\$2 == gid && group % 4 >= 2) writable = 1
+            if (other % 4 >= 2) writable = 1
+            if (!writable) { \$1=\$2=\$3=""; sub(/^ +/, ""); print; exit }
+        }'")"
+
+if [ -n "$UNWRITABLE" ]; then
+    warn "$RUN_AS cannot create files in $UNWRITABLE"
+    note "the tools rewrite a tag by writing a temporary file beside the photograph,"
+    note "so every repair in that folder fails. On the NAS, as root:"
+    note "  chown -R ${LIB_OWNER_NAME:-$RUN_UID}:$RUN_GID '$LIBRARY_PATH'"
+    note "  find '$LIBRARY_PATH' -type d -exec chmod 2775 {} +"
+    note "  find '$LIBRARY_PATH' -type f -exec chmod 664 {} +"
+    note "(an ACL may still permit it — this reads the mode bits only)"
+else
+    ok "library is writable by $RUN_AS"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. The environment the server will read, and the one the web UI is built with

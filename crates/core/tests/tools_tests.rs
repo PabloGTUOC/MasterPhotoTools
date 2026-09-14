@@ -809,3 +809,78 @@ fn benchmark_a_contact_sheet_from_two_hundred_images() {
         "specification §9.1 target is 20 s, measured {elapsed:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// What a repair reports when it cannot confirm what it wrote
+// ---------------------------------------------------------------------------
+
+/// **A repair that wrote files must never report "nothing matched".**
+///
+/// Found on a deployed server: thirty-nine photographs were scanned, a manual
+/// date was applied, and the answer was *"Nothing to do: nothing matched. If
+/// the files are inside a subfolder, tick Include subfolders."* — advice that
+/// was wrong about files that had been written. `verified_count` was passed as
+/// "done", so an unconfirmed write counted as zero and the generic summary read
+/// zero as "nothing was a candidate".
+#[test]
+fn files_written_but_unconfirmed_are_reported_as_such_not_as_nothing_matched() {
+    use phototools_core::tools::f1_dates::{report, DateRepairOutcome, DateRepairSummary};
+
+    let summary = DateRepairSummary {
+        outcomes: (0..39)
+            .map(|i| DateRepairOutcome {
+                path: format!("/library/R1-02646-{i:04}.JPG").into(),
+                intended: dt("2013:05:01 12:00:00"),
+                metadata_verified: true,
+                // The write went out; the read-back did not agree.
+                filesystem_verified: false,
+                note: Some("filesystem modification time did not read back as intended".into()),
+            })
+            .collect(),
+        failures: Vec::new(),
+    };
+
+    let line = report(&summary, &[]);
+
+    assert!(
+        !line.contains("nothing matched"),
+        "thirty-nine files were written; got: {line}"
+    );
+    assert!(
+        !line.contains("subfolder"),
+        "and the advice does not apply: {line}"
+    );
+    assert!(line.contains("39 written but not confirmed"), "got: {line}");
+    assert!(
+        line.contains("filesystem modification time"),
+        "and it says why, so somebody can fix it: {line}"
+    );
+}
+
+#[test]
+fn a_repair_that_confirmed_everything_says_so_plainly() {
+    use phototools_core::tools::f1_dates::{report, DateRepairOutcome, DateRepairSummary};
+
+    let summary = DateRepairSummary {
+        outcomes: vec![DateRepairOutcome {
+            path: "/library/one.jpg".into(),
+            intended: dt("2013:05:01 12:00:00"),
+            metadata_verified: true,
+            filesystem_verified: true,
+            note: None,
+        }],
+        failures: Vec::new(),
+    };
+
+    assert_eq!(report(&summary, &[]), "1 redated and verified");
+}
+
+/// The generic advice is still right when genuinely nothing was a candidate.
+#[test]
+fn a_repair_with_no_outcomes_at_all_still_suggests_the_subfolder_box() {
+    use phototools_core::tools::f1_dates::{report, DateRepairSummary};
+
+    let line = report(&DateRepairSummary::default(), &[]);
+    assert!(line.contains("nothing matched"), "got: {line}");
+    assert!(line.contains("Include subfolders"), "got: {line}");
+}

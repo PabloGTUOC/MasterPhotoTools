@@ -85,6 +85,34 @@ This is the one thing standing between the handoff and working end to end, and i
 rather than code — see **MV-11.1**. When sign-in is wired, the same field carries the ID token and
 nothing else changes.
 
+### A date repair on the NAS writes files it cannot confirm, and nobody knows why yet
+
+**Found 2026-09-14 on the deployed server.** Thirty-nine photographs were
+scanned and shown as *no metadata*; applying a manual date answered *"Nothing to
+do: nothing matched. If the files are inside a subfolder, tick Include
+subfolders."*
+
+Two things were wrong, and only one is fixed.
+
+**Fixed: the report.** `verified_count` was passed to `tools::summarise` as
+"done", so files written but not confirmed counted as zero, and zero read as
+"nothing was a candidate" — advice about subfolders that was wrong about files
+that had been written. `f1_dates::report` now distinguishes them and both
+transports use it, so an unconfirmed write reads *"0 redated and verified, 39
+written but not confirmed (…)"* with the reason attached.
+
+**Open: why the confirmation failed there and not here.** The same folder,
+uppercase `.JPG`, no metadata, manual mode, works on the Mac — asserted in a
+test. On the NAS something in the read-back disagreed. The two candidates are
+the metadata not reading back through `nom-exif`, and the filesystem
+modification time not being settable: the container runs as the photographs'
+owner but a file whose owner differs cannot have its times set by a process that
+merely has write permission.
+
+**The fixed message is the diagnostic**: the next repair on that server will
+name which half failed. Until then this is recorded as unexplained rather than
+guessed at.
+
 ### `check:ingest` fails at its third measurement, and has since `c960e68`
 
 Its part (3) — *Publish is unreachable until a dry run has been reviewed* — loads the built

@@ -381,6 +381,69 @@ impl DateRepairSummary {
             .filter(|o| o.metadata_verified && o.filesystem_verified)
             .count()
     }
+
+    /// The files that were written and could **not** be confirmed.
+    ///
+    /// Neither successes nor failures: the write was issued and did not error,
+    /// and reading the file back did not show what was intended. §9.2
+    /// invariant 6 says an unverified outcome is reported as unverified — so
+    /// these have to be counted somewhere, and until now they were counted
+    /// nowhere.
+    pub fn unconfirmed(&self) -> Vec<&DateRepairOutcome> {
+        self.outcomes
+            .iter()
+            .filter(|o| !(o.metadata_verified && o.filesystem_verified))
+            .collect()
+    }
+}
+
+/// One sentence about what a repair did, for the person who asked for it.
+///
+/// **A repair that wrote files it could not confirm used to report "Nothing to
+/// do: nothing matched … tick Include subfolders".** `verified_count` was
+/// passed as "done", so thirty-nine rewritten photographs with an unconfirmed
+/// read-back counted as zero, and the generic summary read that as "nothing
+/// was a candidate" — advice about subfolders that was not merely unhelpful but
+/// wrong, about files that had in fact been written.
+///
+/// Both transports call this rather than `tools::summarise` directly, so the
+/// Mac and the NAS cannot describe the same outcome differently.
+pub fn report(summary: &DateRepairSummary, skipped: &[Skip]) -> String {
+    // Nothing was written at all: the generic summary is right, and its advice
+    // about subfolders applies.
+    if summary.outcomes.is_empty() {
+        return crate::tools::summarise(
+            0,
+            "redated and verified",
+            summary.failures.len(),
+            skipped,
+            &[],
+        );
+    }
+
+    let verified = summary.verified_count();
+    let unconfirmed = summary.unconfirmed();
+
+    let mut line = format!("{verified} redated and verified");
+    if !unconfirmed.is_empty() {
+        // The first reason, because they are almost always the same reason:
+        // one permission, one filesystem, one clock.
+        let reason = unconfirmed
+            .iter()
+            .find_map(|o| o.note.clone())
+            .unwrap_or_else(|| "the file did not read back as intended".into());
+        line.push_str(&format!(
+            ", {} written but not confirmed ({reason})",
+            unconfirmed.len()
+        ));
+    }
+    if !summary.failures.is_empty() {
+        line.push_str(&format!(", {} failed", summary.failures.len()));
+    }
+    if !skipped.is_empty() {
+        line.push_str(&format!(", {} skipped", skipped.len()));
+    }
+    line
 }
 
 pub struct DateRepairTool;

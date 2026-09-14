@@ -293,13 +293,7 @@ async fn dates_fix(
         // skipped for want of a readable date.
         let skipped = plan.skipped.clone();
         let summary = f1_dates::DateRepairTool.apply(plan, progress)?.data;
-        Ok(tools::summarise(
-            summary.verified_count(),
-            "redated and verified",
-            summary.failures.len(),
-            &skipped,
-            &[],
-        ))
+        Ok(f1_dates::report(&summary, &skipped))
     })
 }
 

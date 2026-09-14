@@ -211,13 +211,7 @@ pub fn fix_dates(args: FixDatesArgs, state: State<'_, AppState>) -> CommandResul
             // had been skipped for want of a readable date.
             let skipped = plan.skipped.clone();
             let summary = DateRepairTool.apply(plan, progress)?.data;
-            Ok(tools::summarise(
-                summary.verified_count(),
-                "redated and verified",
-                summary.failures.len(),
-                &skipped,
-                &[],
-            ))
+            Ok(phototools_core::tools::f1_dates::report(&summary, &skipped))
         })
         .map_err(describe)
 }

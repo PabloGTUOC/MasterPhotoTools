@@ -17,7 +17,7 @@
  * because the server trusts this screen. The review is bound to the exact bytes
  * in the folder, so editing it afterwards un-reviews it.
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import type { ConnectorStatus, FolderPublishPlan } from '@phototools/shared';
 import JobProgress from '@ui/components/JobProgress.vue';
 import PathListField from '@ui/components/PathListField.vue';
@@ -28,7 +28,9 @@ import { server } from '../api';
 const connector = ref<ConnectorStatus | null>(null);
 const jobId = ref<string | null>(null);
 const busy = ref(false);
+const isPublishing = ref(false);
 const failure = ref<string | null>(null);
+let publishWatcher: AbortController | null = null;
 
 // --- publishing a folder (docs/publish-folder-plan.md) --------------------
 //
@@ -56,6 +58,7 @@ const filled = ref<string | null>(null);
  * screen can notice.
  */
 const reviewedSession = ref<string | null>(null);
+const reviewedCount = ref<number | null>(null);
 
 const folderChanged = computed(
   () => reviewedSession.value !== null && reviewedSession.value !== folder.value?.session_id,
@@ -66,9 +69,51 @@ const canPublishFolder = computed(
     folderReviewed.value &&
     !folderChanged.value &&
     !busy.value &&
+    !isPublishing.value &&
     (folder.value?.items.length ?? 0) > 0 &&
     connector.value?.connected === true,
 );
+
+/**
+ * Explanations for why publishing is locked.
+ *
+ * Every applicable condition is reported as a distinct, clear sentence so the
+ * user knows exactly what must happen before photographs can be sent to Google.
+ * During an active upload, the explanation reports the upload rather than
+ * demanding a dry run.
+ */
+const lockReasons = computed(() => {
+  if (isPublishing.value) {
+    return ['An upload is in progress.'];
+  }
+  const reasons: string[] = [];
+  if (busy.value) {
+    reasons.push('Work is in progress.');
+  }
+  if (folderChanged.value) {
+    reasons.push(
+      'The folder has changed since the dry run — run it again so the review matches what will be published.',
+    );
+  } else if (!folderReviewed.value) {
+    reasons.push('Publish is unavailable until a dry run of this folder has been reviewed.');
+  }
+  if ((folder.value?.items.length ?? 0) === 0) {
+    reasons.push('The publishing folder is empty.');
+  }
+  if (connector.value === null) {
+    reasons.push('Checking the Google Photos connection…');
+  } else if (!connector.value.connected) {
+    reasons.push('Google Photos is not connected.');
+  }
+  return reasons;
+});
+
+const publishButtonLabel = computed(() => {
+  if (folderReviewed.value && reviewedCount.value !== null) {
+    return `Publish ${reviewedCount.value} and empty`;
+  }
+  return 'Publish and empty';
+});
 
 async function guard<T>(work: () => Promise<T>): Promise<T | undefined> {
   busy.value = true;
@@ -103,6 +148,8 @@ async function fill() {
     filled.value = result.summary;
     // What is in the folder has changed, so any earlier review is void.
     folderReviewed.value = false;
+    reviewedSession.value = null;
+    reviewedCount.value = null;
     await readFolder();
   }
 }
@@ -113,18 +160,48 @@ async function folderDryRun() {
     folder.value = result;
     folderReviewed.value = true;
     reviewedSession.value = result.session_id;
+    reviewedCount.value = result.items.length;
   }
 }
 
 async function publishTheFolder() {
-  const id = await guard(() => server.publishFolder());
-  if (id) {
-    jobId.value = id;
-    // One review authorises one publish, and the folder is emptied by a
-    // successful one — so whatever is there next is something else.
-    folderReviewed.value = false;
-    reviewedSession.value = null;
-    await readFolder();
+  // Re-read immediately before publishing. If files were added, deleted or
+  // edited outside the browser, the session id changes and publish is aborted.
+  await readFolder();
+  if (!canPublishFolder.value) {
+    return;
+  }
+
+  isPublishing.value = true;
+  failure.value = null;
+  try {
+    const id = await guard(() => server.publishFolder());
+    if (id) {
+      jobId.value = id;
+      let streamDropped = false;
+      publishWatcher = new AbortController();
+      try {
+        await api.watchJob(id, () => {}, publishWatcher.signal);
+      } catch (e) {
+        if ((e as Error).name !== 'AbortError') {
+          streamDropped = true;
+        }
+      } finally {
+        publishWatcher = null;
+      }
+      // One review authorises one publish, and the folder is emptied by a
+      // successful one — so whatever is there next is something else.
+      folderReviewed.value = false;
+      reviewedSession.value = null;
+      reviewedCount.value = null;
+      await readFolder();
+      if (streamDropped && !failure.value) {
+        failure.value =
+          'The progress stream dropped and the folder was re-read; the result shown may not be final.';
+      }
+    }
+  } finally {
+    isPublishing.value = false;
   }
 }
 
@@ -155,11 +232,50 @@ function megabytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * Focus-triggered re-reads are throttled and conditional to protect I/O.
+ *
+ * GET /api/publish/folder walks the folder and SHA-256 hashes every file
+ * (publish/folder.rs) to verify whether content changed. When hundreds of large
+ * RAWs or JPEGs reside on a NAS, firing full SHA-256 passes on every tab switch
+ * or window focus starts a heavy job.
+ *
+ * Re-reads on focus run only when a dry-run review actually exists to invalidate
+ * (reviewedSession !== null), and at most once every 5 seconds. The re-read
+ * immediately before publishing in publishTheFolder stays unconditional.
+ */
+const FOCUS_THROTTLE_MS = 5000;
+let lastFocusCheck = 0;
+
+function onFocus() {
+  if (
+    document.visibilityState === 'visible' &&
+    reviewedSession.value !== null &&
+    !isPublishing.value &&
+    !busy.value
+  ) {
+    const now = Date.now();
+    if (now - lastFocusCheck >= FOCUS_THROTTLE_MS) {
+      lastFocusCheck = now;
+      void readFolder();
+    }
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener('focus', onFocus);
+  document.addEventListener('visibilitychange', onFocus);
   await refreshConnector();
   // The folder is read on opening the tab: whatever is in it is what would be
   // published, however it got there.
   await readFolder();
+});
+
+onUnmounted(() => {
+  window.removeEventListener('focus', onFocus);
+  document.removeEventListener('visibilitychange', onFocus);
+  publishWatcher?.abort();
+  publishWatcher = null;
 });
 </script>
 
@@ -183,12 +299,12 @@ onMounted(async () => {
           v-if="connector.connected"
           type="button"
           class="ghost"
-          :disabled="busy"
+          :disabled="busy || isPublishing"
           @click="disconnect"
         >
           Disconnect
         </button>
-        <button v-else type="button" class="secondary" :disabled="busy" @click="connect">
+        <button v-else type="button" class="secondary" :disabled="busy || isPublishing" @click="connect">
           {{ connector.needs_reauthorisation ? 'Reconnect' : 'Connect Google Photos' }}
         </button>
       </template>
@@ -245,11 +361,11 @@ onMounted(async () => {
         <p v-if="filled" class="note" role="status">{{ filled }}</p>
 
         <div class="row">
-          <button type="button" class="ghost" :disabled="busy" @click="fill">Copy in</button>
-          <button type="button" class="ghost" :disabled="busy" @click="readFolder">
+          <button type="button" class="ghost" :disabled="busy || isPublishing" @click="fill">Copy in</button>
+          <button type="button" class="ghost" :disabled="busy || isPublishing" @click="readFolder">
             Re-read the folder
           </button>
-          <button type="button" class="secondary" :disabled="busy" @click="folderDryRun">
+          <button type="button" class="secondary" :disabled="busy || isPublishing" @click="folderDryRun">
             Dry run
           </button>
           <button
@@ -258,17 +374,18 @@ onMounted(async () => {
             :disabled="!canPublishFolder"
             @click="publishTheFolder"
           >
-            Publish and empty
+            {{ publishButtonLabel }}
           </button>
         </div>
 
-        <p v-if="folderChanged" class="error" role="alert">
-          The folder has changed since the dry run — a file was added, removed or edited. Run it
-          again: the review has to be of what would actually be published.
-        </p>
-        <p v-else-if="!folderReviewed" class="muted small">
-          Publish is unavailable until a dry run of this folder has been reviewed.
-        </p>
+        <div
+          v-if="lockReasons.length"
+          class="gate-explanation"
+          data-testid="gate-explanation"
+          role="status"
+        >
+          <p v-for="reason in lockReasons" :key="reason">{{ reason }}</p>
+        </div>
       </template>
     </section>
 
@@ -368,6 +485,21 @@ onMounted(async () => {
   border-radius: var(--radius-none);
   color: var(--accent-warm);
   font-size: 13px;
+}
+.gate-explanation {
+  display: grid;
+  gap: var(--space-1);
+  padding: 10px 12px;
+  border: 1px solid var(--accent-warm);
+  border-radius: var(--radius-none);
+  background: var(--bg-elevated);
+  color: var(--accent-warm);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.gate-explanation p {
+  margin: 0;
 }
 .small { font-size: 13px; }
 .mono { font-family: var(--font-body); }

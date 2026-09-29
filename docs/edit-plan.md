@@ -308,6 +308,7 @@ Excluded per Ground Rule G11 to keep scope disciplined:
 - **Web browser editing**: Version 1 is strictly desktop-focused.
 - **GPU compute shaders (`wgpu`)**: The CPU renderer in `core` is the authority. Adding GPU pipelines is deferred to avoid headless CI driver complications and new dependencies (G8).
 - **Local adjustments & geometric corrections**: Selective brush masks, radial gradients, keystoning, and lens distortion corrections are outside the single-exposure balancing scope.
+- **1D LUTs**: Only 3D LUTs (`.cube`, `.3dl`, and square HALD `.png`) are supported in v1; 1D LUTs (`LUT_1D_SIZE`) are explicitly refused with a clear message rather than mis-parsed.
 
 ---
 

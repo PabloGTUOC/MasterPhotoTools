@@ -3,6 +3,7 @@
 //! Evaluates parametric exposure, white balance, tone crossover, contrast,
 //! and vibrance/saturation in linear light, transfer-converting to/from sRGB.
 
+use super::lut::Lut;
 use crate::error::Error;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -236,13 +237,37 @@ impl LinearBuffer {
     }
 
     pub fn to_rgb8(&self) -> ImageBuffer {
+        self.to_rgb8_with_lut(None, 0.0)
+    }
+
+    fn to_rgb8_with_lut(&self, lut: Option<&Lut>, intensity: f32) -> ImageBuffer {
+        let intensity = intensity.clamp(0.0, 1.0);
         let mut out = vec![0u8; self.data.len()];
         out.par_chunks_exact_mut(3)
             .zip(self.data.par_chunks_exact(3))
             .for_each(|(out_px, in_px)| {
-                out_px[0] = linear_to_u8(in_px[0]);
-                out_px[1] = linear_to_u8(in_px[1]);
-                out_px[2] = linear_to_u8(in_px[2]);
+                let disp_r = linear_to_srgb(in_px[0]);
+                let disp_g = linear_to_srgb(in_px[1]);
+                let disp_b = linear_to_srgb(in_px[2]);
+
+                let (final_r, final_g, final_b) = if let Some(lut) = lut {
+                    if intensity > 0.0 {
+                        let lut_out = lut.sample([disp_r, disp_g, disp_b]);
+                        (
+                            ((1.0 - intensity) * disp_r + intensity * lut_out[0]).clamp(0.0, 1.0),
+                            ((1.0 - intensity) * disp_g + intensity * lut_out[1]).clamp(0.0, 1.0),
+                            ((1.0 - intensity) * disp_b + intensity * lut_out[2]).clamp(0.0, 1.0),
+                        )
+                    } else {
+                        (disp_r, disp_g, disp_b)
+                    }
+                } else {
+                    (disp_r, disp_g, disp_b)
+                };
+
+                out_px[0] = (final_r * 255.0).round().clamp(0.0, 255.0) as u8;
+                out_px[1] = (final_g * 255.0).round().clamp(0.0, 255.0) as u8;
+                out_px[2] = (final_b * 255.0).round().clamp(0.0, 255.0) as u8;
             });
         ImageBuffer::Rgb8 {
             width: self.width,
@@ -252,13 +277,37 @@ impl LinearBuffer {
     }
 
     pub fn to_rgb16(&self) -> ImageBuffer {
+        self.to_rgb16_with_lut(None, 0.0)
+    }
+
+    fn to_rgb16_with_lut(&self, lut: Option<&Lut>, intensity: f32) -> ImageBuffer {
+        let intensity = intensity.clamp(0.0, 1.0);
         let mut out = vec![0u16; self.data.len()];
         out.par_chunks_exact_mut(3)
             .zip(self.data.par_chunks_exact(3))
             .for_each(|(out_px, in_px)| {
-                out_px[0] = linear_to_u16(in_px[0]);
-                out_px[1] = linear_to_u16(in_px[1]);
-                out_px[2] = linear_to_u16(in_px[2]);
+                let disp_r = linear_to_srgb(in_px[0]);
+                let disp_g = linear_to_srgb(in_px[1]);
+                let disp_b = linear_to_srgb(in_px[2]);
+
+                let (final_r, final_g, final_b) = if let Some(lut) = lut {
+                    if intensity > 0.0 {
+                        let lut_out = lut.sample([disp_r, disp_g, disp_b]);
+                        (
+                            ((1.0 - intensity) * disp_r + intensity * lut_out[0]).clamp(0.0, 1.0),
+                            ((1.0 - intensity) * disp_g + intensity * lut_out[1]).clamp(0.0, 1.0),
+                            ((1.0 - intensity) * disp_b + intensity * lut_out[2]).clamp(0.0, 1.0),
+                        )
+                    } else {
+                        (disp_r, disp_g, disp_b)
+                    }
+                } else {
+                    (disp_r, disp_g, disp_b)
+                };
+
+                out_px[0] = (final_r * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                out_px[1] = (final_g * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                out_px[2] = (final_b * 65535.0).round().clamp(0.0, 65535.0) as u16;
             });
         ImageBuffer::Rgb16 {
             width: self.width,
@@ -419,23 +468,53 @@ pub fn tone_weights(y: f32) -> (f32, f32) {
     (w_h, w_s)
 }
 
-/// Applies an adjustment recipe to an image buffer.
+/// Applies an adjustment recipe to an image buffer, optionally evaluating a 3D LUT.
 ///
-/// In ED-1, recipes with a 3D LUT (`lut: Some(..)`) are explicitly refused per G10,
-/// noting that LUT support arrives in ED-2.
-pub fn apply_recipe(image: &ImageBuffer, recipe: &AdjustmentRecipe) -> Result<ImageBuffer, Error> {
-    if recipe.lut.is_some() {
-        return Err(Error::Refused(
-            "3D LUT application is not available in ED-1 (arrives in ED-2)".into(),
-        ));
+/// In ED-2:
+/// - If `recipe.lut` is set, `lut` must be provided and its sha256 must match `recipe.lut.sha256`.
+/// - If `recipe.lut` is none, providing a `lut` is refused to avoid silent omission.
+/// - The 3D LUT is evaluated in display-encoded space (after sRGB transfer and clamp,
+///   before quantisation) and blended as `out = (1 - i) * disp + i * lut`.
+pub fn apply_recipe(
+    image: &ImageBuffer,
+    recipe: &AdjustmentRecipe,
+    lut: Option<&Lut>,
+) -> Result<ImageBuffer, Error> {
+    match (&recipe.lut, lut) {
+        (Some(lut_ref), Some(provided_lut)) => {
+            if provided_lut.sha256 != lut_ref.sha256 {
+                return Err(Error::Refused(format!(
+                    "LUT sha256 mismatch for '{}': recipe expected {}, but provided LUT has {}",
+                    lut_ref.name, lut_ref.sha256, provided_lut.sha256
+                )));
+            }
+        }
+        (Some(lut_ref), None) => {
+            return Err(Error::Refused(format!(
+                "recipe requires 3D LUT '{}' ({}), but no LUT was provided",
+                lut_ref.name, lut_ref.sha256
+            )));
+        }
+        (None, Some(_)) => {
+            return Err(Error::Refused(
+                "a LUT was provided but the recipe does not specify any LUT".to_string(),
+            ));
+        }
+        (None, None) => {}
     }
 
     let mut linear = LinearBuffer::from_image_buffer(image);
     linear.apply_adjustments(recipe);
 
+    let intensity = if recipe.lut.is_some() {
+        recipe.lut_intensity
+    } else {
+        0.0
+    };
+
     match image {
-        ImageBuffer::Rgb8 { .. } => Ok(linear.to_rgb8()),
-        ImageBuffer::Rgb16 { .. } => Ok(linear.to_rgb16()),
+        ImageBuffer::Rgb8 { .. } => Ok(linear.to_rgb8_with_lut(lut, intensity)),
+        ImageBuffer::Rgb16 { .. } => Ok(linear.to_rgb16_with_lut(lut, intensity)),
     }
 }
 
@@ -485,7 +564,7 @@ mod tests {
             height: h,
             data: data8,
         };
-        let out8 = apply_recipe(&buf8, &default_recipe).unwrap();
+        let out8 = apply_recipe(&buf8, &default_recipe, None).unwrap();
         assert_eq!(
             out8, buf8,
             "8-bit untouched recipe must be bit-exact identity"
@@ -504,7 +583,7 @@ mod tests {
             height: h,
             data: data16,
         };
-        let out16 = apply_recipe(&buf16, &default_recipe).unwrap();
+        let out16 = apply_recipe(&buf16, &default_recipe, None).unwrap();
         assert_eq!(
             out16, buf16,
             "16-bit untouched recipe must be bit-exact identity"
@@ -632,7 +711,7 @@ mod tests {
                         vibrance: 0.0,
                         ..AdjustmentRecipe::default()
                     };
-                    let out = apply_recipe(&img, &recipe).unwrap();
+                    let out = apply_recipe(&img, &recipe, None).unwrap();
                     let ImageBuffer::Rgb8 { data, .. } = out else {
                         panic!("expected ImageBuffer::Rgb8, got {out:?}");
                     };
@@ -644,7 +723,7 @@ mod tests {
     }
 
     #[test]
-    fn a_recipe_with_a_lut_is_refused_until_luts_exist() {
+    fn a_recipe_naming_a_lut_is_refused_without_that_lut() {
         let img = ImageBuffer::Rgb8 {
             width: 1,
             height: 1,
@@ -653,17 +732,256 @@ mod tests {
         let recipe = AdjustmentRecipe {
             lut: Some(LutRef {
                 name: "film_stock.cube".into(),
-                sha256: "0123456789abcdef".into(),
+                sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
             }),
             ..AdjustmentRecipe::default()
         };
-        let err = apply_recipe(&img, &recipe).unwrap_err();
+        let err = apply_recipe(&img, &recipe, None).unwrap_err();
         match err {
             Error::Refused(msg) => {
-                assert!(msg.contains("3D LUT"), "expected LUT mention, got: {msg}");
-                assert!(msg.contains("ED-2"), "expected ED-2 mention, got: {msg}");
+                assert!(
+                    msg.contains("film_stock.cube"),
+                    "expected LUT name, got: {msg}"
+                );
+                assert!(
+                    msg.contains("no LUT was provided"),
+                    "expected missing LUT explanation, got: {msg}"
+                );
             }
             other => panic!("expected Error::Refused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_recipe_naming_a_lut_is_refused_with_a_different_lut() {
+        let img = ImageBuffer::Rgb8 {
+            width: 1,
+            height: 1,
+            data: vec![128, 128, 128],
+        };
+        let cube_str = "TITLE \"Test\"\nLUT_3D_SIZE 2\n0.0 0.0 0.0\n1.0 0.0 0.0\n0.0 1.0 0.0\n1.0 1.0 0.0\n0.0 0.0 1.0\n1.0 0.0 1.0\n0.0 1.0 1.0\n1.0 1.0 1.0\n";
+        let lut = Lut::from_cube("actual.cube", cube_str.as_bytes()).unwrap();
+
+        let recipe = AdjustmentRecipe {
+            lut: Some(LutRef {
+                name: "expected.cube".into(),
+                sha256: "different_hash_that_does_not_match".into(),
+            }),
+            ..AdjustmentRecipe::default()
+        };
+        let err = apply_recipe(&img, &recipe, Some(&lut)).unwrap_err();
+        match err {
+            Error::Refused(msg) => {
+                assert!(
+                    msg.contains("expected.cube"),
+                    "expected LUT name, got: {msg}"
+                );
+                assert!(
+                    msg.contains("mismatch"),
+                    "expected mismatch explanation, got: {msg}"
+                );
+            }
+            other => panic!("expected Error::Refused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_recipe_without_a_lut_is_refused_when_a_lut_is_provided() {
+        let img = ImageBuffer::Rgb8 {
+            width: 1,
+            height: 1,
+            data: vec![128, 128, 128],
+        };
+        let cube_str = "TITLE \"Test\"\nLUT_3D_SIZE 2\n0.0 0.0 0.0\n1.0 0.0 0.0\n0.0 1.0 0.0\n1.0 1.0 0.0\n0.0 0.0 1.0\n1.0 0.0 1.0\n0.0 1.0 1.0\n1.0 1.0 1.0\n";
+        let lut = Lut::from_cube("actual.cube", cube_str.as_bytes()).unwrap();
+
+        let recipe = AdjustmentRecipe {
+            lut: None,
+            ..AdjustmentRecipe::default()
+        };
+        let err = apply_recipe(&img, &recipe, Some(&lut)).unwrap_err();
+        match err {
+            Error::Refused(msg) => {
+                assert!(
+                    msg.contains("recipe does not specify any LUT"),
+                    "expected rejection of unexpected LUT, got: {msg}"
+                );
+            }
+            other => panic!("expected Error::Refused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_lut_is_sampled_with_display_encoded_values_not_linear_ones() {
+        // Size 3 cube where nodes with r, g, b >= 0.5 (indices >= 1) output white [1.0, 1.0, 1.0],
+        // while (0, 0, 0) outputs black [0.0, 0.0, 0.0].
+        let mut cube_str = String::from("TITLE \"DispVsLin\"\nLUT_3D_SIZE 3\n");
+        for b in 0..3 {
+            for g in 0..3 {
+                for r in 0..3 {
+                    if r >= 1 && g >= 1 && b >= 1 {
+                        cube_str.push_str("1.0 1.0 1.0\n");
+                    } else {
+                        cube_str.push_str("0.0 0.0 0.0\n");
+                    }
+                }
+            }
+        }
+        let lut = Lut::from_cube("step.cube", cube_str.as_bytes()).unwrap();
+
+        // 8-bit input grey 128:
+        // In display sRGB space: 128/255 ≈ 0.50196 >= 0.5 on all channels.
+        // In linear light space: srgb_to_linear(128/255) ≈ 0.21586 < 0.5.
+        let img = ImageBuffer::Rgb8 {
+            width: 1,
+            height: 1,
+            data: vec![128, 128, 128],
+        };
+        let recipe = AdjustmentRecipe {
+            lut: Some(LutRef {
+                name: "step.cube".into(),
+                sha256: lut.sha256.clone(),
+            }),
+            lut_intensity: 1.0,
+            ..AdjustmentRecipe::default()
+        };
+
+        let out = apply_recipe(&img, &recipe, Some(&lut)).unwrap();
+        let ImageBuffer::Rgb8 { data, .. } = out else {
+            panic!("expected Rgb8")
+        };
+
+        // If sampled in display space (0.502), the output must be full white [255, 255, 255].
+        // If it were mistakenly sampled in linear space (0.216), it would be dark grey ~110.
+        assert_eq!(
+            data,
+            vec![255, 255, 255],
+            "LUT must be sampled in display-encoded space"
+        );
+    }
+
+    #[test]
+    fn lut_intensity_zero_returns_pre_lut_image() {
+        let img = ImageBuffer::Rgb8 {
+            width: 2,
+            height: 2,
+            data: vec![50, 100, 150, 200, 220, 240, 10, 80, 120, 180, 70, 90],
+        };
+
+        // Inverting LUT (out = 1.0 - in)
+        let mut cube_str = String::from("TITLE \"Invert\"\nLUT_3D_SIZE 2\n");
+        for b in 0..2 {
+            for g in 0..2 {
+                for r in 0..2 {
+                    cube_str.push_str(&format!(
+                        "{:.1} {:.1} {:.1}\n",
+                        1.0 - r as f32,
+                        1.0 - g as f32,
+                        1.0 - b as f32
+                    ));
+                }
+            }
+        }
+        let lut = Lut::from_cube("invert.cube", cube_str.as_bytes()).unwrap();
+
+        let base_recipe = AdjustmentRecipe {
+            exposure: 0.5,
+            contrast: 20.0,
+            highlights: -15.0,
+            ..AdjustmentRecipe::default()
+        };
+
+        let pre_lut_out = apply_recipe(&img, &base_recipe, None).unwrap();
+
+        let recipe_with_zero_lut = AdjustmentRecipe {
+            lut: Some(LutRef {
+                name: "invert.cube".into(),
+                sha256: lut.sha256.clone(),
+            }),
+            lut_intensity: 0.0,
+            ..base_recipe.clone()
+        };
+
+        let out_zero = apply_recipe(&img, &recipe_with_zero_lut, Some(&lut)).unwrap();
+        assert_eq!(
+            out_zero, pre_lut_out,
+            "lut_intensity 0.0 must return identical image to no LUT"
+        );
+    }
+
+    #[test]
+    fn lut_intensity_half_blends_fifty_percent() {
+        let img = ImageBuffer::Rgb8 {
+            width: 1,
+            height: 1,
+            data: vec![100, 150, 200],
+        };
+
+        // Inverting LUT
+        let mut cube_str = String::from("TITLE \"Invert\"\nLUT_3D_SIZE 2\n");
+        for b in 0..2 {
+            for g in 0..2 {
+                for r in 0..2 {
+                    cube_str.push_str(&format!(
+                        "{:.1} {:.1} {:.1}\n",
+                        1.0 - r as f32,
+                        1.0 - g as f32,
+                        1.0 - b as f32
+                    ));
+                }
+            }
+        }
+        let lut = Lut::from_cube("invert.cube", cube_str.as_bytes()).unwrap();
+
+        let recipe_zero = AdjustmentRecipe {
+            lut: Some(LutRef {
+                name: "invert.cube".into(),
+                sha256: lut.sha256.clone(),
+            }),
+            lut_intensity: 0.0,
+            ..AdjustmentRecipe::default()
+        };
+        let out_zero = apply_recipe(&img, &recipe_zero, Some(&lut)).unwrap();
+        let ImageBuffer::Rgb8 {
+            data: data_zero, ..
+        } = out_zero
+        else {
+            panic!("expected Rgb8")
+        };
+
+        let recipe_full = AdjustmentRecipe {
+            lut_intensity: 1.0,
+            ..recipe_zero.clone()
+        };
+        let out_full = apply_recipe(&img, &recipe_full, Some(&lut)).unwrap();
+        let ImageBuffer::Rgb8 {
+            data: data_full, ..
+        } = out_full
+        else {
+            panic!("expected Rgb8")
+        };
+
+        let recipe_half = AdjustmentRecipe {
+            lut_intensity: 0.5,
+            ..recipe_zero.clone()
+        };
+        let out_half = apply_recipe(&img, &recipe_half, Some(&lut)).unwrap();
+        let ImageBuffer::Rgb8 {
+            data: data_half, ..
+        } = out_half
+        else {
+            panic!("expected Rgb8")
+        };
+
+        for c in 0..3 {
+            let expected_half = ((data_zero[c] as f32 + data_full[c] as f32) / 2.0).round() as i32;
+            let diff = (data_half[c] as i32 - expected_half).abs();
+            assert!(
+                diff <= 1,
+                "channel {c} half-blend mismatch: got {}, expected {}",
+                data_half[c],
+                expected_half
+            );
         }
     }
 

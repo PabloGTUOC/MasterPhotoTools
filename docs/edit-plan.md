@@ -83,7 +83,7 @@ is invented (G11); the specification is not edited (G9).
 | **G5** | **Never write to a source SD card.** The editor detects camera cards by checking whether the volume root contains a `DCIM` directory (F10), refusing to write sidecars on card volumes. Mounted shares (such as NAS SMB shares) without `DCIM` remain writable. Bulk LUT requires an explicit destination folder outside any card volume. |
 | **G6** | Every input, output, and LUT file path is canonicalised and validated against configured roots. |
 | **G7** | No test is weakened. Identity adjustments and zero-intensity LUTs must produce identical output. |
-| **G8** | **Zero new runtime dependencies for CPU rendering.** `image`, `rayon`, `rawler`, `mozjpeg`, `tiff`, and `fast_image_resize` are already in `core`. RAW decoding delegates to the existing F14 derivation ladder (`ingest::derivation`). RapidRAW's AGPL code is rejected; only public specifications (Adobe `.cube`) are used. `wgpu` is deferred. |
+| **G8** | **Zero new runtime dependencies for CPU rendering.** `image`, `rayon`, `rawler`, `mozjpeg`, `tiff`, and `fast_image_resize` are already in `core`. RAW decoding delegates to the existing ladder in `media::raw` (not `ingest::derivation`, as `media` must never depend on `ingest`). RapidRAW's AGPL code is rejected; only public specifications (Adobe `.cube`) are used. `wgpu` is deferred. |
 | **G9** | `SPECIFICATION.md` is not edited. |
 | **G10** | No `unimplemented!()`, `todo!()`, or swallowed errors on shipped paths. |
 | **G11** | The scope is strictly the requested adjustments and bulk LUT grading. Carrying `.xmp` sidecars is excluded. |
@@ -95,8 +95,8 @@ is invented (G11); the specification is not edited (G9).
 | Decision | Rationale & consequence |
 |---|---|
 | **CPU-first authority** | A multithreaded CPU pipeline in `core` using `rayon` is the authority for exports and CI tests. `wgpu` is deferred to keep dependencies clean (G8) and avoid GPU driver requirements in headless CI environments. |
-| **RAW decoded through F14 ladder** | Camera RAW inputs are decoded using the existing F14 derivation ladder (`ingest::derivation`), avoiding duplicate decoding dependencies or divergent RAW pipelines. |
-| **Display-encoded LUT application** | Tone and exposure adjustments occur in **linear light**. Tone mapping / gamut clamping and sRGB transfer are applied *before* the 3D LUT, because creative `.cube` LUTs expect display-referred inputs. Inputs are clamped to `DOMAIN_MIN`/`DOMAIN_MAX`, and values $> 1.0$ are mapped prior to lookup. |
+| **RAW decoded through media::raw ladder** | Camera RAW inputs are decoded using `media::raw` (not `ingest::derivation`, preserving modularity since `media` must never depend on `ingest`). In v1, the ladder yields an 8-bit JPEG (often the camera's embedded preview); thus v1 edits the camera's rendering, not sensor data, and has no headroom above the camera's clipping point. |
+| **Display-encoded LUT application** | Tone and exposure adjustments occur in **linear light**. Values are hard-clipped at display white ($[0.0, 1.0]$) to preserve exact identity under identity recipes, and sRGB transfer is applied *before* the 3D LUT, because creative `.cube` LUTs expect display-referred inputs. Inputs are clamped to `DOMAIN_MIN`/`DOMAIN_MAX`. |
 | **Crossover at 0.18 for tones** | Mid-grey ($0.18$) is strictly stationary. Shadows' weight falls to exactly zero at $0.18$; Highlights' weight rises from zero at $0.18$. Adjusting highlights or shadows leaves an 18% grey card untouched. |
 | **Card detection by DCIM** | A card volume is identified by a `DCIM` directory at the volume root (F10), not by a naive `/Volumes/` path check. This ensures macOS mounts of NAS SMB shares (which also mount under `/Volumes/`) remain fully editable while camera cards remain strictly read-only (G5). |
 | **Single-image export rules** | Exports append `_edit`, never overwrite existing files (incrementing `_edit_1`, `_edit_2`), refuse destinations inside `Publishing` (MV-16.7), and stream copy identity recipes directly without re-compression. |
@@ -116,12 +116,12 @@ All color transformations occur in `crates/core/src/media/edit/`:
 
 ```mermaid
 flowchart LR
-    Input["Input Image<br>(JPEG / 16-bit TIFF / RAW)"] --> Decode["Decode to RGB<br>(JPEG, TIFF, or RAW via F14 derivation ladder)"]
+    Input["Input Image<br>(JPEG / 16-bit TIFF / RAW)"] --> Decode["Decode to RGB<br>(JPEG, TIFF, or RAW via media::raw ladder)"]
     Decode --> Linear["Linearize sRGB<br>(to f32 [0.0, ∞))"]
     Linear --> WB["1. White Balance<br>(Temp & Tint gains)"]
     WB --> Exp["2. Exposure<br>(C * 2^EV)"]
     Exp --> Tone["3. Highlights & Shadows<br>(Crossover at 0.18; 0.18 strictly stationary)"]
-    Tone --> Contrast["4. Contrast<br>(S-curve around 0.18)"]
+    Tone --> Contrast["4. Contrast<br>(Power curve pivoting at 0.18)"]
     Contrast --> Sat["5. Saturation & Vibrance<br>(Skin-tone weighted)"]
     Sat --> Display["6. Gamut Clamp & sRGB Transfer<br>(to [0.0, 1.0])"]
     Display --> LUT["7. 3D LUT Application<br>(Tetrahedral + Intensity blend)"]
@@ -152,7 +152,7 @@ pub struct AdjustmentRecipe {
     pub highlights: f32,
     /// Shadow lifting / crushing: -100.0 to +100.0 (anchored, leaves 0.18 untouched).
     pub shadows: f32,
-    /// Mid-tone contrast: -100.0 to +100.0.
+    /// Contrast: -100.0 to +100.0 (power curve pivoting at 0.18, clipped at white by display transfer).
     pub contrast: f32,
     /// Global saturation: -100.0 to +100.0.
     pub saturation: f32,
@@ -187,7 +187,7 @@ impl Default for AdjustmentRecipe {
 ### 2. Mathematics of operations
 
 1. **Decoding & Linearization**:
-   Input files are decoded to RGB (camera RAWs decode through `ingest::derivation`'s F14 ladder). Values are converted to linear light:
+   Input files are decoded to RGB (camera RAWs decode through `media::raw`'s ladder, keeping `media` independent of `ingest`). Values are converted to linear light:
    $$C_{lin} = \begin{cases} \frac{C_{srgb}}{12.92} & C_{srgb} \le 0.04045 \\ \left(\frac{C_{srgb} + 0.055}{1.055}\right)^{2.4} & C_{srgb} > 0.04045 \end{cases}$$
 2. **White balance & exposure**:
    Applies channel gains and optical exposure scaling:
@@ -198,9 +198,9 @@ impl Default for AdjustmentRecipe {
    - **Shadows weight $w_S(Y)$**: exactly $0$ for $Y \ge 0.18$. For $Y < 0.18$, rises smoothly reaching full effect by $Y = 0.05$.
    At $Y = 0.18$, $w_H = 0$ and $w_S = 0$, guaranteeing that mid-grey is never modified by either slider. Proved by unit test `highlights_and_shadows_leave_mid_grey_untouched`.
 4. **Contrast & vibrance**:
-   Contrast applies a sigmoid S-curve centered at $0.18$. Vibrance scales chroma inversely to existing saturation: $(1 - S) \times \Delta V$.
+   Contrast applies a power curve pivoting at $0.18$ ($(Y / 0.18)^{0.5 \cdot c}$, clipped at white by step 6), not a sigmoid S-curve. Vibrance scales chroma inversely to existing saturation: $(1 - S) \times \Delta V$.
 5. **Display transfer & bounds clamping**:
-   Values are tone-mapped and converted back to display sRGB $[0.0, 1.0]$:
+   Values are hard-clipped at display white ($[0.0, 1.0]$) and converted back to display sRGB. v1 deliberately clips rather than applying a filmic tone-mapping shoulder to preserve exact numerical identity under identity recipes. +EV clips highlights that were near white; the Highlights slider is the mechanism to pull them back (acting on $Y > 0.18$ up to full effect at $0.65$, before the display clip):
    $$C_{disp} = \begin{cases} 12.92 C & C \le 0.0031308 \\ 1.055 C^{1/2.4} - 0.055 & C > 0.0031308 \end{cases}$$
 6. **3D LUT evaluation (display space)**:
    Input values are clamped to the LUT's declared `[DOMAIN_MIN, DOMAIN_MAX]` (defaulting to $[0.0, 1.0]$). Tetrahedral interpolation samples the four enclosing lattice vertices to compute $C_{lut}$. The result is blended linearly:
@@ -229,8 +229,8 @@ impl Default for AdjustmentRecipe {
 
 ### `ED-1` · Color and adjustment engine in `core`
 - Create `crates/core/src/media/edit/mod.rs` and `pipeline.rs`.
-- Implement sRGB $\leftrightarrow$ Linear float conversions with table lookup optimization.
-- Wire camera RAW decoding directly to the existing F14 derivation ladder (`crates/core/src/ingest/derivation/f14.rs`).
+- Implement exact sRGB $\leftrightarrow$ Linear float conversions (table lookup optimization deferred to ED-4).
+- Wire camera RAW decoding directly to `media::raw` (`crates/core/src/media/raw.rs`), preserving the invariant that `media` never depends on `ingest`.
 - Implement exposure, white balance, contrast, anchored highlights/shadows, and vibrance algorithms.
 - **Tests**:
   - `an_untouched_recipe_is_exact_identity`
@@ -253,6 +253,7 @@ impl Default for AdjustmentRecipe {
 - Extend `F3 Rename` (`crates/core/src/tools/f3_rename.rs`) to carry companion `.photoedit` files atomically with the parent image.
 - Enforce G5: Implement card volume detection in `core` (`media::card` or `media::edit`): a volume root containing `DCIM` is a card. Prohibit sidecar writes when a file resides on a card volume; allow writes on mounted shares without `DCIM`.
 - Implement single-image export rules: append `_edit` suffix, monotonic collision incrementing (`_edit_1`, `_edit_2`), refusal to write into `Publishing`, and byte-copy on identity recipes.
+- *Orientation note*: `decode_image` does not apply EXIF orientation. This is consistent only if export keeps the orientation tag and pixels together (`carry_metadata` has an `upright` flag).
 - **Tests**:
   - `f3_rename_carries_companion_photoedit_sidecar`
   - `editor_refuses_to_write_a_sidecar_on_a_card_volume`
@@ -264,6 +265,7 @@ impl Default for AdjustmentRecipe {
 ### `ED-4` · Throttled proxy pipeline and binary IPC
 - Implement dual-stage proxy rendering in `core`: 720p during active dragging, settling to 1440p on release.
 - Transfer proxy frames over Tauri custom binary protocol (`phototools-preview://`).
+- *Table lookup note*: `srgb_to_linear` calls `powf` per channel (~200M calls each way for a 36 MP frame). Meeting ED-4's interactive budget will likely require a 256 / 65,536-entry decode table.
 - **Benchmark targets and pass/fail measurement**:
   - **Measurement methodology**: Measure elapsed time from slider input event to new rendered pixels painted in the webview, evaluated with a 1080p proxy generated from a 36 MP source image (e.g. Nikon D810 frame) with active tone adjustments and 3D LUT.
   - **Pass budget**: **p95 at most 50 ms** on an Apple Silicon Mac in a release build (dev profile already optimizes `core`).
@@ -289,6 +291,7 @@ impl Default for AdjustmentRecipe {
 - Build `AdjustmentSlider.vue` and `LutPicker.vue` in `frontend/shared/src/ui/components/` with double-click reset and numeric entry.
 - Create `frontend/desktop/src/views/Edit.vue`.
 - Implement Before/After comparison toggle.
+- *Orientation display note*: The editor viewport must display the photograph upright (respecting EXIF orientation).
 
 ### `ED-8` · Desktop UI bulk LUT view
 - Create `frontend/desktop/src/views/BulkLut.vue`.
@@ -300,6 +303,7 @@ impl Default for AdjustmentRecipe {
 ## Not in this plan
 
 Excluded per Ground Rule G11 to keep scope disciplined:
+- **True RAW development**: In v1, camera RAWs are decoded to 8-bit JPEGs via `media::raw` (often the camera's embedded preview), editing the camera's rendering without sensor-level headroom above clipping. Sensor-level demosaicing, highlight reconstruction from raw sensor data, and 14-bit linear RAW pipelines are excluded.
 - **Carrying `.xmp` sidecars in Rename**: Rename carries `.photoedit` companion files only. If external raw processors' `.xmp` sidecars ever need atomic renaming, that belongs in a separate request.
 - **Web browser editing**: Version 1 is strictly desktop-focused.
 - **GPU compute shaders (`wgpu`)**: The CPU renderer in `core` is the authority. Adding GPU pipelines is deferred to avoid headless CI driver complications and new dependencies (G8).
@@ -314,7 +318,7 @@ Judgement checks in the style of [`docs/manual-verification.md`](manual-verifica
 - [ ] **MV-20.1 — Exposure matching against camera JPEG.**
       Linear exposure compensation must match optical exposure shifts without flattening highlights.
       **Run:** shoot a RAW frame at 0 EV and +1 EV; adjust the 0 EV RAW to +1 EV in the Editor; compare the result against the camera's native +1 EV JPEG.
-      **Pass:** mid-tone luminance and highlight rolloff match the optical +1 EV frame within visual tolerance.
+      **Pass:** mid-tone luminance and highlight rolloff match the optical +1 EV frame within visual tolerance (highlight recovery beyond the camera JPEG is not expected in v1).
       **Result:**
 
 - [ ] **MV-20.2 — Film simulation LUT comparison.**

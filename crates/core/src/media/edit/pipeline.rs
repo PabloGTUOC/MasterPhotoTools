@@ -1,0 +1,777 @@
+//! The colour and adjustment pipeline in `core` (ED-1).
+//!
+//! Evaluates parametric exposure, white balance, tone crossover, contrast,
+//! and vibrance/saturation in linear light, transfer-converting to/from sRGB.
+
+use crate::error::Error;
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+
+/// A portable content-addressed reference to a 3D LUT.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LutRef {
+    pub name: String,
+    pub sha256: String,
+}
+
+/// Parametric photographic adjustment recipe.
+///
+/// Default values correspond to exact identity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdjustmentRecipe {
+    pub version: u32,
+    /// SHA-256 of the source image file at the time of recipe creation.
+    pub source_sha256: String,
+    /// Exposure compensation in EV stops: -5.0 to +5.0 (0.0 = identity).
+    pub exposure: f32,
+    /// White balance temperature shift: -100.0 to +100.0.
+    pub temperature: f32,
+    /// White balance tint shift: -100.0 to +100.0.
+    pub tint: f32,
+    /// Highlight recovery / boost: -100.0 to +100.0 (anchored, leaves 0.18 untouched).
+    pub highlights: f32,
+    /// Shadow lifting / crushing: -100.0 to +100.0 (anchored, leaves 0.18 untouched).
+    pub shadows: f32,
+    /// Contrast: -100.0 to +100.0 (power curve pivoting at 0.18, clipped at white by display transfer).
+    pub contrast: f32,
+    /// Global saturation: -100.0 to +100.0.
+    pub saturation: f32,
+    /// Vibrance (smart saturation protecting saturated tones): -100.0 to +100.0.
+    pub vibrance: f32,
+    /// Optional portable reference to a 3D LUT.
+    pub lut: Option<LutRef>,
+    /// LUT blend factor: 0.0 to 1.0 (1.0 = 100% LUT effect).
+    pub lut_intensity: f32,
+}
+
+impl Default for AdjustmentRecipe {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            source_sha256: String::new(),
+            exposure: 0.0,
+            temperature: 0.0,
+            tint: 0.0,
+            highlights: 0.0,
+            shadows: 0.0,
+            contrast: 0.0,
+            saturation: 0.0,
+            vibrance: 0.0,
+            lut: None,
+            lut_intensity: 1.0,
+        }
+    }
+}
+
+impl AdjustmentRecipe {
+    /// True if all sliders are at rest (0.0) and no LUT is attached.
+    pub fn is_identity(&self) -> bool {
+        self.exposure == 0.0
+            && self.temperature == 0.0
+            && self.tint == 0.0
+            && self.highlights == 0.0
+            && self.shadows == 0.0
+            && self.contrast == 0.0
+            && self.saturation == 0.0
+            && self.vibrance == 0.0
+            && self.lut.is_none()
+    }
+}
+
+/// Decoded RGB image buffer (8-bit or 16-bit per channel).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageBuffer {
+    Rgb8 {
+        width: u32,
+        height: u32,
+        data: Vec<u8>,
+    },
+    Rgb16 {
+        width: u32,
+        height: u32,
+        data: Vec<u16>,
+    },
+}
+
+impl ImageBuffer {
+    pub fn width(&self) -> u32 {
+        match self {
+            ImageBuffer::Rgb8 { width, .. } => *width,
+            ImageBuffer::Rgb16 { width, .. } => *width,
+        }
+    }
+
+    pub fn height(&self) -> u32 {
+        match self {
+            ImageBuffer::Rgb8 { height, .. } => *height,
+            ImageBuffer::Rgb16 { height, .. } => *height,
+        }
+    }
+
+    pub fn as_rgb8(&self) -> Option<&[u8]> {
+        match self {
+            ImageBuffer::Rgb8 { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn as_rgb16(&self) -> Option<&[u16]> {
+        match self {
+            ImageBuffer::Rgb16 { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl From<image::DynamicImage> for ImageBuffer {
+    fn from(dyn_img: image::DynamicImage) -> Self {
+        match dyn_img {
+            image::DynamicImage::ImageRgb16(img) => {
+                let (w, h) = (img.width(), img.height());
+                ImageBuffer::Rgb16 {
+                    width: w,
+                    height: h,
+                    data: img.into_raw(),
+                }
+            }
+            image::DynamicImage::ImageRgba16(img) => {
+                let rgb = image::DynamicImage::ImageRgba16(img).into_rgb16();
+                let (w, h) = (rgb.width(), rgb.height());
+                ImageBuffer::Rgb16 {
+                    width: w,
+                    height: h,
+                    data: rgb.into_raw(),
+                }
+            }
+            image::DynamicImage::ImageLuma16(_)
+            | image::DynamicImage::ImageLumaA16(_)
+            | image::DynamicImage::ImageRgb32F(_)
+            | image::DynamicImage::ImageRgba32F(_) => {
+                let rgb = dyn_img.into_rgb16();
+                let (w, h) = (rgb.width(), rgb.height());
+                ImageBuffer::Rgb16 {
+                    width: w,
+                    height: h,
+                    data: rgb.into_raw(),
+                }
+            }
+            image::DynamicImage::ImageRgb8(img) => {
+                let (w, h) = (img.width(), img.height());
+                ImageBuffer::Rgb8 {
+                    width: w,
+                    height: h,
+                    data: img.into_raw(),
+                }
+            }
+            other => {
+                let rgb = other.into_rgb8();
+                let (w, h) = (rgb.width(), rgb.height());
+                ImageBuffer::Rgb8 {
+                    width: w,
+                    height: h,
+                    data: rgb.into_raw(),
+                }
+            }
+        }
+    }
+}
+
+/// Linear light `f32` floating point buffer [0.0, ∞).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinearBuffer {
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<f32>,
+}
+
+impl LinearBuffer {
+    pub fn new(width: u32, height: u32) -> Self {
+        let size = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|px| px.checked_mul(3))
+            .expect("image buffer size overflow");
+        Self {
+            width,
+            height,
+            data: vec![0.0; size],
+        }
+    }
+
+    pub fn from_image_buffer(buffer: &ImageBuffer) -> Self {
+        match buffer {
+            ImageBuffer::Rgb8 {
+                width,
+                height,
+                data,
+            } => {
+                let mut lin = Self::new(*width, *height);
+                lin.data
+                    .par_chunks_exact_mut(3)
+                    .zip(data.par_chunks_exact(3))
+                    .for_each(|(out_px, in_px)| {
+                        out_px[0] = u8_to_linear(in_px[0]);
+                        out_px[1] = u8_to_linear(in_px[1]);
+                        out_px[2] = u8_to_linear(in_px[2]);
+                    });
+                lin
+            }
+            ImageBuffer::Rgb16 {
+                width,
+                height,
+                data,
+            } => {
+                let mut lin = Self::new(*width, *height);
+                lin.data
+                    .par_chunks_exact_mut(3)
+                    .zip(data.par_chunks_exact(3))
+                    .for_each(|(out_px, in_px)| {
+                        out_px[0] = u16_to_linear(in_px[0]);
+                        out_px[1] = u16_to_linear(in_px[1]);
+                        out_px[2] = u16_to_linear(in_px[2]);
+                    });
+                lin
+            }
+        }
+    }
+
+    pub fn to_rgb8(&self) -> ImageBuffer {
+        let mut out = vec![0u8; self.data.len()];
+        out.par_chunks_exact_mut(3)
+            .zip(self.data.par_chunks_exact(3))
+            .for_each(|(out_px, in_px)| {
+                out_px[0] = linear_to_u8(in_px[0]);
+                out_px[1] = linear_to_u8(in_px[1]);
+                out_px[2] = linear_to_u8(in_px[2]);
+            });
+        ImageBuffer::Rgb8 {
+            width: self.width,
+            height: self.height,
+            data: out,
+        }
+    }
+
+    pub fn to_rgb16(&self) -> ImageBuffer {
+        let mut out = vec![0u16; self.data.len()];
+        out.par_chunks_exact_mut(3)
+            .zip(self.data.par_chunks_exact(3))
+            .for_each(|(out_px, in_px)| {
+                out_px[0] = linear_to_u16(in_px[0]);
+                out_px[1] = linear_to_u16(in_px[1]);
+                out_px[2] = linear_to_u16(in_px[2]);
+            });
+        ImageBuffer::Rgb16 {
+            width: self.width,
+            height: self.height,
+            data: out,
+        }
+    }
+
+    /// Evaluates the pipeline stages in linear light in the specified order:
+    /// white balance → exposure → highlights/shadows → contrast → saturation/vibrance.
+    pub fn apply_adjustments(&mut self, recipe: &AdjustmentRecipe) {
+        // Precompute channel gains and flags once outside the pixel loop
+        let t = recipe.temperature / 100.0;
+        let g = recipe.tint / 100.0;
+        let wb_r = 2.0f32.powf(0.5 * t);
+        let wb_b = 2.0f32.powf(-0.5 * t);
+        let wb_g = 2.0f32.powf(-0.5 * g);
+        let exp_gain = 2.0f32.powf(recipe.exposure);
+
+        let gain_r = wb_r * exp_gain;
+        let gain_g = wb_g * exp_gain;
+        let gain_b = wb_b * exp_gain;
+
+        let h = recipe.highlights / 100.0;
+        let s = recipe.shadows / 100.0;
+        let has_tone = h != 0.0 || s != 0.0;
+
+        let c = recipe.contrast / 100.0;
+        let has_contrast = c != 0.0;
+        let gamma_minus_one = 0.5 * c;
+
+        let sat = recipe.saturation / 100.0;
+        let vib = recipe.vibrance / 100.0;
+        let has_sat_vib = sat != 0.0 || vib != 0.0;
+
+        self.data.par_chunks_exact_mut(3).for_each(|px| {
+            let mut r = px[0];
+            let mut g = px[1];
+            let mut b = px[2];
+
+            // 1 & 2. White Balance & Exposure
+            r *= gain_r;
+            g *= gain_g;
+            b *= gain_b;
+
+            // 3. Highlights & Shadows (crossover at 0.18, 0.18 strictly stationary)
+            if has_tone {
+                let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                let (w_h, w_s) = tone_weights(y);
+                let delta_ev = w_h * h + w_s * s;
+                if delta_ev != 0.0 {
+                    let factor = 2.0f32.powf(delta_ev);
+                    r *= factor;
+                    g *= factor;
+                    b *= factor;
+                }
+            }
+
+            // 4. Contrast (power curve pivoting at 0.18)
+            if has_contrast {
+                let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                if y > 1e-7 {
+                    let factor = (y / 0.18).powf(gamma_minus_one);
+                    r *= factor;
+                    g *= factor;
+                    b *= factor;
+                }
+            }
+
+            // 5. Saturation & Vibrance (preserves neutral grey)
+            if has_sat_vib {
+                let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                let max = r.max(g).max(b);
+                let min = r.min(g).min(b);
+                let current_sat = if max > 1e-7 {
+                    ((max - min) / max).min(1.0)
+                } else {
+                    0.0
+                };
+                let k = ((1.0 + sat) * (1.0 + vib * (1.0 - current_sat))).max(0.0);
+                r = (y + k * (r - y)).max(0.0);
+                g = (y + k * (g - y)).max(0.0);
+                b = (y + k * (b - y)).max(0.0);
+            }
+
+            px[0] = r;
+            px[1] = g;
+            px[2] = b;
+        });
+    }
+}
+
+/// Convert sRGB code in [0.0, 1.0] to linear light.
+#[inline]
+pub fn srgb_to_linear(s: f32) -> f32 {
+    let s = s.clamp(0.0, 1.0);
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Convert linear light [0.0, 1.0] to sRGB code.
+#[inline]
+pub fn linear_to_srgb(l: f32) -> f32 {
+    let l = l.clamp(0.0, 1.0);
+    if l <= 0.0031308 {
+        l * 12.92
+    } else {
+        1.055 * l.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+#[inline]
+pub fn u8_to_linear(v: u8) -> f32 {
+    srgb_to_linear(v as f32 / 255.0)
+}
+
+#[inline]
+pub fn linear_to_u8(l: f32) -> u8 {
+    (linear_to_srgb(l) * 255.0).round().clamp(0.0, 255.0) as u8
+}
+
+#[inline]
+pub fn u16_to_linear(v: u16) -> f32 {
+    srgb_to_linear(v as f32 / 65535.0)
+}
+
+#[inline]
+pub fn linear_to_u16(l: f32) -> u16 {
+    (linear_to_srgb(l) * 65535.0).round().clamp(0.0, 65535.0) as u16
+}
+
+/// Highlights and shadows weights for linear luminance `y`.
+///
+/// Guarantees that at `y = 0.18`, both weights are identically 0.0.
+#[inline]
+pub fn tone_weights(y: f32) -> (f32, f32) {
+    let w_h = if y <= 0.18 {
+        0.0
+    } else if y >= 0.65 {
+        1.0
+    } else {
+        let t = (y - 0.18) / (0.65 - 0.18);
+        t * t * (3.0 - 2.0 * t)
+    };
+
+    let w_s = if y >= 0.18 {
+        0.0
+    } else if y <= 0.05 {
+        1.0
+    } else {
+        let t = (0.18 - y) / (0.18 - 0.05);
+        t * t * (3.0 - 2.0 * t)
+    };
+
+    (w_h, w_s)
+}
+
+/// Applies an adjustment recipe to an image buffer.
+///
+/// In ED-1, recipes with a 3D LUT (`lut: Some(..)`) are explicitly refused per G10,
+/// noting that LUT support arrives in ED-2.
+pub fn apply_recipe(image: &ImageBuffer, recipe: &AdjustmentRecipe) -> Result<ImageBuffer, Error> {
+    if recipe.lut.is_some() {
+        return Err(Error::Refused(
+            "3D LUT application is not available in ED-1 (arrives in ED-2)".into(),
+        ));
+    }
+
+    let mut linear = LinearBuffer::from_image_buffer(image);
+    linear.apply_adjustments(recipe);
+
+    match image {
+        ImageBuffer::Rgb8 { .. } => Ok(linear.to_rgb8()),
+        ImageBuffer::Rgb16 { .. } => Ok(linear.to_rgb16()),
+    }
+}
+
+/// Decodes an image from disk.
+///
+/// JPEGs and TIFFs (8-bit and 16-bit) are decoded via `image`.
+/// RAW files are decoded through `media::raw::raw_to_jpeg` (the F14 ladder),
+/// preserving modularity since `media` must never depend on `ingest`.
+pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
+    if crate::media::raw::is_raw(path) {
+        let derived = crate::media::raw::raw_to_jpeg(path)?;
+        let dyn_img = image::load_from_memory(&derived.bytes)
+            .map_err(|e| Error::Internal(format!("failed to decode derived RAW JPEG: {e}")))?;
+        return Ok(ImageBuffer::from(dyn_img));
+    }
+
+    let reader = image::ImageReader::open(path)?
+        .with_guessed_format()
+        .map_err(|e| Error::Internal(format!("could not identify {}: {e}", path.display())))?;
+    let dyn_img = reader
+        .decode()
+        .map_err(|e| Error::Internal(format!("failed to decode {}: {e}", path.display())))?;
+
+    Ok(ImageBuffer::from(dyn_img))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_untouched_recipe_is_exact_identity() {
+        let default_recipe = AdjustmentRecipe::default();
+
+        // 8-bit buffer: exercise various levels and shades
+        let w = 8;
+        let h = 8;
+        let mut data8 = Vec::with_capacity((w * h * 3) as usize);
+        for i in 0..(w * h) {
+            let r = ((i * 37) % 256) as u8;
+            let g = ((i * 73) % 256) as u8;
+            let b = ((i * 109) % 256) as u8;
+            data8.extend_from_slice(&[r, g, b]);
+        }
+        let buf8 = ImageBuffer::Rgb8 {
+            width: w,
+            height: h,
+            data: data8,
+        };
+        let out8 = apply_recipe(&buf8, &default_recipe).unwrap();
+        assert_eq!(
+            out8, buf8,
+            "8-bit untouched recipe must be bit-exact identity"
+        );
+
+        // 16-bit buffer: exercise various levels
+        let mut data16 = Vec::with_capacity((w * h * 3) as usize);
+        for i in 0..(w * h) {
+            let r = ((i * 10007) % 65536) as u16;
+            let g = ((i * 20011) % 65536) as u16;
+            let b = ((i * 30013) % 65536) as u16;
+            data16.extend_from_slice(&[r, g, b]);
+        }
+        let buf16 = ImageBuffer::Rgb16 {
+            width: w,
+            height: h,
+            data: data16,
+        };
+        let out16 = apply_recipe(&buf16, &default_recipe).unwrap();
+        assert_eq!(
+            out16, buf16,
+            "16-bit untouched recipe must be bit-exact identity"
+        );
+    }
+
+    #[test]
+    fn srgb_round_trips_every_8_bit_code_exactly() {
+        for code in 0..=255u8 {
+            let lin = u8_to_linear(code);
+            let recovered = linear_to_u8(lin);
+            assert_eq!(recovered, code, "failed round-trip for 8-bit code {code}");
+        }
+    }
+
+    #[test]
+    fn srgb_round_trips_every_16_bit_code_exactly() {
+        for code in 0..=65535u16 {
+            let lin = u16_to_linear(code);
+            let recovered = linear_to_u16(lin);
+            assert_eq!(recovered, code, "failed round-trip for 16-bit code {code}");
+        }
+    }
+
+    #[test]
+    fn exposure_plus_one_doubles_linear_luminance() {
+        let mut lin = LinearBuffer {
+            width: 2,
+            height: 1,
+            data: vec![0.18, 0.18, 0.18, 0.10, 0.20, 0.30],
+        };
+        let y0_before = 0.2126 * lin.data[0] + 0.7152 * lin.data[1] + 0.0722 * lin.data[2];
+        let y1_before = 0.2126 * lin.data[3] + 0.7152 * lin.data[4] + 0.0722 * lin.data[5];
+
+        let recipe = AdjustmentRecipe {
+            exposure: 1.0,
+            ..AdjustmentRecipe::default()
+        };
+        lin.apply_adjustments(&recipe);
+
+        let y0_after = 0.2126 * lin.data[0] + 0.7152 * lin.data[1] + 0.0722 * lin.data[2];
+        let y1_after = 0.2126 * lin.data[3] + 0.7152 * lin.data[4] + 0.0722 * lin.data[5];
+
+        assert!((y0_after - 2.0 * y0_before).abs() < 1e-6);
+        assert!((y1_after - 2.0 * y1_before).abs() < 1e-6);
+    }
+
+    #[test]
+    fn highlights_and_shadows_leave_mid_grey_untouched() {
+        let mid_grey = 0.18f32;
+        for highlights in [-100.0f32, 100.0f32] {
+            for shadows in [-100.0f32, 100.0f32] {
+                let mut lin = LinearBuffer {
+                    width: 1,
+                    height: 1,
+                    data: vec![mid_grey, mid_grey, mid_grey],
+                };
+                let recipe = AdjustmentRecipe {
+                    highlights,
+                    shadows,
+                    ..AdjustmentRecipe::default()
+                };
+                lin.apply_adjustments(&recipe);
+                assert_eq!(
+                    lin.data[0], mid_grey,
+                    "highlights {highlights}, shadows {shadows} modified mid-grey R"
+                );
+                assert_eq!(
+                    lin.data[1], mid_grey,
+                    "highlights {highlights}, shadows {shadows} modified mid-grey G"
+                );
+                assert_eq!(
+                    lin.data[2], mid_grey,
+                    "highlights {highlights}, shadows {shadows} modified mid-grey B"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn contrast_leaves_mid_grey_untouched() {
+        let mid_grey = 0.18f32;
+        for contrast in [-100.0f32, -50.0f32, 0.0f32, 50.0f32, 100.0f32] {
+            let mut lin = LinearBuffer {
+                width: 1,
+                height: 1,
+                data: vec![mid_grey, mid_grey, mid_grey],
+            };
+            let recipe = AdjustmentRecipe {
+                contrast,
+                ..AdjustmentRecipe::default()
+            };
+            lin.apply_adjustments(&recipe);
+            assert_eq!(
+                lin.data[0], mid_grey,
+                "contrast {contrast} modified mid-grey R"
+            );
+            assert_eq!(
+                lin.data[1], mid_grey,
+                "contrast {contrast} modified mid-grey G"
+            );
+            assert_eq!(
+                lin.data[2], mid_grey,
+                "contrast {contrast} modified mid-grey B"
+            );
+        }
+    }
+
+    #[test]
+    fn neutral_grey_stays_neutral_with_white_balance_and_saturation_at_rest() {
+        for grey_u8 in [0u8, 30, 80, 119, 128, 200, 255] {
+            let img = ImageBuffer::Rgb8 {
+                width: 1,
+                height: 1,
+                data: vec![grey_u8, grey_u8, grey_u8],
+            };
+            for exposure in [-2.0f32, 0.0, 1.5] {
+                for contrast in [-50.0f32, 0.0, 50.0] {
+                    let recipe = AdjustmentRecipe {
+                        exposure,
+                        contrast,
+                        temperature: 0.0,
+                        tint: 0.0,
+                        saturation: 0.0,
+                        vibrance: 0.0,
+                        ..AdjustmentRecipe::default()
+                    };
+                    let out = apply_recipe(&img, &recipe).unwrap();
+                    let ImageBuffer::Rgb8 { data, .. } = out else {
+                        panic!("expected ImageBuffer::Rgb8, got {out:?}");
+                    };
+                    assert_eq!(data[0], data[1], "R != G for grey {grey_u8}");
+                    assert_eq!(data[1], data[2], "G != B for grey {grey_u8}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_recipe_with_a_lut_is_refused_until_luts_exist() {
+        let img = ImageBuffer::Rgb8 {
+            width: 1,
+            height: 1,
+            data: vec![128, 128, 128],
+        };
+        let recipe = AdjustmentRecipe {
+            lut: Some(LutRef {
+                name: "film_stock.cube".into(),
+                sha256: "0123456789abcdef".into(),
+            }),
+            ..AdjustmentRecipe::default()
+        };
+        let err = apply_recipe(&img, &recipe).unwrap_err();
+        match err {
+            Error::Refused(msg) => {
+                assert!(msg.contains("3D LUT"), "expected LUT mention, got: {msg}");
+                assert!(msg.contains("ED-2"), "expected ED-2 mention, got: {msg}");
+            }
+            other => panic!("expected Error::Refused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_raw_is_decoded_through_the_media_raw_ladder() {
+        // Synthesise a minimal TIFF-based RAW file carrying an embedded JPEG preview
+        let temp = tempfile::tempdir().unwrap();
+        let raw_path = temp.path().join("test_shot.nef");
+
+        let w = 64u32;
+        let h = 48u32;
+        let mut jpeg_bytes = Vec::new();
+        let preview_img = image::RgbImage::from_pixel(w, h, image::Rgb([180, 120, 60]));
+        let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
+        preview_img
+            .write_to(&mut cursor, image::ImageFormat::Jpeg)
+            .unwrap();
+
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(b"II");
+        tiff.extend_from_slice(&42u16.to_le_bytes());
+        tiff.extend_from_slice(&8u32.to_le_bytes()); // IFD0 offset
+
+        let num_entries = 4u16;
+        let ifd_len = 2 + 12 * (num_entries as usize) + 4;
+        let jpeg_offset = (8 + ifd_len) as u32;
+
+        tiff.extend_from_slice(&num_entries.to_le_bytes());
+        // Tag 0x0100 (ImageWidth), LONG (4), count 1, value w
+        tiff.extend_from_slice(&0x0100u16.to_le_bytes());
+        tiff.extend_from_slice(&4u16.to_le_bytes());
+        tiff.extend_from_slice(&1u32.to_le_bytes());
+        tiff.extend_from_slice(&w.to_le_bytes());
+
+        // Tag 0x0101 (ImageLength), LONG (4), count 1, value h
+        tiff.extend_from_slice(&0x0101u16.to_le_bytes());
+        tiff.extend_from_slice(&4u16.to_le_bytes());
+        tiff.extend_from_slice(&1u32.to_le_bytes());
+        tiff.extend_from_slice(&h.to_le_bytes());
+
+        // Tag 0x0201 (JPEGInterchangeFormat), LONG (4), count 1, offset jpeg_offset
+        tiff.extend_from_slice(&0x0201u16.to_le_bytes());
+        tiff.extend_from_slice(&4u16.to_le_bytes());
+        tiff.extend_from_slice(&1u32.to_le_bytes());
+        tiff.extend_from_slice(&jpeg_offset.to_le_bytes());
+
+        // Tag 0x0202 (JPEGInterchangeFormatLength), LONG (4), count 1, length
+        tiff.extend_from_slice(&0x0202u16.to_le_bytes());
+        tiff.extend_from_slice(&4u16.to_le_bytes());
+        tiff.extend_from_slice(&1u32.to_le_bytes());
+        tiff.extend_from_slice(&(jpeg_bytes.len() as u32).to_le_bytes());
+
+        // Next IFD = 0
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        tiff.extend_from_slice(&jpeg_bytes);
+
+        std::fs::write(&raw_path, &tiff).unwrap();
+
+        // Decode through decode_image, which delegates RAWs to media::raw
+        let decoded =
+            decode_image(&raw_path).expect("RAW decoding through media::raw ladder must succeed");
+        assert_eq!(decoded.width(), w);
+        assert_eq!(decoded.height(), h);
+        match decoded {
+            ImageBuffer::Rgb8 { data, .. } => {
+                assert_eq!(data.len(), (w * h * 3) as usize);
+            }
+            ImageBuffer::Rgb16 { .. } => {
+                panic!("RAW ladder preview decoded as Rgb16 instead of Rgb8")
+            }
+        }
+    }
+
+    #[test]
+    fn a_16_bit_greyscale_tiff_keeps_all_16_bits() {
+        let temp = tempfile::tempdir().unwrap();
+        let tiff_path = temp.path().join("film_scan_16bit_gray.tiff");
+
+        let w = 4u32;
+        let h = 2u32;
+        // Distinct values requiring more than 8 bits of tone
+        let luma_values: Vec<u16> = vec![
+            0x0102, // 258: 8-bit truncation loses upper byte
+            0x1234, // 4660
+            0x8000, // 32768
+            0xFFFF, // 65535
+            0x00FF, // 255: lower byte only
+            0x0F00, // 3840: upper byte only
+            0xABCD, // 43981
+            0x5432, // 21554
+        ];
+
+        let gray_buf =
+            image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(w, h, luma_values.clone())
+                .unwrap();
+        gray_buf.save(&tiff_path).unwrap();
+
+        let decoded = decode_image(&tiff_path).expect("16-bit greyscale TIFF must decode");
+        assert_eq!(decoded.width(), w);
+        assert_eq!(decoded.height(), h);
+        let ImageBuffer::Rgb16 { data, .. } = decoded else {
+            panic!("expected ImageBuffer::Rgb16, got {decoded:?}");
+        };
+        assert_eq!(data.len(), (w * h * 3) as usize);
+        for (i, &expected_luma) in luma_values.iter().enumerate() {
+            assert_eq!(data[i * 3], expected_luma, "R mismatch at pixel {i}");
+            assert_eq!(data[i * 3 + 1], expected_luma, "G mismatch at pixel {i}");
+            assert_eq!(data[i * 3 + 2], expected_luma, "B mismatch at pixel {i}");
+        }
+    }
+}

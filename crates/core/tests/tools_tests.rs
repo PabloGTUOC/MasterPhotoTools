@@ -910,3 +910,544 @@ fn a_repair_with_no_outcomes_at_all_still_suggests_the_subfolder_box() {
     assert!(line.contains("nothing matched"), "got: {line}");
     assert!(line.contains("Include subfolders"), "got: {line}");
 }
+
+// ---------------------------------------------------------------------------
+// ED-3 Image edit tools — sidecars, rename, card safety, export
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_sidecar_is_named_after_the_whole_file_so_raw_and_jpeg_pairs_do_not_share_one() {
+    use phototools_core::tools::edit::sidecar_path;
+
+    let jpg_path = Path::new("/library/photos/IMG_0001.JPG");
+    let raw_path = Path::new("/library/photos/IMG_0001.CR2");
+
+    let jpg_sidecar = sidecar_path(jpg_path);
+    let raw_sidecar = sidecar_path(raw_path);
+
+    assert_eq!(
+        jpg_sidecar,
+        Path::new("/library/photos/IMG_0001.JPG.photoedit")
+    );
+    assert_eq!(
+        raw_sidecar,
+        Path::new("/library/photos/IMG_0001.CR2.photoedit")
+    );
+    assert_ne!(
+        jpg_sidecar, raw_sidecar,
+        "RAW and JPEG pairs side-by-side must never share a sidecar"
+    );
+}
+
+#[test]
+fn a_sidecar_round_trips_and_a_future_version_is_refused() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::{load_recipe, save_recipe, CURRENT_RECIPE_VERSION};
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("photo.jpg", 100, 100);
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.75,
+        temperature: 0.1,
+        tint: -0.2,
+        highlights: -0.5,
+        shadows: 0.3,
+        contrast: 0.15,
+        saturation: 0.05,
+        vibrance: -0.1,
+        lut: Some(phototools_core::media::edit::LutRef {
+            name: "creative.cube".into(),
+            sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+        }),
+        lut_intensity: 0.8,
+        ..AdjustmentRecipe::default()
+    };
+
+    let sidecar = save_recipe(&img, &recipe).unwrap();
+    assert!(sidecar.exists());
+
+    let loaded = load_recipe(&sidecar).unwrap();
+    assert_eq!(loaded.exposure, 0.75);
+    assert_eq!(loaded.temperature, 0.1);
+    assert_eq!(
+        loaded.lut.as_ref().map(|l| l.name.as_str()),
+        Some("creative.cube")
+    );
+    assert_eq!(loaded.lut_intensity, 0.8);
+    assert!(!loaded.source_sha256.is_empty());
+
+    // Future version refused
+    let future_json = serde_json::json!({
+        "version": CURRENT_RECIPE_VERSION + 1,
+        "source_sha256": loaded.source_sha256,
+        "exposure": 1.0
+    });
+    fs::write(&sidecar, future_json.to_string()).unwrap();
+
+    let err = load_recipe(&sidecar).unwrap_err();
+    assert!(
+        err.to_string().contains("unsupported sidecar version"),
+        "expected refusal of future version, got: {err}"
+    );
+}
+
+#[test]
+fn a_sidecar_is_written_atomically() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::{save_recipe, sidecar_path};
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("atomic.jpg", 100, 100);
+    let recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        ..AdjustmentRecipe::default()
+    };
+
+    let written = save_recipe(&img, &recipe).unwrap();
+    assert_eq!(written, sidecar_path(&img));
+    assert!(written.exists());
+
+    // Ensure no leftover temporary files in directory
+    let parent = img.parent().unwrap();
+    for entry in fs::read_dir(parent).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        assert!(
+            !name.starts_with(".photoedit_tmp"),
+            "temporary file left behind: {name}"
+        );
+    }
+}
+
+#[test]
+fn f3_rename_carries_companion_photoedit_sidecar() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::{save_recipe, sidecar_path};
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("IMG_0001.jpg", 100, 100);
+    let recipe = AdjustmentRecipe {
+        exposure: 1.25,
+        ..AdjustmentRecipe::default()
+    };
+    let sidecar = save_recipe(&img, &recipe).unwrap();
+    assert!(sidecar.exists());
+    let original_bytes = fs::read(&sidecar).unwrap();
+
+    let plan = BatchRenamerTool
+        .plan(&BatchRenameParams {
+            paths: vec![img.clone()],
+            date: Some("20240101".into()),
+            subject: Some("Trip".into()),
+            camera: None,
+            film: None,
+            order: RenameOrder::Numeric,
+        })
+        .unwrap()
+        .data;
+
+    assert_eq!(plan.actions.len(), 1);
+    let target_photo = plan.actions[0].target.clone();
+    let target_sidecar = sidecar_path(&target_photo);
+
+    let summary = BatchRenamerTool
+        .apply(plan, &InMemoryProgress::new())
+        .unwrap()
+        .data;
+
+    assert_eq!(summary.renamed.len(), 1);
+    assert!(summary.failures.is_empty());
+    assert!(!img.exists(), "original photo was renamed");
+    assert!(!sidecar.exists(), "original sidecar was renamed");
+    assert!(target_photo.exists(), "target photo exists");
+    assert!(target_sidecar.exists(), "target sidecar exists");
+    assert_eq!(
+        fs::read(&target_sidecar).unwrap(),
+        original_bytes,
+        "sidecar content preserved intact"
+    );
+}
+
+#[test]
+fn f3_rename_plans_a_conflict_when_the_sidecar_target_exists() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::{save_recipe, sidecar_path};
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("IMG_0001.jpg", 100, 100);
+    let recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        ..AdjustmentRecipe::default()
+    };
+    save_recipe(&img, &recipe).unwrap();
+
+    // Plant the target sidecar already on disk
+    let target = f.path().join("20240101-Trip-01.jpg");
+    let target_sidecar = sidecar_path(&target);
+    fs::write(&target_sidecar, b"existing sidecar").unwrap();
+
+    let plan = BatchRenamerTool
+        .plan(&BatchRenameParams {
+            paths: vec![img.clone()],
+            date: Some("20240101".into()),
+            subject: Some("Trip".into()),
+            camera: None,
+            film: None,
+            order: RenameOrder::Numeric,
+        })
+        .unwrap()
+        .data;
+
+    assert!(
+        plan.actions.is_empty(),
+        "action must be skipped due to target sidecar conflict"
+    );
+    assert_eq!(plan.skipped.len(), 1);
+    assert!(
+        plan.skipped[0]
+            .reason
+            .contains("Would overwrite an existing sidecar"),
+        "reason was: {}",
+        plan.skipped[0].reason
+    );
+}
+
+#[test]
+fn f3_rename_reports_a_sidecar_that_could_not_follow_its_photo() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::save_recipe;
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("IMG_0001.jpg", 100, 100);
+    let recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        ..AdjustmentRecipe::default()
+    };
+    let sidecar = save_recipe(&img, &recipe).unwrap();
+
+    let plan = BatchRenamerTool
+        .plan(&BatchRenameParams {
+            paths: vec![img.clone()],
+            date: Some("20240101".into()),
+            subject: Some("Trip".into()),
+            camera: None,
+            film: None,
+            order: RenameOrder::Numeric,
+        })
+        .unwrap()
+        .data;
+
+    // Simulate companion sidecar vanishing between plan and apply
+    fs::remove_file(&sidecar).unwrap();
+
+    let summary = BatchRenamerTool
+        .apply(plan, &InMemoryProgress::new())
+        .unwrap()
+        .data;
+
+    // Photo was renamed in step 1, but step 2 reported the vanished sidecar against the photo
+    assert_eq!(summary.renamed.len(), 1);
+    assert_eq!(summary.failures.len(), 1);
+    assert_eq!(summary.failures[0].0, img);
+    assert!(
+        summary.failures[0].1.contains("vanished"),
+        "failure message must mention sidecar vanished: {}",
+        summary.failures[0].1
+    );
+}
+
+#[test]
+fn editor_refuses_to_save_a_sidecar_for_a_nonexistent_image() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::save_recipe;
+
+    let nonexistent = Path::new("/definitely/not/a/real/path/IMG_9999.JPG");
+    let recipe = AdjustmentRecipe::default();
+    let err = save_recipe(nonexistent, &recipe).unwrap_err();
+    assert!(
+        err.to_string().contains("does not exist"),
+        "expected nonexistent image refusal, got: {err}"
+    );
+}
+
+#[test]
+fn editor_refuses_to_write_a_sidecar_on_a_card_volume() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::save_recipe_with_resolver;
+
+    let temp = tempfile::tempdir().unwrap();
+    let card_root = temp.path().join("card");
+    let dcim = card_root.join("DCIM");
+    fs::create_dir_all(&dcim).unwrap();
+    let img = card_root.join("DCIM/100EOS5D/IMG_0001.JPG");
+    fs::create_dir_all(img.parent().unwrap()).unwrap();
+    fs::write(&img, b"fake jpg").unwrap();
+
+    let recipe = AdjustmentRecipe::default();
+    let resolver = |_p: &Path| Some(card_root.clone());
+    let err = save_recipe_with_resolver(&img, &recipe, resolver).unwrap_err();
+
+    assert!(
+        err.to_string().contains(
+            "Card media is read-only (G5). Copy files to a working folder to save edits."
+        ),
+        "expected card read-only refusal message, got: {err}"
+    );
+}
+
+#[test]
+fn a_mounted_share_without_dcim_is_writable() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::{is_card_volume_with_resolver, save_recipe_with_resolver};
+
+    let temp = tempfile::tempdir().unwrap();
+    let share_root = temp.path().join("share");
+    fs::create_dir_all(&share_root).unwrap();
+    let img = share_root.join("photos/IMG_0001.JPG");
+    fs::create_dir_all(img.parent().unwrap()).unwrap();
+    fs::write(&img, b"fake jpg").unwrap();
+
+    let resolver = |_p: &Path| Some(share_root.clone());
+    assert!(!is_card_volume_with_resolver(&img, resolver));
+
+    let recipe = AdjustmentRecipe::default();
+    let sidecar = save_recipe_with_resolver(&img, &recipe, resolver).unwrap();
+    assert!(sidecar.exists());
+}
+
+#[test]
+fn a_library_folder_containing_a_copied_dcim_is_not_a_card() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::{is_card_volume, save_recipe};
+
+    let temp = tempfile::tempdir().unwrap();
+    let library = temp.path().join("MyPhotoLibrary");
+    let copied_dcim = library.join("DCIM").join("100CANON");
+    fs::create_dir_all(&copied_dcim).unwrap();
+    let img = copied_dcim.join("IMG_0001.JPG");
+    fs::write(&img, b"fake jpg").unwrap();
+
+    // With the real volume root detection (walk up to mount point):
+    assert!(
+        !is_card_volume(&img),
+        "A copied DCIM folder inside a library is not at the mount root, so it must not be treated as a card"
+    );
+
+    let recipe = AdjustmentRecipe::default();
+    let sidecar = save_recipe(&img, &recipe).unwrap();
+    assert!(sidecar.exists());
+}
+
+#[test]
+fn export_edited_image_appends_edit_suffix_and_never_overwrites() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::export_edited_image;
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("flower.jpg", 50, 50);
+    let out_dir = f.path().join("exports");
+    fs::create_dir_all(&out_dir).unwrap();
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.2,
+        ..Default::default()
+    };
+
+    let res1 = export_edited_image(&img, &recipe, None, &out_dir).unwrap();
+    assert_eq!(res1.path, out_dir.join("flower_edit.jpg"));
+    assert!(res1.path.exists());
+
+    let res2 = export_edited_image(&img, &recipe, None, &out_dir).unwrap();
+    assert_eq!(res2.path, out_dir.join("flower_edit_1.jpg"));
+    assert!(res2.path.exists());
+
+    let res3 = export_edited_image(&img, &recipe, None, &out_dir).unwrap();
+    assert_eq!(res3.path, out_dir.join("flower_edit_2.jpg"));
+    assert!(res3.path.exists());
+
+    // Verify earlier exports were not overwritten
+    assert!(res1.path.exists());
+    assert!(res2.path.exists());
+}
+
+#[test]
+fn exporting_a_recipe_whose_lut_is_missing_is_refused() {
+    use phototools_core::media::edit::{AdjustmentRecipe, LutRef};
+    use phototools_core::tools::edit::export_edited_image;
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("photo.jpg", 50, 50);
+    let out_dir = f.path().join("exports_lut");
+
+    let recipe = AdjustmentRecipe {
+        lut: Some(LutRef {
+            name: "missing.cube".into(),
+            sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+        }),
+        lut_intensity: 1.0,
+        ..AdjustmentRecipe::default()
+    };
+
+    let err = export_edited_image(&img, &recipe, None, &out_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("no LUT was provided"),
+        "expected missing LUT refusal, got: {err}"
+    );
+}
+
+#[test]
+fn a_failed_export_leaves_no_file_behind() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::export_edited_image;
+
+    let f = Fixtures::new();
+    let bad_img = f.path().join("corrupted.jpg");
+    fs::write(&bad_img, b"not a real jpeg").unwrap();
+    let out_dir = f.path().join("exports_clean");
+    fs::create_dir_all(&out_dir).unwrap();
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        ..AdjustmentRecipe::default()
+    };
+
+    let err = export_edited_image(&bad_img, &recipe, None, &out_dir);
+    assert!(err.is_err(), "corrupted image export must fail");
+
+    let entries: Vec<_> = fs::read_dir(&out_dir).unwrap().flatten().collect();
+    assert!(
+        entries.is_empty(),
+        "failed export must leave no file behind, found: {entries:?}"
+    );
+}
+
+#[test]
+fn export_refuses_a_destination_on_a_card() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::export_edited_image_with_resolver;
+
+    let temp = tempfile::tempdir().unwrap();
+    let card_root = temp.path().join("card");
+    let dcim = card_root.join("DCIM");
+    fs::create_dir_all(&dcim).unwrap();
+    let card_out = card_root.join("DCIM/exports");
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("flower.jpg", 50, 50);
+    let recipe = AdjustmentRecipe::default();
+    let resolver = |_p: &Path| Some(card_root.clone());
+
+    let err =
+        export_edited_image_with_resolver(&img, &recipe, None, &card_out, resolver).unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("Cannot export to a card volume: card media is read-only (G5)"),
+        "expected card refusal, got: {err}"
+    );
+}
+
+#[test]
+fn exporting_an_untouched_jpeg_preserves_source_bytes_without_reencoding() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::export_edited_image;
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("original.jpg", 100, 100);
+    let original_bytes = fs::read(&img).unwrap();
+    let out_dir = f.path().join("exports");
+
+    let recipe = AdjustmentRecipe::default();
+    let res = export_edited_image(&img, &recipe, None, &out_dir).unwrap();
+    let exported_bytes = fs::read(&res.path).unwrap();
+
+    assert_eq!(
+        exported_bytes, original_bytes,
+        "Untouched image must be stream-copied byte-for-byte without re-encoding"
+    );
+}
+
+#[test]
+fn an_exported_jpeg_keeps_its_orientation_tag_and_capture_date() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::media::meta::Orientation;
+    use phototools_core::tools::edit::export_edited_image;
+
+    let f = Fixtures::new();
+    let img = f.jpeg_with_tags(
+        "portrait.jpg",
+        100,
+        200,
+        &[(tag::ORIENTATION, TiffValue::Short(6))],
+        &[(
+            tag::DATE_TIME_ORIGINAL,
+            TiffValue::Ascii("2024:05:15 12:00:00".into()),
+        )],
+    );
+    let meta_before = read_meta(&img).unwrap();
+    assert_eq!(meta_before.orientation, Orientation::Rotate90);
+    assert!(meta_before.capture.is_some());
+
+    let out_dir = f.path().join("exports");
+    // Non-identity recipe triggers decode -> apply -> encode
+    let recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        ..AdjustmentRecipe::default()
+    };
+
+    let res = export_edited_image(&img, &recipe, None, &out_dir).unwrap();
+    assert!(res.path.exists());
+
+    let meta_after = read_meta(&res.path).unwrap();
+    assert_eq!(
+        meta_after.orientation, meta_before.orientation,
+        "Orientation tag must survive with unrotated pixels"
+    );
+    assert_eq!(
+        meta_after.capture, meta_before.capture,
+        "Capture date must survive into export"
+    );
+}
+
+#[test]
+fn a_16_bit_tiff_exports_as_a_16_bit_tiff() {
+    use phototools_core::media::edit::{decode_image, AdjustmentRecipe, ImageBuffer};
+    use phototools_core::tools::edit::export_edited_image;
+
+    let f = Fixtures::new();
+    let mut img16 = image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::new(20, 20);
+    for pixel in img16.pixels_mut() {
+        *pixel = image::Rgb([10000u16, 20000u16, 30000u16]);
+    }
+    let tiff_path = f.path().join("test16.tiff");
+    let dyn_img = image::DynamicImage::ImageRgb16(img16);
+    dyn_img
+        .save_with_format(&tiff_path, image::ImageFormat::Tiff)
+        .unwrap();
+
+    let out_dir = f.path().join("exports");
+    let recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        ..AdjustmentRecipe::default()
+    };
+
+    let res = export_edited_image(&tiff_path, &recipe, None, &out_dir).unwrap();
+    assert!(res.path.exists());
+    assert_eq!(res.path.extension().and_then(|s| s.to_str()), Some("tiff"));
+
+    let decoded = decode_image(&res.path).unwrap();
+    match decoded {
+        ImageBuffer::Rgb16 {
+            width,
+            height,
+            data,
+        } => {
+            assert_eq!(width, 20);
+            assert_eq!(height, 20);
+            assert_eq!(data.len(), 20 * 20 * 3);
+        }
+        ImageBuffer::Rgb8 { .. } => {
+            panic!("16-bit TIFF exported as 8-bit!");
+        }
+    }
+}

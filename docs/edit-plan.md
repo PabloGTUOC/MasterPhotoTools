@@ -31,19 +31,22 @@ A dedicated desktop workspace for tuning one photograph at a time:
   3D LUT selector with an intensity slider (0–100%).
 - **Interactive control**: Double-click any slider label to reset to 0.0 (exact identity). Press `\`
   or hold the "Before / After" toggle to compare against the unadjusted input.
-- **Saving**: Edits are stored non-destructively in a lightweight `.photoedit` JSON sidecar. Card
-  media is detected by the presence of a `DCIM` directory at the volume root (F10); if the file
-  resides on a card volume, the editor operates in **Read-Only Mode** (G5). Mounted shares (such as
-  the NAS library) without `DCIM` remain writable.
+- **Saving**: Edits are stored non-destructively in a lightweight `<file name>.photoedit` JSON
+  sidecar (e.g. `IMG_0001.JPG.photoedit` alongside `IMG_0001.JPG`, ensuring RAW and JPEG pairs
+  never share one). Card media is detected at its mount point by walking up ancestors until the
+  filesystem device ID (`MetadataExt::dev` on Unix) changes and testing `Card::at(volume_root).looks_like_a_card()`
+  (checking for a root `DCIM` directory); if the file resides on a card volume, the editor operates
+  in **Read-Only Mode** (G5). A library folder holding a copied `DCIM` tree is not a card.
+  Mounted shares (such as the NAS library) without `DCIM` at their mount root remain writable.
 - **Exporting**: An explicit "Export Render" button bakes the recipe to a full-resolution JPEG or
   TIFF:
   - **Naming**: Appends `_edit` to the stem (e.g. `IMG_0001_edit.jpg`).
   - **Destination**: Defaults to the source file's directory, or an explicit user-selected folder.
-  - **Collision rule**: **Never overwrite.** If `<stem>_edit.<ext>` already exists, increments
-    monotonically (`<stem>_edit_1.<ext>`, `<stem>_edit_2.<ext>`), preserving prior exports
-    (§9.2 invariant 6).
+  - **Collision rule**: **Never overwrite.** Uses exclusive file creation (`OpenOptions::create_new(true)`):
+    attempts `<stem>_edit.<ext>`, then `<stem>_edit_1.<ext>`, `<stem>_edit_2.<ext>`... atomically,
+    preventing race conditions if two exports run concurrently (§9.2 invariant 6).
   - **Safety rule**: Refuses to export directly into the `Publishing` folder (MV-16.7), keeping
-    reviewed staging safe.
+    reviewed staging safe, and refuses destinations on a card volume (G5).
   - **Identity copy**: If the recipe is untouched (all sliders at 0.0, no LUT), export performs a
     direct byte-for-byte stream copy to prevent generational JPEG DCT compression loss.
 
@@ -80,7 +83,7 @@ is invented (G11); the specification is not edited (G9).
 | **G1** | The adjustment recipe, color math, LUT parser, and CPU renderer live strictly in `phototools-core` (`media::edit` and `tools::lut`). Binary crates hold only Tauri IPC transport. |
 | **G2** | All rendering and LUT parsing compiles and passes unit tests in `crates/core` with **no binary crate present**. Card volume detection lives in `core` so G5 refusal is testable in isolation. |
 | **G3 / G4** | Metadata reads remain in-process via `nom-exif`. Derivatives inherit capture dates, camera tags, and GPS coordinates through `tools::carry_metadata` via the persistent `ExifWriter`. |
-| **G5** | **Never write to a source SD card.** The editor detects camera cards by checking whether the volume root contains a `DCIM` directory (F10), refusing to write sidecars on card volumes. Mounted shares (such as NAS SMB shares) without `DCIM` remain writable. Bulk LUT requires an explicit destination folder outside any card volume. |
+| **G5** | **Never write to a source SD card.** The editor detects camera cards by finding the volume root at the mount point (via device ID change) and checking whether it contains a `DCIM` directory (`Card::looks_like_a_card()`, F10), refusing to write sidecars on card volumes. Mounted shares (such as NAS SMB shares) without `DCIM` at their mount root remain writable. Bulk LUT and Export require an explicit destination folder outside any card volume. |
 | **G6** | Every input, output, and LUT file path is canonicalised and validated against configured roots. |
 | **G7** | No test is weakened. Identity adjustments and zero-intensity LUTs must produce identical output. |
 | **G8** | **Zero new runtime dependencies for CPU rendering.** `image`, `rayon`, `rawler`, `mozjpeg`, `tiff`, and `fast_image_resize` are already in `core`. RAW decoding delegates to the existing ladder in `media::raw` (not `ingest::derivation`, as `media` must never depend on `ingest`). RapidRAW's AGPL code is rejected; only public specifications (Adobe `.cube`) are used. `wgpu` is deferred. |
@@ -98,10 +101,10 @@ is invented (G11); the specification is not edited (G9).
 | **RAW decoded through media::raw ladder** | Camera RAW inputs are decoded using `media::raw` (not `ingest::derivation`, preserving modularity since `media` must never depend on `ingest`). In v1, the ladder yields an 8-bit JPEG (often the camera's embedded preview); thus v1 edits the camera's rendering, not sensor data, and has no headroom above the camera's clipping point. |
 | **Display-encoded LUT application** | Tone and exposure adjustments occur in **linear light**. Values are hard-clipped at display white ($[0.0, 1.0]$) to preserve exact identity under identity recipes, and sRGB transfer is applied *before* the 3D LUT, because creative `.cube` LUTs expect display-referred inputs. Inputs are clamped to `DOMAIN_MIN`/`DOMAIN_MAX`. |
 | **Crossover at 0.18 for tones** | Mid-grey ($0.18$) is strictly stationary. Shadows' weight falls to exactly zero at $0.18$; Highlights' weight rises from zero at $0.18$. Adjusting highlights or shadows leaves an 18% grey card untouched. |
-| **Card detection by DCIM** | A card volume is identified by a `DCIM` directory at the volume root (F10), not by a naive `/Volumes/` path check. This ensures macOS mounts of NAS SMB shares (which also mount under `/Volumes/`) remain fully editable while camera cards remain strictly read-only (G5). |
-| **Single-image export rules** | Exports append `_edit`, never overwrite existing files (incrementing `_edit_1`, `_edit_2`), refuse destinations inside `Publishing` (MV-16.7), and stream copy identity recipes directly without re-compression. |
+| **Card detection at mount point** | A card volume is identified at its mount point by walking up ancestors to the volume root (`MetadataExt::dev` boundary on Unix) and verifying `Card::at(volume_root).looks_like_a_card()` (case-insensitive `DCIM`). We do not check every ancestor for `DCIM` (a library folder holding a copied `DCIM` tree is not a card). macOS mounts of NAS SMB shares without `DCIM` at their mount root remain fully editable while camera cards remain strictly read-only (G5). |
+| **Single-image export rules** | Exports append `_edit`, never overwrite existing files (incrementing `_edit_1`, `_edit_2` atomically via `create_new(true)`), refuse destinations inside `Publishing` (MV-16.7, resolved at command layer) or on cards (G5), and stream copy identity recipes directly without re-compression. |
 | **Interactive proxy & binary IPC** | Slider adjustments re-render a 720p/1080p proxy during active mouse drag via raw binary IPC, settling to a 1440p render on release. Avoids base64 JSON serialization bottlenecks over the Tauri bridge. Performance targets are strictly measured in ED-4. |
-| **Sidecar & Rename harmony** | F3 Rename carries companion `.photoedit` files atomically with the parent image. Carrying `.xmp` is excluded (G11). Recipes store `source_sha256` for detached verification. |
+| **Sidecar & Rename harmony** | F3 Rename carries companion `<file name>.photoedit` files with the parent image in two steps: in plan, the sidecar is not a standalone item and an existing target sidecar is a planned conflict; in apply, the photo is renamed then the sidecar is renamed (re-checking existence), reporting sidecar rename failures against the photo (G10). Carrying `.xmp` is excluded (G11). Recipes store `source_sha256` for detached verification. |
 | **Managed LUT library** | Recipes reference LUTs by content hash (`sha256`) and filename, resolving against a managed LUT root under configured paths (G6), avoiding fragile absolute paths. |
 | **Identity export byte copy** | Exporting an image with zero adjustments performs a byte-for-byte stream copy, avoiding generational JPEG DCT compression loss. |
 | **Desktop-only v1 scope** | Both screens live in `frontend/desktop/src/views/`, avoiding unbacked `ApiClient` routes on the web. |
@@ -249,18 +252,29 @@ impl Default for AdjustmentRecipe {
   - `lut_intensity_half_blends_fifty_percent`
 
 ### `ED-3` · Sidecar serialization, F3 rename, card safety, and export rules
-- Implement `<stem>.photoedit` JSON serialization with `source_sha256` and versioning.
-- Extend `F3 Rename` (`crates/core/src/tools/f3_rename.rs`) to carry companion `.photoedit` files atomically with the parent image.
-- Enforce G5: Implement card volume detection in `core` (`media::card` or `media::edit`): a volume root containing `DCIM` is a card. Prohibit sidecar writes when a file resides on a card volume; allow writes on mounted shares without `DCIM`.
-- Implement single-image export rules: append `_edit` suffix, monotonic collision incrementing (`_edit_1`, `_edit_2`), refusal to write into `Publishing`, and byte-copy on identity recipes.
-- *Orientation note*: `decode_image` does not apply EXIF orientation. This is consistent only if export keeps the orientation tag and pixels together (`carry_metadata` has an `upright` flag).
+- Implement `<file name>.photoedit` JSON serialization with `source_sha256` and versioning (e.g. `IMG_0001.JPG.photoedit` so RAW and JPEG pairs do not share one). Write sidecars atomically via a temporary file in the same directory. Reject unknown future versions clearly. Refuse to save sidecars for nonexistent images (G10).
+- Extend `F3 Rename` (`crates/core/src/tools/f3_rename.rs`) to carry companion `.photoedit` files in two steps: in plan, record the companion sidecar in the planned action, the sidecar is not a standalone item, and an existing target sidecar is a planned conflict; in apply, re-check both photo and sidecar targets before moving either, then rename photo followed by sidecar, reporting sidecar rename failures against the photo in the summary (G10).
+- Enforce G5: Implement card volume detection in `core` (`tools::edit`): find the volume root at the mount point (`MetadataExt::dev` boundary on Unix) and check `Card::at(volume_root).looks_like_a_card()`. Make root-finding injectable for testing. Prohibit sidecar writes and export destinations on card volumes; allow writes on mounted shares without `DCIM`.
+- Implement single-image export rules (`export_edited_image(source, recipe, lut, out_dir)`): `out_dir` must already be resolved by the caller with `resolve_output` (enforcing G6 roots and MV-16.7 Publishing refusal at the command/API layer). Core refuses destinations on cards (G5). Append `_edit` suffix with atomic exclusive create (`create_new(true)` checking `_edit`, `_edit_1`, `_edit_2`...). Perform direct byte copy on identity recipes. Refuse recipes whose requested LUT is missing. Encode to memory first so failed encodes leave no file behind. Encode 16-bit TIFFs as 16-bit TIFF, everything else as JPEG (quality 95). Carry metadata with `carry_metadata(..., upright: false)` and report skips.
+- *Orientation note*: `decode_image` does not apply EXIF orientation. This is consistent only if export keeps the orientation tag and pixels together (`carry_metadata` with `upright: false`).
 - **Tests**:
+  - `a_sidecar_is_named_after_the_whole_file_so_raw_and_jpeg_pairs_do_not_share_one`
+  - `a_sidecar_round_trips_and_a_future_version_is_refused`
+  - `a_sidecar_is_written_atomically`
+  - `editor_refuses_to_save_a_sidecar_for_a_nonexistent_image`
   - `f3_rename_carries_companion_photoedit_sidecar`
+  - `f3_rename_plans_a_conflict_when_the_sidecar_target_exists`
+  - `f3_rename_reports_a_sidecar_that_could_not_follow_its_photo`
   - `editor_refuses_to_write_a_sidecar_on_a_card_volume`
   - `a_mounted_share_without_dcim_is_writable`
+  - `a_library_folder_containing_a_copied_dcim_is_not_a_card`
   - `export_edited_image_appends_edit_suffix_and_never_overwrites`
-  - `export_edited_image_refuses_destination_inside_publishing_folder`
+  - `exporting_a_recipe_whose_lut_is_missing_is_refused`
+  - `a_failed_export_leaves_no_file_behind`
+  - `export_refuses_a_destination_on_a_card`
   - `exporting_an_untouched_jpeg_preserves_source_bytes_without_reencoding`
+  - `an_exported_jpeg_keeps_its_orientation_tag_and_capture_date`
+  - `a_16_bit_tiff_exports_as_a_16_bit_tiff`
 
 ### `ED-4` · Throttled proxy pipeline and binary IPC
 - Implement dual-stage proxy rendering in `core`: 720p during active dragging, settling to 1440p on release.
@@ -284,7 +298,9 @@ impl Default for AdjustmentRecipe {
 
 ### `ED-6` · Tauri commands and IPC in `desktop`
 - Expose commands in `crates/desktop/src/commands/edit.rs`: `load_recipe`, `save_recipe`, `export_edited_image`, `plan_bulk_lut`, `apply_bulk_lut`.
-- Ensure all paths resolve against configured roots (G6).
+- Ensure all paths resolve against configured roots (G6). The export command resolves `out_dir` via `resolve_output(config, ...)`, enforcing G6 roots and MV-16.7 Publishing folder refusal.
+- **Tests**:
+  - `export_edited_image_refuses_destination_inside_publishing_folder`
 
 ### `ED-7` · Desktop UI single-image editor view
 - Add `--canvas-surround: #767676` and `--z-canvas: 60` to `tokens.css`.

@@ -33,6 +33,8 @@ pub struct BatchRenameParams {
 pub struct BatchRenameAction {
     pub source: PathBuf,
     pub target: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidecar: Option<(PathBuf, PathBuf)>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -205,10 +207,22 @@ impl Tool for BatchRenamerTool {
                             file: child.to_string_lossy().to_string(),
                             reason: "Hidden file — name it directly to rename it".into(),
                         });
+                    } else if crate::tools::edit::is_sidecar(&child) {
+                        // .photoedit sidecars travel with their companion photo,
+                        // never as standalone items in the list.
+                        continue;
                     } else {
                         inputs.push(child);
                     }
                 }
+                continue;
+            }
+
+            if crate::tools::edit::is_sidecar(path) {
+                skipped.push(Skip {
+                    file: path.to_string_lossy().to_string(),
+                    reason: "Edit sidecar — travels with its companion image".into(),
+                });
                 continue;
             }
 
@@ -277,6 +291,29 @@ impl Tool for BatchRenamerTool {
                 });
                 continue;
             }
+
+            // Check companion sidecar if present
+            let src_sidecar = crate::tools::edit::sidecar_path(source);
+            let sidecar = if src_sidecar.exists() {
+                let target_sidecar = crate::tools::edit::sidecar_path(&target);
+                if target != *source && target_sidecar.exists() {
+                    skipped.push(Skip {
+                        file: source.to_string_lossy().to_string(),
+                        reason: format!(
+                            "Would overwrite an existing sidecar: {}",
+                            target_sidecar
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                        ),
+                    });
+                    continue;
+                }
+                Some((src_sidecar, target_sidecar))
+            } else {
+                None
+            };
+
             if !claimed.insert(target.clone()) {
                 skipped.push(Skip {
                     file: source.to_string_lossy().to_string(),
@@ -288,6 +325,7 @@ impl Tool for BatchRenamerTool {
             actions.push(BatchRenameAction {
                 source: source.clone(),
                 target,
+                sidecar,
             });
         }
 
@@ -316,6 +354,7 @@ impl Tool for BatchRenamerTool {
 
             // Re-check immediately before the write: `fs::rename` replaces its
             // target silently on Unix, and the plan may be minutes old.
+            // Re-check both targets (photo and sidecar) before moving either.
             if action.target.exists() {
                 summary.failures.push((
                     action.source.clone(),
@@ -327,8 +366,40 @@ impl Tool for BatchRenamerTool {
                 continue;
             }
 
+            if let Some((_, ref target_sidecar)) = action.sidecar {
+                if target_sidecar.exists() {
+                    summary.failures.push((
+                        action.source.clone(),
+                        format!(
+                            "Target sidecar appeared since the plan was made: {}",
+                            target_sidecar.display()
+                        ),
+                    ));
+                    continue;
+                }
+            }
+
             match fs::rename(&action.source, &action.target) {
-                Ok(()) => summary.renamed.push(action),
+                Ok(()) => {
+                    summary.renamed.push(action.clone());
+                    // Step 2: rename companion sidecar if one was planned
+                    if let Some((ref src_sidecar, ref target_sidecar)) = action.sidecar {
+                        if !src_sidecar.exists() {
+                            summary.failures.push((
+                                action.source.clone(),
+                                format!(
+                                    "Companion sidecar vanished before rename: {}",
+                                    src_sidecar.display()
+                                ),
+                            ));
+                        } else if let Err(e) = fs::rename(src_sidecar, target_sidecar) {
+                            summary.failures.push((
+                                action.source.clone(),
+                                format!("Companion sidecar rename failed: {e}"),
+                            ));
+                        }
+                    }
+                }
                 Err(e) => summary
                     .failures
                     .push((action.source.clone(), format!("Rename failed: {e}"))),

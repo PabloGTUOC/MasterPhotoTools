@@ -1,5 +1,6 @@
 //! The archive operations (F1–F9)
 
+pub mod edit;
 pub mod f1_dates;
 pub mod f2_takeout;
 pub mod f3_rename;
@@ -10,6 +11,13 @@ pub mod f7_border;
 pub mod f8_tiff;
 pub mod f9_browser;
 pub mod geotag;
+
+pub use edit::{
+    export_edited_image, export_edited_image_with_resolver, find_volume_root, is_card_volume,
+    is_card_volume_with_resolver, is_identity, is_sidecar, load_recipe, load_recipe_for_image,
+    save_recipe, save_recipe_with_resolver, sidecar_path, ExportResult, CURRENT_RECIPE_VERSION,
+    SIDECAR_EXTENSION,
+};
 
 use crate::jobs::{Progress, ToolResult};
 

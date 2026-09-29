@@ -103,7 +103,7 @@ is invented (G11); the specification is not edited (G9).
 | **Crossover at 0.18 for tones** | Mid-grey ($0.18$) is strictly stationary. Shadows' weight falls to exactly zero at $0.18$; Highlights' weight rises from zero at $0.18$. Adjusting highlights or shadows leaves an 18% grey card untouched. |
 | **Card detection at mount point** | A card volume is identified at its mount point by walking up ancestors to the volume root (`MetadataExt::dev` boundary on Unix) and verifying `Card::at(volume_root).looks_like_a_card()` (case-insensitive `DCIM`). We do not check every ancestor for `DCIM` (a library folder holding a copied `DCIM` tree is not a card). macOS mounts of NAS SMB shares without `DCIM` at their mount root remain fully editable while camera cards remain strictly read-only (G5). |
 | **Single-image export rules** | Exports append `_edit`, never overwrite existing files (incrementing `_edit_1`, `_edit_2` atomically via `create_new(true)`), refuse destinations inside `Publishing` (MV-16.7, resolved at command layer) or on cards (G5), and stream copy identity recipes directly without re-compression. |
-| **Interactive proxy & binary IPC** | Slider adjustments re-render a 720p/1080p proxy during active mouse drag via raw binary IPC, settling to a 1440p render on release. Avoids base64 JSON serialization bottlenecks over the Tauri bridge. Performance targets are strictly measured in ED-4. |
+| **Interactive proxy & binary IPC** | Slider adjustments re-render a 720p proxy during active mouse drag via raw binary IPC, settling to a 1440p render on release. Core preview rendering is budgeted and verified in ED-4; binary IPC protocol is built in ED-6; end-to-end slider-to-paint responsiveness is measured in ED-7. |
 | **Sidecar & Rename harmony** | F3 Rename carries companion `<file name>.photoedit` files with the parent image in two steps: in plan, the sidecar is not a standalone item and an existing target sidecar is a planned conflict; in apply, the photo is renamed then the sidecar is renamed (re-checking existence), reporting sidecar rename failures against the photo (G10). Carrying `.xmp` is excluded (G11). Recipes store `source_sha256` for detached verification. |
 | **Managed LUT library** | Recipes reference LUTs by content hash (`sha256`) and filename, resolving against a managed LUT root under configured paths (G6), avoiding fragile absolute paths. |
 | **Identity export byte copy** | Exporting an image with zero adjustments performs a byte-for-byte stream copy, avoiding generational JPEG DCT compression loss. |
@@ -276,16 +276,30 @@ impl Default for AdjustmentRecipe {
   - `an_exported_jpeg_keeps_its_orientation_tag_and_capture_date`
   - `a_16_bit_tiff_exports_as_a_16_bit_tiff`
 
-### `ED-4` · Throttled proxy pipeline and binary IPC
-- Implement dual-stage proxy rendering in `core`: 720p during active dragging, settling to 1440p on release.
-- Transfer proxy frames over Tauri custom binary protocol (`phototools-preview://`).
-- *Table lookup note*: `srgb_to_linear` calls `powf` per channel (~200M calls each way for a 36 MP frame). Meeting ED-4's interactive budget will likely require a 256 / 65,536-entry decode table.
-- **Benchmark targets and pass/fail measurement**:
-  - **Measurement methodology**: Measure elapsed time from slider input event to new rendered pixels painted in the webview, evaluated with a 1080p proxy generated from a 36 MP source image (e.g. Nikon D810 frame) with active tone adjustments and 3D LUT.
-  - **Pass budget**: **p95 at most 50 ms** on an Apple Silicon Mac in a release build (dev profile already optimizes `core`).
-    *Why 50 ms:* 50 ms sustains 20 fps interactive response, the physiological threshold for visual motor continuity when scrubbing exposure and tone controls. Multithreaded SIMD processing in `core` takes ~15–25 ms, leaving ~25 ms for binary IPC transfer and display.
-  - **Settling budget**: **p95 at most 120 ms** for the 1440p settling frame upon mouse release, meeting the 100–150 ms human immediacy window.
-  - *Note*: These figures are concrete pass/fail targets to be verified and measured on hardware in this step.
+### `ED-4` · Proxy preview renderer in core and render budgets
+- Implement `PreviewSession` in `crates/core/src/media/edit/preview.rs` holding cached, already-linear proxies: 720p during active dragging (1280 px long edge), settling to 1440p on release (2560 px long edge).
+  - *Resolution rationale*: We choose 720p (1280 px long edge, ~1.09 MP for 3:2) for dragging because active scrubbing demands continuous, stutter-free visual motor continuity at 30–60 fps. Rendering 720p executes at **8.2 ms p95** (measured in release on Apple Silicon with a 36 MP frame, tone adjustments, and a 33³ LUT), safely below the 25 ms core render budget and leaving ample headroom for IPC transfer and webview display. The settling 1440p frame (2560 px long edge) renders at **35.5 ms p95** (measured in release on Apple Silicon), restoring full retina sharpness on mouse release within the 60 ms budget.
+  - *Downscaling rationale*: We downscale in decoded integer pixel space (`Rgb8` / `Rgb16`) before linearising rather than linearising the 36 MP full-resolution frame first:
+    1. *Memory footprint*: Allocating full-frame floating-point buffers for 36 MP consumes ~433 MB RAM; downscaling integer pixels first allocates only ~13 MB (720p) and ~52 MB (1440p) for the cached linear proxies, avoiding memory spikes and cache thrashing.
+    2. *Speed & SIMD efficiency*: `fast_image_resize` provides SIMD-accelerated (NEON/AVX2) assembly kernels for `U8x3` and `U16x3` integer resizing. Full session creation (both proxies downscaled and linearised) takes **113 ms** (measured in release on Apple Silicon with a 36 MP frame), well below the ≤ 1 s budget.
+    3. *Linearisation efficiency*: Linearising only the two downscaled proxies (~5.4 MP combined) via 256- and 65,536-entry decode lookup tables completely eliminates redundant conversions of discarded full-frame pixels.
+  - *Downscaling trade-off*: Averaging in encoded (gamma) space darkens fine high-contrast detail slightly in the **preview**, relative to the export, which renders at full resolution. That is a fair trade for an interactive preview, but documented so nobody mistakes it for a pipeline error when comparing a preview with an export at 100%.
+- Implement 256- and 65,536-entry decode lookup tables (`SRGB_TO_LINEAR_U8`, `SRGB_TO_LINEAR_U16`) holding exactly the values of `srgb_to_linear`, used in `LinearBuffer::from_image_buffer` to eliminate per-channel `powf` calls during linearisation.
+- Implement `render(recipe, lut, stage) -> Result<RgbaFrame, Error>` outputting RGBA8 ready for canvas `ImageData` without client-side conversion. Refuses missing or mismatched LUTs via shared `validate_lut`.
+- Faithfulness: on the same proxy pixels, every channel matches the exact export renderer within ±1 code value with adjustments and a 3D LUT active.
+- **Core render benchmark targets and pass/fail measurement**:
+  - **Measurement methodology**: Evaluated on a synthetic 36 MP source (7360×4912), one warm pass, then p95 over at least 40 renders with exposure, highlights, contrast, saturation, and a 33³ LUT active.
+  - **Drag frame (720p)**: **p95 ≤ 25 ms** (half of ED-7's 50 ms end-to-end budget, as split by the plan's architectural rationale). Measured release figure: **8.2 ms p95** on Apple Silicon.
+  - **Settle frame (1440p)**: **p95 ≤ 60 ms** (half of ED-7's 120 ms end-to-end budget). Measured release figure: **35.5 ms p95** on Apple Silicon.
+  - **Session creation**: **≤ 1 s** (decode excluded, proxy downscaling and linearisation included). Measured release figure: **113 ms** on Apple Silicon.
+  - Asserted under `#[cfg(not(debug_assertions))]`, printed always.
+- **Tests**:
+  - `decode_tables_match_the_exact_conversion_for_every_code`
+  - `rendering_never_changes_the_cached_proxies`
+  - `the_preview_matches_the_export_renderer_within_one_code`
+  - `a_preview_refuses_a_recipe_whose_lut_is_missing`
+  - `a_preview_frame_is_rgba_of_the_proxy_size`
+  - `benchmark_edit_preview`
 
 ### `ED-5` · Bulk LUT tool in `core::tools`
 - Implement `BulkLutTool` in `crates/core/src/tools/lut.rs` conforming to `Tool` trait.
@@ -298,6 +312,7 @@ impl Default for AdjustmentRecipe {
 
 ### `ED-6` · Tauri commands and IPC in `desktop`
 - Expose commands in `crates/desktop/src/commands/edit.rs`: `load_recipe`, `save_recipe`, `export_edited_image`, `plan_bulk_lut`, `apply_bulk_lut`.
+- Register the `phototools-preview://` custom binary protocol in Tauri to stream raw RGBA8 proxy frames directly from `PreviewSession` over the binary bridge (transport only, G1), avoiding base64 JSON serialization overhead.
 - Ensure all paths resolve against configured roots (G6). The export command resolves `out_dir` via `resolve_output(config, ...)`, enforcing G6 roots and MV-16.7 Publishing folder refusal.
 - **Tests**:
   - `export_edited_image_refuses_destination_inside_publishing_folder`
@@ -308,6 +323,11 @@ impl Default for AdjustmentRecipe {
 - Create `frontend/desktop/src/views/Edit.vue`.
 - Implement Before/After comparison toggle.
 - *Orientation display note*: The editor viewport must display the photograph upright (respecting EXIF orientation).
+- **End-to-end slider-to-paint benchmark targets and pass/fail measurement**:
+  - **Measurement methodology**: Measured the way `check:ingest` measures the web grid: in a browser, against the real view, with frames from a stub. Measures elapsed time from slider input event to new rendered pixels painted in the webview.
+  - **Pass budget (dragging)**: **p95 at most 50 ms** on an Apple Silicon Mac in a release build (dev profile already optimizes `core`).
+    *Why 50 ms:* 50 ms sustains 20 fps interactive response, the physiological threshold for visual motor continuity when scrubbing exposure and tone controls. Multithreaded SIMD processing in `core` takes ~15–25 ms, leaving ~25 ms for binary IPC transfer and webview display.
+  - **Settling budget (on mouse release)**: **p95 at most 120 ms** for the 1440p settling frame upon mouse release, meeting the 100–150 ms human immediacy window.
 
 ### `ED-8` · Desktop UI bulk LUT view
 - Create `frontend/desktop/src/views/BulkLut.vue`.

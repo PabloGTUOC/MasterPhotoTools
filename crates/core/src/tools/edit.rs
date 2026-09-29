@@ -6,7 +6,9 @@
 //! Drives `media::edit` and never touches pixels itself.
 
 use crate::error::Error;
-use crate::media::edit::{apply_recipe, decode_image, AdjustmentRecipe, ImageBuffer, Lut};
+use crate::media::edit::{
+    apply_recipe, decode_image, validate_lut, AdjustmentRecipe, ImageBuffer, Lut,
+};
 use crate::tools::{carry_metadata, Derived, Skip};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
@@ -310,18 +312,8 @@ where
         ));
     }
 
-    // 2. Validate LUT presence: a recipe that requests a LUT must have it provided
-    if let (Some(lut_ref), None) = (&recipe.lut, lut) {
-        return Err(Error::Refused(format!(
-            "recipe requires 3D LUT '{}' ({}), but no LUT was provided",
-            lut_ref.name, lut_ref.sha256
-        )));
-    }
-    if let (None, Some(_)) = (&recipe.lut, lut) {
-        return Err(Error::Refused(
-            "a LUT was provided but the recipe does not specify any LUT".to_string(),
-        ));
-    }
+    // 2. Validate LUT presence: a recipe that requests a LUT must have it provided and matched
+    validate_lut(recipe, lut)?;
 
     let stem = source.file_stem().unwrap_or_default().to_string_lossy();
     if stem.is_empty() {

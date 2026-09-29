@@ -10,7 +10,8 @@ pub mod slices;
 pub mod text;
 
 pub use edit::{
-    apply_recipe, decode_image, AdjustmentRecipe, ImageBuffer, LinearBuffer, Lut, LutRef,
+    apply_recipe, decode_image, validate_lut, AdjustmentRecipe, ImageBuffer, LinearBuffer, Lut,
+    LutRef, PreviewSession, PreviewStage, RgbaFrame,
 };
 pub use image_ops::{
     apply_orientation, decode, decode_oriented, dimensions_for_megapixels, downscale_to_max_edge,

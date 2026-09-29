@@ -1293,3 +1293,407 @@ fn a_file_exiftool_did_write_is_not_reported_as_a_failure() {
         Some(dt("2013:05:01 12:00:00"))
     );
 }
+
+// ---------------------------------------------------------------------------
+// ED-4 — Preview renderer and session in core
+// ---------------------------------------------------------------------------
+
+#[test]
+fn decode_tables_match_the_exact_conversion_for_every_code() {
+    use phototools_core::media::edit::pipeline::{srgb_to_linear, u16_to_linear, u8_to_linear};
+
+    for code in 0..=255u8 {
+        let expected = srgb_to_linear(code as f32 / 255.0);
+        let table_val = u8_to_linear(code);
+        assert_eq!(
+            table_val.to_bits(),
+            expected.to_bits(),
+            "u8 table mismatch at code {code}: expected {expected}, got {table_val}"
+        );
+    }
+
+    for code in 0..=65535u16 {
+        let expected = srgb_to_linear(code as f32 / 65535.0);
+        let table_val = u16_to_linear(code);
+        assert_eq!(
+            table_val.to_bits(),
+            expected.to_bits(),
+            "u16 table mismatch at code {code}: expected {expected}, got {table_val}"
+        );
+    }
+}
+
+#[test]
+fn rendering_never_changes_the_cached_proxies() {
+    use phototools_core::media::edit::{
+        AdjustmentRecipe, ImageBuffer, Lut, LutRef, PreviewSession, PreviewStage,
+    };
+
+    let buf = ImageBuffer::Rgb8 {
+        width: 1600,
+        height: 1200,
+        data: (0..1600 * 1200 * 3).map(|i| (i % 256) as u8).collect(),
+    };
+
+    let session = PreviewSession::new(&buf).unwrap();
+
+    // Snapshot the linear proxy buffers bit-for-bit before rendering
+    let drag_snapshot = session.drag_linear().data.clone();
+    let settle_snapshot = session.settle_linear().data.clone();
+
+    let cube_content = "\
+TITLE \"Test\"
+LUT_3D_SIZE 2
+0.0 0.0 0.0
+1.0 0.0 0.0
+0.0 1.0 0.0
+1.0 1.0 0.0
+0.0 0.0 1.0
+1.0 0.0 1.0
+0.0 1.0 1.0
+1.0 1.0 1.0
+";
+    let lut = Lut::from_cube("test.cube", cube_content.as_bytes()).unwrap();
+    let lut_ref = LutRef {
+        name: "test.cube".to_string(),
+        sha256: lut.sha256.clone(),
+    };
+
+    let recipes_with_lut = [
+        AdjustmentRecipe {
+            exposure: 1.5,
+            contrast: 25.0,
+            highlights: -30.0,
+            shadows: 20.0,
+            saturation: 15.0,
+            lut: Some(lut_ref.clone()),
+            ..Default::default()
+        },
+        AdjustmentRecipe {
+            exposure: -2.0,
+            contrast: -15.0,
+            temperature: 2000.0,
+            tint: 15.0,
+            vibrance: -40.0,
+            lut: Some(lut_ref),
+            ..Default::default()
+        },
+    ];
+
+    for recipe in &recipes_with_lut {
+        let drag_frame = session
+            .render(recipe, Some(&lut), PreviewStage::Drag)
+            .unwrap();
+        assert!(drag_frame.width > 0);
+        let settle_frame = session
+            .render(recipe, Some(&lut), PreviewStage::Settle)
+            .unwrap();
+        assert!(settle_frame.width > 0);
+    }
+
+    let recipe_no_lut = AdjustmentRecipe {
+        exposure: 0.8,
+        contrast: 10.0,
+        saturation: 5.0,
+        ..Default::default()
+    };
+    let drag_frame = session
+        .render(&recipe_no_lut, None, PreviewStage::Drag)
+        .unwrap();
+    assert!(drag_frame.width > 0);
+    let settle_frame = session
+        .render(&recipe_no_lut, None, PreviewStage::Settle)
+        .unwrap();
+    assert!(settle_frame.width > 0);
+
+    // Verify bit-for-bit invariance of both cached linear proxy buffers
+    assert_eq!(
+        session.drag_linear().data,
+        drag_snapshot,
+        "rendering must never mutate the cached drag linear proxy in place"
+    );
+    assert_eq!(
+        session.settle_linear().data,
+        settle_snapshot,
+        "rendering must never mutate the cached settle linear proxy in place"
+    );
+}
+
+#[test]
+fn the_preview_matches_the_export_renderer_within_one_code() {
+    use phototools_core::media::edit::{
+        apply_recipe, render_rgba_frame, AdjustmentRecipe, ImageBuffer, LinearBuffer, Lut, LutRef,
+    };
+
+    let w = 64;
+    let h = 64;
+    let mut data = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            let r = ((x * 4) % 256) as u8;
+            let g = ((y * 4) % 256) as u8;
+            let b = (((x + y) * 2) % 256) as u8;
+            data.extend_from_slice(&[r, g, b]);
+        }
+    }
+    let proxy_img = ImageBuffer::Rgb8 {
+        width: w as u32,
+        height: h as u32,
+        data,
+    };
+
+    let cube_content = "\
+TITLE \"Test Cube\"
+LUT_3D_SIZE 2
+0.0 0.0 0.0
+1.0 0.1 0.05
+0.05 0.9 0.1
+0.95 0.95 0.2
+0.1 0.05 0.8
+0.85 0.2 0.85
+0.2 0.85 0.9
+1.0 1.0 1.0
+";
+    let lut = Lut::from_cube("test.cube", cube_content.as_bytes()).unwrap();
+    let recipe = AdjustmentRecipe {
+        exposure: 0.4,
+        highlights: -20.0,
+        shadows: 15.0,
+        contrast: 12.0,
+        saturation: 10.0,
+        vibrance: -8.0,
+        temperature: 15.0,
+        tint: -10.0,
+        lut: Some(LutRef {
+            name: "test.cube".into(),
+            sha256: lut.sha256.clone(),
+        }),
+        lut_intensity: 0.85,
+        ..Default::default()
+    };
+
+    let exact_out = apply_recipe(&proxy_img, &recipe, Some(&lut)).unwrap();
+    let exact_rgb = exact_out.as_rgb8().unwrap();
+
+    let proxy_lin = LinearBuffer::from_image_buffer(&proxy_img);
+    let preview_frame = render_rgba_frame(&proxy_lin, &recipe, Some(&lut)).unwrap();
+
+    assert_eq!(preview_frame.width, proxy_img.width());
+    assert_eq!(preview_frame.height, proxy_img.height());
+    assert_eq!(preview_frame.bytes.len(), w * h * 4);
+
+    for i in 0..(w * h) {
+        let exact_r = exact_rgb[i * 3] as i32;
+        let exact_g = exact_rgb[i * 3 + 1] as i32;
+        let exact_b = exact_rgb[i * 3 + 2] as i32;
+
+        let prev_r = preview_frame.bytes[i * 4] as i32;
+        let prev_g = preview_frame.bytes[i * 4 + 1] as i32;
+        let prev_b = preview_frame.bytes[i * 4 + 2] as i32;
+        let prev_a = preview_frame.bytes[i * 4 + 3];
+
+        assert_eq!(prev_a, 255, "Alpha channel must be 255 at pixel {i}");
+        assert!(
+            (exact_r - prev_r).abs() <= 1,
+            "Red channel at pixel {i} differs by > 1: exact {exact_r} vs preview {prev_r}"
+        );
+        assert!(
+            (exact_g - prev_g).abs() <= 1,
+            "Green channel at pixel {i} differs by > 1: exact {exact_g} vs preview {prev_r}"
+        );
+        assert!(
+            (exact_b - prev_b).abs() <= 1,
+            "Blue channel at pixel {i} differs by > 1: exact {exact_b} vs preview {prev_b}"
+        );
+    }
+}
+
+#[test]
+fn a_preview_refuses_a_recipe_whose_lut_is_missing() {
+    use phototools_core::media::edit::{
+        AdjustmentRecipe, ImageBuffer, LutRef, PreviewSession, PreviewStage,
+    };
+
+    let buf = ImageBuffer::Rgb8 {
+        width: 10,
+        height: 10,
+        data: vec![128; 300],
+    };
+    let session = PreviewSession::new(&buf).unwrap();
+
+    let recipe = AdjustmentRecipe {
+        lut: Some(LutRef {
+            name: "missing.cube".into(),
+            sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+        }),
+        ..Default::default()
+    };
+
+    let err = session
+        .render(&recipe, None, PreviewStage::Drag)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("no LUT was provided"),
+        "expected missing LUT refusal, got: {err}"
+    );
+}
+
+#[test]
+fn a_preview_frame_is_rgba_of_the_proxy_size() {
+    use phototools_core::media::edit::{
+        AdjustmentRecipe, ImageBuffer, PreviewSession, PreviewStage,
+    };
+
+    let buf = ImageBuffer::Rgb8 {
+        width: 3000,
+        height: 2000,
+        data: vec![100; 3000 * 2000 * 3],
+    };
+    let session = PreviewSession::new(&buf).unwrap();
+    let recipe = AdjustmentRecipe::default();
+
+    let drag = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    assert_eq!(drag.width, 1280);
+    assert_eq!(drag.height, 853);
+    assert_eq!(drag.bytes.len(), 1280 * 853 * 4);
+    assert!(drag.bytes.chunks_exact(4).all(|px| px[3] == 255));
+
+    let settle = session.render(&recipe, None, PreviewStage::Settle).unwrap();
+    assert_eq!(settle.width, 2560);
+    assert_eq!(settle.height, 1706);
+    assert_eq!(settle.bytes.len(), 2560 * 1706 * 4);
+    assert!(settle.bytes.chunks_exact(4).all(|px| px[3] == 255));
+}
+
+#[test]
+fn benchmark_edit_preview() {
+    use phototools_core::media::edit::{
+        AdjustmentRecipe, ImageBuffer, Lut, LutRef, PreviewSession, PreviewStage,
+    };
+
+    let w = 7360;
+    let h = 4912;
+    let total_pixels = w * h;
+    let mut data = vec![128u8; total_pixels * 3];
+    for (i, byte) in data.iter_mut().enumerate() {
+        *byte = ((i * 31) % 256) as u8;
+    }
+    let img36 = ImageBuffer::Rgb8 {
+        width: w as u32,
+        height: h as u32,
+        data,
+    };
+
+    let size = 33;
+    let mut lut_data = Vec::with_capacity(size * size * size);
+    for b in 0..size {
+        for g in 0..size {
+            for r in 0..size {
+                let rf = r as f32 / (size - 1) as f32;
+                let gf = g as f32 / (size - 1) as f32;
+                let bf = b as f32 / (size - 1) as f32;
+                lut_data.push([
+                    (rf * 0.95 + 0.02).clamp(0.0, 1.0),
+                    (gf * 0.98 + 0.01).clamp(0.0, 1.0),
+                    (bf * 0.90 + 0.05).clamp(0.0, 1.0),
+                ]);
+            }
+        }
+    }
+    let lut33 = Lut {
+        title: Some("Synthetic 33".into()),
+        size,
+        domain_min: [0.0, 0.0, 0.0],
+        domain_max: [1.0, 1.0, 1.0],
+        sha256: "synth33_sha256".into(),
+        data: lut_data,
+    };
+
+    let t_session = Instant::now();
+    let session = PreviewSession::new(&img36).unwrap();
+    let session_elapsed = t_session.elapsed();
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        highlights: -25.0,
+        shadows: 20.0,
+        contrast: 15.0,
+        saturation: 12.0,
+        lut: Some(LutRef {
+            name: "synth33.cube".into(),
+            sha256: lut33.sha256.clone(),
+        }),
+        lut_intensity: 0.8,
+        ..Default::default()
+    };
+
+    let _ = session
+        .render(&recipe, Some(&lut33), PreviewStage::Drag)
+        .unwrap();
+    let _ = session
+        .render(&recipe, Some(&lut33), PreviewStage::Settle)
+        .unwrap();
+
+    let mut drag_times = Vec::with_capacity(40);
+    for _ in 0..40 {
+        let t0 = Instant::now();
+        let frame = session
+            .render(&recipe, Some(&lut33), PreviewStage::Drag)
+            .unwrap();
+        drag_times.push(t0.elapsed());
+        assert_eq!(frame.width, 1280);
+    }
+    drag_times.sort();
+    let p95_drag_idx = ((drag_times.len() as f64 * 0.95).ceil() as usize).saturating_sub(1);
+    let p95_drag = drag_times[p95_drag_idx];
+
+    let mut settle_times = Vec::with_capacity(40);
+    for _ in 0..40 {
+        let t0 = Instant::now();
+        let frame = session
+            .render(&recipe, Some(&lut33), PreviewStage::Settle)
+            .unwrap();
+        settle_times.push(t0.elapsed());
+        assert_eq!(frame.width, 2560);
+    }
+    settle_times.sort();
+    let p95_settle_idx = ((settle_times.len() as f64 * 0.95).ceil() as usize).saturating_sub(1);
+    let p95_settle = settle_times[p95_settle_idx];
+
+    println!(
+        "Preview benchmark [36 MP 7360x4912, {} build]:",
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
+    );
+    println!(
+        "  Session creation (proxies + linearisation): {:?}",
+        session_elapsed
+    );
+    println!("  Drag frame (720p 1280x854) p95 over 40: {:?}", p95_drag);
+    println!(
+        "  Settle frame (1440p 2560x1708) p95 over 40: {:?}",
+        p95_settle
+    );
+
+    #[cfg(not(debug_assertions))]
+    {
+        assert!(
+            session_elapsed <= Duration::from_millis(1000),
+            "Session creation budget is <= 1000 ms, measured {:?}",
+            session_elapsed
+        );
+        assert!(
+            p95_drag <= Duration::from_millis(25),
+            "Drag frame p95 budget is <= 25 ms, measured {:?}",
+            p95_drag
+        );
+        assert!(
+            p95_settle <= Duration::from_millis(60),
+            "Settle frame p95 budget is <= 60 ms, measured {:?}",
+            p95_settle
+        );
+    }
+}

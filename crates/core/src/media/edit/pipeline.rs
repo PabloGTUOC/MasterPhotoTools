@@ -8,6 +8,7 @@ use crate::error::Error;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::LazyLock;
 
 /// A portable content-addressed reference to a 3D LUT.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -422,9 +423,27 @@ pub fn linear_to_srgb(l: f32) -> f32 {
     }
 }
 
+/// 256-entry lookup table mapping 8-bit sRGB code to linear light float.
+pub static SRGB_TO_LINEAR_U8: LazyLock<[f32; 256]> = LazyLock::new(|| {
+    let mut table = [0.0f32; 256];
+    for (i, item) in table.iter_mut().enumerate() {
+        *item = srgb_to_linear(i as f32 / 255.0);
+    }
+    table
+});
+
+/// 65,536-entry lookup table mapping 16-bit sRGB code to linear light float.
+pub static SRGB_TO_LINEAR_U16: LazyLock<Box<[f32; 65536]>> = LazyLock::new(|| {
+    let mut table = vec![0.0f32; 65536];
+    for (i, item) in table.iter_mut().enumerate() {
+        *item = srgb_to_linear(i as f32 / 65535.0);
+    }
+    table.into_boxed_slice().try_into().unwrap()
+});
+
 #[inline]
 pub fn u8_to_linear(v: u8) -> f32 {
-    srgb_to_linear(v as f32 / 255.0)
+    SRGB_TO_LINEAR_U8[v as usize]
 }
 
 #[inline]
@@ -434,7 +453,7 @@ pub fn linear_to_u8(l: f32) -> u8 {
 
 #[inline]
 pub fn u16_to_linear(v: u16) -> f32 {
-    srgb_to_linear(v as f32 / 65535.0)
+    SRGB_TO_LINEAR_U16[v as usize]
 }
 
 #[inline]
@@ -468,18 +487,9 @@ pub fn tone_weights(y: f32) -> (f32, f32) {
     (w_h, w_s)
 }
 
-/// Applies an adjustment recipe to an image buffer, optionally evaluating a 3D LUT.
-///
-/// In ED-2:
-/// - If `recipe.lut` is set, `lut` must be provided and its sha256 must match `recipe.lut.sha256`.
-/// - If `recipe.lut` is none, providing a `lut` is refused to avoid silent omission.
-/// - The 3D LUT is evaluated in display-encoded space (after sRGB transfer and clamp,
-///   before quantisation) and blended as `out = (1 - i) * disp + i * lut`.
-pub fn apply_recipe(
-    image: &ImageBuffer,
-    recipe: &AdjustmentRecipe,
-    lut: Option<&Lut>,
-) -> Result<ImageBuffer, Error> {
+/// Validates that if a recipe specifies a LUT, the provided LUT matches its sha256,
+/// and that if no LUT is specified, no LUT was provided.
+pub fn validate_lut(recipe: &AdjustmentRecipe, lut: Option<&Lut>) -> Result<(), Error> {
     match (&recipe.lut, lut) {
         (Some(lut_ref), Some(provided_lut)) => {
             if provided_lut.sha256 != lut_ref.sha256 {
@@ -502,6 +512,22 @@ pub fn apply_recipe(
         }
         (None, None) => {}
     }
+    Ok(())
+}
+
+/// Applies an adjustment recipe to an image buffer, optionally evaluating a 3D LUT.
+///
+/// In ED-2:
+/// - If `recipe.lut` is set, `lut` must be provided and its sha256 must match `recipe.lut.sha256`.
+/// - If `recipe.lut` is none, providing a `lut` is refused to avoid silent omission.
+/// - The 3D LUT is evaluated in display-encoded space (after sRGB transfer and clamp,
+///   before quantisation) and blended as `out = (1 - i) * disp + i * lut`.
+pub fn apply_recipe(
+    image: &ImageBuffer,
+    recipe: &AdjustmentRecipe,
+    lut: Option<&Lut>,
+) -> Result<ImageBuffer, Error> {
+    validate_lut(recipe, lut)?;
 
     let mut linear = LinearBuffer::from_image_buffer(image);
     linear.apply_adjustments(recipe);

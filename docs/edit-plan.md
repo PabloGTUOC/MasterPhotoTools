@@ -1,0 +1,354 @@
+# Editing — development plan
+
+> **Not built.** Written before any code is committed. Where the build diverges from this plan
+> the text will be corrected in place and the rationale recorded in
+> [`docs/phase-reports/edit.md`](phase-reports/edit.md).
+
+Non-destructive photographic adjustments for individual frames on the desktop, and bulk 3D LUT
+grading for folders.
+
+A photograph captured on an SD card or scanned from film frequently requires basic exposure and
+white balance adjustment, or a creative film simulation LUT, before it is ready for border framing,
+contact sheets, or publishing. This tool adds non-destructive editing and folder-scale LUT
+application directly into PhotoTools.
+
+Steps have stable ids (`ED-4`), the same way [`manual-verification.md`](manual-verification.md)
+numbers its checks, so one can be named in a commit or a conversation.
+
+---
+
+## The flow, as the screen presents it
+
+Two desktop screens, separating single-frame refinement from batch grading.
+
+### 1 · Single-image editor (`frontend/desktop/src/views/Edit.vue`)
+A dedicated desktop workspace for tuning one photograph at a time:
+- **Viewport**: The photograph presented against an isolated, true neutral 18% grey surround
+  (`var(--canvas-surround)`), free of CRT scanlines (`var(--z-canvas)` sits above scanlines at 50,
+  and beneath navigation at 200).
+- **Side panel**: Grouped parametric sliders for White Balance (temperature, tint), Exposure,
+  Highlights/Shadows (strictly anchored at mid-grey), Contrast, and Vibrance/Saturation, plus a
+  3D LUT selector with an intensity slider (0–100%).
+- **Interactive control**: Double-click any slider label to reset to 0.0 (exact identity). Press `\`
+  or hold the "Before / After" toggle to compare against the unadjusted input.
+- **Saving**: Edits are stored non-destructively in a lightweight `.photoedit` JSON sidecar. Card
+  media is detected by the presence of a `DCIM` directory at the volume root (F10); if the file
+  resides on a card volume, the editor operates in **Read-Only Mode** (G5). Mounted shares (such as
+  the NAS library) without `DCIM` remain writable.
+- **Exporting**: An explicit "Export Render" button bakes the recipe to a full-resolution JPEG or
+  TIFF:
+  - **Naming**: Appends `_edit` to the stem (e.g. `IMG_0001_edit.jpg`).
+  - **Destination**: Defaults to the source file's directory, or an explicit user-selected folder.
+  - **Collision rule**: **Never overwrite.** If `<stem>_edit.<ext>` already exists, increments
+    monotonically (`<stem>_edit_1.<ext>`, `<stem>_edit_2.<ext>`), preserving prior exports
+    (§9.2 invariant 6).
+  - **Safety rule**: Refuses to export directly into the `Publishing` folder (MV-16.7), keeping
+    reviewed staging safe.
+  - **Identity copy**: If the recipe is untouched (all sliders at 0.0, no LUT), export performs a
+    direct byte-for-byte stream copy to prevent generational JPEG DCT compression loss.
+
+### 2 · Bulk LUT tool (`frontend/desktop/src/views/BulkLut.vue`)
+A standard folder tool matching the pattern of F7 (Border) and F8 (TIFF):
+- **Input**: Point at a folder of photographs (JPEG, TIFF, or camera RAW).
+- **LUT selection**: Choose a 3D LUT from the managed LUT library (`.cube`, `.3dl`, or HALD `.png`)
+  and set intensity (0–100%).
+- **Multi-sample preview**: Previews the LUT effect across 3–5 representative frames spread
+  throughout the folder before committing.
+- **Output destination**: Choose an output directory. Refuses to write directly into `Publishing`
+  (MV-16.7).
+- **Execution**: Runs as a background job with progress reporting, cancellable at any time. All
+  camera EXIF, capture dates, and GPS coordinates are preserved onto the output files via the
+  persistent `ExifWriter`.
+
+### Pure shared controls
+Slider and picker components (`AdjustmentSlider.vue`, `LutPicker.vue`) live in
+`frontend/shared/src/ui/components/`. Version 1 is **desktop-only**: no web routes are mounted,
+and no `ApiClient` transport method is declared that one transport would throw for.
+
+---
+
+## Status of this work against the specification
+
+**`SPECIFICATION.md` does not mention image adjustments, exposure compensation, or LUTs.**
+Like `tools::geotag` and `tools::timeline`, this feature is outside the specification. No F-number
+is invented (G11); the specification is not edited (G9).
+
+### Ground rules compliance
+
+| Rule | Enforcement in this plan |
+|---|---|
+| **G1** | The adjustment recipe, color math, LUT parser, and CPU renderer live strictly in `phototools-core` (`media::edit` and `tools::lut`). Binary crates hold only Tauri IPC transport. |
+| **G2** | All rendering and LUT parsing compiles and passes unit tests in `crates/core` with **no binary crate present**. Card volume detection lives in `core` so G5 refusal is testable in isolation. |
+| **G3 / G4** | Metadata reads remain in-process via `nom-exif`. Derivatives inherit capture dates, camera tags, and GPS coordinates through `tools::carry_metadata` via the persistent `ExifWriter`. |
+| **G5** | **Never write to a source SD card.** The editor detects camera cards by checking whether the volume root contains a `DCIM` directory (F10), refusing to write sidecars on card volumes. Mounted shares (such as NAS SMB shares) without `DCIM` remain writable. Bulk LUT requires an explicit destination folder outside any card volume. |
+| **G6** | Every input, output, and LUT file path is canonicalised and validated against configured roots. |
+| **G7** | No test is weakened. Identity adjustments and zero-intensity LUTs must produce identical output. |
+| **G8** | **Zero new runtime dependencies for CPU rendering.** `image`, `rayon`, `rawler`, `mozjpeg`, `tiff`, and `fast_image_resize` are already in `core`. RAW decoding delegates to the existing F14 derivation ladder (`ingest::derivation`). RapidRAW's AGPL code is rejected; only public specifications (Adobe `.cube`) are used. `wgpu` is deferred. |
+| **G9** | `SPECIFICATION.md` is not edited. |
+| **G10** | No `unimplemented!()`, `todo!()`, or swallowed errors on shipped paths. |
+| **G11** | The scope is strictly the requested adjustments and bulk LUT grading. Carrying `.xmp` sidecars is excluded. |
+
+---
+
+## Decisions already taken
+
+| Decision | Rationale & consequence |
+|---|---|
+| **CPU-first authority** | A multithreaded CPU pipeline in `core` using `rayon` is the authority for exports and CI tests. `wgpu` is deferred to keep dependencies clean (G8) and avoid GPU driver requirements in headless CI environments. |
+| **RAW decoded through F14 ladder** | Camera RAW inputs are decoded using the existing F14 derivation ladder (`ingest::derivation`), avoiding duplicate decoding dependencies or divergent RAW pipelines. |
+| **Display-encoded LUT application** | Tone and exposure adjustments occur in **linear light**. Tone mapping / gamut clamping and sRGB transfer are applied *before* the 3D LUT, because creative `.cube` LUTs expect display-referred inputs. Inputs are clamped to `DOMAIN_MIN`/`DOMAIN_MAX`, and values $> 1.0$ are mapped prior to lookup. |
+| **Crossover at 0.18 for tones** | Mid-grey ($0.18$) is strictly stationary. Shadows' weight falls to exactly zero at $0.18$; Highlights' weight rises from zero at $0.18$. Adjusting highlights or shadows leaves an 18% grey card untouched. |
+| **Card detection by DCIM** | A card volume is identified by a `DCIM` directory at the volume root (F10), not by a naive `/Volumes/` path check. This ensures macOS mounts of NAS SMB shares (which also mount under `/Volumes/`) remain fully editable while camera cards remain strictly read-only (G5). |
+| **Single-image export rules** | Exports append `_edit`, never overwrite existing files (incrementing `_edit_1`, `_edit_2`), refuse destinations inside `Publishing` (MV-16.7), and stream copy identity recipes directly without re-compression. |
+| **Interactive proxy & binary IPC** | Slider adjustments re-render a 720p/1080p proxy during active mouse drag via raw binary IPC, settling to a 1440p render on release. Avoids base64 JSON serialization bottlenecks over the Tauri bridge. Performance targets are strictly measured in ED-4. |
+| **Sidecar & Rename harmony** | F3 Rename carries companion `.photoedit` files atomically with the parent image. Carrying `.xmp` is excluded (G11). Recipes store `source_sha256` for detached verification. |
+| **Managed LUT library** | Recipes reference LUTs by content hash (`sha256`) and filename, resolving against a managed LUT root under configured paths (G6), avoiding fragile absolute paths. |
+| **Identity export byte copy** | Exporting an image with zero adjustments performs a byte-for-byte stream copy, avoiding generational JPEG DCT compression loss. |
+| **Desktop-only v1 scope** | Both screens live in `frontend/desktop/src/views/`, avoiding unbacked `ApiClient` routes on the web. |
+| **Multi-sample pre-flight preview** | In Bulk LUT, 3–5 representative frames spread throughout the folder are rendered before committing to the batch. The background job can be cancelled at any time. |
+| **Re-editing after publishing** | Google Photos deduplication keys on file content hash (`key_kind = "file"`). Re-editing an already published photograph creates a new file hash, which uploads as a second copy. The dry run must explicitly state this. |
+
+---
+
+## Color and adjustment pipeline architecture
+
+All color transformations occur in `crates/core/src/media/edit/`:
+
+```mermaid
+flowchart LR
+    Input["Input Image<br>(JPEG / 16-bit TIFF / RAW)"] --> Decode["Decode to RGB<br>(JPEG, TIFF, or RAW via F14 derivation ladder)"]
+    Decode --> Linear["Linearize sRGB<br>(to f32 [0.0, ∞))"]
+    Linear --> WB["1. White Balance<br>(Temp & Tint gains)"]
+    WB --> Exp["2. Exposure<br>(C * 2^EV)"]
+    Exp --> Tone["3. Highlights & Shadows<br>(Crossover at 0.18; 0.18 strictly stationary)"]
+    Tone --> Contrast["4. Contrast<br>(S-curve around 0.18)"]
+    Contrast --> Sat["5. Saturation & Vibrance<br>(Skin-tone weighted)"]
+    Sat --> Display["6. Gamut Clamp & sRGB Transfer<br>(to [0.0, 1.0])"]
+    Display --> LUT["7. 3D LUT Application<br>(Tetrahedral + Intensity blend)"]
+    LUT --> Output["8-bit / 16-bit Encoded Output"]
+```
+
+### 1. Adjustment definition (`AdjustmentRecipe`)
+
+```rust
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LutRef {
+    pub name: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdjustmentRecipe {
+    pub version: u32,
+    /// SHA-256 of the source image file at the time of recipe creation.
+    pub source_sha256: String,
+    /// Exposure compensation in EV stops: -5.0 to +5.0 (0.0 = identity).
+    pub exposure: f32,
+    /// White balance temperature shift: -100.0 to +100.0.
+    pub temperature: f32,
+    /// White balance tint shift: -100.0 to +100.0.
+    pub tint: f32,
+    /// Highlight recovery / boost: -100.0 to +100.0 (anchored, leaves 0.18 untouched).
+    pub highlights: f32,
+    /// Shadow lifting / crushing: -100.0 to +100.0 (anchored, leaves 0.18 untouched).
+    pub shadows: f32,
+    /// Mid-tone contrast: -100.0 to +100.0.
+    pub contrast: f32,
+    /// Global saturation: -100.0 to +100.0.
+    pub saturation: f32,
+    /// Vibrance (smart saturation protecting saturated tones): -100.0 to +100.0.
+    pub vibrance: f32,
+    /// Optional portable reference to a 3D LUT.
+    pub lut: Option<LutRef>,
+    /// LUT blend factor: 0.0 to 1.0 (1.0 = 100% LUT effect).
+    pub lut_intensity: f32,
+}
+
+impl Default for AdjustmentRecipe {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            source_sha256: String::new(),
+            exposure: 0.0,
+            temperature: 0.0,
+            tint: 0.0,
+            highlights: 0.0,
+            shadows: 0.0,
+            contrast: 0.0,
+            saturation: 0.0,
+            vibrance: 0.0,
+            lut: None,
+            lut_intensity: 1.0,
+        }
+    }
+}
+```
+
+### 2. Mathematics of operations
+
+1. **Decoding & Linearization**:
+   Input files are decoded to RGB (camera RAWs decode through `ingest::derivation`'s F14 ladder). Values are converted to linear light:
+   $$C_{lin} = \begin{cases} \frac{C_{srgb}}{12.92} & C_{srgb} \le 0.04045 \\ \left(\frac{C_{srgb} + 0.055}{1.055}\right)^{2.4} & C_{srgb} > 0.04045 \end{cases}$$
+2. **White balance & exposure**:
+   Applies channel gains and optical exposure scaling:
+   $$C = C_{lin} \times \text{gain}_{wb} \times 2^{\Delta EV}$$
+3. **Crossover highlights & shadows (0.18 stationary)**:
+   Mid-grey ($Y = 0.18$) is strictly stationary. The tonal curves are defined so their weights do not overlap across mid-grey:
+   - **Highlights weight $w_H(Y)$**: exactly $0$ for $Y \le 0.18$. For $Y > 0.18$, rises smoothly (cubic Hermite) reaching full effect by $Y = 0.65$.
+   - **Shadows weight $w_S(Y)$**: exactly $0$ for $Y \ge 0.18$. For $Y < 0.18$, rises smoothly reaching full effect by $Y = 0.05$.
+   At $Y = 0.18$, $w_H = 0$ and $w_S = 0$, guaranteeing that mid-grey is never modified by either slider. Proved by unit test `highlights_and_shadows_leave_mid_grey_untouched`.
+4. **Contrast & vibrance**:
+   Contrast applies a sigmoid S-curve centered at $0.18$. Vibrance scales chroma inversely to existing saturation: $(1 - S) \times \Delta V$.
+5. **Display transfer & bounds clamping**:
+   Values are tone-mapped and converted back to display sRGB $[0.0, 1.0]$:
+   $$C_{disp} = \begin{cases} 12.92 C & C \le 0.0031308 \\ 1.055 C^{1/2.4} - 0.055 & C > 0.0031308 \end{cases}$$
+6. **3D LUT evaluation (display space)**:
+   Input values are clamped to the LUT's declared `[DOMAIN_MIN, DOMAIN_MAX]` (defaulting to $[0.0, 1.0]$). Tetrahedral interpolation samples the four enclosing lattice vertices to compute $C_{lut}$. The result is blended linearly:
+   $$C_{final} = (1 - \text{intensity}) \times C_{disp} + \text{intensity} \times C_{lut}$$
+
+---
+
+## User experience and interface design
+
+### 1. Scanline isolation and neutral surround
+- **Canvas surround token**: `--canvas-surround: #767676` is declared in `frontend/shared/src/ui/styles/tokens.css`. This is true 18% photographic grey ($L^*=50$), preventing chromatic adaptation illusions. In light mode (`[data-theme='light']`), `--canvas-surround` remains `#767676`, because 18% reflectance is an absolute perceptual reference regardless of application chrome.
+- **Canvas z-index token**: `--z-canvas: 60` is declared in `tokens.css`. It lifts the photograph above global CRT scanlines (`--z-scanlines: 50`) while remaining safely beneath status overlays (`--z-status: 100`) and navigation (`--z-nav: 200`).
+
+### 2. Control safety and reversibility
+- **Reset per slider**: Double-clicking any slider label immediately restores it to `0.0`.
+- **Before/After toggle**: Hotkey `\` or holding the comparison button switches the viewport to the unadjusted source.
+- **Card media safety banner**: When opening an image from a volume whose root contains a `DCIM` directory (F10), the UI activates a banner: *"Card media is read-only (G5). Copy files to a working folder to save edits."*
+
+### 3. Multi-sample bulk LUT pre-flight feedback
+- In `/tools/lut`, selecting a folder extracts 3–5 representative frames across the roll and renders a preview strip at the selected LUT intensity before processing.
+- Progress reporting displays: `X rendered, Y skipped, Z failed`, with immediate cancellation support.
+
+---
+
+## Steps
+
+### `ED-1` · Color and adjustment engine in `core`
+- Create `crates/core/src/media/edit/mod.rs` and `pipeline.rs`.
+- Implement sRGB $\leftrightarrow$ Linear float conversions with table lookup optimization.
+- Wire camera RAW decoding directly to the existing F14 derivation ladder (`crates/core/src/ingest/derivation/f14.rs`).
+- Implement exposure, white balance, contrast, anchored highlights/shadows, and vibrance algorithms.
+- **Tests**:
+  - `an_untouched_recipe_is_exact_identity`
+  - `exposure_plus_one_doubles_linear_luminance`
+  - `highlights_and_shadows_leave_mid_grey_untouched`
+
+### `ED-2` · 3D LUT parser and tetrahedral interpolator
+- Create `crates/core/src/media/edit/lut.rs`.
+- Implement clean-room parser for Adobe `.cube`, `.3dl`, and square HALD `.png`.
+- Honour `DOMAIN_MIN` and `DOMAIN_MAX`. Handle out-of-range inputs before interpolation.
+- Implement tetrahedral interpolation in display-encoded space.
+- **Tests**:
+  - `a_lut_is_sampled_with_display_encoded_values_not_linear_ones`
+  - `an_identity_cube_returns_exact_input_values`
+  - `lut_intensity_zero_returns_pre_lut_image`
+  - `lut_intensity_half_blends_fifty_percent`
+
+### `ED-3` · Sidecar serialization, F3 rename, card safety, and export rules
+- Implement `<stem>.photoedit` JSON serialization with `source_sha256` and versioning.
+- Extend `F3 Rename` (`crates/core/src/tools/f3_rename.rs`) to carry companion `.photoedit` files atomically with the parent image.
+- Enforce G5: Implement card volume detection in `core` (`media::card` or `media::edit`): a volume root containing `DCIM` is a card. Prohibit sidecar writes when a file resides on a card volume; allow writes on mounted shares without `DCIM`.
+- Implement single-image export rules: append `_edit` suffix, monotonic collision incrementing (`_edit_1`, `_edit_2`), refusal to write into `Publishing`, and byte-copy on identity recipes.
+- **Tests**:
+  - `f3_rename_carries_companion_photoedit_sidecar`
+  - `editor_refuses_to_write_a_sidecar_on_a_card_volume`
+  - `a_mounted_share_without_dcim_is_writable`
+  - `export_edited_image_appends_edit_suffix_and_never_overwrites`
+  - `export_edited_image_refuses_destination_inside_publishing_folder`
+  - `exporting_an_untouched_jpeg_preserves_source_bytes_without_reencoding`
+
+### `ED-4` · Throttled proxy pipeline and binary IPC
+- Implement dual-stage proxy rendering in `core`: 720p during active dragging, settling to 1440p on release.
+- Transfer proxy frames over Tauri custom binary protocol (`phototools-preview://`).
+- **Benchmark targets and pass/fail measurement**:
+  - **Measurement methodology**: Measure elapsed time from slider input event to new rendered pixels painted in the webview, evaluated with a 1080p proxy generated from a 36 MP source image (e.g. Nikon D810 frame) with active tone adjustments and 3D LUT.
+  - **Pass budget**: **p95 at most 50 ms** on an Apple Silicon Mac in a release build (dev profile already optimizes `core`).
+    *Why 50 ms:* 50 ms sustains 20 fps interactive response, the physiological threshold for visual motor continuity when scrubbing exposure and tone controls. Multithreaded SIMD processing in `core` takes ~15–25 ms, leaving ~25 ms for binary IPC transfer and display.
+  - **Settling budget**: **p95 at most 120 ms** for the 1440p settling frame upon mouse release, meeting the 100–150 ms human immediacy window.
+  - *Note*: These figures are concrete pass/fail targets to be verified and measured on hardware in this step.
+
+### `ED-5` · Bulk LUT tool in `core::tools`
+- Implement `BulkLutTool` in `crates/core/src/tools/lut.rs` conforming to `Tool` trait.
+- Enforce output directory safety: refuse writing to `Publishing` folder (MV-16.7).
+- Integrate `tools::carry_metadata` to copy capture dates, camera tags, and GPS fixes onto all output files via persistent `ExifWriter`.
+- **Tests**:
+  - `bulk_lut_preserves_capture_date_and_gps_on_all_outputs`
+  - `bulk_lut_refuses_output_directory_inside_publishing_folder`
+  - `bulk_lut_summary_reports_processed_skipped_and_failed`
+
+### `ED-6` · Tauri commands and IPC in `desktop`
+- Expose commands in `crates/desktop/src/commands/edit.rs`: `load_recipe`, `save_recipe`, `export_edited_image`, `plan_bulk_lut`, `apply_bulk_lut`.
+- Ensure all paths resolve against configured roots (G6).
+
+### `ED-7` · Desktop UI single-image editor view
+- Add `--canvas-surround: #767676` and `--z-canvas: 60` to `tokens.css`.
+- Build `AdjustmentSlider.vue` and `LutPicker.vue` in `frontend/shared/src/ui/components/` with double-click reset and numeric entry.
+- Create `frontend/desktop/src/views/Edit.vue`.
+- Implement Before/After comparison toggle.
+
+### `ED-8` · Desktop UI bulk LUT view
+- Create `frontend/desktop/src/views/BulkLut.vue`.
+- Implement folder pickers, LUT selector, intensity slider, and multi-sample preview strip.
+- Mount into desktop navigation bar.
+
+---
+
+## Not in this plan
+
+Excluded per Ground Rule G11 to keep scope disciplined:
+- **Carrying `.xmp` sidecars in Rename**: Rename carries `.photoedit` companion files only. If external raw processors' `.xmp` sidecars ever need atomic renaming, that belongs in a separate request.
+- **Web browser editing**: Version 1 is strictly desktop-focused.
+- **GPU compute shaders (`wgpu`)**: The CPU renderer in `core` is the authority. Adding GPU pipelines is deferred to avoid headless CI driver complications and new dependencies (G8).
+- **Local adjustments & geometric corrections**: Selective brush masks, radial gradients, keystoning, and lens distortion corrections are outside the single-exposure balancing scope.
+
+---
+
+## Verification and acceptance plan (MV-20)
+
+Judgement checks in the style of [`docs/manual-verification.md`](manual-verification.md). They live in this plan until implementation begins.
+
+- [ ] **MV-20.1 — Exposure matching against camera JPEG.**
+      Linear exposure compensation must match optical exposure shifts without flattening highlights.
+      **Run:** shoot a RAW frame at 0 EV and +1 EV; adjust the 0 EV RAW to +1 EV in the Editor; compare the result against the camera's native +1 EV JPEG.
+      **Pass:** mid-tone luminance and highlight rolloff match the optical +1 EV frame within visual tolerance.
+      **Result:**
+
+- [ ] **MV-20.2 — Film simulation LUT comparison.**
+      Display-encoded 3D LUT sampling must reproduce film simulations identically to reference software.
+      **Run:** apply a known film `.cube` LUT at 100% intensity in the Editor; compare the exported output side-by-side with the same LUT applied in reference grading software.
+      **Pass:** color rendition, shadow tint, and contrast curve are visually indistinguishable from reference output.
+      **Result:**
+
+- [ ] **MV-20.3 — Neutral surround calibration.**
+      The canvas surround must provide a true radiometric mid-grey ground that does not skew human exposure perception.
+      **Run:** view the Editor canvas in dark and light modes beside an X-Rite 18% neutral grey card in daylight.
+      **Pass:** the surround matches the card's lightness; mid-tones do not appear artificially washed out or crushed.
+      **Result:**
+
+- [ ] **MV-20.4 — Metadata and GPS preservation on export.**
+      Exported derivatives must carry the original capture date, camera model, lens metadata, and GPS position, respecting naming and collision rules.
+      **Run:** run `exiftool -s` on a photograph before and after exporting from the Editor; export a second time.
+      **Pass:** `DateTimeOriginal`, camera tags, lens tags, and GPS coordinates match; output filename appends `_edit`; second export increments to `_edit_1` without overwriting; exporting to `Publishing` is refused.
+      **Result:**
+
+- [ ] **MV-20.5 — Bulk LUT folder run.**
+      Grading an entire folder must operate reliably, non-destructively, and with full metadata retention.
+      **Run:** run the Bulk LUT tool over a folder of 50 images; cancel halfway through, then re-run to completion.
+      **Pass:** cancellation stops cleanly without corrupted files; completed run writes all 50 files with `_lut` suffix; no originals are overwritten.
+      **Result:**
+
+- [ ] **MV-20.6 — Bulk LUT refusal on Publishing folder.**
+      Bulk LUT must refuse to output directly into the `Publishing` folder (MV-16.7).
+      **Run:** attempt to set the Bulk LUT output destination to the active `Publishing` directory.
+      **Pass:** the tool refuses to start and displays an actionable error explaining that `Publishing` is reserved for reviewed outputs.
+      **Result:**
+
+- [ ] **MV-20.7 — Card media read-only safety.**
+      Opening files directly from an SD card volume must never create sidecar files on the removable card (G5), while mounted network shares remain writable.
+      **Run:** open a photograph directly from an SD card volume whose root contains a `DCIM` directory in the Editor; adjust sliders. Then open a photograph from a mounted SMB share without `DCIM`.
+      **Pass:** on the card volume, the read-only banner is displayed and no `.photoedit` file is written; exporting requires selecting a destination on a local disk. On the mounted SMB share, sidecar saving works normally.
+      **Result:**

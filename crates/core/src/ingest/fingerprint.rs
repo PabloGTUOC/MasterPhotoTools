@@ -129,6 +129,8 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    use std::time::{Duration, SystemTime};
+
     struct Tree {
         temp: tempfile::TempDir,
     }
@@ -149,8 +151,17 @@ mod tests {
         }
     }
 
-    fn write(path: PathBuf, bytes: &[u8]) {
+    fn write(path: impl AsRef<Path>, bytes: &[u8]) {
         fs::write(path, bytes).unwrap();
+    }
+
+    fn set_mtime(path: impl AsRef<Path>, time: SystemTime) {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
     }
 
     #[test]
@@ -200,8 +211,14 @@ mod tests {
         // why F10 names both.
         let t = Tree::new("EOS_A");
         fs::create_dir_all(t.temp.path().join("EOS_B").join("DCIM")).unwrap();
-        write(t.dcim("EOS_A").join("IMG_0001.JPG"), b"aaaa");
-        write(t.dcim("EOS_B").join("IMG_0001.JPG"), b"aaaa");
+        let file_a = t.dcim("EOS_A").join("IMG_0001.JPG");
+        let file_b = t.dcim("EOS_B").join("IMG_0001.JPG");
+        write(&file_a, b"aaaa");
+        write(&file_b, b"aaaa");
+
+        let fixed_mtime = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        set_mtime(&file_a, fixed_mtime);
+        set_mtime(&file_b, fixed_mtime);
 
         let a = Fingerprint::of(&t.card("EOS_A")).unwrap();
         let b = Fingerprint::of(&t.card("EOS_B")).unwrap();
@@ -216,9 +233,12 @@ mod tests {
         // the relative layout may participate.
         let one = tempfile::tempdir().unwrap();
         let two = tempfile::tempdir().unwrap();
+        let fixed_mtime = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         for base in [one.path(), two.path()] {
             fs::create_dir_all(base.join("EOS").join("DCIM").join("100CANON")).unwrap();
-            write(base.join("EOS/DCIM/100CANON/IMG_0001.JPG"), b"aaaa");
+            let file = base.join("EOS/DCIM/100CANON/IMG_0001.JPG");
+            write(&file, b"aaaa");
+            set_mtime(&file, fixed_mtime);
         }
 
         let a = Fingerprint::of(&Card::at(one.path().join("EOS")).unwrap()).unwrap();

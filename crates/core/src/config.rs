@@ -121,6 +121,21 @@ impl Config {
         path
     }
 
+    /// Directory where the managed 3D LUT library is stored (ED-6).
+    ///
+    /// Stored alongside the application database in the app data directory
+    /// (e.g. `~/Library/Application Support/masterphototools/luts` on macOS).
+    pub fn lut_dir(&self) -> PathBuf {
+        self.database
+            .parent()
+            .map(|p| p.join("luts"))
+            .unwrap_or_else(|| {
+                dirs::data_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("masterphototools/luts")
+            })
+    }
+
     pub fn load() -> Result<Self, Error> {
         let path = Self::config_path();
         if path.exists() {

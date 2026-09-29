@@ -322,12 +322,21 @@ impl Default for AdjustmentRecipe {
   - `a_lut_changed_after_the_dry_run_refuses_the_run`
 
 ### `ED-6` · Tauri commands and IPC in `desktop`
-- Expose commands in `crates/desktop/src/commands/edit.rs`: `load_recipe`, `save_recipe`, `export_edited_image`, `plan_bulk_lut`, `apply_bulk_lut`.
-- Register the `phototools-preview://` custom binary protocol in Tauri to stream raw RGBA8 proxy frames directly from `PreviewSession` over the binary bridge (transport only, G1), avoiding base64 JSON serialization overhead.
+- Expose commands in `crates/desktop/src/commands/edit.rs`: `load_recipe`, `save_recipe`, `export_edited_image`, `plan_bulk_lut`, `apply_bulk_lut`, `open_preview`, `render_preview`, `close_preview`, `list_luts`, `import_lut`.
+- Stream raw RGBA8 proxy frames directly using Tauri v2's `tauri::ipc::Response` binary IPC rather than a custom URI scheme (`phototools-preview://`), providing zero base64 JSON serialization overhead with no extra dependencies and passing an 8-byte `[width: u32, height: u32]` big-endian header directly with the pixel payload.
 - Ensure all paths resolve against configured roots (G6). Commands resolve `out_dir` via `resolve_output(config, ...)`, enforcing G6 roots and MV-16.7 Publishing folder refusal.
+- Managed LUT library in core (`core::tools::lut_library`) stored under the app data folder (`config.lut_dir()`), with atomic `create_new` non-overwriting import and line-numbered parser verification.
+- Enforce reviewed-hash verification in `apply_bulk_lut` against `reviewed_lut_sha256` to prevent the reviewed-hash trap if the LUT changed on disk after review.
+- Restrict `PreviewSession` in `AppState` to at most one open session (~65 MB proxies), dropping any previous session on new open.
+- Add frontend client methods on `TauriApiClient` only, leaving the shared `ApiClient` unchanged (front-end boundary).
 - **Tests**:
   - `export_edited_image_refuses_destination_inside_publishing_folder`
   - `bulk_lut_refuses_output_directory_inside_publishing_folder`
+  - `apply_bulk_lut_refuses_when_the_lut_changed_after_the_reviewed_plan`
+  - `render_preview_returns_width_height_and_rgba_of_that_size`
+  - `opening_a_second_preview_closes_the_first`
+  - `import_lut_refuses_an_unparseable_file_and_never_overwrites_a_different_lut`
+  - `a_recipe_whose_lut_left_the_library_is_refused_by_name`
 
 ### `ED-7` · Desktop UI single-image editor view
 - Add `--canvas-surround: #767676` and `--z-canvas: 60` to `tokens.css`.

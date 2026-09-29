@@ -1932,3 +1932,86 @@ LUT_3D_SIZE 2
         "must refuse execution when LUT changes after dry run; got: {msg}"
     );
 }
+
+#[test]
+fn import_lut_refuses_an_unparseable_file_and_never_overwrites_a_different_lut() {
+    use phototools_core::tools::lut_library::{import_lut, list_luts};
+
+    let f = Fixtures::new();
+    let library_dir = f.path().join("luts");
+
+    // 1. Unparseable file: refused at import time
+    let broken = f.path().join("corrupted.cube");
+    fs::write(&broken, b"LUT_3D_SIZE 2\n0.0 0.0\n").unwrap();
+    let err = import_lut(&library_dir, &broken).unwrap_err();
+    assert!(
+        err.to_string().contains(":2:") || err.to_string().contains("corrupted.cube"),
+        "broken file must be refused at import time: {err}"
+    );
+
+    // 2. Valid LUT: imported successfully
+    let valid_a = create_test_cube(f.path()); // "test.cube"
+    let entry_a = import_lut(&library_dir, &valid_a).unwrap();
+    assert_eq!(entry_a.name, "test.cube");
+    assert_eq!(entry_a.format, "cube");
+
+    // Check it's in list_luts
+    let list = list_luts(&library_dir).unwrap();
+    assert_eq!(list.luts.len(), 1);
+    assert_eq!(list.luts[0].name, "test.cube");
+
+    // 3. Different LUT with the same file name: must refuse to overwrite
+    let other_dir = f.path().join("other");
+    fs::create_dir_all(&other_dir).unwrap();
+    let different_lut = other_dir.join("test.cube");
+    let different_content = "\
+TITLE \"Different\"
+LUT_3D_SIZE 2
+0.5 0.5 0.5
+1.0 0.0 0.0
+0.0 1.0 0.0
+1.0 1.0 0.0
+0.0 0.0 1.0
+1.0 0.0 1.0
+0.0 1.0 1.0
+1.0 1.0 1.0
+";
+    fs::write(&different_lut, different_content).unwrap();
+
+    let err = import_lut(&library_dir, &different_lut).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("different LUT with that name already exists"),
+        "importing different LUT under same name must be refused; got: {msg}"
+    );
+
+    // Verify existing file in library is unchanged
+    let re_read = list_luts(&library_dir).unwrap();
+    assert_eq!(re_read.luts[0].sha256, entry_a.sha256);
+}
+
+#[test]
+fn a_recipe_whose_lut_left_the_library_is_refused_by_name() {
+    use phototools_core::media::edit::pipeline::LutRef;
+    use phototools_core::tools::lut_library::resolve_recipe_lut;
+
+    let f = Fixtures::new();
+    let library_dir = f.path().join("luts");
+    fs::create_dir_all(&library_dir).unwrap();
+
+    let lut_ref = LutRef {
+        name: "VintageWarm.cube".into(),
+        sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+    };
+
+    let err = resolve_recipe_lut(&library_dir, &lut_ref).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("VintageWarm.cube"),
+        "error message must name the missing LUT; got: {msg}"
+    );
+    assert!(
+        msg.contains("no longer in the library"),
+        "error message must state it is no longer in the library; got: {msg}"
+    );
+}

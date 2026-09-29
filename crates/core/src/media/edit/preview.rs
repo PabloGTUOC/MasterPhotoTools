@@ -81,6 +81,12 @@ pub struct PreviewSession {
 }
 
 impl PreviewSession {
+    /// Decode an image from disk and construct an interactive preview session.
+    pub fn open(path: &std::path::Path) -> Result<Self, Error> {
+        let image = super::pipeline::decode_image(path)?;
+        Self::new(&image)
+    }
+
     /// Build a preview session from a decoded image buffer.
     pub fn new(image: &ImageBuffer) -> Result<Self, Error> {
         Self::from_image_buffer(image)

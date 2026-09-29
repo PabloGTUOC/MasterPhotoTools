@@ -375,6 +375,167 @@ export class TauriApiClient implements ApiClient {
         .catch((e) => finish(e instanceof Error ? e : new Error(String(e))));
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // Editing & LUT commands (ED-6) - on TauriApiClient only, never ApiClient
+  // ---------------------------------------------------------------------------
+
+  loadRecipe(path: string): Promise<AdjustmentRecipe> {
+    return invoke<AdjustmentRecipe>('load_recipe', { path });
+  }
+
+  saveRecipe(path: string, recipe: AdjustmentRecipe): Promise<string> {
+    return invoke<string>('save_recipe', { path, recipe });
+  }
+
+  exportEditedImage(
+    path: string,
+    recipe: AdjustmentRecipe,
+    outDir: string,
+  ): Promise<ExportResult> {
+    return invoke<ExportResult>('export_edited_image', {
+      path,
+      recipe,
+      outDir,
+    });
+  }
+
+  planBulkLut(
+    inputs: string[],
+    lut: string,
+    intensity: number,
+    outDir: string,
+  ): Promise<BulkLutPlanSummary> {
+    return invoke<BulkLutPlanSummary>('plan_bulk_lut', {
+      inputs,
+      lut,
+      intensity,
+      outDir,
+    });
+  }
+
+  applyBulkLut(
+    inputs: string[],
+    lut: string,
+    intensity: number,
+    outDir: string,
+    reviewedLutSha256: string,
+  ): Promise<string> {
+    return invoke<string>('apply_bulk_lut', {
+      inputs,
+      lut,
+      intensity,
+      outDir,
+      reviewedLutSha256,
+    });
+  }
+
+  openPreview(path: string): Promise<OpenPreviewResult> {
+    return invoke<OpenPreviewResult>('open_preview', { path });
+  }
+
+  async renderPreview(
+    sessionId: string,
+    recipe: AdjustmentRecipe,
+    stage: PreviewStage = 'Drag',
+  ): Promise<{ width: number; height: number; pixels: Uint8ClampedArray }> {
+    const res = await invoke<ArrayBuffer | Uint8Array>('render_preview', {
+      sessionId,
+      recipe,
+      stage,
+    });
+    let buffer: ArrayBuffer;
+    let byteOffset = 0;
+    if (res instanceof Uint8Array) {
+      buffer = res.buffer;
+      byteOffset = res.byteOffset;
+    } else {
+      buffer = res;
+    }
+    const view = new DataView(buffer, byteOffset);
+    const width = view.getUint32(0, false);
+    const height = view.getUint32(4, false);
+    const pixels = new Uint8ClampedArray(
+      buffer,
+      byteOffset + 8,
+      width * height * 4,
+    );
+    return { width, height, pixels };
+  }
+
+  closePreview(sessionId: string): Promise<void> {
+    return invoke<void>('close_preview', { sessionId });
+  }
+
+  listLuts(): Promise<LutLibraryList> {
+    return invoke<LutLibraryList>('list_luts');
+  }
+
+  importLut(path: string): Promise<LutEntry> {
+    return invoke<LutEntry>('import_lut', { path });
+  }
+}
+
+/** 3D LUT reference in a recipe. */
+export interface LutRef {
+  name: string;
+  sha256: string;
+}
+
+/** Non-destructive adjustment recipe (ED-1, ED-6). */
+export interface AdjustmentRecipe {
+  exposure?: number;
+  temperature?: number;
+  tint?: number;
+  contrast?: number;
+  highlights?: number;
+  shadows?: number;
+  whites?: number;
+  blacks?: number;
+  lut?: LutRef | null;
+  lut_intensity?: number;
+}
+
+/** Stage for preview rendering. */
+export type PreviewStage = 'Drag' | 'Settle';
+
+/** Open preview response. */
+export interface OpenPreviewResult {
+  session_id: string;
+  drag: [number, number];
+  settle: [number, number];
+}
+
+/** Export result. */
+export interface ExportResult {
+  path: string;
+}
+
+/** Plan summary for Bulk LUT tool (ED-6). */
+export interface BulkLutPlanSummary {
+  actions_count: number;
+  skipped: Array<{ file: string; reason: string }>;
+  lut_sha256: string;
+  sample_frames: string[];
+}
+
+/** Metadata for an imported LUT entry. */
+export interface LutEntry {
+  name: string;
+  sha256: string;
+  format: string;
+}
+
+/** An unparseable file in the LUT library. */
+export interface LutError {
+  name: string;
+  error: string;
+}
+
+/** Contents of the managed LUT library. */
+export interface LutLibraryList {
+  luts: LutEntry[];
+  errors: LutError[];
 }
 
 /** Where the server is, and what to authenticate with (§5.2, §5.3). */

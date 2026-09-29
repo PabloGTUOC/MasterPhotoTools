@@ -12,6 +12,7 @@ pub mod f8_tiff;
 pub mod f9_browser;
 pub mod geotag;
 pub mod lut;
+pub mod lut_library;
 
 pub use edit::{
     exclusive_create_target, export_edited_image, export_edited_image_with_resolver,
@@ -22,6 +23,10 @@ pub use edit::{
 pub use lut::{
     sample_frames, BulkLutAction, BulkLutParams, BulkLutSummary, BulkLutTool,
     ACCEPTED as BULK_LUT_ACCEPTED,
+};
+pub use lut_library::{
+    find_lut_by_name_or_sha256, find_lut_by_sha256, import_lut, list_luts, resolve_recipe_lut,
+    LutEntry, LutError, LutLibraryList,
 };
 
 use crate::jobs::{Progress, ToolResult};

@@ -107,6 +107,18 @@ fn main() {
             app.manage(state);
             Ok(())
         })
+        .on_window_event(|window, event| {
+            // Close preview session when the window closes so the last session's
+            // ~65 MB does not remain allocated while the macOS app continues running.
+            if matches!(
+                event,
+                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+            ) {
+                if let Some(state) = window.try_state::<AppState>() {
+                    state.close_any_preview();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
             commands::get_config,
@@ -153,6 +165,16 @@ fn main() {
             commands::apply_geotag,
             commands::get_launch_at_login,
             commands::set_launch_at_login,
+            commands::load_recipe,
+            commands::save_recipe,
+            commands::export_edited_image,
+            commands::plan_bulk_lut,
+            commands::apply_bulk_lut,
+            commands::open_preview,
+            commands::render_preview,
+            commands::close_preview,
+            commands::list_luts,
+            commands::import_lut,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the PhotoTools desktop application");

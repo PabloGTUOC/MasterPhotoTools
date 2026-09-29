@@ -25,11 +25,14 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::State;
 
+pub mod edit;
+pub use edit::*;
+
 /// Commands answer with a message, not a `Result<_, Error>`, because Tauri
 /// serialises the error side as an opaque string. This keeps the reason visible.
-type CommandResult<T> = Result<T, String>;
+pub(crate) type CommandResult<T> = Result<T, String>;
 
-fn describe(e: Error) -> String {
+pub(crate) fn describe(e: Error) -> String {
     match e {
         Error::AccessDenied(_) => {
             "That path is outside the folders this application may touch.".to_string()
@@ -42,18 +45,18 @@ fn describe(e: Error) -> String {
 // G6 — path resolution
 // ---------------------------------------------------------------------------
 
-fn resolve_input(config: &Config, path: &str) -> CommandResult<PathBuf> {
+pub(crate) fn resolve_input(config: &Config, path: &str) -> CommandResult<PathBuf> {
     config.resolve(std::path::Path::new(path)).map_err(describe)
 }
 
-fn resolve_inputs(config: &Config, paths: &[String]) -> CommandResult<Vec<PathBuf>> {
+pub(crate) fn resolve_inputs(config: &Config, paths: &[String]) -> CommandResult<Vec<PathBuf>> {
     if paths.is_empty() {
         return Err("No paths were supplied.".into());
     }
     paths.iter().map(|p| resolve_input(config, p)).collect()
 }
 
-fn resolve_output(config: &Config, path: &str) -> CommandResult<PathBuf> {
+pub(crate) fn resolve_output(config: &Config, path: &str) -> CommandResult<PathBuf> {
     config
         .resolve_for_create(std::path::Path::new(path))
         .map_err(describe)

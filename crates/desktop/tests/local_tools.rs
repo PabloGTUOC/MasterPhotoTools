@@ -226,3 +226,230 @@ async fn a_two_hundred_from_the_wrong_service_is_not_reachable() {
     );
     assert!(status.detail.unwrap().contains("listening"));
 }
+
+/// Helper to create a valid 2x2x2 cube LUT on disk.
+fn create_test_cube(dir: &std::path::Path) -> PathBuf {
+    let p = dir.join("test.cube");
+    let content = "\
+TITLE \"Test Cube\"
+LUT_3D_SIZE 2
+0.0 0.0 0.0
+1.0 0.0 0.0
+0.0 1.0 0.0
+1.0 1.0 0.0
+0.0 0.0 1.0
+1.0 0.0 1.0
+0.0 1.0 1.0
+1.0 1.0 1.0
+";
+    std::fs::write(&p, content).unwrap();
+    p
+}
+
+#[test]
+fn export_edited_image_refuses_destination_inside_publishing_folder() {
+    let mut f = fixture();
+    let pub_dir = f._temp.path().join("publishing");
+    std::fs::create_dir_all(&pub_dir).unwrap();
+    f.config.publishing_dir = Some(pub_dir.canonicalize().unwrap());
+
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = phototools_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let img_path = f.root.join("source.jpg");
+    image::RgbImage::new(60, 40).save(&img_path).unwrap();
+
+    let recipe = phototools_core::media::edit::AdjustmentRecipe::default();
+    let err = phototools_desktop::commands::edit::export_edited_image_impl(
+        &state,
+        img_path.to_string_lossy().to_string(),
+        recipe,
+        pub_dir.to_string_lossy().to_string(),
+    )
+    .unwrap_err();
+
+    assert!(
+        err.contains("publishing folder"),
+        "must refuse writing inside Publishing folder (MV-16.7); got: {err}"
+    );
+}
+
+#[test]
+fn bulk_lut_refuses_output_directory_inside_publishing_folder() {
+    let mut f = fixture();
+    let pub_dir = f._temp.path().join("publishing");
+    std::fs::create_dir_all(&pub_dir).unwrap();
+    f.config.publishing_dir = Some(pub_dir.canonicalize().unwrap());
+
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = phototools_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let img_path = f.root.join("photo.jpg");
+    image::RgbImage::new(60, 40).save(&img_path).unwrap();
+
+    // Import a test LUT into the managed library
+    let cube = create_test_cube(&f.root);
+    phototools_desktop::commands::edit::import_lut_impl(&state, cube.to_string_lossy().to_string())
+        .unwrap();
+
+    let err = phototools_desktop::commands::edit::plan_bulk_lut_impl(
+        &state,
+        vec![img_path.to_string_lossy().to_string()],
+        "test.cube".into(),
+        1.0,
+        pub_dir.to_string_lossy().to_string(),
+    )
+    .unwrap_err();
+
+    assert!(
+        err.contains("publishing folder"),
+        "must refuse output inside Publishing folder (MV-16.7); got: {err}"
+    );
+}
+
+#[test]
+fn apply_bulk_lut_refuses_when_the_lut_changed_after_the_reviewed_plan() {
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = phototools_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let img_path = f.root.join("source.jpg");
+    image::RgbImage::new(60, 40).save(&img_path).unwrap();
+
+    let cube = create_test_cube(&f.root);
+    phototools_desktop::commands::edit::import_lut_impl(&state, cube.to_string_lossy().to_string())
+        .unwrap();
+
+    let out_dir = f.root.join("graded_out");
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    // 1. User plans and reviews the dry run
+    let plan = phototools_desktop::commands::edit::plan_bulk_lut_impl(
+        &state,
+        vec![img_path.to_string_lossy().to_string()],
+        "test.cube".into(),
+        1.0,
+        out_dir.to_string_lossy().to_string(),
+    )
+    .unwrap();
+    let reviewed_lut_sha256 = plan.lut_sha256;
+
+    // 2. The LUT file on disk is modified after review
+    let lut_in_lib = f.config.lut_dir().join("test.cube");
+    let modified_content = "\
+TITLE \"Modified Test Cube\"
+LUT_3D_SIZE 2
+0.2 0.2 0.2
+1.0 0.0 0.0
+0.0 1.0 0.0
+1.0 1.0 0.0
+0.0 0.0 1.0
+1.0 0.0 1.0
+0.0 1.0 1.0
+1.0 1.0 1.0
+";
+    std::fs::write(&lut_in_lib, modified_content).unwrap();
+
+    // 3. User clicks Run with the reviewed hash
+    let err = phototools_desktop::commands::edit::apply_bulk_lut_impl(
+        &state,
+        vec![img_path.to_string_lossy().to_string()],
+        "test.cube".into(),
+        1.0,
+        out_dir.to_string_lossy().to_string(),
+        reviewed_lut_sha256,
+    )
+    .unwrap_err();
+
+    assert!(
+        err.contains("changed on disk since the reviewed plan"),
+        "must refuse execution when LUT changed after reviewed plan; got: {err}"
+    );
+}
+
+#[test]
+fn render_preview_returns_width_height_and_rgba_of_that_size() {
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = phototools_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let img_path = f.root.join("photo.jpg");
+    image::RgbImage::new(60, 40).save(&img_path).unwrap();
+
+    let open_res = phototools_desktop::commands::edit::open_preview_impl(
+        &state,
+        img_path.to_string_lossy().to_string(),
+    )
+    .unwrap();
+
+    assert_eq!(open_res.drag, (60, 40));
+    assert_eq!(open_res.settle, (60, 40));
+
+    let bytes = phototools_desktop::commands::edit::render_preview_impl(
+        &state,
+        open_res.session_id,
+        phototools_core::media::edit::AdjustmentRecipe::default(),
+        Some(phototools_core::media::edit::preview::PreviewStage::Drag),
+    )
+    .unwrap();
+
+    let width = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
+    let height = u32::from_be_bytes(bytes[4..8].try_into().unwrap());
+    assert_eq!(width, 60);
+    assert_eq!(height, 40);
+    assert_eq!(
+        bytes.len(),
+        8 + (60 * 40 * 4),
+        "payload must contain 8-byte header and exactly width*height*4 RGBA bytes"
+    );
+}
+
+#[test]
+fn opening_a_second_preview_closes_the_first() {
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = phototools_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let img1 = f.root.join("first.jpg");
+    image::RgbImage::new(40, 40).save(&img1).unwrap();
+    let img2 = f.root.join("second.jpg");
+    image::RgbImage::new(80, 80).save(&img2).unwrap();
+
+    let session1 = phototools_desktop::commands::edit::open_preview_impl(
+        &state,
+        img1.to_string_lossy().to_string(),
+    )
+    .unwrap()
+    .session_id;
+
+    let session2 = phototools_desktop::commands::edit::open_preview_impl(
+        &state,
+        img2.to_string_lossy().to_string(),
+    )
+    .unwrap()
+    .session_id;
+
+    assert_ne!(session1, session2);
+
+    // Session 1 is now closed and must be refused
+    let err = phototools_desktop::commands::edit::render_preview_impl(
+        &state,
+        session1,
+        phototools_core::media::edit::AdjustmentRecipe::default(),
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("closed or replaced"),
+        "session 1 must be closed after opening session 2; got: {err}"
+    );
+
+    // Session 2 is active and succeeds
+    let res = phototools_desktop::commands::edit::render_preview_impl(
+        &state,
+        session2,
+        phototools_core::media::edit::AdjustmentRecipe::default(),
+        None,
+    );
+    assert!(res.is_ok(), "session 2 must be active and renderable");
+}

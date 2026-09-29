@@ -28,6 +28,9 @@
   --border: var(--grid);
   --border-strong: var(--dust);
 
+  /* True 18% neutral photographic grey (L*=50) (ED-7). */
+  --canvas-surround: #767676;
+
   --text: var(--chrome);
   --text-heading: var(--white);
   --text-muted: var(--fog);
@@ -78,6 +81,7 @@
   /* --- z-index (§9.4) -------------------------------------------------- */
   --z-content: 1;
   --z-scanlines: 50;
+  --z-canvas: 60;
   --z-status: 100;
   --z-nav: 200;
   --z-lightbox: 300;
@@ -102,6 +106,8 @@
   --grid: #b8b8cc;
   --chrome: #1a1a26;
   --white: #0a0a0f;
+  /* 18% neutral grey remains invariant across themes (ED-7). */
+  --canvas-surround: #767676;
   /* Darkened so it still passes AA against paper. */
   --phosphor: #00b368;
   --dust: #6e6e8c;

@@ -28,12 +28,14 @@ pub struct BulkLutPlanSummary {
     pub sample_frames: Vec<String>,
 }
 
-/// Metadata and proxy dimensions returned when opening a preview session.
+/// Metadata, proxy dimensions, orientation, and card safety status returned when opening a preview session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenPreviewResult {
     pub session_id: String,
     pub drag: (u32, u32),
     pub settle: (u32, u32),
+    pub orientation: u32,
+    pub read_only: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -41,14 +43,17 @@ pub struct OpenPreviewResult {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn load_recipe(path: String, state: State<'_, AppState>) -> CommandResult<AdjustmentRecipe> {
+pub fn load_recipe(
+    path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<Option<AdjustmentRecipe>> {
     load_recipe_impl(&state, path)
 }
 
-pub fn load_recipe_impl(state: &AppState, path: String) -> CommandResult<AdjustmentRecipe> {
+pub fn load_recipe_impl(state: &AppState, path: String) -> CommandResult<Option<AdjustmentRecipe>> {
     let config = state.config();
     let resolved = resolve_input(&config, &path)?;
-    phototools_core::tools::edit::load_recipe(&resolved).map_err(describe)
+    phototools_core::tools::edit::load_recipe_for_image(&resolved).map_err(describe)
 }
 
 #[tauri::command]
@@ -254,6 +259,8 @@ pub fn open_preview_impl(state: &AppState, path: String) -> CommandResult<OpenPr
         session_id: info.session_id,
         drag: info.drag,
         settle: info.settle,
+        orientation: info.orientation,
+        read_only: info.read_only,
     })
 }
 

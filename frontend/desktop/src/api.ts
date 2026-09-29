@@ -380,8 +380,8 @@ export class TauriApiClient implements ApiClient {
   // Editing & LUT commands (ED-6) - on TauriApiClient only, never ApiClient
   // ---------------------------------------------------------------------------
 
-  loadRecipe(path: string): Promise<AdjustmentRecipe> {
-    return invoke<AdjustmentRecipe>('load_recipe', { path });
+  loadRecipe(path: string): Promise<AdjustmentRecipe | null> {
+    return invoke<AdjustmentRecipe | null>('load_recipe', { path });
   }
 
   saveRecipe(path: string, recipe: AdjustmentRecipe): Promise<string> {
@@ -484,14 +484,16 @@ export interface LutRef {
 
 /** Non-destructive adjustment recipe (ED-1, ED-6). */
 export interface AdjustmentRecipe {
+  version?: number;
+  source_sha256?: string;
   exposure?: number;
   temperature?: number;
   tint?: number;
-  contrast?: number;
   highlights?: number;
   shadows?: number;
-  whites?: number;
-  blacks?: number;
+  contrast?: number;
+  saturation?: number;
+  vibrance?: number;
   lut?: LutRef | null;
   lut_intensity?: number;
 }
@@ -504,11 +506,14 @@ export interface OpenPreviewResult {
   session_id: string;
   drag: [number, number];
   settle: [number, number];
+  orientation: number;
+  read_only: boolean;
 }
 
 /** Export result. */
 export interface ExportResult {
   path: string;
+  metadata_skipped?: { file: string; reason: string } | null;
 }
 
 /** Plan summary for Bulk LUT tool (ED-6). */

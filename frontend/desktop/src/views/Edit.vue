@@ -1,0 +1,882 @@
+<script setup lang="ts">
+/**
+ * Single-image editor view (ED-7).
+ *
+ * Dedicated workspace for tuning one photograph at a time:
+ * - Viewport: True neutral 18% grey surround (`--canvas-surround`), free of scanlines (`--z-canvas: 60`).
+ * - Rendering discipline: At most one IPC `renderPreview` in flight, latest-wins, drag frames (720p) during scrub, settle frame (1440p) on release.
+ * - Painting: RGBA8 directly onto canvas with `putImageData`, displayed upright via CSS transform reflecting EXIF orientation.
+ * - Controls: Parametric sliders with double-click reset to 0 (identity), 3D LUT selector with intensity, before/after compare (`\` or hold button).
+ * - Safe saving: 300 ms debounced `saveRecipe`; card volumes are read-only with safety banner (G5).
+ * - Sidecar safety: Unreadable sidecars disable autosave to avoid overwriting existing edits.
+ * - Full export: `exportEditedImage` with collision protection and destination validation.
+ */
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import type {
+  AdjustmentRecipe,
+  LutLibraryList,
+  LutRef,
+  OpenPreviewResult,
+  PreviewStage,
+} from '@host/api';
+import { desktop } from '@host/api';
+import AdjustmentSlider from '@ui/components/AdjustmentSlider.vue';
+import LutPicker from '@ui/components/LutPicker.vue';
+import PathField from '@ui/components/PathField.vue';
+import { useRoots } from '@ui/useRoots';
+
+const sourcePath = ref('');
+const exportDir = ref('');
+const sessionId = ref<string | null>(null);
+const orientation = ref<number>(1);
+const isReadOnly = ref(false);
+const autosaveDisabled = ref(false);
+const loading = ref(false);
+const error = ref<string | null>(null);
+const saveStatus = ref<string>('');
+const exportStatus = ref<string | null>(null);
+const exportError = ref<string | null>(null);
+const isBefore = ref(false);
+
+const canvasRef = ref<HTMLCanvasElement | null>(null);
+const viewportContainerRef = ref<HTMLDivElement | null>(null);
+
+// Container dimensions for responsive fit
+const containerWidth = ref(0);
+const containerHeight = ref(0);
+const frameWidth = ref(1280);
+const frameHeight = ref(854);
+let resizeObserver: ResizeObserver | null = null;
+
+// Roots and listing for PathField
+const { roots, failure: rootsError } = useRoots();
+const listRoots = (p: string) => desktop.list(p);
+
+// Library LUTs
+const lutList = ref<LutLibraryList>({ luts: [], errors: [] });
+
+function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
+  return {
+    version: 1,
+    source_sha256: sourceSha,
+    exposure: 0.0,
+    temperature: 0.0,
+    tint: 0.0,
+    highlights: 0.0,
+    shadows: 0.0,
+    contrast: 0.0,
+    saturation: 0.0,
+    vibrance: 0.0,
+    lut: null,
+    lut_intensity: 1.0,
+  };
+}
+
+const recipe = ref<AdjustmentRecipe>(createIdentityRecipe());
+
+// Rendering discipline state
+let inFlight = false;
+let pending: { recipe: AdjustmentRecipe; stage: PreviewStage } | null = null;
+let saveDebounceTimer: number | undefined;
+
+// Whether orientation swaps width and height
+const swapsAxes = computed(() => [5, 6, 7, 8].includes(orientation.value));
+
+// Orientation CSS transform (checked against EXIF standard 1-8)
+const canvasTransform = computed(() => {
+  switch (orientation.value) {
+    case 1:
+      return 'none';
+    case 2:
+      return 'scaleX(-1)';
+    case 3:
+      return 'rotate(180deg)';
+    case 4:
+      return 'scaleY(-1)';
+    case 5:
+      // Transpose: reflection across main diagonal (y, x)
+      return 'rotate(90deg) scaleY(-1)';
+    case 6:
+      // Rotate 90 deg CW
+      return 'rotate(90deg)';
+    case 7:
+      // Transverse: reflection across anti-diagonal (-y, -x)
+      return 'rotate(90deg) scaleX(-1)';
+    case 8:
+      // Rotate 270 deg CW
+      return 'rotate(270deg)';
+    default:
+      return 'none';
+  }
+});
+
+// Sizing so rotated canvas fits inside viewport container without overflowing or clipping
+const canvasStyle = computed(() => {
+  const cw = containerWidth.value;
+  const ch = containerHeight.value;
+  const fw = frameWidth.value || 1280;
+  const fh = frameHeight.value || 854;
+
+  if (cw <= 0 || ch <= 0) {
+    return {
+      maxWidth: '100%',
+      maxHeight: '100%',
+      objectFit: 'contain' as const,
+      transform: canvasTransform.value,
+      position: 'relative' as const,
+      zIndex: 'var(--z-canvas)',
+    };
+  }
+
+  if (swapsAxes.value) {
+    // Rotated image is H wide and W high visually
+    const aVis = fh / fw;
+    let vW: number;
+    let vH: number;
+    if (cw / ch > aVis) {
+      vH = ch;
+      vW = ch * aVis;
+    } else {
+      vW = cw;
+      vH = cw / aVis;
+    }
+    // Because canvas layout is rotated by 90/270 deg, its DOM width must be vH and DOM height vW
+    const lW = vH;
+    const lH = vW;
+    return {
+      width: `${Math.round(lW)}px`,
+      height: `${Math.round(lH)}px`,
+      transform: canvasTransform.value,
+      position: 'relative' as const,
+      zIndex: 'var(--z-canvas)',
+    };
+  } else {
+    const a = fw / fh;
+    let lW: number;
+    let lH: number;
+    if (cw / ch > a) {
+      lH = ch;
+      lW = ch * a;
+    } else {
+      lW = cw;
+      lH = cw / a;
+    }
+    return {
+      width: `${Math.round(lW)}px`,
+      height: `${Math.round(lH)}px`,
+      transform: canvasTransform.value,
+      position: 'relative' as const,
+      zIndex: 'var(--z-canvas)',
+    };
+  }
+});
+
+async function refreshLuts() {
+  try {
+    lutList.value = await desktop.listLuts();
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    error.value = `Failed to list LUTs: ${msg}`;
+    console.error('Failed to list LUTs:', err);
+  }
+}
+
+async function handleImportLut(path: string) {
+  try {
+    error.value = null;
+    await desktop.importLut(path);
+    await refreshLuts();
+  } catch (err: unknown) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+function paintPixels(frame: { width: number; height: number; pixels: Uint8ClampedArray }, stage: PreviewStage) {
+  const canvas = canvasRef.value;
+  if (!canvas) return;
+
+  frameWidth.value = frame.width;
+  frameHeight.value = frame.height;
+
+  if (canvas.width !== frame.width || canvas.height !== frame.height) {
+    canvas.width = frame.width;
+    canvas.height = frame.height;
+  }
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const imgData = new ImageData(frame.pixels, frame.width, frame.height);
+  ctx.putImageData(imgData, 0, 0);
+
+  // Dispatch custom event for test harness and verification
+  canvas.dispatchEvent(
+    new CustomEvent('frame-painted', {
+      detail: {
+        width: frame.width,
+        height: frame.height,
+        stage,
+        timestamp: performance.now(),
+      },
+    }),
+  );
+}
+
+async function executeRender(r: AdjustmentRecipe, stage: PreviewStage) {
+  if (!sessionId.value) return;
+  inFlight = true;
+
+  try {
+    const frame = await desktop.renderPreview(sessionId.value, r, stage);
+    paintPixels(frame, stage);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    error.value = `Preview render failed: ${msg}`;
+    console.error('Preview render error:', err);
+  } finally {
+    inFlight = false;
+    if (pending) {
+      const next = pending;
+      pending = null;
+      executeRender(next.recipe, next.stage);
+    }
+  }
+}
+
+function requestRender(stage: PreviewStage) {
+  if (!sessionId.value) return;
+  const current = isBefore.value ? createIdentityRecipe() : { ...recipe.value };
+
+  if (inFlight) {
+    // Latest wins: replace pending request
+    pending = { recipe: current, stage };
+  } else {
+    executeRender(current, stage);
+  }
+}
+
+function scheduleSave() {
+  if (isReadOnly.value) {
+    saveStatus.value = 'Read-only: card media';
+    return;
+  }
+  if (autosaveDisabled.value) {
+    saveStatus.value = 'Autosave disabled (sidecar error)';
+    return;
+  }
+  if (!sourcePath.value || !sessionId.value) return;
+
+  if (saveDebounceTimer) {
+    window.clearTimeout(saveDebounceTimer);
+  }
+
+  saveStatus.value = 'Saving…';
+  saveDebounceTimer = window.setTimeout(async () => {
+    saveDebounceTimer = undefined;
+    try {
+      await desktop.saveRecipe(sourcePath.value, recipe.value);
+      saveStatus.value = 'Saved';
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      saveStatus.value = `Couldn't save: ${msg}`;
+    }
+  }, 300);
+}
+
+function onRecipeValueInput() {
+  requestRender('Drag');
+}
+
+function onRecipeValueChange() {
+  requestRender('Settle');
+  scheduleSave();
+}
+
+function setLut(lut: LutRef | null) {
+  recipe.value.lut = lut;
+  onRecipeValueChange();
+}
+
+function setLutIntensity(val: number) {
+  recipe.value.lut_intensity = val;
+  onRecipeValueInput();
+}
+
+function onLutIntensityChange(val: number) {
+  recipe.value.lut_intensity = val;
+  onRecipeValueChange();
+}
+
+function setBefore(active: boolean) {
+  if (isBefore.value === active) return;
+  isBefore.value = active;
+  requestRender('Settle');
+}
+
+function isTextInputFocused(): boolean {
+  const active = document.activeElement;
+  if (!active) return false;
+  const tag = active.tagName.toLowerCase();
+  if (tag === 'textarea') return true;
+  if (tag === 'input') {
+    const type = (active as HTMLInputElement).type.toLowerCase();
+    return (
+      type === 'text' ||
+      type === 'number' ||
+      type === 'search' ||
+      type === 'password' ||
+      type === 'email'
+    );
+  }
+  return false;
+}
+
+function handleKeyDown(e: KeyboardEvent) {
+  if (e.key === '\\') {
+    if (isTextInputFocused()) return;
+    e.preventDefault();
+    setBefore(true);
+  }
+}
+
+function handleKeyUp(e: KeyboardEvent) {
+  if (e.key === '\\') {
+    if (isTextInputFocused()) return;
+    e.preventDefault();
+    setBefore(false);
+  }
+}
+
+async function openImage(path: string) {
+  if (!path.trim()) return;
+  loading.value = true;
+  error.value = null;
+  saveStatus.value = '';
+  exportStatus.value = null;
+  exportError.value = null;
+  autosaveDisabled.value = false;
+
+  if (sessionId.value) {
+    await desktop.closePreview(sessionId.value).catch(() => {});
+    sessionId.value = null;
+  }
+
+  try {
+    const info: OpenPreviewResult = await desktop.openPreview(path.trim());
+    sessionId.value = info.session_id;
+    orientation.value = info.orientation;
+    isReadOnly.value = info.read_only;
+
+    // Load existing sidecar recipe if present, distinguishing between no sidecar and load failure
+    let existing: AdjustmentRecipe | null = null;
+    let recipeLoadFailed = false;
+    try {
+      existing = await desktop.loadRecipe(path.trim());
+    } catch (err: unknown) {
+      recipeLoadFailed = true;
+      const msg = err instanceof Error ? err.message : String(err);
+      error.value = `Failed to load recipe sidecar: ${msg}`;
+      saveStatus.value = `Autosave disabled: sidecar failed to load (${msg})`;
+      autosaveDisabled.value = true;
+    }
+
+    if (existing) {
+      recipe.value = {
+        ...createIdentityRecipe(),
+        ...existing,
+      };
+      saveStatus.value = 'Saved';
+      autosaveDisabled.value = false;
+    } else if (!recipeLoadFailed) {
+      recipe.value = createIdentityRecipe();
+      saveStatus.value = isReadOnly.value ? 'Read-only: card media' : '';
+      autosaveDisabled.value = false;
+    } else {
+      recipe.value = createIdentityRecipe();
+    }
+
+    // Default export directory to image directory
+    const parts = path.trim().split('/');
+    parts.pop();
+    exportDir.value = parts.join('/') || '/';
+
+    // Initial render
+    requestRender('Settle');
+  } catch (err: unknown) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function handleExport() {
+  if (!sourcePath.value || !exportDir.value) return;
+  exportStatus.value = null;
+  exportError.value = null;
+
+  try {
+    const res = await desktop.exportEditedImage(
+      sourcePath.value.trim(),
+      recipe.value,
+      exportDir.value.trim(),
+    );
+    exportStatus.value = res.path;
+    if (res.metadata_skipped) {
+      exportStatus.value += ` (Metadata skipped: ${res.metadata_skipped.reason})`;
+    }
+  } catch (err: unknown) {
+    exportError.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+function resetAll() {
+  recipe.value = createIdentityRecipe();
+  onRecipeValueChange();
+}
+
+watch(sourcePath, (newPath) => {
+  if (newPath) {
+    openImage(newPath);
+  }
+});
+
+onMounted(() => {
+  refreshLuts();
+  window.addEventListener('keydown', handleKeyDown);
+  window.addEventListener('keyup', handleKeyUp);
+
+  if (viewportContainerRef.value) {
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width > 0 && entry.contentRect.height > 0) {
+          containerWidth.value = entry.contentRect.width;
+          containerHeight.value = entry.contentRect.height;
+        }
+      }
+    });
+    resizeObserver.observe(viewportContainerRef.value);
+  }
+});
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeyDown);
+  window.removeEventListener('keyup', handleKeyUp);
+
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
+
+  // Flush pending save immediately on unmount (Item 7)
+  if (saveDebounceTimer) {
+    window.clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = undefined;
+    if (!isReadOnly.value && !autosaveDisabled.value && sourcePath.value && sessionId.value) {
+      desktop.saveRecipe(sourcePath.value, recipe.value).catch((err: unknown) => {
+        console.error('Failed to flush recipe save on unmount:', err);
+      });
+    }
+  }
+
+  if (sessionId.value) {
+    desktop.closePreview(sessionId.value).catch(() => {});
+  }
+});
+</script>
+
+<template>
+  <div class="edit-screen">
+    <!-- Top toolbar: image path input, loading indicator, and card safety banner -->
+    <div class="edit-screen__toolbar">
+      <PathField
+        v-model="sourcePath"
+        label="Photograph to edit"
+        :roots="roots"
+        :roots-error="rootsError"
+        :list="listRoots"
+        placeholder="/path/to/image.jpg"
+        :selectable="['jpg', 'jpeg', 'tif', 'tiff', 'cr2', 'nef', 'arw', 'dng', 'png']"
+      />
+
+      <div v-if="loading" class="edit-screen__loading" data-testid="edit-loading">
+        Loading photograph<span class="edit-screen__cursor">_</span>
+      </div>
+
+      <div v-if="error" class="error edit-screen__error" data-testid="edit-error">
+        {{ error }}
+      </div>
+
+      <!-- Card Read-Only Banner (G5) -->
+      <div v-if="isReadOnly" class="edit-screen__card-banner" data-testid="card-readonly-banner">
+        Card media is read-only (G5). Copy files to a working folder to save edits.
+      </div>
+    </div>
+
+    <!-- Workspace: canvas viewport on the left, adjustment panel on the right -->
+    <div class="edit-screen__workspace">
+      <!-- Photograph Canvas Viewport -->
+      <div class="canvas-viewport" data-testid="canvas-viewport">
+        <div ref="viewportContainerRef" class="canvas-viewport__container">
+          <canvas
+            ref="canvasRef"
+            class="canvas-viewport__canvas"
+            data-testid="edit-canvas"
+            :style="canvasStyle"
+          ></canvas>
+        </div>
+
+        <!-- Before / After toggle button -->
+        <div class="canvas-viewport__overlay">
+          <button
+            type="button"
+            class="secondary canvas-viewport__before-btn"
+            data-testid="before-after-btn"
+            :class="{ active: isBefore }"
+            @pointerdown="setBefore(true)"
+            @pointerup="setBefore(false)"
+            @pointerleave="setBefore(false)"
+          >
+            {{ isBefore ? 'Before (Original)' : 'Before / After (Hold or \\)' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Side panel: Parametric adjustments & LUT grading -->
+      <aside class="adjustment-panel">
+        <div class="adjustment-panel__header">
+          <h2 class="adjustment-panel__title">Adjustments</h2>
+          <button
+            type="button"
+            class="ghost adjustment-panel__reset-btn"
+            data-testid="reset-all-btn"
+            @click="resetAll"
+          >
+            Reset all
+          </button>
+        </div>
+
+        <div class="adjustment-panel__group">
+          <span class="adjustment-panel__group-title">Exposure & Tone</span>
+          <AdjustmentSlider
+            v-model="recipe.exposure"
+            label="Exposure"
+            :min="-5.0"
+            :max="5.0"
+            :step="0.1"
+            unit="EV"
+            test-id="exposure"
+            @update:model-value="onRecipeValueInput"
+            @change="onRecipeValueChange"
+          />
+
+          <AdjustmentSlider
+            v-model="recipe.contrast"
+            label="Contrast"
+            :min="-100"
+            :max="100"
+            :step="1"
+            test-id="contrast"
+            @update:model-value="onRecipeValueInput"
+            @change="onRecipeValueChange"
+          />
+
+          <AdjustmentSlider
+            v-model="recipe.highlights"
+            label="Highlights"
+            :min="-100"
+            :max="100"
+            :step="1"
+            test-id="highlights"
+            @update:model-value="onRecipeValueInput"
+            @change="onRecipeValueChange"
+          />
+
+          <AdjustmentSlider
+            v-model="recipe.shadows"
+            label="Shadows"
+            :min="-100"
+            :max="100"
+            :step="1"
+            test-id="shadows"
+            @update:model-value="onRecipeValueInput"
+            @change="onRecipeValueChange"
+          />
+        </div>
+
+        <div class="adjustment-panel__group">
+          <span class="adjustment-panel__group-title">White Balance</span>
+          <AdjustmentSlider
+            v-model="recipe.temperature"
+            label="Temperature"
+            :min="-100"
+            :max="100"
+            :step="1"
+            test-id="temperature"
+            @update:model-value="onRecipeValueInput"
+            @change="onRecipeValueChange"
+          />
+
+          <AdjustmentSlider
+            v-model="recipe.tint"
+            label="Tint"
+            :min="-100"
+            :max="100"
+            :step="1"
+            test-id="tint"
+            @update:model-value="onRecipeValueInput"
+            @change="onRecipeValueChange"
+          />
+        </div>
+
+        <div class="adjustment-panel__group">
+          <span class="adjustment-panel__group-title">Color</span>
+          <AdjustmentSlider
+            v-model="recipe.saturation"
+            label="Saturation"
+            :min="-100"
+            :max="100"
+            :step="1"
+            test-id="saturation"
+            @update:model-value="onRecipeValueInput"
+            @change="onRecipeValueChange"
+          />
+
+          <AdjustmentSlider
+            v-model="recipe.vibrance"
+            label="Vibrance"
+            :min="-100"
+            :max="100"
+            :step="1"
+            test-id="vibrance"
+            @update:model-value="onRecipeValueInput"
+            @change="onRecipeValueChange"
+          />
+        </div>
+
+        <!-- 3D LUT Selector -->
+        <LutPicker
+          :model-value="recipe.lut ?? null"
+          :intensity="recipe.lut_intensity ?? 1.0"
+          :luts="lutList.luts"
+          :errors="lutList.errors"
+          :roots="roots"
+          :roots-error="rootsError"
+          :list="listRoots"
+          @update:model-value="setLut"
+          @update:intensity="setLutIntensity"
+          @change="onLutIntensityChange"
+          @import="handleImportLut"
+        />
+
+        <!-- Save Status Line -->
+        <div class="adjustment-panel__status" data-testid="save-status">
+          <span v-if="saveStatus" :class="{ error: saveStatus.startsWith('Couldn\'t') || saveStatus.startsWith('Autosave disabled') }">
+            {{ saveStatus }}
+          </span>
+        </div>
+
+        <!-- Export Render Section -->
+        <div class="adjustment-panel__export">
+          <span class="adjustment-panel__group-title">Export Render</span>
+          <PathField
+            v-model="exportDir"
+            label="Destination folder"
+            :roots="roots"
+            :roots-error="rootsError"
+            :list="listRoots"
+            placeholder="/path/to/output_folder"
+          />
+
+          <button
+            type="button"
+            class="primary adjustment-panel__export-btn"
+            data-testid="export-btn"
+            :disabled="!sessionId || !exportDir"
+            @click="handleExport"
+          >
+            Export render
+          </button>
+
+          <div v-if="exportStatus" class="adjustment-panel__export-success" data-testid="export-success">
+            Exported to: {{ exportStatus }}
+          </div>
+
+          <div v-if="exportError" class="error adjustment-panel__export-error" data-testid="export-error">
+            {{ exportError }}
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.edit-screen {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: var(--space-3);
+  height: 100%;
+  min-height: 0;
+}
+
+.edit-screen__toolbar {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.edit-screen__loading {
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--accent);
+}
+
+.edit-screen__cursor {
+  animation: blink 1s steps(1) infinite;
+}
+
+.edit-screen__error {
+  padding: var(--space-2);
+  border: 1px solid var(--danger);
+}
+
+.edit-screen__card-banner {
+  font-family: var(--font-label);
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  padding: var(--space-2) var(--space-3);
+  background: rgba(255, 179, 71, 0.1);
+  border: 1px solid var(--amber);
+  color: var(--amber);
+}
+
+.edit-screen__workspace {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: var(--space-4);
+  min-height: 540px;
+  height: 100%;
+}
+
+/* --- Canvas Viewport (§1.1 isolated surround above scanlines) ------------ */
+
+.canvas-viewport {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  background: var(--canvas-surround);
+  border: var(--border-hair);
+  min-height: 480px;
+  overflow: hidden;
+}
+
+.canvas-viewport__container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  padding: var(--space-4);
+}
+
+.canvas-viewport__canvas {
+  object-fit: contain;
+  position: relative;
+  z-index: var(--z-canvas);
+  image-rendering: auto;
+}
+
+.canvas-viewport__overlay {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-2);
+  background: rgba(10, 10, 15, 0.6);
+}
+
+.canvas-viewport__before-btn {
+  min-height: 40px;
+  padding: var(--space-2) var(--space-4);
+  font-size: 12px;
+}
+
+.canvas-viewport__before-btn.active {
+  background: var(--accent);
+  color: var(--void);
+}
+
+/* --- Adjustment Sidebar Panel ------------------------------------------- */
+
+.adjustment-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  background: var(--bg-elevated);
+  border: var(--border-hair);
+  overflow-y: auto;
+  max-height: calc(100vh - 180px);
+}
+
+.adjustment-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.adjustment-panel__title {
+  font-size: 20px;
+  font-family: var(--font-display);
+}
+
+.adjustment-panel__reset-btn {
+  min-height: 40px;
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
+}
+
+.adjustment-panel__group {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-hair);
+  background: var(--bg-panel);
+}
+
+.adjustment-panel__group-title {
+  font-family: var(--font-label);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.adjustment-panel__status {
+  font-family: var(--font-label);
+  font-size: 13px;
+  min-height: 20px;
+  color: var(--accent);
+}
+
+.adjustment-panel__export {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-hair);
+  background: var(--bg-panel);
+}
+
+.adjustment-panel__export-btn {
+  width: 100%;
+  min-height: 44px;
+}
+
+.adjustment-panel__export-success {
+  font-family: var(--font-label);
+  font-size: 12px;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.adjustment-panel__export-error {
+  font-size: 12px;
+  word-break: break-all;
+}
+</style>

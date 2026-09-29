@@ -384,6 +384,8 @@ fn render_preview_returns_width_height_and_rgba_of_that_size() {
 
     assert_eq!(open_res.drag, (60, 40));
     assert_eq!(open_res.settle, (60, 40));
+    assert_eq!(open_res.orientation, 1);
+    assert!(!open_res.read_only);
 
     let bytes = phototools_desktop::commands::edit::render_preview_impl(
         &state,
@@ -452,4 +454,54 @@ fn opening_a_second_preview_closes_the_first() {
         None,
     );
     assert!(res.is_ok(), "session 2 must be active and renderable");
+}
+
+#[test]
+fn a_saved_recipe_is_loaded_again_when_the_photo_is_reopened() {
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = phototools_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let img = f.root.join("reopen.jpg");
+    image::RgbImage::new(40, 40).save(&img).unwrap();
+
+    let recipe = phototools_core::media::edit::AdjustmentRecipe {
+        exposure: 1.5,
+        temperature: -10.0,
+        contrast: 25.0,
+        ..Default::default()
+    };
+
+    let path_str = img.to_string_lossy().to_string();
+    phototools_desktop::commands::edit::save_recipe_impl(&state, path_str.clone(), recipe).unwrap();
+
+    // Reopen and load
+    let loaded = phototools_desktop::commands::edit::load_recipe_impl(&state, path_str)
+        .unwrap()
+        .expect("saved recipe must be loaded");
+    assert_eq!(loaded.exposure, 1.5);
+    assert_eq!(loaded.temperature, -10.0);
+    assert_eq!(loaded.contrast, 25.0);
+}
+
+#[test]
+fn an_unreadable_sidecar_is_reported_not_treated_as_no_edits() {
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = phototools_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let img = f.root.join("corrupt.jpg");
+    image::RgbImage::new(40, 40).save(&img).unwrap();
+
+    // Write invalid JSON to companion sidecar
+    let sidecar = f.root.join("corrupt.jpg.photoedit");
+    std::fs::write(&sidecar, b"not valid json").unwrap();
+
+    let path_str = img.to_string_lossy().to_string();
+    let err = phototools_desktop::commands::edit::load_recipe_impl(&state, path_str)
+        .expect_err("unreadable sidecar must error, never return None");
+    assert!(
+        err.contains("JSON") || err.contains("syntax") || err.contains("corrupt"),
+        "error must report the corrupted sidecar; got: {err}"
+    );
 }

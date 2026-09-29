@@ -8,6 +8,8 @@ import { sharedToolRoutes } from '@ui/routes';
 // Desktop-only: §2.3 puts the card reader on the Mac, so the review screen has
 // no meaning in a build that cannot see a card.
 import Ingest from './views/Ingest.vue';
+// Single-image non-destructive editor (ED-7).
+import Edit from './views/Edit.vue';
 // The shared Timeline with the server panel above it: syncing is this machine's
 // business, and the server cannot sync with itself
 // (`docs/timeline-sync-plan.md`).
@@ -21,6 +23,7 @@ const router = createRouter({
     // Ingest is the landing screen: §2.3 puts the card reader on this machine,
     // and reading a card is what the desktop application is for.
     { path: '/', component: Ingest },
+    { path: '/edit', component: Edit },
     // The tabs both applications carry, defined once in `@ui/routes`. The
     // Timeline's component is replaced rather than its path: the label, the
     // order and the step number stay the shared ones, so the two applications

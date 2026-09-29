@@ -25,12 +25,14 @@ static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 pub type PreviewDimensions = (u32, u32);
 
-/// Session identifier and proxy dimensions returned on preview open.
+/// Session identifier, proxy dimensions, orientation, and card safety status returned on preview open.
 #[derive(Debug, Clone)]
 pub struct PreviewSessionInfo {
     pub session_id: String,
     pub drag: PreviewDimensions,
     pub settle: PreviewDimensions,
+    pub orientation: u32,
+    pub read_only: bool,
 }
 
 /// A currently active interactive preview session and its token.
@@ -100,6 +102,10 @@ impl AppState {
         let session = PreviewSession::open(&path)?;
         let drag = session.drag_dimensions();
         let settle = session.settle_dimensions();
+        let orientation = phototools_core::media::meta::read_meta(&path)
+            .map(|m| m.orientation as u32)
+            .unwrap_or(1);
+        let read_only = phototools_core::tools::edit::is_card_volume(&path);
         let session_id = format!(
             "preview_{}",
             NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed)
@@ -114,6 +120,8 @@ impl AppState {
             session_id,
             drag,
             settle,
+            orientation,
+            read_only,
         })
     }
 

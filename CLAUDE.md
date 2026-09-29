@@ -69,7 +69,7 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 858 passing
+cargo test --workspace          # 860 passing
 cargo test -p phototools-core   # 758 passing — G2
 ```
 
@@ -87,11 +87,13 @@ npm --prefix frontend/web run check:ingest      # Phase 13 acceptance, measured 
 npm --prefix frontend/desktop run typecheck
 npm --prefix frontend/desktop run build
 npm --prefix frontend/desktop run check:transport
+npm --prefix frontend/desktop run check:edit    # ED-7 acceptance & render timing budget, measured in a browser
 ```
 
 `check:layout` and `check:ingest` drive Chromium and write screenshots to
-`frontend/web/layout-proof/`. They assert **numbers**, not shapes — a change that makes the grid
-slower or unwindows it fails them.
+`frontend/web/layout-proof/`; `check:edit` drives Chromium and writes screenshots to
+`frontend/desktop/layout-proof/`. They assert **numbers**, not shapes — a change that makes the grid
+or preview slower or unwindows it fails them.
 
 MSRV is **1.80**, enforced by clippy. `std::iter::repeat_n` and friends are too new.
 

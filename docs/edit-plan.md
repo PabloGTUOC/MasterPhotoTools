@@ -303,19 +303,31 @@ impl Default for AdjustmentRecipe {
 
 ### `ED-5` · Bulk LUT tool in `core::tools`
 - Implement `BulkLutTool` in `crates/core/src/tools/lut.rs` conforming to `Tool` trait.
-- Enforce output directory safety: refuse writing to `Publishing` folder (MV-16.7).
-- Integrate `tools::carry_metadata` to copy capture dates, camera tags, and GPS fixes onto all output files via persistent `ExifWriter`.
+- Refuse output directory on an SD card volume (G5, `is_card_volume`) in `plan()` before anything runs.
+- Split `tools::edit` into render-and-write with parameterized exclusive creation (`_lut`, `_lut_1`...) and metadata carrying.
+- Process files sequentially (Rayon parallelism within each image, never decoding many full frames at once).
+- Call `carry_metadata` once for the entire batch (G4, single persistent `ExifWriter`).
+- Implement `sample_frames(plan, n)` returning up to `n` frames evenly spread through the plan order.
 - **Tests**:
+  - `bulk_lut_over_many_files_starts_exactly_one_exiftool`
   - `bulk_lut_preserves_capture_date_and_gps_on_all_outputs`
-  - `bulk_lut_refuses_output_directory_inside_publishing_folder`
   - `bulk_lut_summary_reports_processed_skipped_and_failed`
+  - `bulk_lut_never_overwrites_and_names_outputs_with_lut_suffix`
+  - `bulk_lut_refuses_an_output_directory_on_a_card`
+  - `bulk_lut_cancelled_midway_leaves_no_partial_file_and_reports_what_it_wrote`
+  - `bulk_lut_skips_sidecars_and_hidden_files`
+  - `sample_frames_spreads_across_the_folder_rather_than_taking_the_first`
+  - `export_still_carries_metadata_after_the_split`
+  - `a_malformed_lut_is_refused_at_plan_time_not_after_running`
+  - `a_lut_changed_after_the_dry_run_refuses_the_run`
 
 ### `ED-6` · Tauri commands and IPC in `desktop`
 - Expose commands in `crates/desktop/src/commands/edit.rs`: `load_recipe`, `save_recipe`, `export_edited_image`, `plan_bulk_lut`, `apply_bulk_lut`.
 - Register the `phototools-preview://` custom binary protocol in Tauri to stream raw RGBA8 proxy frames directly from `PreviewSession` over the binary bridge (transport only, G1), avoiding base64 JSON serialization overhead.
-- Ensure all paths resolve against configured roots (G6). The export command resolves `out_dir` via `resolve_output(config, ...)`, enforcing G6 roots and MV-16.7 Publishing folder refusal.
+- Ensure all paths resolve against configured roots (G6). Commands resolve `out_dir` via `resolve_output(config, ...)`, enforcing G6 roots and MV-16.7 Publishing folder refusal.
 - **Tests**:
   - `export_edited_image_refuses_destination_inside_publishing_folder`
+  - `bulk_lut_refuses_output_directory_inside_publishing_folder`
 
 ### `ED-7` · Desktop UI single-image editor view
 - Add `--canvas-surround: #767676` and `--z-canvas: 60` to `tokens.css`.

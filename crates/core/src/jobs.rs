@@ -353,6 +353,7 @@ impl Progress for SinkProgress {
 
 pub type ToolResult<T> = Result<Outcome<T>, Error>;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome<T> {
     pub data: T,
 }

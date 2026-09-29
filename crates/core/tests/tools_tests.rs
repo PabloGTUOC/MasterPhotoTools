@@ -1451,3 +1451,484 @@ fn a_16_bit_tiff_exports_as_a_16_bit_tiff() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// ED-5: Bulk LUT tool (crates/core/src/tools/lut.rs)
+// ---------------------------------------------------------------------------
+
+fn spawn_counting_shim(f: &Fixtures) -> (std::path::PathBuf, std::path::PathBuf) {
+    let log = f.path().join("spawns.log");
+    let shim = f.path().join("exiftool-shim");
+    let real = std::process::Command::new("which")
+        .arg("exiftool")
+        .output()
+        .unwrap()
+        .stdout;
+    let real = String::from_utf8(real).unwrap().trim().to_string();
+
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\necho spawn >> {}\nexec {} \"$@\"\n",
+            log.display(),
+            real
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    (shim, log)
+}
+
+fn create_test_cube(dir: &Path) -> std::path::PathBuf {
+    let p = dir.join("test.cube");
+    let content = "\
+TITLE \"Test Cube\"
+LUT_3D_SIZE 2
+0.0 0.0 0.0
+1.0 0.0 0.0
+0.0 1.0 0.0
+1.0 1.0 0.0
+0.0 0.0 1.0
+1.0 0.0 1.0
+0.0 1.0 1.0
+1.0 1.0 1.0
+";
+    fs::write(&p, content).unwrap();
+    p
+}
+
+#[test]
+fn bulk_lut_over_many_files_starts_exactly_one_exiftool() {
+    use phototools_core::tools::lut::{BulkLutParams, BulkLutTool};
+
+    let f = Fixtures::new();
+    let (shim, log) = spawn_counting_shim(&f);
+
+    let mut inputs = Vec::new();
+    for i in 0..6 {
+        inputs.push(f.jpeg_with_exif(
+            &format!("shot{i}.jpg"),
+            40,
+            40,
+            &format!("2024:05:1{i} 10:00:00"),
+            "CAM1",
+        ));
+    }
+
+    let lut_path = create_test_cube(f.path());
+    let out_dir = f.path().join("bulk_out");
+    let params = BulkLutParams::new(inputs, lut_path, 1.0, out_dir);
+
+    let plan = BulkLutTool.plan(&params).unwrap().data;
+    assert_eq!(plan.actions.len(), 6);
+
+    let summary = BulkLutTool
+        .apply_with(
+            plan,
+            &InMemoryProgress::default(),
+            Some(&shim.to_string_lossy()),
+        )
+        .unwrap()
+        .data;
+
+    assert_eq!(summary.written.len(), 6);
+    assert_eq!(summary.failures.len(), 0);
+
+    let spawns = std::fs::read_to_string(&log).unwrap().lines().count();
+    assert_eq!(
+        spawns, 1,
+        "6 files processed by BulkLutTool must start exactly one exiftool, not {spawns}"
+    );
+}
+
+#[test]
+fn bulk_lut_preserves_capture_date_and_gps_on_all_outputs() {
+    use phototools_core::media::ExifWriter;
+    use phototools_core::tools::geotag::{exif, TrackPoint};
+    use phototools_core::tools::lut::{BulkLutParams, BulkLutTool};
+
+    let f = Fixtures::new();
+    let mut inputs = Vec::new();
+    for i in 0..3 {
+        let day = i + 1;
+        let path = f.jpeg_with_exif(
+            &format!("geo{i}.jpg"),
+            50,
+            50,
+            &format!("2024:06:0{day} 14:00:00"),
+            "GPSCAM",
+        );
+        let fix = TrackPoint {
+            at: 1_767_259_800 + i as i64 * 60,
+            lat: 52.531549 + i as f64 * 0.01,
+            lon: 3.460808 + i as f64 * 0.01,
+            ele: Some(36.4),
+        };
+        let mut writer = ExifWriter::start().unwrap();
+        writer
+            .set_tags(&path, &exif::render(&fix, true).args())
+            .unwrap();
+        writer.close().unwrap();
+        inputs.push(path);
+    }
+
+    let lut_path = create_test_cube(f.path());
+    let out_dir = f.path().join("geo_out");
+    let params = BulkLutParams::new(inputs, lut_path, 0.8, out_dir);
+
+    let plan = BulkLutTool.plan(&params).unwrap().data;
+    let summary = BulkLutTool
+        .apply(plan, &InMemoryProgress::default())
+        .unwrap()
+        .data;
+
+    assert_eq!(summary.written.len(), 3);
+    for (i, out_path) in summary.written.iter().enumerate() {
+        let day = i + 1;
+        let meta = read_meta(out_path).unwrap();
+        assert_eq!(
+            meta.capture,
+            Some(dt(&format!("2024:06:0{day} 14:00:00"))),
+            "capture date must be preserved on output {i}"
+        );
+        assert_eq!(meta.camera.as_deref(), Some("GPSCAM"));
+        let fix = meta.gps.expect("GPS must survive into bulk LUT output");
+        assert!((fix.lat - (52.531549 + i as f64 * 0.01)).abs() < 1e-4);
+        assert!((fix.lon - (3.460808 + i as f64 * 0.01)).abs() < 1e-4);
+    }
+}
+
+#[test]
+fn bulk_lut_summary_reports_processed_skipped_and_failed() {
+    use phototools_core::tools::lut::{BulkLutParams, BulkLutTool};
+
+    let f = Fixtures::new();
+    let good1 = f.jpeg_without_exif("good1.jpg", 30, 30);
+    let good2 = f.jpeg_without_exif("good2.jpg", 30, 30);
+    let corrupt = f.path().join("corrupt.jpg");
+    fs::write(&corrupt, b"not a valid JPEG image file content at all").unwrap();
+
+    let lut_path = create_test_cube(f.path());
+    let out_dir = f.path().join("summary_out");
+    let params = BulkLutParams::new(vec![good1, corrupt.clone(), good2], lut_path, 0.5, out_dir);
+
+    let plan = BulkLutTool.plan(&params).unwrap().data;
+    assert_eq!(plan.actions.len(), 3);
+
+    let summary = BulkLutTool
+        .apply(plan, &InMemoryProgress::default())
+        .unwrap()
+        .data;
+
+    assert_eq!(summary.written.len(), 2, "2 good files must be written");
+    assert_eq!(summary.failures.len(), 1, "1 corrupt file must be reported");
+    assert_eq!(summary.failures[0].0, corrupt);
+    assert!(
+        !summary.failures[0].1.is_empty(),
+        "failure must include a reason"
+    );
+}
+
+#[test]
+fn bulk_lut_never_overwrites_and_names_outputs_with_lut_suffix() {
+    use phototools_core::tools::lut::{BulkLutParams, BulkLutTool};
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("photo.jpg", 40, 40);
+    let lut_path = create_test_cube(f.path());
+    let out_dir = f.path().join("mono_out");
+
+    let params = BulkLutParams::new(vec![img.clone()], lut_path.clone(), 1.0, out_dir.clone());
+
+    // First apply -> photo_lut.jpg
+    let plan1 = BulkLutTool.plan(&params).unwrap().data;
+    let summary1 = BulkLutTool
+        .apply(plan1, &InMemoryProgress::default())
+        .unwrap()
+        .data;
+    assert_eq!(summary1.written.len(), 1);
+    assert_eq!(summary1.written[0].file_name().unwrap(), "photo_lut.jpg");
+
+    // Second apply -> photo_lut_1.jpg
+    let plan2 = BulkLutTool.plan(&params).unwrap().data;
+    let summary2 = BulkLutTool
+        .apply(plan2, &InMemoryProgress::default())
+        .unwrap()
+        .data;
+    assert_eq!(summary2.written.len(), 1);
+    assert_eq!(summary2.written[0].file_name().unwrap(), "photo_lut_1.jpg");
+
+    // Third apply -> photo_lut_2.jpg
+    let plan3 = BulkLutTool.plan(&params).unwrap().data;
+    let summary3 = BulkLutTool
+        .apply(plan3, &InMemoryProgress::default())
+        .unwrap()
+        .data;
+    assert_eq!(summary3.written.len(), 1);
+    assert_eq!(summary3.written[0].file_name().unwrap(), "photo_lut_2.jpg");
+
+    // All three files exist concurrently and were not overwritten
+    assert!(out_dir.join("photo_lut.jpg").exists());
+    assert!(out_dir.join("photo_lut_1.jpg").exists());
+    assert!(out_dir.join("photo_lut_2.jpg").exists());
+}
+
+#[test]
+fn bulk_lut_refuses_an_output_directory_on_a_card() {
+    use phototools_core::tools::lut::{BulkLutParams, BulkLutTool};
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("photo.jpg", 40, 40);
+    let lut_path = create_test_cube(f.path());
+
+    let temp = tempfile::tempdir().unwrap();
+    let card_root = temp.path().join("card");
+    let dcim = card_root.join("DCIM");
+    fs::create_dir_all(&dcim).unwrap();
+    let card_out = card_root.join("DCIM/exports");
+
+    let params = BulkLutParams::new(vec![img], lut_path, 1.0, card_out);
+    let resolver = |_p: &Path| Some(card_root.clone());
+
+    let err = BulkLutTool
+        .plan_with_resolver(&params, resolver)
+        .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("Cannot output to a card volume: card media is read-only (G5)"),
+        "expected card refusal, got: {err}"
+    );
+}
+
+#[test]
+fn bulk_lut_cancelled_midway_leaves_no_partial_file_and_reports_what_it_wrote() {
+    use phototools_core::jobs::Progress;
+    use phototools_core::tools::lut::{BulkLutParams, BulkLutTool};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let f = Fixtures::new();
+    let img1 = f.jpeg_without_exif("shot1.jpg", 40, 40);
+    let img2 = f.jpeg_without_exif("shot2.jpg", 40, 40);
+    let img3 = f.jpeg_without_exif("shot3.jpg", 40, 40);
+    let lut_path = create_test_cube(f.path());
+    let out_dir = f.path().join("cancel_out");
+
+    struct CancelAfterFirst {
+        cancel_checks: AtomicUsize,
+    }
+    impl Progress for CancelAfterFirst {
+        fn report(&self, _done: u64, _total: u64, _message: &str) {}
+        fn cancelled(&self) -> bool {
+            // First check before file 1 returns false, second check before file 2 returns true
+            self.cancel_checks.fetch_add(1, Ordering::SeqCst) >= 1
+        }
+    }
+
+    let params = BulkLutParams::new(vec![img1, img2, img3], lut_path, 1.0, out_dir.clone());
+    let plan = BulkLutTool.plan(&params).unwrap().data;
+    assert_eq!(plan.actions.len(), 3);
+
+    let progress = CancelAfterFirst {
+        cancel_checks: AtomicUsize::new(0),
+    };
+    let summary = BulkLutTool.apply(plan, &progress).unwrap().data;
+
+    assert_eq!(
+        summary.written.len(),
+        1,
+        "only the first file should have been written before cancellation"
+    );
+    assert!(out_dir.join("shot1_lut.jpg").exists());
+    assert!(!out_dir.join("shot2_lut.jpg").exists());
+    assert!(!out_dir.join("shot3_lut.jpg").exists());
+}
+
+#[test]
+fn bulk_lut_skips_sidecars_and_hidden_files() {
+    use phototools_core::tools::lut::{BulkLutParams, BulkLutTool};
+
+    let f = Fixtures::new();
+    let in_dir = f.path().join("mix_input");
+    fs::create_dir_all(&in_dir).unwrap();
+
+    let valid = in_dir.join("photo.jpg");
+    let img_src = f.jpeg_without_exif("valid_src.jpg", 40, 40);
+    fs::copy(&img_src, &valid).unwrap();
+
+    let sidecar = in_dir.join("photo.jpg.photoedit");
+    fs::write(&sidecar, b"{\"version\":1}").unwrap();
+
+    let hidden_img = in_dir.join(".hidden.jpg");
+    fs::copy(&img_src, &hidden_img).unwrap();
+
+    let ds_store = in_dir.join(".DS_Store");
+    fs::write(&ds_store, b"fake ds store").unwrap();
+
+    let lut_path = create_test_cube(f.path());
+    let out_dir = f.path().join("mix_out");
+
+    let params = BulkLutParams::new(vec![in_dir], lut_path, 1.0, out_dir.clone());
+    let plan = BulkLutTool.plan(&params).unwrap().data;
+
+    assert_eq!(
+        plan.actions.len(),
+        1,
+        "only valid photo.jpg should become an action, sidecars and hidden files skipped"
+    );
+    assert_eq!(plan.actions[0].source, valid);
+
+    let summary = BulkLutTool
+        .apply(plan, &InMemoryProgress::default())
+        .unwrap()
+        .data;
+
+    assert_eq!(summary.written.len(), 1);
+    assert_eq!(summary.written[0], out_dir.join("photo_lut.jpg"));
+    assert!(!out_dir.join(".hidden_lut.jpg").exists());
+    assert!(!out_dir.join(".DS_Store_lut.jpg").exists());
+}
+
+#[test]
+fn sample_frames_spreads_across_the_folder_rather_than_taking_the_first() {
+    use phototools_core::tools::lut::{sample_frames, BulkLutAction};
+    use phototools_core::tools::Plan;
+    use std::path::PathBuf;
+
+    let actions: Vec<_> = (0..10)
+        .map(|i| BulkLutAction {
+            source: PathBuf::from(format!("/photos/IMG_{i:04}.jpg")),
+            out_dir: PathBuf::from("/out"),
+            lut_path: PathBuf::from("/luts/test.cube"),
+            lut_sha256: "test_sha256".to_string(),
+            intensity: 1.0,
+        })
+        .collect();
+
+    let plan = Plan {
+        actions,
+        skipped: Vec::new(),
+    };
+
+    let samples = sample_frames(&plan, 3);
+    assert_eq!(samples.len(), 3);
+    assert_eq!(
+        samples[0],
+        PathBuf::from("/photos/IMG_0000.jpg"),
+        "first sample must be the first frame"
+    );
+    assert_eq!(
+        samples[1],
+        PathBuf::from("/photos/IMG_0004.jpg"),
+        "middle sample must be midway through the folder"
+    );
+    assert_eq!(
+        samples[2],
+        PathBuf::from("/photos/IMG_0009.jpg"),
+        "last sample must be the last frame"
+    );
+
+    // Proves it does NOT take the first 3
+    let first_three: Vec<_> = plan
+        .actions
+        .iter()
+        .take(3)
+        .map(|a| a.source.clone())
+        .collect();
+    assert_ne!(
+        samples, first_three,
+        "sample_frames must spread evenly across the folder, not just take the first N"
+    );
+}
+
+#[test]
+fn export_still_carries_metadata_after_the_split() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::export_edited_image;
+
+    let f = Fixtures::new();
+    let img = f.jpeg_with_exif("source.jpg", 60, 60, "2025:07:08 12:00:00", "LEICA_M11");
+    let out_dir = f.path().join("split_guard_out");
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        ..AdjustmentRecipe::default()
+    };
+
+    let res = export_edited_image(&img, &recipe, None, &out_dir).unwrap();
+    assert!(res.path.exists());
+
+    let meta = read_meta(&res.path).unwrap();
+    assert_eq!(
+        meta.capture,
+        Some(dt("2025:07:08 12:00:00")),
+        "Capture date must survive into export after render_and_write split"
+    );
+    assert_eq!(
+        meta.camera.as_deref(),
+        Some("LEICA_M11"),
+        "Camera tag must survive into export after render_and_write split"
+    );
+}
+
+#[test]
+fn a_malformed_lut_is_refused_at_plan_time_not_after_running() {
+    use phototools_core::tools::lut::{BulkLutParams, BulkLutTool};
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("photo.jpg", 30, 30);
+    let broken_lut = f.path().join("broken.cube");
+    fs::write(&broken_lut, b"TITLE \"Broken\"\nLUT_3D_SIZE 2\n0.0 0.0\n").unwrap();
+
+    let out_dir = f.path().join("out");
+    let params = BulkLutParams::new(vec![img], broken_lut, 1.0, out_dir);
+
+    let err = BulkLutTool.plan(&params).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains(":3:"),
+        "error must cite parser's line-numbered failure at plan time; got: {msg}"
+    );
+}
+
+#[test]
+fn a_lut_changed_after_the_dry_run_refuses_the_run() {
+    use phototools_core::tools::lut::{BulkLutParams, BulkLutTool};
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("photo.jpg", 30, 30);
+    let lut_path = create_test_cube(f.path());
+    let out_dir = f.path().join("changed_out");
+
+    let params = BulkLutParams::new(vec![img], lut_path.clone(), 1.0, out_dir);
+    let plan = BulkLutTool.plan(&params).unwrap().data;
+    assert_eq!(plan.actions.len(), 1);
+
+    // Modify the LUT file on disk after the plan / dry run has been produced
+    let modified_content = "\
+TITLE \"Modified Cube\"
+LUT_3D_SIZE 2
+0.1 0.1 0.1
+1.0 0.0 0.0
+0.0 1.0 0.0
+1.0 1.0 0.0
+0.0 0.0 1.0
+1.0 0.0 1.0
+0.0 1.0 1.0
+1.0 1.0 1.0
+";
+    fs::write(&lut_path, modified_content).unwrap();
+
+    let err = BulkLutTool
+        .apply(plan, &InMemoryProgress::default())
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("changed on disk since the dry run"),
+        "must refuse execution when LUT changes after dry run; got: {msg}"
+    );
+}

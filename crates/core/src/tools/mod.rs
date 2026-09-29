@@ -11,12 +11,17 @@ pub mod f7_border;
 pub mod f8_tiff;
 pub mod f9_browser;
 pub mod geotag;
+pub mod lut;
 
 pub use edit::{
-    export_edited_image, export_edited_image_with_resolver, find_volume_root, is_card_volume,
-    is_card_volume_with_resolver, is_identity, is_sidecar, load_recipe, load_recipe_for_image,
-    save_recipe, save_recipe_with_resolver, sidecar_path, ExportResult, CURRENT_RECIPE_VERSION,
-    SIDECAR_EXTENSION,
+    exclusive_create_target, export_edited_image, export_edited_image_with_resolver,
+    find_volume_root, is_card_volume, is_card_volume_with_resolver, is_identity, is_sidecar,
+    load_recipe, load_recipe_for_image, render_and_write, save_recipe, save_recipe_with_resolver,
+    sidecar_path, ExportResult, CURRENT_RECIPE_VERSION, SIDECAR_EXTENSION,
+};
+pub use lut::{
+    sample_frames, BulkLutAction, BulkLutParams, BulkLutSummary, BulkLutTool,
+    ACCEPTED as BULK_LUT_ACCEPTED,
 };
 
 use crate::jobs::{Progress, ToolResult};
@@ -102,6 +107,7 @@ pub fn summarise(
 }
 
 /// One output, and the photograph it was made from.
+#[derive(Debug, Clone)]
 pub struct Derived {
     pub source: std::path::PathBuf,
     pub output: std::path::PathBuf,
@@ -131,11 +137,23 @@ pub struct Derived {
 /// Returning the skips rather than swallowing them is what lets a summary say
 /// so (G10).
 pub fn carry_metadata(derived: &[Derived], upright: bool) -> Vec<Skip> {
+    carry_metadata_with(derived, upright, None)
+}
+
+/// Carry metadata across a batch of derivatives, optionally specifying a custom `exiftool` program.
+pub fn carry_metadata_with(derived: &[Derived], upright: bool, program: Option<&str>) -> Vec<Skip> {
     if derived.is_empty() {
         return Vec::new();
     }
 
-    let mut writer = match crate::media::ExifWriter::start() {
+    let writer_result = match program {
+        Some(prog) => {
+            crate::media::ExifWriter::start_with(prog, std::time::Duration::from_secs(60))
+        }
+        None => crate::media::ExifWriter::start(),
+    };
+
+    let mut writer = match writer_result {
         Ok(writer) => writer,
         Err(e) => {
             // Everything was written; only the metadata is missing. Say so once

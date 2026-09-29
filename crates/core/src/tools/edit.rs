@@ -249,19 +249,25 @@ impl AsRef<Path> for ExportResult {
     }
 }
 
-/// Atomically creates an exclusive export target file, testing candidates `_edit`, `_edit_1`, `_edit_2`...
-fn exclusive_create_export_target(
+/// Atomically creates an exclusive export target file, testing candidates `{stem}_{suffix}.{ext}`, `{stem}_{suffix}_1.{ext}`, etc.
+pub fn exclusive_create_target(
     out_dir: &Path,
     stem: &str,
+    suffix: &str,
     ext: &str,
 ) -> Result<(PathBuf, File), Error> {
+    let norm_suffix = if suffix.starts_with('_') {
+        suffix.to_string()
+    } else {
+        format!("_{suffix}")
+    };
     let mut k = 0usize;
     loop {
         let filename = match (k, ext.is_empty()) {
-            (0, false) => format!("{stem}_edit.{ext}"),
-            (0, true) => format!("{stem}_edit"),
-            (n, false) => format!("{stem}_edit_{n}.{ext}"),
-            (n, true) => format!("{stem}_edit_{n}"),
+            (0, false) => format!("{stem}{norm_suffix}.{ext}"),
+            (0, true) => format!("{stem}{norm_suffix}"),
+            (n, false) => format!("{stem}{norm_suffix}_{n}.{ext}"),
+            (n, true) => format!("{stem}{norm_suffix}_{n}"),
         };
         let candidate_path = out_dir.join(&filename);
         match OpenOptions::new()
@@ -274,6 +280,99 @@ fn exclusive_create_export_target(
                 k += 1;
             }
             Err(e) => return Err(Error::from(e)),
+        }
+    }
+}
+
+/// Renders an edited image and writes it to `out_dir` with exclusive naming using `suffix`.
+///
+/// Decodes the source, applies the adjustment recipe (including LUT validation), encodes
+/// to memory (TIFF for 16-bit, JPEG for 8-bit), and writes to an exclusive output file.
+/// Returns the `Derived` descriptor without writing metadata.
+pub fn render_and_write(
+    source: &Path,
+    recipe: &AdjustmentRecipe,
+    lut: Option<&Lut>,
+    out_dir: &Path,
+    suffix: &str,
+) -> Result<Derived, Error> {
+    validate_lut(recipe, lut)?;
+
+    let stem = source.file_stem().unwrap_or_default().to_string_lossy();
+    if stem.is_empty() {
+        return Err(Error::Refused("Source file has no stem name".into()));
+    }
+
+    let decoded = decode_image(source)?;
+    let processed = apply_recipe(&decoded, recipe, lut)?;
+
+    match processed {
+        ImageBuffer::Rgb16 {
+            width,
+            height,
+            data,
+        } => {
+            let img16 =
+                image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_raw(width, height, data)
+                    .ok_or_else(|| Error::Internal("failed to construct Rgb16 buffer".into()))?;
+            let dyn_img = image::DynamicImage::ImageRgb16(img16);
+            let mut tiff_bytes = Vec::new();
+            let mut cursor = std::io::Cursor::new(&mut tiff_bytes);
+            dyn_img
+                .write_to(&mut cursor, image::ImageFormat::Tiff)
+                .map_err(|e| Error::Internal(format!("failed to encode TIFF: {e}")))?;
+
+            std::fs::create_dir_all(out_dir)?;
+            let (target_path, mut target_file) =
+                exclusive_create_target(out_dir, &stem, suffix, "tiff")?;
+            if let Err(e) = target_file.write_all(&tiff_bytes) {
+                let _ = std::fs::remove_file(&target_path);
+                return Err(Error::from(e));
+            }
+            if let Err(e) = target_file.flush() {
+                let _ = std::fs::remove_file(&target_path);
+                return Err(Error::from(e));
+            }
+
+            Ok(Derived {
+                source: source.to_path_buf(),
+                output: target_path,
+                width,
+                height,
+            })
+        }
+        ImageBuffer::Rgb8 {
+            width,
+            height,
+            data,
+        } => {
+            let dyn_img = image::DynamicImage::ImageRgb8(
+                image::ImageBuffer::from_raw(width, height, data)
+                    .ok_or_else(|| Error::Internal("failed to construct Rgb8 buffer".into()))?,
+            );
+            let jpeg_bytes = crate::media::jpeg::encode(
+                &dyn_img,
+                &crate::media::jpeg::JpegOptions::deliverable(95),
+            )?;
+
+            std::fs::create_dir_all(out_dir)?;
+            let (target_path, mut target_file) =
+                exclusive_create_target(out_dir, &stem, suffix, "jpg")?;
+            if let Err(e) = target_file.write_all(&jpeg_bytes) {
+                let _ = std::fs::remove_file(&target_path);
+                return Err(Error::from(e));
+            }
+            if let Err(e) = target_file.flush() {
+                let _ = std::fs::remove_file(&target_path);
+                return Err(Error::from(e));
+            }
+
+            Ok(Derived {
+                source: source.to_path_buf(),
+                output: target_path,
+                width,
+                height,
+            })
         }
     }
 }
@@ -323,7 +422,7 @@ where
     let is_raw = crate::media::raw::is_raw(source);
     let identity = is_identity(recipe, lut);
 
-    // Identity recipe on already-encoded non-RAW image: byte copy
+    // Identity recipe on already-encoded non-RAW image: byte copy without re-encoding
     if !is_raw && identity {
         let mut src_file = File::open(source)?;
         std::fs::create_dir_all(out_dir)?;
@@ -333,7 +432,8 @@ where
             .unwrap_or_default()
             .to_string_lossy()
             .to_lowercase();
-        let (target_path, mut target_file) = exclusive_create_export_target(out_dir, &stem, &ext)?;
+        let (target_path, mut target_file) =
+            exclusive_create_target(out_dir, &stem, "_edit", &ext)?;
         if let Err(e) = std::io::copy(&mut src_file, &mut target_file) {
             let _ = std::fs::remove_file(&target_path);
             return Err(Error::from(e));
@@ -348,93 +448,13 @@ where
         });
     }
 
-    // Non-identity or RAW: decode, apply, encode to memory first so no empty file is left behind
-    let decoded = decode_image(source)?;
-    let processed = apply_recipe(&decoded, recipe, lut)?;
+    // Non-identity or RAW: render-and-write, then carry metadata for this single derivative (G4)
+    let derived = render_and_write(source, recipe, lut, out_dir, "_edit")?;
+    let skipped = carry_metadata(std::slice::from_ref(&derived), false);
+    let metadata_skipped = skipped.into_iter().next();
 
-    match processed {
-        ImageBuffer::Rgb16 {
-            width,
-            height,
-            data,
-        } => {
-            let img16 =
-                image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_raw(width, height, data)
-                    .ok_or_else(|| Error::Internal("failed to construct Rgb16 buffer".into()))?;
-            let dyn_img = image::DynamicImage::ImageRgb16(img16);
-            let mut tiff_bytes = Vec::new();
-            let mut cursor = std::io::Cursor::new(&mut tiff_bytes);
-            dyn_img
-                .write_to(&mut cursor, image::ImageFormat::Tiff)
-                .map_err(|e| Error::Internal(format!("failed to encode TIFF: {e}")))?;
-
-            std::fs::create_dir_all(out_dir)?;
-            let (target_path, mut target_file) =
-                exclusive_create_export_target(out_dir, &stem, "tiff")?;
-            if let Err(e) = target_file.write_all(&tiff_bytes) {
-                let _ = std::fs::remove_file(&target_path);
-                return Err(Error::from(e));
-            }
-            if let Err(e) = target_file.flush() {
-                let _ = std::fs::remove_file(&target_path);
-                return Err(Error::from(e));
-            }
-            drop(target_file);
-
-            let derived = [Derived {
-                source: source.to_path_buf(),
-                output: target_path.clone(),
-                width,
-                height,
-            }];
-            let skipped = carry_metadata(&derived, false);
-            let metadata_skipped = skipped.into_iter().next();
-
-            Ok(ExportResult {
-                path: target_path,
-                metadata_skipped,
-            })
-        }
-        ImageBuffer::Rgb8 {
-            width,
-            height,
-            data,
-        } => {
-            let dyn_img = image::DynamicImage::ImageRgb8(
-                image::ImageBuffer::from_raw(width, height, data)
-                    .ok_or_else(|| Error::Internal("failed to construct Rgb8 buffer".into()))?,
-            );
-            let jpeg_bytes = crate::media::jpeg::encode(
-                &dyn_img,
-                &crate::media::jpeg::JpegOptions::deliverable(95),
-            )?;
-
-            std::fs::create_dir_all(out_dir)?;
-            let (target_path, mut target_file) =
-                exclusive_create_export_target(out_dir, &stem, "jpg")?;
-            if let Err(e) = target_file.write_all(&jpeg_bytes) {
-                let _ = std::fs::remove_file(&target_path);
-                return Err(Error::from(e));
-            }
-            if let Err(e) = target_file.flush() {
-                let _ = std::fs::remove_file(&target_path);
-                return Err(Error::from(e));
-            }
-            drop(target_file);
-
-            let derived = [Derived {
-                source: source.to_path_buf(),
-                output: target_path.clone(),
-                width,
-                height,
-            }];
-            let skipped = carry_metadata(&derived, false);
-            let metadata_skipped = skipped.into_iter().next();
-
-            Ok(ExportResult {
-                path: target_path,
-                metadata_skipped,
-            })
-        }
-    }
+    Ok(ExportResult {
+        path: derived.output,
+        metadata_skipped,
+    })
 }

@@ -138,18 +138,19 @@ happened*, and all three are fixed: a refusal reported as success, a written-
 but-unconfirmed file counted as nothing, and a failure reported without its
 reason.
 
-### `check:ingest` fails at its third measurement, and has since `c960e68`
+### `check:ingest` part 3 measures the folder screen
 
-Its part (3) — *Publish is unreachable until a dry run has been reviewed* — loads the built
-`/publish` and waits for a button named exactly `Publish`, then for `[data-testid="gate-explanation"]`.
+Its part (3) — *Publish is unreachable until a dry run has been reviewed* — loaded the built
+`/publish` and waited for a button named exactly `Publish`, then for `[data-testid="gate-explanation"]`.
 `c960e68` made the screen the publishing folder: the button became **Publish and empty** and the
-explanation lost its test id. The check times out after thirty seconds; parts (1) and (2), the
-shot grid and bulk actions, still pass and still print their numbers.
+explanation lost its test id. The check timed out after thirty seconds; parts (1) and (2), the
+shot grid and bulk actions, still passed and printed their numbers.
 
-Found on 2026-09-11 while running the gates for an unrelated front-end change, and confirmed
-pre-existing by running the check on the unmodified tree. The claim it guards is still worth
-measuring — the folder's gate is the same rule, §9.2 rule 3 — so the fix is to amend it to the
-folder screen, as `workflow-plan.md` says for exactly this case, **not** to delete part (3) (G7).
+Closed 2026-09-29: amended to the folder screen because the rule it guards (§9.2 rule 3: Google
+Photos cannot delete, so publish must be unreachable before review) applies to the folder workflow
+just as it did to card handoff sessions. The check targets the new button names (`Publish and empty`,
+`Publish N and empty`), asserts the gate explanation, and verifies the button relocks if the
+folder is edited after review.
 
 ---
 

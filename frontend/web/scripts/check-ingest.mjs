@@ -36,8 +36,8 @@ function preinstalledChromium() {
   return undefined;
 }
 
-/** Serve a built single-page app: unknown paths fall back to index.html. */
-function createStaticServer(root) {
+/** Serve a built single-page app: API routes answered by apiHandler; unknown paths fall back to index.html. */
+function createStaticServer(root, apiHandler) {
   const types = {
     '.html': 'text/html',
     '.js': 'text/javascript',
@@ -47,8 +47,11 @@ function createStaticServer(root) {
     '.json': 'application/json',
   };
   return createHttpServer((request, response) => {
-    const url = (request.url ?? '/').split('?')[0];
-    const candidate = join(root, normalize(url));
+    const pathname = (request.url ?? '/').split('?')[0];
+    if (pathname.startsWith('/api/') && apiHandler) {
+      if (apiHandler(request, response, pathname)) return;
+    }
+    const candidate = join(root, normalize(pathname));
     const file =
       existsSync(candidate) && extname(candidate) ? candidate : join(root, 'index.html');
     response.writeHead(200, {
@@ -287,25 +290,149 @@ try {
   if (!existsSync(DIST)) {
     failures.push(`no ${DIST}/ — run \`npm run build\` before this check`);
   } else {
-    const site = createStaticServer(DIST);
+    let stubSessionId = 'session-initial-1234';
+    const stubItems = [
+      {
+        shot_id: 'shot-1',
+        stem: 'test1',
+        source_sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        file_name: 'test1.jpg',
+        bytes: 1024 * 1024,
+      },
+      {
+        shot_id: 'shot-2',
+        stem: 'test2',
+        source_sha256: 'ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb',
+        file_name: 'test2.jpg',
+        bytes: 2 * 1024 * 1024,
+      },
+      {
+        shot_id: 'shot-3',
+        stem: 'test3',
+        source_sha256: '4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce',
+        file_name: 'test3.jpg',
+        bytes: 3 * 1024 * 1024,
+      },
+    ];
+    const stubTotalBytes = stubItems.reduce((acc, it) => acc + it.bytes, 0);
+
+    const getFolderPlan = () => ({
+      session_id: stubSessionId,
+      items: stubItems,
+      skipped: [],
+      total_bytes: stubTotalBytes,
+      upload_requests: stubItems.length,
+      batch_create_requests: 1,
+    });
+
+    const site = createStaticServer(DIST, (req, res, pathname) => {
+      if (pathname === '/api/connectors/google/status' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            connected: true,
+            scope: 'photoslibrary.appendonly',
+            connected_at: '2026-09-29T10:00:00Z',
+            needs_reauthorisation: false,
+            detail: null,
+          }),
+        );
+        return true;
+      }
+      if (pathname === '/api/storage/roots' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify([]));
+        return true;
+      }
+      if (pathname === '/api/publish/folder' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(getFolderPlan()));
+        return true;
+      }
+      if (pathname === '/api/publish/folder/plan' && req.method === 'POST') {
+        req.on('data', () => {});
+        req.on('end', () => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(getFolderPlan()));
+        });
+        return true;
+      }
+      return false;
+    });
     await new Promise((resolve) => site.listen(0, resolve));
     const siteBase = `http://127.0.0.1:${site.address().port}`;
 
     await page.goto(`${siteBase}/publish`, { waitUntil: 'networkidle' });
 
-    const publish = page.getByRole('button', { name: 'Publish', exact: true });
-    const disabled = await publish.isDisabled();
-    const explained = await page.locator('[data-testid="gate-explanation"]').count();
+    // (3a) Button accessible name before dry run is "Publish and empty", matching
+    // the anchored pattern /^Publish( \d+)? and empty$/, and is disabled.
+    const publishPattern = /^Publish( \d+)? and empty$/;
+    const publishBefore = page.getByRole('button', { name: 'Publish and empty', exact: true });
+    const disabledBefore = await publishBefore.isDisabled();
+    const explanationLocator = page.locator('[data-testid="gate-explanation"]');
+    const explanationVisibleBefore = await explanationLocator.isVisible();
+    const explanationTextBefore = (await explanationLocator.textContent()) ?? '';
 
-    note(`publish disabled before any dry run: ${disabled}`);
-    if (!disabled) {
+    note(`publish disabled before any dry run: ${disabledBefore}`);
+    if (!disabledBefore) {
       failures.push(
         'Publish is available with no dry run reviewed; the Google Photos API ' +
           'cannot delete, so this is the one control that must be unreachable',
       );
     }
-    if (explained === 0) {
+    if (!explanationVisibleBefore) {
       failures.push('nothing on screen explains why Publish is unavailable');
+    } else if (
+      !explanationTextBefore.includes(
+        'Publish is unavailable until a dry run of this folder has been reviewed.',
+      )
+    ) {
+      failures.push(
+        `gate explanation does not contain the dry-run reason: "${explanationTextBefore.trim()}"`,
+      );
+    }
+
+    // (3b) Review a dry run: the button updates to "Publish N and empty" with the
+    // stub's item count and unlocks.
+    await page.getByRole('button', { name: 'Dry run', exact: true }).click();
+    const expectedButtonName = `Publish ${stubItems.length} and empty`;
+    const publishAfterDryRun = page.getByRole('button', {
+      name: expectedButtonName,
+      exact: true,
+    });
+    try {
+      await publishAfterDryRun.waitFor({ state: 'visible', timeout: 5000 });
+    } catch {
+      failures.push(`Publish button did not update to "${expectedButtonName}" within 5 s`);
+    }
+
+    const enabledAfterDryRun = await publishAfterDryRun.isEnabled();
+    note(`publish button after dry run: enabled=${enabledAfterDryRun}, name="${expectedButtonName}"`);
+    if (!enabledAfterDryRun) {
+      failures.push('Publish button remained locked after a reviewed dry run');
+    }
+
+    // (3c) Simulate folder edited behind the app's back: session_id changes.
+    // We trigger the re-read using the "Re-read the folder" button: this
+    // exercises the exact same readFolder() check and folderChanged invalidation
+    // as a window focus event, without imposing an arbitrary 5-second sleep on
+    // the test suite's runtime budget.
+    stubSessionId = 'session-modified-5678';
+    await page.getByRole('button', { name: 'Re-read the folder', exact: true }).click();
+
+    const changedReason = 'The folder has changed since the dry run';
+    try {
+      await explanationLocator.filter({ hasText: changedReason }).waitFor({ timeout: 5000 });
+    } catch {
+      failures.push('gate explanation did not show the folder-changed reason within 5 s');
+    }
+
+    const publishAfterChange = page.getByRole('button', { name: publishPattern });
+    const disabledAfterChange = await publishAfterChange.isDisabled();
+
+    note(`publish locked after folder changed: ${disabledAfterChange}`);
+    if (!disabledAfterChange) {
+      failures.push('Publish button remained enabled after folder contents changed on disk');
     }
 
     await page.screenshot({ path: join(OUT, 'publish-gate.png'), fullPage: false });

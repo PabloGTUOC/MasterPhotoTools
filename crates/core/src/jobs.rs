@@ -25,6 +25,7 @@ pub enum JobStatus {
     Completed,
     Failed,
     Interrupted,
+    Cancelled,
 }
 
 impl JobStatus {
@@ -35,6 +36,7 @@ impl JobStatus {
             JobStatus::Completed => "completed",
             JobStatus::Failed => "failed",
             JobStatus::Interrupted => "interrupted",
+            JobStatus::Cancelled => "cancelled",
         }
     }
 
@@ -42,7 +44,10 @@ impl JobStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            JobStatus::Completed | JobStatus::Failed | JobStatus::Interrupted
+            JobStatus::Completed
+                | JobStatus::Failed
+                | JobStatus::Interrupted
+                | JobStatus::Cancelled
         )
     }
 }
@@ -63,6 +68,7 @@ impl std::str::FromStr for JobStatus {
             "completed" => Ok(JobStatus::Completed),
             "failed" => Ok(JobStatus::Failed),
             "interrupted" => Ok(JobStatus::Interrupted),
+            "cancelled" => Ok(JobStatus::Cancelled),
             other => Err(Error::Job(format!("unknown job status {other:?}"))),
         }
     }
@@ -187,6 +193,8 @@ pub struct JobRunner {
     /// Job writes are small and rare next to the work itself.
     ledger: Arc<Mutex<Ledger>>,
     sink: Arc<dyn JobEventSink>,
+    cancellations:
+        Arc<Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
 }
 
 impl JobRunner {
@@ -194,6 +202,7 @@ impl JobRunner {
         Self {
             ledger: Arc::new(Mutex::new(ledger)),
             sink,
+            cancellations: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -238,6 +247,21 @@ impl JobRunner {
         self.spawn_with_id(next_job_id(), kind, total, work)
     }
 
+    /// Request cancellation of an active job.
+    ///
+    /// Sets the job's cancellation flag so its next `progress.cancelled()` check
+    /// stops work cleanly. Returns `true` if the job was found and running, or
+    /// `false` if the job was unknown or had already finished.
+    pub fn cancel(&self, id: &str) -> bool {
+        if let Ok(guard) = self.cancellations.lock() {
+            if let Some(flag) = guard.get(id) {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                return true;
+            }
+        }
+        false
+    }
+
     /// As [`spawn`](Self::spawn), with an id the caller chose.
     ///
     /// A caller that must register a listener *before* the job can emit needs to
@@ -257,26 +281,43 @@ impl JobRunner {
         let id = job.id.clone();
         self.with_ledger(|l| l.insert_job(&job))?;
 
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if let Ok(mut guard) = self.cancellations.lock() {
+            guard.insert(id.clone(), Arc::clone(&cancelled));
+        }
+
         let reporter = SinkProgress {
             id: id.clone(),
             kind: kind.to_string(),
             total,
             ledger: Arc::clone(&self.ledger),
             sink: Arc::clone(&self.sink),
+            cancelled,
         };
 
         let ledger = Arc::clone(&self.ledger);
         let sink = Arc::clone(&self.sink);
         let finished_id = id.clone();
         let finished_kind = kind.to_string();
+        let cancellations = Arc::clone(&self.cancellations);
 
         std::thread::Builder::new()
             .name(format!("job-{kind}"))
             .spawn(move || {
                 let (status, error, message) = match work(&reporter) {
-                    Ok(summary) => (JobStatus::Completed, None, summary),
+                    Ok(summary) => {
+                        if reporter.cancelled() {
+                            (JobStatus::Cancelled, None, summary)
+                        } else {
+                            (JobStatus::Completed, None, summary)
+                        }
+                    }
                     Err(e) => (JobStatus::Failed, Some(e.to_string()), e.to_string()),
                 };
+
+                if let Ok(mut guard) = cancellations.lock() {
+                    guard.remove(&finished_id);
+                }
 
                 if let Ok(guard) = ledger.lock() {
                     let _ = guard.finish_job(
@@ -325,6 +366,7 @@ struct SinkProgress {
     total: u64,
     ledger: Arc<Mutex<Ledger>>,
     sink: Arc<dyn JobEventSink>,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Progress for SinkProgress {
@@ -347,7 +389,7 @@ impl Progress for SinkProgress {
     }
 
     fn cancelled(&self) -> bool {
-        false
+        self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -370,6 +412,7 @@ mod tests {
             JobStatus::Completed,
             JobStatus::Failed,
             JobStatus::Interrupted,
+            JobStatus::Cancelled,
         ] {
             let parsed: JobStatus = status.as_str().parse().unwrap();
             assert_eq!(parsed, status);
@@ -384,6 +427,7 @@ mod tests {
         assert!(JobStatus::Completed.is_terminal());
         assert!(JobStatus::Failed.is_terminal());
         assert!(JobStatus::Interrupted.is_terminal());
+        assert!(JobStatus::Cancelled.is_terminal());
     }
 
     #[test]
@@ -394,5 +438,98 @@ mod tests {
         assert_eq!(job.total, 400);
         assert!(job.finished_at.is_none());
         assert!(job.error.is_none());
+    }
+
+    #[test]
+    fn a_cancelled_job_stops_and_is_recorded_as_cancelled() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(temp.path().join("ledger.db")).unwrap();
+        let runner = JobRunner::new(ledger, Arc::new(NoEvents));
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+
+        let id = runner
+            .spawn("cancellable", 10, move |p| {
+                started_tx.send(()).unwrap();
+                while !p.cancelled() {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                done_tx.send(true).unwrap();
+                Ok("stopped early".to_string())
+            })
+            .unwrap();
+
+        started_rx.recv().unwrap();
+        assert!(runner.cancel(&id));
+        assert!(done_rx.recv().unwrap());
+
+        for _ in 0..100 {
+            if let Ok(Some(j)) = runner.get(&id) {
+                if j.status == JobStatus::Cancelled {
+                    assert_eq!(j.summary.as_deref(), Some("stopped early"));
+                    return;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("job was not recorded as cancelled in ledger");
+    }
+
+    #[test]
+    fn cancelling_an_unknown_or_finished_job_returns_false() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(temp.path().join("ledger.db")).unwrap();
+        let runner = JobRunner::new(ledger, Arc::new(NoEvents));
+
+        // Unknown job
+        assert!(!runner.cancel("nonexistent-job-id"));
+
+        // Finished job
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let id = runner
+            .spawn("instant", 1, move |_p| {
+                done_tx.send(()).unwrap();
+                Ok("finished".to_string())
+            })
+            .unwrap();
+
+        done_rx.recv().unwrap();
+        for _ in 0..100 {
+            if let Ok(Some(j)) = runner.get(&id) {
+                if j.status.is_terminal() {
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert!(!runner.cancel(&id));
+    }
+
+    #[test]
+    fn cancellation_map_cleans_up_on_job_finish() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(temp.path().join("ledger.db")).unwrap();
+        let runner = JobRunner::new(ledger, Arc::new(NoEvents));
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let id = runner
+            .spawn("quick", 1, move |_p| {
+                done_tx.send(()).unwrap();
+                Ok("done".to_string())
+            })
+            .unwrap();
+
+        done_rx.recv().unwrap();
+        for _ in 0..100 {
+            if let Ok(Some(j)) = runner.get(&id) {
+                if j.status.is_terminal() {
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert_eq!(runner.cancellations.lock().unwrap().len(), 0);
     }
 }

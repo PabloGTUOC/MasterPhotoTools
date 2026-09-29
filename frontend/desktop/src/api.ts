@@ -57,7 +57,7 @@ import type {
 } from '@phototools/shared';
 
 /** Statuses a job never leaves again, mirroring `JobStatus::is_terminal`. */
-const TERMINAL: JobStatus[] = ['completed', 'failed', 'interrupted'];
+const TERMINAL: JobStatus[] = ['completed', 'failed', 'interrupted', 'cancelled'];
 
 /** The Tauri event `core`'s job runner emits through. */
 const JOB_EVENT = 'phototools://job';
@@ -405,12 +405,14 @@ export class TauriApiClient implements ApiClient {
     lut: string,
     intensity: number,
     outDir: string,
+    recursive?: boolean,
   ): Promise<BulkLutPlanSummary> {
     return invoke<BulkLutPlanSummary>('plan_bulk_lut', {
       inputs,
       lut,
       intensity,
       outDir,
+      recursive: recursive ?? false,
     });
   }
 
@@ -420,6 +422,7 @@ export class TauriApiClient implements ApiClient {
     intensity: number,
     outDir: string,
     reviewedLutSha256: string,
+    recursive?: boolean,
   ): Promise<string> {
     return invoke<string>('apply_bulk_lut', {
       inputs,
@@ -427,7 +430,12 @@ export class TauriApiClient implements ApiClient {
       intensity,
       outDir,
       reviewedLutSha256,
+      recursive: recursive ?? false,
     });
+  }
+
+  cancelJob(id: string): Promise<boolean> {
+    return invoke<boolean>('cancel_job', { id });
   }
 
   openPreview(path: string): Promise<OpenPreviewResult> {

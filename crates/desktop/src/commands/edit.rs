@@ -129,9 +129,17 @@ pub fn plan_bulk_lut(
     lut: String,
     intensity: f32,
     out_dir: String,
+    recursive: Option<bool>,
     state: State<'_, AppState>,
 ) -> CommandResult<BulkLutPlanSummary> {
-    plan_bulk_lut_impl(&state, inputs, lut, intensity, out_dir)
+    plan_bulk_lut_impl(
+        &state,
+        inputs,
+        lut,
+        intensity,
+        out_dir,
+        recursive.unwrap_or(false),
+    )
 }
 
 pub fn plan_bulk_lut_impl(
@@ -140,6 +148,7 @@ pub fn plan_bulk_lut_impl(
     lut: String,
     intensity: f32,
     out_dir: String,
+    recursive: bool,
 ) -> CommandResult<BulkLutPlanSummary> {
     let config = state.config();
     let resolved_inputs = resolve_inputs(&config, &inputs)?;
@@ -151,7 +160,8 @@ pub fn plan_bulk_lut_impl(
         .map_err(describe)?
         .ok_or_else(|| format!("LUT '{lut}' was not found in the library"))?;
 
-    let params = BulkLutParams::new(resolved_inputs, lut_path, intensity, resolved_out);
+    let mut params = BulkLutParams::new(resolved_inputs, lut_path, intensity, resolved_out);
+    params.recursive = recursive;
     let plan = BulkLutTool.plan(&params).map_err(describe)?.data;
     let sample_frames = phototools_core::tools::lut::sample_frames(&plan, 3)
         .into_iter()
@@ -178,9 +188,18 @@ pub fn apply_bulk_lut(
     intensity: f32,
     out_dir: String,
     reviewed_lut_sha256: String,
+    recursive: Option<bool>,
     state: State<'_, AppState>,
 ) -> CommandResult<String> {
-    apply_bulk_lut_impl(&state, inputs, lut, intensity, out_dir, reviewed_lut_sha256)
+    apply_bulk_lut_impl(
+        &state,
+        inputs,
+        lut,
+        intensity,
+        out_dir,
+        reviewed_lut_sha256,
+        recursive.unwrap_or(false),
+    )
 }
 
 pub fn apply_bulk_lut_impl(
@@ -190,6 +209,7 @@ pub fn apply_bulk_lut_impl(
     intensity: f32,
     out_dir: String,
     reviewed_lut_sha256: String,
+    recursive: bool,
 ) -> CommandResult<String> {
     let config = state.config();
     let resolved_inputs = resolve_inputs(&config, &inputs)?;
@@ -213,7 +233,8 @@ pub fn apply_bulk_lut_impl(
     }
 
     let total = resolved_inputs.len() as u64;
-    let params = BulkLutParams::new(resolved_inputs, lut_path, intensity, resolved_out);
+    let mut params = BulkLutParams::new(resolved_inputs, lut_path, intensity, resolved_out);
+    params.recursive = recursive;
     let expected_hash = reviewed_lut_sha256;
 
     state

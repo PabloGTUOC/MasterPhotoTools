@@ -10,6 +10,8 @@ import { sharedToolRoutes } from '@ui/routes';
 import Ingest from './views/Ingest.vue';
 // Single-image non-destructive editor (ED-7).
 import Edit from './views/Edit.vue';
+// Bulk 3D LUT grading tool (ED-8).
+import BulkLut from './views/BulkLut.vue';
 // The shared Timeline with the server panel above it: syncing is this machine's
 // business, and the server cannot sync with itself
 // (`docs/timeline-sync-plan.md`).
@@ -24,6 +26,7 @@ const router = createRouter({
     // and reading a card is what the desktop application is for.
     { path: '/', component: Ingest },
     { path: '/edit', component: Edit },
+    { path: '/bulk-lut', component: BulkLut },
     // The tabs both applications carry, defined once in `@ui/routes`. The
     // Timeline's component is replaced rather than its path: the label, the
     // order and the step number stay the shared ones, so the two applications

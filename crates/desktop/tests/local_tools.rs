@@ -298,6 +298,7 @@ fn bulk_lut_refuses_output_directory_inside_publishing_folder() {
         "test.cube".into(),
         1.0,
         pub_dir.to_string_lossy().to_string(),
+        false,
     )
     .unwrap_err();
 
@@ -330,6 +331,7 @@ fn apply_bulk_lut_refuses_when_the_lut_changed_after_the_reviewed_plan() {
         "test.cube".into(),
         1.0,
         out_dir.to_string_lossy().to_string(),
+        false,
     )
     .unwrap();
     let reviewed_lut_sha256 = plan.lut_sha256;
@@ -358,6 +360,7 @@ LUT_3D_SIZE 2
         1.0,
         out_dir.to_string_lossy().to_string(),
         reviewed_lut_sha256,
+        false,
     )
     .unwrap_err();
 
@@ -365,6 +368,57 @@ LUT_3D_SIZE 2
         err.contains("changed on disk since the reviewed plan"),
         "must refuse execution when LUT changed after reviewed plan; got: {err}"
     );
+}
+
+#[test]
+fn cancel_job_stops_an_active_job_and_refuses_a_finished_job() {
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = phototools_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+
+    let job_id = state
+        .jobs
+        .spawn("long_job", 10, move |p| {
+            started_tx.send(()).unwrap();
+            while !p.cancelled() {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            done_tx.send(()).unwrap();
+            Ok("stopped early".to_string())
+        })
+        .unwrap();
+
+    // Guarantee the worker thread is actively executing its loop
+    started_rx.recv().unwrap();
+
+    // The desktop command reaches the running job
+    assert!(phototools_desktop::commands::cancel_job_impl(&state, job_id.clone()).unwrap());
+    done_rx.recv().unwrap();
+
+    // Wait for the background worker thread to terminate and update the ledger
+    let mut finished_job = None;
+    for _ in 0..100 {
+        if let Some(job) = state.jobs.get(&job_id).unwrap() {
+            if job.status.is_terminal() {
+                finished_job = Some(job);
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    let job = finished_job.expect("job must complete and reach terminal status");
+    assert_eq!(job.status, phototools_core::jobs::JobStatus::Cancelled);
+    assert_eq!(job.summary.as_deref(), Some("stopped early"));
+
+    // Cancelling a finished job returns false
+    assert!(!phototools_desktop::commands::cancel_job_impl(&state, job_id).unwrap());
+
+    // Cancelling an unknown job returns false
+    assert!(!phototools_desktop::commands::cancel_job_impl(&state, "unknown_job".into()).unwrap());
 }
 
 #[test]

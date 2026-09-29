@@ -5,16 +5,36 @@
  * Cancelling stops watching; the job keeps running on the server, which is what
  * the button says.
  */
-import { onUnmounted, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import type { JobEvent } from '@phototools/shared';
 import { api } from '@host/api';
 
-const props = defineProps<{ jobId: string | null }>();
+const props = withDefaults(
+  defineProps<{
+    jobId: string | null;
+    canCancel?: boolean;
+  }>(),
+  {
+    canCancel: false,
+  },
+);
+
+const emit = defineEmits<{
+  (e: 'cancel'): void;
+  (e: 'done'): void;
+}>();
 
 const event = ref<JobEvent | null>(null);
 const failure = ref<string | null>(null);
 const watching = ref(false);
 let controller: AbortController | null = null;
+
+const isRunning = computed(() => {
+  if (!watching.value) return false;
+  if (event.value?.terminal) return false;
+  const s = event.value?.state;
+  return s === undefined || s === 'pending' || s === 'running';
+});
 
 function stop() {
   controller?.abort();
@@ -33,7 +53,16 @@ watch(
     controller = new AbortController();
     watching.value = true;
     try {
-      await api.watchJob(id, (next) => (event.value = next), controller.signal);
+      await api.watchJob(
+        id,
+        (next) => {
+          event.value = next;
+          if (next.terminal) {
+            emit('done');
+          }
+        },
+        controller.signal,
+      );
     } catch (e) {
       if ((e as Error).name !== 'AbortError') {
         failure.value = e instanceof Error ? e.message : String(e);
@@ -77,9 +106,19 @@ const bar = () => {
       <span class="job-state" :data-state="event?.state ?? 'pending'">
         // {{ event?.state ?? 'starting' }}
       </span>
-      <button v-if="watching" type="button" class="ghost" @click="stop">
-        Stop watching
-      </button>
+      <div class="job-actions">
+        <button
+          v-if="canCancel && isRunning"
+          type="button"
+          class="ghost danger"
+          @click="emit('cancel')"
+        >
+          Cancel
+        </button>
+        <button v-if="watching" type="button" class="ghost" @click="stop">
+          Stop watching
+        </button>
+      </div>
     </header>
 
     <p
@@ -119,6 +158,12 @@ const bar = () => {
   gap: var(--space-3);
 }
 
+.job-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .job-state {
   font-family: var(--font-label);
   font-size: 13px;
@@ -140,6 +185,9 @@ const bar = () => {
   text-shadow: var(--glow-red);
 }
 .job-state[data-state='interrupted'] {
+  color: var(--accent-warm);
+}
+.job-state[data-state='cancelled'] {
   color: var(--accent-warm);
 }
 

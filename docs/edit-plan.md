@@ -1,7 +1,7 @@
 # Editing — development plan
 
-> **Not built.** Written before any code is committed. Where the build diverges from this plan
-> the text will be corrected in place and the rationale recorded in
+> **Built.** Where the build diverged from this plan
+> the text has been corrected in place and the rationale recorded in
 > [`docs/phase-reports/edit.md`](phase-reports/edit.md).
 
 Non-destructive photographic adjustments for individual frames on the desktop, and bulk 3D LUT
@@ -356,9 +356,13 @@ impl Default for AdjustmentRecipe {
     These figures include the simulated core delays (8.3 ms drag / 35.0 ms settle matching release benchmarks) and verify the UI event loop, debounce/latest-wins scheduling, DOM canvas updates, and IPC transfer path with a stubbed backend.
 
 ### `ED-8` · Desktop UI bulk LUT view
-- Create `frontend/desktop/src/views/BulkLut.vue`.
-- Implement folder pickers, LUT selector, intensity slider, and multi-sample preview strip.
-- Mount into desktop navigation bar.
+- Built `frontend/desktop/src/views/BulkLut.vue`.
+- Implemented folder and file inputs (`PathListField`), recursive toggle, 3D LUT selector with blend intensity (`LutPicker`), and output destination (`PathField`).
+- Built dry run workflow (`planBulkLut`): reports actions count, skipped files with reasons, explains `_lut` suffix output naming, and renders sample frame previews sequentially (at most one preview session in flight).
+- Implemented dry-run lock discipline matching Publish: run button disabled until reviewed dry run exists for exact settings, with all lock reasons listed; setting changes immediately invalidate dry run. Run action passes reviewed `lut_sha256`.
+- Integrated `JobProgress` with cancellation support (`cancelJob` on `TauriApiClient`); displays verbatim core refusals and written/skipped/failed counts upon cancellation.
+- Mounted `/bulk-lut` into desktop navigation beside Edit in `App.vue`.
+- Added automated browser verification harness `check:bulk-lut` (`scripts/check-bulk-lut.mjs`), asserting lock discipline, sequential preview sessions, verbatim refusal reporting, job cancel behavior, and interactive touch targets ≥ 40px with screenshot proof in `layout-proof/bulk-lut.png`.
 
 ---
 

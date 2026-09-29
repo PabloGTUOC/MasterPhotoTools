@@ -1719,13 +1719,15 @@ fn bulk_lut_cancelled_midway_leaves_no_partial_file_and_reports_what_it_wrote() 
     let out_dir = f.path().join("cancel_out");
 
     struct CancelAfterFirst {
-        cancel_checks: AtomicUsize,
+        reports: AtomicUsize,
     }
     impl Progress for CancelAfterFirst {
-        fn report(&self, _done: u64, _total: u64, _message: &str) {}
+        fn report(&self, _done: u64, _total: u64, _message: &str) {
+            self.reports.fetch_add(1, Ordering::SeqCst);
+        }
         fn cancelled(&self) -> bool {
-            // First check before file 1 returns false, second check before file 2 returns true
-            self.cancel_checks.fetch_add(1, Ordering::SeqCst) >= 1
+            // Turns true after its first report
+            self.reports.load(Ordering::SeqCst) >= 1
         }
     }
 
@@ -1734,7 +1736,7 @@ fn bulk_lut_cancelled_midway_leaves_no_partial_file_and_reports_what_it_wrote() 
     assert_eq!(plan.actions.len(), 3);
 
     let progress = CancelAfterFirst {
-        cancel_checks: AtomicUsize::new(0),
+        reports: AtomicUsize::new(0),
     };
     let summary = BulkLutTool.apply(plan, &progress).unwrap().data;
 
@@ -1746,6 +1748,23 @@ fn bulk_lut_cancelled_midway_leaves_no_partial_file_and_reports_what_it_wrote() 
     assert!(out_dir.join("shot1_lut.jpg").exists());
     assert!(!out_dir.join("shot2_lut.jpg").exists());
     assert!(!out_dir.join("shot3_lut.jpg").exists());
+
+    // Assert no partial files or temp files in out_dir
+    let written_files: Vec<_> = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(written_files, vec!["shot1_lut.jpg"]);
+
+    // Summary line reports exactly what was written
+    let summary_line = phototools_core::tools::summarise(
+        summary.written.len(),
+        "graded",
+        summary.failures.len(),
+        &summary.skipped,
+        &phototools_core::tools::lut::ACCEPTED,
+    );
+    assert_eq!(summary_line, "1 graded, 0 failed");
 }
 
 #[test]

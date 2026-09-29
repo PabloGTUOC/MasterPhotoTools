@@ -11,7 +11,8 @@ export type JobStatus =
   | 'running'
   | 'completed'
   | 'failed'
-  | 'interrupted';
+  | 'interrupted'
+  | 'cancelled';
 
 /** `phototools_core::jobs::Job` */
 export interface Job {

@@ -127,6 +127,7 @@ fn main() {
             commands::set_server_settings,
             commands::server_status,
             commands::get_job,
+            commands::cancel_job,
             commands::list_directory,
             commands::list_roots,
             commands::scan_dates,

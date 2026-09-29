@@ -116,6 +116,15 @@ pub fn get_job(id: String, state: State<'_, AppState>) -> CommandResult<Option<J
     state.jobs.get(&id).map_err(describe)
 }
 
+#[tauri::command]
+pub fn cancel_job(id: String, state: State<'_, AppState>) -> CommandResult<bool> {
+    cancel_job_impl(&state, id)
+}
+
+pub fn cancel_job_impl(state: &AppState, id: String) -> CommandResult<bool> {
+    Ok(state.jobs.cancel(&id))
+}
+
 // ---------------------------------------------------------------------------
 // F9 — library browser
 // ---------------------------------------------------------------------------

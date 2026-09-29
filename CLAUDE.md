@@ -28,7 +28,7 @@ structured half of that work — 72 of them, all actionable.
 | [`docs/timeline-plan.md`](docs/timeline-plan.md) | The Timeline tab: the track library on a map, and points placed by hand. Stage A built; MV-17 awaits a browser. Google's location history is Stages B–C, not built |
 | [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
-| [`docs/edit-plan.md`](docs/edit-plan.md) | The Edit tab and Bulk LUT tool: non-destructive exposure adjustments and 3D LUT grading. **Not built** |
+| [`docs/edit-plan.md`](docs/edit-plan.md) | The Edit tab and Bulk LUT tool: non-destructive exposure adjustments and 3D LUT grading. Built; MV-20 awaits a Mac |
 | [`docs/deployment.md`](docs/deployment.md) | Deploying the server and the desktop app, and every environment variable |
 | [`docs/phase-reports/`](docs/phase-reports/) | One report per phase: what was delivered, what deviated, and why |
 
@@ -69,8 +69,8 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 860 passing
-cargo test -p phototools-core   # 758 passing — G2
+cargo test --workspace          # 864 passing
+cargo test -p phototools-core   # 761 passing — G2
 ```
 
 Front ends:
@@ -88,10 +88,11 @@ npm --prefix frontend/desktop run typecheck
 npm --prefix frontend/desktop run build
 npm --prefix frontend/desktop run check:transport
 npm --prefix frontend/desktop run check:edit    # ED-7 acceptance & render timing budget, measured in a browser
+npm --prefix frontend/desktop run check:bulk-lut # ED-8 acceptance & lock discipline, measured in a browser
 ```
 
 `check:layout` and `check:ingest` drive Chromium and write screenshots to
-`frontend/web/layout-proof/`; `check:edit` drives Chromium and writes screenshots to
+`frontend/web/layout-proof/`; `check:edit` and `check:bulk-lut` drive Chromium and write screenshots to
 `frontend/desktop/layout-proof/`. They assert **numbers**, not shapes — a change that makes the grid
 or preview slower or unwindows it fails them.
 

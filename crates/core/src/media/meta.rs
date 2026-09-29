@@ -626,13 +626,156 @@ pub fn exiftool_program_with(configured: Option<String>) -> Result<String, Error
 /// belongs to the file that caused it rather than to whatever came next.
 const READY_ERR: &str = "{phototools-stderr-ready}";
 
-pub struct ExifWriter {
+/// How many times one writer may replace a hung or crashed exiftool.
+///
+/// One anomalous file should cost that file, not the rest of the roll, so a
+/// restart is worth having. But an exiftool that dies on file after file is a
+/// broken machine, not a bad file, and restarting it every time would spawn one
+/// process per file — exactly what G4 forbids. Two is enough to ride out a
+/// couple of bad frames and few enough to stop quickly when it is the tool.
+const MAX_RESTARTS: u32 = 2;
+
+struct ActiveProcess {
     child: Child,
     stdin: ChildStdin,
     lines: Receiver<std::io::Result<String>>,
     reader: Option<JoinHandle<()>>,
     err_reader: Option<JoinHandle<()>>,
+}
+
+pub struct ExifWriter {
+    process: Option<ActiveProcess>,
+    program: String,
     timeout: Duration,
+    restarts: u32,
+    /// Set once the writer will not start exiftool again, with the reason every
+    /// later call reports. Kept as the reason rather than a flag because "the cap
+    /// was reached" and "exiftool could not be started again" call for different
+    /// fixes, and a later file saying the wrong one sends somebody the wrong way
+    /// (G10).
+    dead: Option<String>,
+}
+
+fn spawn_process(program: &str) -> Result<ActiveProcess, Error> {
+    let mut child = Command::new(program)
+        .args(["-stay_open", "True", "-@", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        // **Not `null`.** exiftool says why it refused a file on stderr, and
+        // discarding that is how a write that never happened came back as a
+        // success — thirty-nine photographs "redated" on a NAS, unchanged
+        // on disk, with nothing anywhere saying so (G10).
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            Error::Internal(format!(
+                "Failed to start {program}: {e}. exiftool is required for metadata \
+                 writing (specification §2.6) and must be on PATH."
+            ))
+        })?;
+
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| Error::Internal("exiftool stdin unavailable".into()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| Error::Internal("exiftool stdout unavailable".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| Error::Internal("exiftool stderr unavailable".into()))?;
+
+    // Read on threads so a hung child surfaces as a timeout rather than a
+    // blocked caller. Both streams feed one channel: what exiftool did is
+    // on stdout and why it refused is on stderr, and a caller needs both to
+    // say anything true about a file.
+    let (tx, lines) = mpsc::channel();
+    let out_tx = tx.clone();
+    let reader = std::thread::spawn(move || {
+        let buf = BufReader::new(stdout);
+        for line in buf.lines() {
+            if out_tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let err_reader = std::thread::spawn(move || {
+        let buf = BufReader::new(stderr);
+        for line in buf.lines() {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    Ok(ActiveProcess {
+        child,
+        stdin,
+        lines,
+        reader: Some(reader),
+        err_reader: Some(err_reader),
+    })
+}
+
+fn cleanup_active_process(proc: &mut ActiveProcess) {
+    let _ = proc.child.kill();
+    let _ = proc.child.wait();
+    if let Some(handle) = proc.reader.take() {
+        let _ = handle.join();
+    }
+    if let Some(handle) = proc.err_reader.take() {
+        let _ = handle.join();
+    }
+}
+
+fn send_and_wait(
+    proc: &mut ActiveProcess,
+    args: &[String],
+    timeout: Duration,
+) -> Result<Vec<String>, Error> {
+    for arg in args {
+        writeln!(proc.stdin, "{arg}")?;
+    }
+    writeln!(proc.stdin, "-echo4")?;
+    writeln!(proc.stdin, "{READY_ERR}")?;
+    writeln!(proc.stdin, "-execute")?;
+    proc.stdin.flush()?;
+    wait_for_ready(proc, timeout)
+}
+
+fn wait_for_ready(proc: &mut ActiveProcess, timeout: Duration) -> Result<Vec<String>, Error> {
+    let mut said = Vec::new();
+    let (mut stdout_done, mut stderr_done) = (false, false);
+    loop {
+        if stdout_done && stderr_done {
+            return Ok(said);
+        }
+        match proc.lines.recv_timeout(timeout) {
+            Ok(Ok(line)) => {
+                if line.contains(READY_ERR) {
+                    stderr_done = true;
+                    continue;
+                }
+                if line.contains("{ready}") {
+                    stdout_done = true;
+                    continue;
+                }
+                said.push(line);
+            }
+            Ok(Err(e)) => return Err(Error::Internal(format!("exiftool read failed: {e}"))),
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(Error::Internal("exiftool closed unexpectedly".into()));
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                let _ = proc.child.kill();
+                return Err(Error::Internal(format!(
+                    "exiftool did not respond within {timeout:?}"
+                )));
+            }
+        }
+    }
 }
 
 /// Whether a command block actually wrote the file, and what to say if not.
@@ -688,72 +831,27 @@ impl ExifWriter {
     /// Exists so tests can point at a shim that records how many processes were
     /// spawned — the G4 guarantee is otherwise only observable from outside.
     pub fn start_with(program: &str, timeout: Duration) -> Result<Self, Error> {
-        let mut child = Command::new(program)
-            .args(["-stay_open", "True", "-@", "-"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            // **Not `null`.** exiftool says why it refused a file on stderr, and
-            // discarding that is how a write that never happened came back as a
-            // success — thirty-nine photographs "redated" on a NAS, unchanged
-            // on disk, with nothing anywhere saying so (G10).
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                Error::Internal(format!(
-                    "Failed to start {program}: {e}. exiftool is required for metadata \
-                     writing (specification §2.6) and must be on PATH."
-                ))
-            })?;
-
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| Error::Internal("exiftool stdin unavailable".into()))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| Error::Internal("exiftool stdout unavailable".into()))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| Error::Internal("exiftool stderr unavailable".into()))?;
-
-        // Read on threads so a hung child surfaces as a timeout rather than a
-        // blocked caller. Both streams feed one channel: what exiftool did is
-        // on stdout and why it refused is on stderr, and a caller needs both to
-        // say anything true about a file.
-        let (tx, lines) = mpsc::channel();
-        let out_tx = tx.clone();
-        let reader = std::thread::spawn(move || {
-            let buf = BufReader::new(stdout);
-            for line in buf.lines() {
-                if out_tx.send(line).is_err() {
-                    break;
-                }
-            }
-        });
-        let err_reader = std::thread::spawn(move || {
-            let buf = BufReader::new(stderr);
-            for line in buf.lines() {
-                if tx.send(line).is_err() {
-                    break;
-                }
-            }
-        });
-
-        let mut writer = Self {
-            child,
-            stdin,
-            lines,
-            reader: Some(reader),
-            err_reader: Some(err_reader),
-            timeout,
-        };
-
+        let mut proc = spawn_process(program)?;
         // Handshake: prove the process is alive and framing works before any
         // caller depends on it.
-        writer.execute(&["-ver".to_string()])?;
-        Ok(writer)
+        if let Err(e) = send_and_wait(&mut proc, &["-ver".to_string()], timeout) {
+            cleanup_active_process(&mut proc);
+            return Err(e);
+        }
+
+        Ok(Self {
+            process: Some(proc),
+            program: program.to_string(),
+            timeout,
+            restarts: 0,
+            dead: None,
+        })
+    }
+
+    fn cleanup_process(&mut self) {
+        if let Some(mut proc) = self.process.take() {
+            cleanup_active_process(&mut proc);
+        }
     }
 
     /// Send one command block and collect everything it said.
@@ -763,47 +861,52 @@ impl ExifWriter {
     /// exiftool wrote to stderr could arrive after `{ready}` had already been
     /// seen on stdout, and be attributed to the next file or lost entirely.
     fn execute(&mut self, args: &[String]) -> Result<Vec<String>, Error> {
-        for arg in args {
-            writeln!(self.stdin, "{arg}")?;
+        if let Some(reason) = &self.dead {
+            return Err(Error::Internal(reason.clone()));
         }
-        writeln!(self.stdin, "-echo4")?;
-        writeln!(self.stdin, "{READY_ERR}")?;
-        writeln!(self.stdin, "-execute")?;
-        self.stdin.flush()?;
-        self.wait_for_ready()
-    }
 
-    /// Everything said between this command and both of its sentinels.
-    fn wait_for_ready(&mut self) -> Result<Vec<String>, Error> {
-        let mut said = Vec::new();
-        let (mut stdout_done, mut stderr_done) = (false, false);
-        loop {
-            if stdout_done && stderr_done {
-                return Ok(said);
-            }
-            match self.lines.recv_timeout(self.timeout) {
-                Ok(Ok(line)) => {
-                    if line.contains(READY_ERR) {
-                        stderr_done = true;
-                        continue;
+        let Some(proc) = self.process.as_mut() else {
+            // Unreachable while `dead` is kept in step with `process`, but a
+            // writer with no process must say so rather than panic.
+            return Err(Error::Internal("exiftool is not running".into()));
+        };
+
+        match send_and_wait(proc, args, self.timeout) {
+            Ok(said) => Ok(said),
+            Err(e) => {
+                // Timeout, disconnect, or pipe failure: clean up this child so it does
+                // not become a zombie, and restart if within the restart cap.
+                self.cleanup_process();
+
+                if self.restarts < MAX_RESTARTS {
+                    self.restarts += 1;
+                    let restarted = spawn_process(&self.program).and_then(|mut new_proc| {
+                        match send_and_wait(&mut new_proc, &["-ver".to_string()], self.timeout) {
+                            Ok(_) => Ok(new_proc),
+                            Err(handshake) => {
+                                cleanup_active_process(&mut new_proc);
+                                Err(handshake)
+                            }
+                        }
+                    });
+                    match restarted {
+                        Ok(new_proc) => self.process = Some(new_proc),
+                        Err(why) => {
+                            self.dead = Some(format!(
+                                "exiftool stopped responding and could not be started again: {why}"
+                            ));
+                        }
                     }
-                    if line.contains("{ready}") {
-                        stdout_done = true;
-                        continue;
-                    }
-                    said.push(line);
+                } else {
+                    self.dead = Some(format!(
+                        "exiftool stopped responding {} times, so it is not being started \
+                         again: the tool is failing, not one file",
+                        MAX_RESTARTS + 1
+                    ));
                 }
-                Ok(Err(e)) => return Err(Error::Internal(format!("exiftool read failed: {e}"))),
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Err(Error::Internal("exiftool closed unexpectedly".into()));
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    let _ = self.child.kill();
-                    return Err(Error::Internal(format!(
-                        "exiftool did not respond within {:?}",
-                        self.timeout
-                    )));
-                }
+
+                // The file that caused the failure is reported as failed and never retried.
+                Err(e)
             }
         }
     }
@@ -971,15 +1074,27 @@ impl ExifWriter {
     }
 
     fn shutdown(&mut self) {
-        let _ = writeln!(self.stdin, "-stay_open");
-        let _ = writeln!(self.stdin, "False");
-        let _ = self.stdin.flush();
-        let _ = self.child.wait();
-        if let Some(handle) = self.reader.take() {
-            let _ = handle.join();
-        }
-        if let Some(handle) = self.err_reader.take() {
-            let _ = handle.join();
+        if let Some(proc) = self.process.take() {
+            let ActiveProcess {
+                mut child,
+                mut stdin,
+                reader,
+                err_reader,
+                ..
+            } = proc;
+            let _ = writeln!(stdin, "-stay_open");
+            let _ = writeln!(stdin, "False");
+            let _ = stdin.flush();
+            // Close the pipe before waiting. exiftool exits on `-stay_open False`,
+            // but a child that does not — a wedged exiftool, or a test shim — would
+            // otherwise wait on input that can never arrive, and this `wait` would
+            // block for ever. Every writer is dropped at the end of a job, so that
+            // hung the job, not just the tool.
+            drop(stdin);
+            let _ = child.wait();
+            for handle in [reader, err_reader].into_iter().flatten() {
+                let _ = handle.join();
+            }
         }
     }
 }

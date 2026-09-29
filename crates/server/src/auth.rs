@@ -12,6 +12,7 @@ use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 
 /// Google's JWK endpoint for Firebase ID tokens.
@@ -50,15 +51,29 @@ struct Jwk {
 pub struct KeyStore {
     keys: RwLock<HashMap<String, Arc<DecodingKey>>>,
     jwk_url: Option<String>,
+    client: reqwest::Client,
 }
 
 impl KeyStore {
+    /// Overall request timeout for signing key fetches (§3a).
+    pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// Connect timeout for signing key fetches.
+    ///
+    /// 3 seconds is chosen because TCP handshakes across public internet to
+    /// Google CDN endpoints typically complete within tens of milliseconds;
+    /// 3 seconds leaves ample headroom for TCP SYN retransmissions on slow or
+    /// flaky links while failing fast if the endpoint is blackholed, well
+    /// before the 10-second overall request timeout fires.
+    pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+
     /// A store that refreshes from Google.
     pub fn google() -> Self {
-        Self {
-            keys: RwLock::new(HashMap::new()),
-            jwk_url: Some(GOOGLE_JWK_URL.to_string()),
-        }
+        Self::with_url_and_timeouts(
+            Some(GOOGLE_JWK_URL.to_string()),
+            Self::DEFAULT_CONNECT_TIMEOUT,
+            Self::DEFAULT_TIMEOUT,
+        )
     }
 
     /// A store that never reaches the network. Tests inject keys directly.
@@ -66,6 +81,25 @@ impl KeyStore {
         Self {
             keys: RwLock::new(HashMap::new()),
             jwk_url: None,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    /// A store configured with custom URL and timeouts (used by tests).
+    pub fn with_url_and_timeouts(
+        jwk_url: Option<String>,
+        connect_timeout: Duration,
+        timeout: Duration,
+    ) -> Self {
+        let client = reqwest::Client::builder()
+            .connect_timeout(connect_timeout)
+            .timeout(timeout)
+            .build()
+            .expect("valid reqwest client");
+        Self {
+            keys: RwLock::new(HashMap::new()),
+            jwk_url,
+            client,
         }
     }
 
@@ -97,14 +131,32 @@ impl KeyStore {
     }
 
     async fn refresh(&self, url: &str) -> Result<(), AuthError> {
-        let response = reqwest::get(url).await.map_err(|e| AuthError {
-            code: "signing_keys_unavailable",
-            message: format!("Could not fetch signing keys: {e}"),
+        let response = self.client.get(url).send().await.map_err(|e| {
+            let message = if e.is_timeout() {
+                format!("Could not fetch signing keys: request timed out: {e}")
+            } else {
+                format!("Could not fetch signing keys: {e}")
+            };
+            AuthError {
+                code: "signing_keys_unavailable",
+                message,
+            }
         })?;
 
-        let set: JwkSet = response.json().await.map_err(|e| AuthError {
-            code: "signing_keys_malformed",
-            message: format!("Signing key response could not be parsed: {e}"),
+        let set: JwkSet = response.json().await.map_err(|e| {
+            let message = if e.is_timeout() {
+                format!("Could not fetch signing keys: request timed out: {e}")
+            } else {
+                format!("Signing key response could not be parsed: {e}")
+            };
+            AuthError {
+                code: if e.is_timeout() {
+                    "signing_keys_unavailable"
+                } else {
+                    "signing_keys_malformed"
+                },
+                message,
+            }
         })?;
 
         let mut cache = self.keys.write().await;
@@ -691,5 +743,38 @@ mod tests {
         assert!(DeviceCredential::from_parts(some("phone"), some("   ")).is_none());
         assert!(DeviceCredential::from_parts(some(""), some("token")).is_none());
         assert!(DeviceCredential::from_parts(some("phone"), some("token")).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_signing_key_endpoint_that_never_answers_fails_rather_than_hangs() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{port}/jwk");
+
+        // Keep connection open without answering
+        let _server = std::thread::spawn(move || {
+            if let Ok((_stream, _)) = listener.accept() {
+                std::thread::sleep(Duration::from_secs(5));
+            }
+        });
+
+        // 100 ms timeout for fast test execution
+        let timeout = Duration::from_millis(100);
+        let store = KeyStore::with_url_and_timeouts(Some(url.clone()), timeout, timeout);
+
+        let started = std::time::Instant::now();
+        let err = store.refresh(&url).await.unwrap_err();
+        let elapsed = started.elapsed();
+
+        assert_eq!(err.code, "signing_keys_unavailable");
+        assert!(
+            err.message.contains("timed out"),
+            "expected timeout message, got: {}",
+            err.message
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "expected timeout well under 2s, took {elapsed:?}"
+        );
     }
 }

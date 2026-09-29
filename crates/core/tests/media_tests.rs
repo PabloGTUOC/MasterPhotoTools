@@ -175,26 +175,32 @@ fn start_against_script(
     panic!("script stayed busy far longer than any fork race explains");
 }
 
-/// Install a shim named `exiftool` that appends one line per invocation to a log
-/// and then execs the real tool. Returns (shim path, log path).
-fn spawn_counting_shim(f: &Fixtures) -> (PathBuf, PathBuf) {
-    let log = f.path().join("spawns.log");
-    let shim = f.path().join("exiftool-shim");
-    let real = String::from_utf8(
+fn real_exiftool_path() -> String {
+    String::from_utf8(
         std::process::Command::new("which")
             .arg("exiftool")
             .output()
             .unwrap()
             .stdout,
     )
-    .unwrap();
+    .unwrap()
+    .trim()
+    .to_string()
+}
+
+/// Install a shim named `exiftool` that appends one line per invocation to a log
+/// and then execs the real tool. Returns (shim path, log path).
+fn spawn_counting_shim(f: &Fixtures) -> (PathBuf, PathBuf) {
+    let log = f.path().join("spawns.log");
+    let shim = f.path().join("exiftool-shim");
+    let real = real_exiftool_path();
 
     write_script(
         &shim,
         &format!(
             "#!/bin/sh\necho spawn >> {}\nexec {} \"$@\"\n",
             log.display(),
-            real.trim()
+            real
         ),
     );
     (shim, log)
@@ -305,6 +311,365 @@ fn a_hung_child_times_out_rather_than_blocking_forever() {
     };
     assert!(started.elapsed() < Duration::from_secs(10));
     assert!(message.contains("did not respond"), "got: {message}");
+}
+
+#[test]
+fn a_hung_exiftool_is_restarted_and_the_next_file_is_written() {
+    let f = Fixtures::new();
+    let log = f.path().join("spawns.log");
+    let shim = f.path().join("hang-once-shim");
+    let real = real_exiftool_path();
+
+    // Spawn 1 answers the -ver handshake, then hangs on the first write command.
+    // Spawn 2 execs real exiftool so the next file is genuinely written.
+    write_script(
+        &shim,
+        &format!(
+            r#"#!/bin/sh
+log="{}"
+real="{}"
+if [ -s "$log" ]; then first=0; else first=1; fi
+echo spawn >> "$log"
+if [ "$first" = "1" ]; then
+    saw_ver=0
+    while IFS= read -r line; do
+        if [ "$line" = "-execute" ]; then
+            if [ "$saw_ver" = "1" ]; then
+                echo "{{phototools-stderr-ready}}" >&2
+                echo "12.70"
+                echo "{{ready}}"
+                saw_ver=0
+            else
+                exec sleep 60
+            fi
+        elif [ "$line" = "-ver" ]; then
+            saw_ver=1
+        fi
+    done
+else
+    exec "$real" "$@"
+fi
+"#,
+            log.display(),
+            real
+        ),
+    );
+
+    let path_hung = f.jpeg_without_exif("hung.jpg", 16, 16);
+    let path_next = f.jpeg_without_exif("next.jpg", 16, 16);
+    let date = dt("2024:06:01 10:00:00");
+    let set = DateSet { date: Some(date) };
+
+    let mut writer = start_against_script(&shim, Duration::from_millis(1000)).unwrap();
+
+    let hung_res = writer.write_dates(&path_hung, &set);
+    assert!(hung_res.is_err(), "hung file must fail and be reported");
+    assert_eq!(read_meta(&path_hung).unwrap().capture, None);
+
+    let next_res = writer.write_dates(&path_next, &set);
+    assert!(
+        next_res.is_ok(),
+        "next file must succeed with restarted writer"
+    );
+    assert_eq!(read_meta(&path_next).unwrap().capture, Some(date));
+
+    writer.close().unwrap();
+
+    let spawns = std::fs::read_to_string(&log).unwrap().lines().count();
+    assert_eq!(spawns, 2, "writer must have spawned initial + 1 restart");
+}
+
+#[test]
+fn the_file_that_hung_exiftool_is_reported_failed_not_retried() {
+    let f = Fixtures::new();
+    let log = f.path().join("spawns.log");
+    let commands_log = f.path().join("commands.log");
+    let shim = f.path().join("log-commands-shim");
+
+    // Spawn 1 logs all lines; on file 1 (-execute) it hangs.
+    // Spawn 2 logs all lines; on handshake and subsequent commands it returns success.
+    write_script(
+        &shim,
+        &format!(
+            r#"#!/bin/sh
+log="{}"
+commands="{}"
+if [ -s "$log" ]; then first=0; else first=1; fi
+echo spawn >> "$log"
+saw_ver=0
+while IFS= read -r line; do
+    echo "$line" >> "$commands"
+    if [ "$line" = "-execute" ]; then
+        if [ "$saw_ver" = "1" ]; then
+            echo "{{phototools-stderr-ready}}" >&2
+            echo "12.70"
+            echo "{{ready}}"
+            saw_ver=0
+        elif [ "$first" = "1" ]; then
+            exec sleep 60
+        else
+            echo "{{phototools-stderr-ready}}" >&2
+            echo "1 image files updated"
+            echo "{{ready}}"
+        fi
+    elif [ "$line" = "-ver" ]; then
+        saw_ver=1
+    fi
+done
+"#,
+            log.display(),
+            commands_log.display()
+        ),
+    );
+
+    let path_hung = f.jpeg_without_exif("hung_never_retry.jpg", 16, 16);
+    let path_next = f.jpeg_without_exif("next_file.jpg", 16, 16);
+    let date = dt("2024:06:01 10:00:00");
+    let set = DateSet { date: Some(date) };
+
+    let mut writer = start_against_script(&shim, Duration::from_millis(1000)).unwrap();
+
+    let hung_res = writer.write_dates(&path_hung, &set);
+    assert!(
+        hung_res.is_err(),
+        "the file that hung exiftool must be reported failed"
+    );
+
+    let next_res = writer.write_dates(&path_next, &set);
+    assert!(next_res.is_ok(), "the subsequent file succeeds");
+
+    writer.close().unwrap();
+
+    let recorded = std::fs::read_to_string(&commands_log).unwrap();
+    // The hung file was sent to spawn 1 once, but never retried on spawn 2.
+    assert_eq!(
+        recorded.matches(&path_hung.display().to_string()).count(),
+        1,
+        "the hung file must not be retried automatically"
+    );
+    assert_eq!(
+        recorded.matches(&path_next.display().to_string()).count(),
+        1,
+        "the next file was sent once"
+    );
+}
+
+#[test]
+fn exiftool_is_restarted_at_most_twice_per_writer() {
+    let f = Fixtures::new();
+    let log = f.path().join("spawns.log");
+    let shim = f.path().join("always-hang-shim");
+
+    // Every spawn answers the -ver handshake, then hangs on the actual command.
+    write_script(
+        &shim,
+        &format!(
+            r#"#!/bin/sh
+log="{}"
+echo spawn >> "$log"
+saw_ver=0
+while IFS= read -r line; do
+    if [ "$line" = "-execute" ]; then
+        if [ "$saw_ver" = "1" ]; then
+            echo "{{phototools-stderr-ready}}" >&2
+            echo "12.70"
+            echo "{{ready}}"
+            saw_ver=0
+        else
+            exec sleep 60
+        fi
+    elif [ "$line" = "-ver" ]; then
+        saw_ver=1
+    fi
+done
+"#,
+            log.display()
+        ),
+    );
+
+    let set = DateSet {
+        date: Some(dt("2024:01:01 00:00:00")),
+    };
+    let mut writer = start_against_script(&shim, Duration::from_millis(1000)).unwrap();
+    // Initial spawn happened during start.
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1);
+
+    // Call 1: hangs, triggers restart 1 (spawn 2).
+    let f1 = f.jpeg_without_exif("f1.jpg", 16, 16);
+    let r1 = writer.write_dates(&f1, &set);
+    assert!(r1.is_err());
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 2);
+
+    // Call 2: hangs, triggers restart 2 (spawn 3).
+    let f2 = f.jpeg_without_exif("f2.jpg", 16, 16);
+    let r2 = writer.write_dates(&f2, &set);
+    assert!(r2.is_err());
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 3);
+
+    // Call 3: hangs. Restarts cap (2) reached, marked dead, no spawn.
+    let f3 = f.jpeg_without_exif("f3.jpg", 16, 16);
+    let r3 = writer.write_dates(&f3, &set);
+    assert!(r3.is_err());
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap().lines().count(),
+        3,
+        "cap reached; no further spawns"
+    );
+
+    // Later calls fail straight away without spawning.
+    let f4 = f.jpeg_without_exif("f4.jpg", 16, 16);
+    let r4 = writer.write_dates(&f4, &set);
+    let err4 = r4.unwrap_err().to_string();
+    assert!(
+        err4.contains("not being started again"),
+        "must say exiftool is not being started again; got: {err4}"
+    );
+    assert!(
+        err4.contains("3 times"),
+        "must name how many times it failed (1 + 2 restarts); got: {err4}"
+    );
+
+    let f5 = f.jpeg_without_exif("f5.jpg", 16, 16);
+    let r5 = writer.write_dates(&f5, &set);
+    assert!(r5.is_err());
+
+    // Still exactly 3 spawns in all (initial + 2 restarts).
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap().lines().count(),
+        3,
+        "exiftool must be spawned at most 3 times in all (1 + 2 restarts)"
+    );
+}
+
+#[test]
+fn a_restart_that_fails_reports_why_rather_than_blaming_the_cap() {
+    // The first process answers its handshake and then hangs on the first file.
+    // Every later process exits at once, as exiftool does when it has been
+    // removed or broken underneath a running job. The files after that must be
+    // told exiftool could not be started again — not that it hung too often,
+    // which would send somebody looking at their photographs instead of the tool.
+    let f = Fixtures::new();
+    let log = f.path().join("spawns.log");
+    let shim = f.path().join("dies-on-restart-shim");
+    write_script(
+        &shim,
+        &format!(
+            r#"#!/bin/sh
+log="{}"
+if [ -s "$log" ]; then
+    echo spawn >> "$log"
+    exit 1
+fi
+echo spawn >> "$log"
+saw_ver=0
+while IFS= read -r line; do
+    if [ "$line" = "-execute" ]; then
+        if [ "$saw_ver" = "1" ]; then
+            echo "{{phototools-stderr-ready}}" >&2
+            echo "12.70"
+            echo "{{ready}}"
+            saw_ver=0
+        else
+            exec sleep 60
+        fi
+    elif [ "$line" = "-ver" ]; then
+        saw_ver=1
+    fi
+done
+"#,
+            log.display()
+        ),
+    );
+
+    let set = DateSet {
+        date: Some(dt("2024:01:01 00:00:00")),
+    };
+    let mut writer = start_against_script(&shim, Duration::from_millis(1000)).unwrap();
+
+    let hung = f.jpeg_without_exif("hung.jpg", 16, 16);
+    assert!(writer.write_dates(&hung, &set).is_err());
+
+    let next = f.jpeg_without_exif("next.jpg", 16, 16);
+    let message = writer.write_dates(&next, &set).unwrap_err().to_string();
+    assert!(
+        message.contains("could not be started again"),
+        "must say the restart failed; got: {message}"
+    );
+    assert!(
+        !message.contains("not being started again"),
+        "must not blame the restart cap after one restart; got: {message}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap().lines().count(),
+        2,
+        "one failed restart, and no further attempts"
+    );
+}
+
+#[test]
+fn a_crashed_exiftool_is_restarted_and_the_next_file_is_written() {
+    let f = Fixtures::new();
+    let log = f.path().join("spawns.log");
+    let shim = f.path().join("crash-once-shim");
+    let real = real_exiftool_path();
+
+    // Spawn 1 answers -ver, then exits 1 immediately on the first write (crash / Disconnected).
+    // Spawn 2 execs real exiftool so the next file is written cleanly.
+    write_script(
+        &shim,
+        &format!(
+            r#"#!/bin/sh
+log="{}"
+real="{}"
+if [ -s "$log" ]; then first=0; else first=1; fi
+echo spawn >> "$log"
+if [ "$first" = "1" ]; then
+    saw_ver=0
+    while IFS= read -r line; do
+        if [ "$line" = "-execute" ]; then
+            if [ "$saw_ver" = "1" ]; then
+                echo "{{phototools-stderr-ready}}" >&2
+                echo "12.70"
+                echo "{{ready}}"
+                saw_ver=0
+            else
+                exit 1
+            fi
+        elif [ "$line" = "-ver" ]; then
+            saw_ver=1
+        fi
+    done
+else
+    exec "$real" "$@"
+fi
+"#,
+            log.display(),
+            real
+        ),
+    );
+
+    let path_crashed = f.jpeg_without_exif("crashed.jpg", 16, 16);
+    let path_next = f.jpeg_without_exif("after_crash.jpg", 16, 16);
+    let date = dt("2024:07:01 11:00:00");
+    let set = DateSet { date: Some(date) };
+
+    let mut writer = start_against_script(&shim, Duration::from_millis(500)).unwrap();
+
+    let crashed_res = writer.write_dates(&path_crashed, &set);
+    assert!(crashed_res.is_err(), "crashed process write must fail");
+    assert_eq!(read_meta(&path_crashed).unwrap().capture, None);
+
+    let next_res = writer.write_dates(&path_next, &set);
+    assert!(
+        next_res.is_ok(),
+        "subsequent file succeeds after crash restart"
+    );
+    assert_eq!(read_meta(&path_next).unwrap().capture, Some(date));
+
+    writer.close().unwrap();
+
+    let spawns = std::fs::read_to_string(&log).unwrap().lines().count();
+    assert_eq!(spawns, 2, "writer restarted once after crash");
 }
 
 #[test]

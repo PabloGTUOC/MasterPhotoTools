@@ -205,12 +205,17 @@ impl VolumeWatcher {
                     for path in due {
                         let inspected = match ledger.lock() {
                             Ok(ledger) => inspect(&path, &ledger),
-                            Err(_) => continue,
+                            Err(e) => {
+                                eprintln!("could not inspect {}: {e}", path.display());
+                                continue;
+                            }
                         };
                         // A card that cannot be inspected is not worth crashing
                         // the watcher over; the next mount still gets a look.
-                        if let Ok(Some(detected)) = inspected {
-                            on_card(detected);
+                        match inspected {
+                            Ok(Some(detected)) => on_card(detected),
+                            Ok(None) => {} // Nothing new to report
+                            Err(e) => eprintln!("could not inspect {}: {e}", path.display()),
                         }
                     }
                 }

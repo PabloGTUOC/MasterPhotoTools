@@ -320,6 +320,9 @@ pub fn render_rgba_frame(
     let lut_is_unit = lut.is_some_and(|l| l.is_unit_domain());
 
     let curves_table = ToneCurvesTable::from_recipe(recipe.curves.as_ref());
+    let grading_table = super::grading::CompiledGradingTable::from_recipe(recipe.grading.as_ref());
+    let has_grading = !grading_table.is_identity;
+    let grading_lut = &*grading_table.table;
     let srgb_table = &**FAST_LINEAR_TO_SRGB;
 
     let mut out_bytes = Vec::with_capacity(out_len);
@@ -446,21 +449,33 @@ pub fn render_rgba_frame(
                         (disp_r, disp_g, disp_b)
                     };
 
+                    // 3-way colour grading in display-encoded space
+                    let (graded_r, graded_g, graded_b) = if has_grading {
+                        super::grading::CompiledGradingTable::apply_table(
+                            grading_lut,
+                            curved_r,
+                            curved_g,
+                            curved_b,
+                        )
+                    } else {
+                        (curved_r, curved_g, curved_b)
+                    };
+
                     // 3D LUT sampling & blending in display space
                     let (final_r, final_g, final_b) = if has_lut {
                         let lut_inst = lut.unwrap();
                         let lut_out = if lut_is_unit {
-                            lut_inst.sample_unit([curved_r, curved_g, curved_b])
+                            lut_inst.sample_unit([graded_r, graded_g, graded_b])
                         } else {
-                            lut_inst.sample([curved_r, curved_g, curved_b])
+                            lut_inst.sample([graded_r, graded_g, graded_b])
                         };
                         (
-                            curved_r + intensity * (lut_out[0] - curved_r),
-                            curved_g + intensity * (lut_out[1] - curved_g),
-                            curved_b + intensity * (lut_out[2] - curved_b),
+                            graded_r + intensity * (lut_out[0] - graded_r),
+                            graded_g + intensity * (lut_out[1] - graded_g),
+                            graded_b + intensity * (lut_out[2] - graded_b),
                         )
                     } else {
-                        (curved_r, curved_g, curved_b)
+                        (graded_r, graded_g, graded_b)
                     };
 
                     let r_u8 = (final_r.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;

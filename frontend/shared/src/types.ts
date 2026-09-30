@@ -915,3 +915,21 @@ export interface HslAdjustments {
   magenta: HslBand;
 }
 
+/** Tonal color wheel parameters for 3-way color grading (ED-12). */
+export interface ColorWheel {
+  hue: number;
+  saturation: number;
+  luminance: number;
+}
+
+/** 3-way color grading configuration (ED-12). */
+export interface ColorGrading {
+  shadows: ColorWheel;
+  midtones: ColorWheel;
+  highlights: ColorWheel;
+  global: ColorWheel;
+  blending: number;
+  balance: number;
+}
+
+

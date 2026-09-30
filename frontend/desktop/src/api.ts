@@ -523,7 +523,24 @@ export interface HslAdjustments {
   magenta: HslBand;
 }
 
-/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11). */
+/** Tonal color wheel parameters for 3-way color grading (ED-12). */
+export interface ColorWheel {
+  hue: number;
+  saturation: number;
+  luminance: number;
+}
+
+/** 3-way color grading configuration (ED-12). */
+export interface ColorGrading {
+  shadows: ColorWheel;
+  midtones: ColorWheel;
+  highlights: ColorWheel;
+  global: ColorWheel;
+  blending: number;
+  balance: number;
+}
+
+/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11, ED-12). */
 export interface AdjustmentRecipe {
   version?: number;
   source_sha256?: string;
@@ -543,6 +560,7 @@ export interface AdjustmentRecipe {
   hue?: number;
   curves?: ToneCurves | null;
   hsl?: HslAdjustments | null;
+  grading?: ColorGrading | null;
 }
 
 /** Stage for preview rendering. */

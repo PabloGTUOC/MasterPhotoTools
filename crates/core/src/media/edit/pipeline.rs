@@ -67,6 +67,9 @@ pub struct AdjustmentRecipe {
     /// Optional 8-band HSL adjustments evaluated in OkLCh color space.
     #[serde(default)]
     pub hsl: Option<super::hsl::HslAdjustments>,
+    /// Optional 3-way colour grading wheels evaluated in display-encoded space.
+    #[serde(default)]
+    pub grading: Option<super::grading::ColorGrading>,
 }
 
 impl Default for AdjustmentRecipe {
@@ -90,12 +93,13 @@ impl Default for AdjustmentRecipe {
             hue: 0.0,
             curves: None,
             hsl: None,
+            grading: None,
         }
     }
 }
 
 impl AdjustmentRecipe {
-    /// True if all sliders are at rest (0.0), no curves are active, no HSL is applied, and no LUT is attached.
+    /// True if all sliders are at rest (0.0), no curves are active, no HSL is applied, no grading is active, and no LUT is attached.
     pub fn is_identity(&self) -> bool {
         self.exposure == 0.0
             && self.temperature == 0.0
@@ -112,6 +116,7 @@ impl AdjustmentRecipe {
             && self.hue == 0.0
             && self.curves.as_ref().map_or(true, |c| c.is_identity())
             && self.hsl.as_ref().map_or(true, |h| h.is_identity())
+            && self.grading.as_ref().map_or(true, |g| g.is_identity())
     }
 }
 
@@ -285,7 +290,24 @@ impl LinearBuffer {
         intensity: f32,
         curves_table: &super::curves::ToneCurvesTable,
     ) -> ImageBuffer {
+        self.to_rgb8_with_lut_curves_and_grading(
+            lut,
+            intensity,
+            curves_table,
+            &super::grading::CompiledGradingTable::default(),
+        )
+    }
+
+    pub fn to_rgb8_with_lut_curves_and_grading(
+        &self,
+        lut: Option<&Lut>,
+        intensity: f32,
+        curves_table: &super::curves::ToneCurvesTable,
+        grading_table: &super::grading::CompiledGradingTable,
+    ) -> ImageBuffer {
         let intensity = intensity.clamp(0.0, 1.0);
+        let has_grading = !grading_table.is_identity;
+        let grading_lut = &*grading_table.table;
         let mut out = vec![0u8; self.data.len()];
         out.par_chunks_exact_mut(3)
             .zip(self.data.par_chunks_exact(3))
@@ -300,19 +322,30 @@ impl LinearBuffer {
                     (disp_r, disp_g, disp_b)
                 };
 
-                let (final_r, final_g, final_b) = if let Some(lut) = lut {
-                    if intensity > 0.0 {
-                        let lut_out = lut.sample([curved_r, curved_g, curved_b]);
-                        (
-                            ((1.0 - intensity) * curved_r + intensity * lut_out[0]).clamp(0.0, 1.0),
-                            ((1.0 - intensity) * curved_g + intensity * lut_out[1]).clamp(0.0, 1.0),
-                            ((1.0 - intensity) * curved_b + intensity * lut_out[2]).clamp(0.0, 1.0),
-                        )
-                    } else {
-                        (curved_r, curved_g, curved_b)
-                    }
+                let (graded_r, graded_g, graded_b) = if has_grading {
+                    super::grading::CompiledGradingTable::apply_table(
+                        grading_lut,
+                        curved_r,
+                        curved_g,
+                        curved_b,
+                    )
                 } else {
                     (curved_r, curved_g, curved_b)
+                };
+
+                let (final_r, final_g, final_b) = if let Some(lut) = lut {
+                    if intensity > 0.0 {
+                        let lut_out = lut.sample([graded_r, graded_g, graded_b]);
+                        (
+                            ((1.0 - intensity) * graded_r + intensity * lut_out[0]).clamp(0.0, 1.0),
+                            ((1.0 - intensity) * graded_g + intensity * lut_out[1]).clamp(0.0, 1.0),
+                            ((1.0 - intensity) * graded_b + intensity * lut_out[2]).clamp(0.0, 1.0),
+                        )
+                    } else {
+                        (graded_r, graded_g, graded_b)
+                    }
+                } else {
+                    (graded_r, graded_g, graded_b)
                 };
 
                 out_px[0] = (final_r * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -344,7 +377,24 @@ impl LinearBuffer {
         intensity: f32,
         curves_table: &super::curves::ToneCurvesTable,
     ) -> ImageBuffer {
+        self.to_rgb16_with_lut_curves_and_grading(
+            lut,
+            intensity,
+            curves_table,
+            &super::grading::CompiledGradingTable::default(),
+        )
+    }
+
+    pub fn to_rgb16_with_lut_curves_and_grading(
+        &self,
+        lut: Option<&Lut>,
+        intensity: f32,
+        curves_table: &super::curves::ToneCurvesTable,
+        grading_table: &super::grading::CompiledGradingTable,
+    ) -> ImageBuffer {
         let intensity = intensity.clamp(0.0, 1.0);
+        let has_grading = !grading_table.is_identity;
+        let grading_lut = &*grading_table.table;
         let mut out = vec![0u16; self.data.len()];
         out.par_chunks_exact_mut(3)
             .zip(self.data.par_chunks_exact(3))
@@ -359,19 +409,30 @@ impl LinearBuffer {
                     (disp_r, disp_g, disp_b)
                 };
 
-                let (final_r, final_g, final_b) = if let Some(lut) = lut {
-                    if intensity > 0.0 {
-                        let lut_out = lut.sample([curved_r, curved_g, curved_b]);
-                        (
-                            ((1.0 - intensity) * curved_r + intensity * lut_out[0]).clamp(0.0, 1.0),
-                            ((1.0 - intensity) * curved_g + intensity * lut_out[1]).clamp(0.0, 1.0),
-                            ((1.0 - intensity) * curved_b + intensity * lut_out[2]).clamp(0.0, 1.0),
-                        )
-                    } else {
-                        (curved_r, curved_g, curved_b)
-                    }
+                let (graded_r, graded_g, graded_b) = if has_grading {
+                    super::grading::CompiledGradingTable::apply_table(
+                        grading_lut,
+                        curved_r,
+                        curved_g,
+                        curved_b,
+                    )
                 } else {
                     (curved_r, curved_g, curved_b)
+                };
+
+                let (final_r, final_g, final_b) = if let Some(lut) = lut {
+                    if intensity > 0.0 {
+                        let lut_out = lut.sample([graded_r, graded_g, graded_b]);
+                        (
+                            ((1.0 - intensity) * graded_r + intensity * lut_out[0]).clamp(0.0, 1.0),
+                            ((1.0 - intensity) * graded_g + intensity * lut_out[1]).clamp(0.0, 1.0),
+                            ((1.0 - intensity) * graded_b + intensity * lut_out[2]).clamp(0.0, 1.0),
+                        )
+                    } else {
+                        (graded_r, graded_g, graded_b)
+                    }
+                } else {
+                    (graded_r, graded_g, graded_b)
                 };
 
                 out_px[0] = (final_r * 65535.0).round().clamp(0.0, 65535.0) as u16;
@@ -665,14 +726,21 @@ pub fn apply_recipe(
     };
 
     let curves_table = super::curves::ToneCurvesTable::from_recipe(recipe.curves.as_ref());
+    let grading_table = super::grading::CompiledGradingTable::from_recipe(recipe.grading.as_ref());
 
     match image {
-        ImageBuffer::Rgb8 { .. } => {
-            Ok(linear.to_rgb8_with_lut_and_curves(lut, intensity, &curves_table))
-        }
-        ImageBuffer::Rgb16 { .. } => {
-            Ok(linear.to_rgb16_with_lut_and_curves(lut, intensity, &curves_table))
-        }
+        ImageBuffer::Rgb8 { .. } => Ok(linear.to_rgb8_with_lut_curves_and_grading(
+            lut,
+            intensity,
+            &curves_table,
+            &grading_table,
+        )),
+        ImageBuffer::Rgb16 { .. } => Ok(linear.to_rgb16_with_lut_curves_and_grading(
+            lut,
+            intensity,
+            &curves_table,
+            &grading_table,
+        )),
     }
 }
 

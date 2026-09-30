@@ -718,19 +718,34 @@ verification case. Every commit can be launched, tested, and visually evaluated.
   - `check:edit`: 8-band HSL selective adjustments and swatches verified in headless Chromium.
 
 ### `ED-12` · 3-way colour grading wheels, `ColorWheel` component & `check:edit`
-- **Core**: Implement 3-way grading (Shadows, Midtones, Highlights) plus Global color wheel in `media::edit::grading`. Use ASC CDL Lift/Gamma/Gain color model with smooth luminance-weighted power ramps. Implement Range Blending ($0.0$ to $100.0$) and Tonal Balance ($-100.0$ to $+100.0$) controls. Convert polar coordinates $(\text{angle}, \text{intensity})$ to chromatic shifts stably without gamut distortion.
-- **Desktop UI**: Build `frontend/shared/src/ui/components/ColorWheel.vue`: interactive polar wheel with draggable reticle, hue ring, saturation radius, luminance slider, and numeric readouts ($\ge 40$px hit targets). Embed in "Colour Grading" section of `Edit.vue` with tabbed/quadrant view for Shadows, Midtones, Highlights, and Global wheels, plus Blending and Balance sliders.
+- **Core**: Implement 3-way grading (Shadows, Midtones, Highlights) plus Global color wheel in `media::edit::grading`.
+  - **Pipeline Domain & CDL Formulation**: Runs immediately following tone curves in the display-encoded domain before 3D LUT sampling. Employs ASC CDL Lift/Gamma/Gain formulation with smooth range-weighted tonal transitions: Shadows (Lift) acts as an additive offset weighted by $w_S(y)$ shifting the black floor while keeping white fixed ($F(1)=1$); Highlights (Gain) acts as slope scaling weighted by $w_H(y)$ moving the white end while keeping pure black fixed ($F(0)=0$); Midtones (Gamma) acts as a power curve weighted by $w_M(y)$ bending midtones while keeping both endpoints fixed ($F(0)=0, F(1)=1$); Global acts as multiplicative exposure gain ($2^{\text{global} \times 0.5}$) scaling without lifting black off 0. Power base is strictly clamped at 0 (`base.max(0.0)`) so negative values never reach `powf`.
+  - **Partition of Unity**: Shadows, Midtones, and Highlights weights are smooth cubic Hermite functions of display luma that sum to $1.0$ at every luma for all Balance and Blending values ($w_S(y) + w_M(y) + w_H(y) \equiv 1.0$). Balance shifts crossover centers monotonically; Blending expands or contracts transition overlap width without breaking the partition.
+  - **Luma-Neutral Tints**: Wheel polar coordinates $(\text{angle}, \text{intensity})$ are evaluated in OkLCh ($L=0.7, C = \text{sat} \times 0.2$), where angle matches 8-band HSL knot angles (29.23° = Red). Rec. 709 luma contribution is subtracted so chromatic tint offsets never alter brightness (preserving luma within 1 code value).
+  - **Precomputed 1024-entry Table**: All tonal range weights, CDL luminance mappings, and chromatic tint offsets are precompiled into `CompiledGradingTable` once upon recipe change, eliminating per-pixel Oklab round-trips. Per-pixel evaluation is a single table lookup plus multiply-adds.
+  - **Exact Identity at Rest**: Completely skipped when all wheels are at neutral origin, preserving the drag budget and exact preview/export identity.
+- **Desktop UI**: Build `frontend/shared/src/ui/components/ColorWheel.vue`: transport-free component with SVG circle content (OkLCh hue ring conic gradient clipped via SVG `<clipPath>`, no CSS `border-radius > 2px`), draggable reticle with pointer capture, keyboard arrow navigation (Shift for 5x step), numeric readouts for angle and saturation, double-click reset, and integrated `AdjustmentSlider` for luminance. Embed in "Colour Grading" section of `Edit.vue` with tabbed selector for Shadows, Midtones, Highlights, and Global wheels, modified indicator dots, per-wheel reset button, section reset, and Blending / Balance sliders. All interactive controls satisfy $\ge 40$px hit targets.
 - **Verification**:
-  - Re-run `benchmark_edit_preview` in release profile.
-  - Add `check:edit` cases verifying reticle dragging, balance slider adjustments, live split-toning canvas updates, and double-click reset.
+  - Re-run `benchmark_edit_preview` in release profile asserting 720p drag p95 $\le 12$ ms, 1440p settle p95 $\le 40$ ms.
+  - Add `check:edit` Section 9f verifying 4 tabs, $\ge 40$px hit targets, modified indicators, loaded values, keyboard navigation, per-wheel reset, and section reset.
 - **Tests**:
   - `untouched_grading_wheels_are_exact_identity`
+  - `range_weights_sum_to_one_at_every_luma`
+  - `balance_moves_the_crossover_monotonically`
+  - `a_wheel_tint_preserves_luma`
   - `shadows_wheel_tints_shadows_and_decays_smoothly_at_high_luminance`
   - `highlights_wheel_tints_highlights_and_decays_smoothly_at_low_luminance`
-  - `grading_balance_and_blending_adjust_tonal_overlap_stably`
   - `global_wheel_tints_all_luminance_levels_uniformly`
-  - `benchmark_edit_preview` (re-asserted in release)
-  - `check:edit`: color wheel reticle dragging and balance controls verified in headless Chromium.
+  - `grading_balance_and_blending_adjust_tonal_overlap_stably`
+  - `power_base_clamped_at_zero_never_evaluates_negative_powf`
+  - `wheel_angle_matches_hsl_reference_knot_hues`
+  - `shadows_luminance_moves_black_but_not_white`
+  - `highlights_luminance_moves_white_but_not_black`
+  - `midtones_luminance_keeps_black_and_white_fixed`
+  - `global_luminance_does_not_lift_pure_black`
+  - `graded_output_stays_in_range_and_finite`
+  - `benchmark_edit_preview` (re-asserted in release: drag $\le 12$ ms, settle $\le 40$ ms)
+  - `check:edit`: 3-way colour grading wheels, tabs, keyboard navigation, and resets verified in headless Chromium.
 
 ### `ED-13` · Geometry, upright orientation baking, crop/straighten UI & `check:edit`
 - **Core**: Implement spatial transforms in `media::edit::geometry`: normalised crop $[x_{min}, y_{min}, x_{max}, y_{max}]$, 90° quadrant rotations, fine straighten $[-45.0^\circ, +45.0^\circ]$ with automatic inscribed crop-to-fit scale factor $s(\theta, W, H)$, and horizontal/vertical flips. Enforce upright orientation invariant: if any geometric transform is active, export renders upright pixels and writes EXIF `Orientation = 1` (`carry_metadata(..., upright: true)`). If untouched, preserve original orientation tag (`upright: false`) and support direct byte-copy stream export for unmodified images.

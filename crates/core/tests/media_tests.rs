@@ -1508,6 +1508,30 @@ LUT_3D_SIZE 2
             },
             ..Default::default()
         }),
+        grading: Some(phototools_core::media::edit::ColorGrading {
+            shadows: phototools_core::media::edit::ColorWheel {
+                hue: 200.0,
+                saturation: 0.3,
+                luminance: -0.1,
+            },
+            midtones: phototools_core::media::edit::ColorWheel {
+                hue: 45.0,
+                saturation: 0.2,
+                luminance: 0.05,
+            },
+            highlights: phototools_core::media::edit::ColorWheel {
+                hue: 60.0,
+                saturation: 0.25,
+                luminance: 0.1,
+            },
+            global: phototools_core::media::edit::ColorWheel {
+                hue: 30.0,
+                saturation: 0.15,
+                luminance: -0.05,
+            },
+            blending: 50.0,
+            balance: 10.0,
+        }),
         lut: Some(LutRef {
             name: "test.cube".into(),
             sha256: lut.sha256.clone(),
@@ -1729,6 +1753,30 @@ fn benchmark_edit_preview() {
                 luminance: 0.0,
             },
         }),
+        grading: Some(phototools_core::media::edit::ColorGrading {
+            shadows: phototools_core::media::edit::ColorWheel {
+                hue: 210.0,
+                saturation: 0.25,
+                luminance: -0.05,
+            },
+            midtones: phototools_core::media::edit::ColorWheel {
+                hue: 45.0,
+                saturation: 0.15,
+                luminance: 0.05,
+            },
+            highlights: phototools_core::media::edit::ColorWheel {
+                hue: 60.0,
+                saturation: 0.20,
+                luminance: 0.02,
+            },
+            global: phototools_core::media::edit::ColorWheel {
+                hue: 30.0,
+                saturation: 0.10,
+                luminance: 0.0,
+            },
+            blending: 60.0,
+            balance: 10.0,
+        }),
         lut: Some(LutRef {
             name: "synth33.cube".into(),
             sha256: lut33.sha256.clone(),
@@ -1911,7 +1959,25 @@ fn benchmark_edit_preview() {
     }
     let curves_time = t_curves.elapsed() / 10;
 
-    // 5. 3D LUT Tetrahedral Sampling
+    // 5. Colour Grading (1024-entry luma-indexed LUT precomputed from OkLCh tints and CDL mapping)
+    let grading_table = phototools_core::media::edit::grading::CompiledGradingTable::from_recipe(
+        recipe.grading.as_ref(),
+    );
+    let t_grading = Instant::now();
+    for _ in 0..10 {
+        settle_proxy
+            .data
+            .par_chunks_exact(row_in_len)
+            .for_each(|row| {
+                for px in row.chunks_exact(3) {
+                    let out = grading_table.apply(px[0], px[1], px[2]);
+                    std::hint::black_box(out);
+                }
+            });
+    }
+    let grading_time = t_grading.elapsed() / 10;
+
+    // 6. 3D LUT Tetrahedral Sampling
     let t_lut = Instant::now();
     for _ in 0..10 {
         settle_proxy
@@ -1969,7 +2035,11 @@ fn benchmark_edit_preview() {
         curves_time
     );
     println!(
-        "    5. 3D LUT sampling & blending (33x33x33 tetrahedral interpolation): {:?}",
+        "    5. Colour grading (1024-entry luma LUT with OkLCh tints + CDL): {:?}",
+        grading_time
+    );
+    println!(
+        "    6. 3D LUT sampling & blending (33x33x33 tetrahedral interpolation): {:?}",
         lut_time
     );
 

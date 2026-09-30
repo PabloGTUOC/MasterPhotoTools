@@ -690,6 +690,153 @@ try {
     console.log('  Section reset successfully reset all HSL bands to identity.');
   }
 
+  // 9f. Assert 3-way Colour Grading panel (ED-12)
+  console.log('Asserting 3-way Colour Grading panel (wheels, tabs, oklch hues, readouts, dots, and resets)...');
+  await pathInput.fill('/Volumes/Photos/v2_edits.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(100);
+
+  // Expand Colour Grading section
+  const gradingToggle = page.locator('button[data-testid="section-grading-toggle"]');
+  await gradingToggle.click();
+  await page.waitForTimeout(50);
+
+  // Check that all 4 tabs exist and satisfy hit target >= 40px
+  const tabData = await page.evaluate(() => {
+    const tabs = Array.from(document.querySelectorAll('.grading-tab'));
+    return tabs.map((t) => ({
+      testId: t.getAttribute('data-testid'),
+      hasDot: Boolean(t.querySelector('.grading-tab-dot')),
+      isActive: t.classList.contains('active'),
+      width: t.getBoundingClientRect().width,
+      height: t.getBoundingClientRect().height,
+    }));
+  });
+
+  if (tabData.length !== 4) {
+    failures.push(`Expected 4 grading tabs, found ${tabData.length}`);
+  } else {
+    console.log('  Found all 4 grading tabs.');
+  }
+
+  const undersizedTabs = tabData.filter((t) => t.width < 40 || t.height < 40);
+  if (undersizedTabs.length > 0) {
+    failures.push(`Some grading tabs have hit target < 40px: ${JSON.stringify(undersizedTabs)}`);
+  } else {
+    console.log('  All grading tabs satisfy >= 40px hit target.');
+  }
+
+  // Check modified dots on tabs (Shadows, Midtones, Highlights modified; Global clean)
+  const shadowsTab = tabData.find((t) => t.testId === 'grading-tab-shadows');
+  const midtonesTab = tabData.find((t) => t.testId === 'grading-tab-midtones');
+  const highlightsTab = tabData.find((t) => t.testId === 'grading-tab-highlights');
+  const globalTab = tabData.find((t) => t.testId === 'grading-tab-global');
+
+  if (!shadowsTab?.hasDot) {
+    failures.push('Shadows tab should show modified dot indicator for loaded v2 edits');
+  }
+  if (!midtonesTab?.hasDot) {
+    failures.push('Midtones tab should show modified dot indicator for loaded v2 edits');
+  }
+  if (!highlightsTab?.hasDot) {
+    failures.push('Highlights tab should show modified dot indicator for loaded v2 edits');
+  }
+  if (globalTab?.hasDot) {
+    failures.push('Global tab should NOT show modified dot indicator for untouched wheel');
+  }
+  console.log('  Modified indicators correctly present on Shadows, Midtones, Highlights.');
+
+  // Verify loaded values on default Shadows wheel: hue=210°, sat=35%, lum=-10%
+  const shadowsWheelVals = await page.evaluate(() => {
+    const hue = document.querySelector('[data-testid="grading-wheel-shadows-readout-hue"]')?.textContent?.trim();
+    const sat = document.querySelector('[data-testid="grading-wheel-shadows-readout-sat"]')?.textContent?.trim();
+    const lum = document.querySelector('input[data-testid="grading-wheel-shadows-slider-lum-number"]')?.value;
+    return { hue, sat, lum };
+  });
+
+  if (shadowsWheelVals.hue !== '210°' || shadowsWheelVals.sat !== '35%' || shadowsWheelVals.lum !== '-10') {
+    failures.push(`Shadows wheel values mismatch: expected 210°, 35%, -10; got ${JSON.stringify(shadowsWheelVals)}`);
+  } else {
+    console.log(`  Shadows wheel correctly displays loaded values: hue=${shadowsWheelVals.hue}, sat=${shadowsWheelVals.sat}, lum=${shadowsWheelVals.lum}%`);
+  }
+
+  // Check Blending and Balance sliders: blending=60, balance=-15
+  const rangeVals = await page.evaluate(() => {
+    const blending = document.querySelector('input[data-testid="grading-slider-blending-number"]')?.value;
+    const balance = document.querySelector('input[data-testid="grading-slider-balance-number"]')?.value;
+    return { blending, balance };
+  });
+
+  if (rangeVals.blending !== '60' || rangeVals.balance !== '-15') {
+    failures.push(`Grading range sliders mismatch: expected blending=60, balance=-15; got ${JSON.stringify(rangeVals)}`);
+  } else {
+    console.log(`  Grading range sliders correctly display loaded values: blending=${rangeVals.blending}%, balance=${rangeVals.balance}`);
+  }
+
+  // Switch tabs to Highlights: verify values hue=35°, sat=40%, lum=15%
+  const highlightsTabBtn = page.locator('button[data-testid="grading-tab-highlights"]');
+  await highlightsTabBtn.click();
+  await page.waitForTimeout(50);
+
+  const highlightsWheelVals = await page.evaluate(() => {
+    const hue = document.querySelector('[data-testid="grading-wheel-highlights-readout-hue"]')?.textContent?.trim();
+    const sat = document.querySelector('[data-testid="grading-wheel-highlights-readout-sat"]')?.textContent?.trim();
+    const lum = document.querySelector('input[data-testid="grading-wheel-highlights-slider-lum-number"]')?.value;
+    return { hue, sat, lum };
+  });
+
+  if (highlightsWheelVals.hue !== '35°' || highlightsWheelVals.sat !== '40%' || highlightsWheelVals.lum !== '15') {
+    failures.push(`Highlights wheel values mismatch: expected 35°, 40%, 15; got ${JSON.stringify(highlightsWheelVals)}`);
+  } else {
+    console.log(`  Highlights wheel correctly displays loaded values: hue=${highlightsWheelVals.hue}, sat=${highlightsWheelVals.sat}, lum=${highlightsWheelVals.lum}%`);
+  }
+
+  // Test keyboard navigation on the SVG wheel: ArrowRight moves hue
+  const wheelSvg = page.locator('[data-testid="grading-wheel-highlights-svg"]');
+  await wheelSvg.focus();
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(20);
+
+  const hueAfterArrow = await page.evaluate(() => {
+    return document.querySelector('[data-testid="grading-wheel-highlights-readout-hue"]')?.textContent?.trim();
+  });
+  if (hueAfterArrow !== '36°') {
+    failures.push(`Highlights wheel keyboard navigation failed: expected 36°, got ${hueAfterArrow}`);
+  } else {
+    console.log('  Highlights wheel responded correctly to ArrowRight navigation (36°).');
+  }
+
+  // Reset Highlights wheel via per-wheel reset button
+  const resetWheelBtn = page.locator('button[data-testid="grading-reset-wheel-btn"]');
+  await resetWheelBtn.click();
+  await page.waitForTimeout(50);
+
+  const highlightsAfterReset = await page.evaluate(() => {
+    const hue = document.querySelector('[data-testid="grading-wheel-highlights-readout-hue"]')?.textContent?.trim();
+    const sat = document.querySelector('[data-testid="grading-wheel-highlights-readout-sat"]')?.textContent?.trim();
+    const lum = document.querySelector('input[data-testid="grading-wheel-highlights-slider-lum-number"]')?.value;
+    const dot = Boolean(document.querySelector('[data-testid="grading-dot-highlights"]'));
+    return { hue, sat, lum, dot };
+  });
+
+  if (highlightsAfterReset.hue !== '0°' || highlightsAfterReset.sat !== '0%' || highlightsAfterReset.lum !== '0' || highlightsAfterReset.dot) {
+    failures.push(`Reset current wheel failed: expected 0°, 0%, 0, no dot; got ${JSON.stringify(highlightsAfterReset)}`);
+  } else {
+    console.log('  Per-wheel reset successfully reset Highlights wheel to 0 and cleared modified dot.');
+  }
+
+  // Section reset for Colour Grading
+  const gradingResetBtn = page.locator('button[data-testid="section-grading-reset"]');
+  await gradingResetBtn.click();
+  await page.waitForTimeout(50);
+
+  const dotsAfterGradingReset = await page.evaluate(() => document.querySelectorAll('.grading-tab-dot').length);
+  if (dotsAfterGradingReset !== 0) {
+    failures.push(`Grading section reset failed: expected 0 modified dots, found ${dotsAfterGradingReset}`);
+  } else {
+    console.log('  Section reset successfully reset all grading wheels to identity.');
+  }
+
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');
   await pathInput.press('Enter');

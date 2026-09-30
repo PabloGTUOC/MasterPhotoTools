@@ -204,6 +204,14 @@ export class StubDesktopApiClient {
           purple: { hue: 0, saturation: 0, luminance: 0 },
           magenta: { hue: 0, saturation: 0, luminance: 0 },
         },
+        grading: {
+          shadows: { hue: 210, saturation: 0.35, luminance: -0.1 },
+          midtones: { hue: 45, saturation: 0.2, luminance: 0.05 },
+          highlights: { hue: 35, saturation: 0.4, luminance: 0.15 },
+          global: { hue: 0, saturation: 0, luminance: 0 },
+          blending: 60,
+          balance: -15,
+        },
       };
     }
     if (path.includes('existing_edits')) {

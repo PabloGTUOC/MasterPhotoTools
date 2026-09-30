@@ -2,6 +2,7 @@
 
 pub mod color;
 pub mod curves;
+pub mod grading;
 pub mod hsl;
 pub mod lut;
 pub mod pipeline;
@@ -11,6 +12,7 @@ pub use color::{
     linear_srgb_to_oklab, oklab_to_linear_srgb, rotate_hue_oklch, rotate_hue_oklch_sincos,
 };
 pub use curves::{CurvePoint, CurveTable, MonotoneSpline, ToneCurves, ToneCurvesTable};
+pub use grading::{ColorGrading, ColorWheel, CompiledGradingTable};
 pub use hsl::{CompiledHslTable, HslAdjustments, HslBand};
 pub use lut::{Lut, MAX_LUT_SIZE, MIN_LUT_SIZE};
 pub use pipeline::{

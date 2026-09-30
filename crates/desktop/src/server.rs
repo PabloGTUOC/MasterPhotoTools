@@ -10,11 +10,24 @@ use phototools_core::ingest::{ArrivalReport, Manifest, SessionClient, SessionPla
 use phototools_core::jobs::{Job, JobStatus};
 use phototools_core::tools::geotag;
 use serde::{Deserialize, Serialize};
+use std::error::Error as StdError;
 use std::sync::Mutex;
 use std::time::Duration;
 
 /// How long to wait before deciding the NAS is not answering.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The innermost cause of an error: reqwest's own text names the URL it was
+/// fetching, not the reason it failed, and the reason is what a person can fix.
+fn root_cause(error: &impl StdError) -> String {
+    let mut last: &dyn StdError = error;
+    let mut current = error.source();
+    while let Some(source) = current {
+        last = source;
+        current = source.source();
+    }
+    last.to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServerSettings {
@@ -231,15 +244,18 @@ impl ServerConnection {
                     PROBE_TIMEOUT.as_secs()
                 )),
             },
-            Err(_) => ServerStatus {
-                reachable: false,
-                base_url: base_url.clone(),
-                version: None,
-                detail: Some(format!(
-                    "Nothing answered at {base_url}. Check the server is running and the \
-                     address is right."
-                )),
-            },
+            Err(e) => {
+                let cause = root_cause(&e);
+                ServerStatus {
+                    reachable: false,
+                    base_url: base_url.clone(),
+                    version: None,
+                    detail: Some(format!(
+                        "Nothing answered at {base_url} ({cause}). Check the server is running and the \
+                         address is right."
+                    )),
+                }
+            }
         }
     }
 }
@@ -481,6 +497,19 @@ mod tests {
             status.detail.is_some(),
             "the UI needs something to show the user"
         );
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_says_it_was_refused() {
+        // Port 1 is not listening; this should show the specific error
+        let connection = ServerConnection::new(ServerSettings {
+            base_url: "http://127.0.0.1:1".into(),
+            auth_token: None,
+        });
+
+        let status = connection.status().await;
+        let detail = status.detail.unwrap();
+        assert!(detail.to_lowercase().contains("refused"));
     }
 }
 

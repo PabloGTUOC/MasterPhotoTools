@@ -14,6 +14,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type {
   AdjustmentRecipe,
+  HslAdjustments,
   LutLibraryList,
   LutRef,
   OpenPreviewResult,
@@ -58,6 +59,30 @@ const listRoots = (p: string) => desktop.list(p);
 // Library LUTs
 const lutList = ref<LutLibraryList>({ luts: [], errors: [] });
 
+// 8-band HSL definitions (knot angles in OkLCh from reference sRGB colors)
+interface HslBandDef {
+  key: keyof HslAdjustments;
+  label: string;
+  hueDeg: number;
+}
+
+const HSL_BANDS: HslBandDef[] = [
+  { key: 'red', label: 'Red', hueDeg: 29.23 },
+  { key: 'orange', label: 'Orange', hueDeg: 52.78 },
+  { key: 'yellow', label: 'Yellow', hueDeg: 109.77 },
+  { key: 'green', label: 'Green', hueDeg: 142.50 },
+  { key: 'aqua', label: 'Aqua', hueDeg: 194.77 },
+  { key: 'blue', label: 'Blue', hueDeg: 264.05 },
+  { key: 'purple', label: 'Purple', hueDeg: 293.77 },
+  { key: 'magenta', label: 'Magenta', hueDeg: 328.36 },
+];
+
+const selectedHslBand = ref<keyof HslAdjustments>('red');
+
+const currentBandDef = computed(() => {
+  return HSL_BANDS.find((b) => b.key === selectedHslBand.value) ?? HSL_BANDS[0];
+});
+
 function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
   return {
     version: 2,
@@ -81,6 +106,16 @@ function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
       red: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
       green: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
       blue: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+    },
+    hsl: {
+      red: { hue: 0, saturation: 0, luminance: 0 },
+      orange: { hue: 0, saturation: 0, luminance: 0 },
+      yellow: { hue: 0, saturation: 0, luminance: 0 },
+      green: { hue: 0, saturation: 0, luminance: 0 },
+      aqua: { hue: 0, saturation: 0, luminance: 0 },
+      blue: { hue: 0, saturation: 0, luminance: 0 },
+      purple: { hue: 0, saturation: 0, luminance: 0 },
+      magenta: { hue: 0, saturation: 0, luminance: 0 },
     },
   };
 }
@@ -393,6 +428,7 @@ async function openImage(path: string) {
     }
 
     if (existing) {
+      const defaultHsl = createIdentityRecipe().hsl!;
       recipe.value = {
         ...createIdentityRecipe(),
         ...existing,
@@ -404,6 +440,18 @@ async function openImage(path: string) {
               blue: existing.curves.blue ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
             }
           : createIdentityRecipe().curves,
+        hsl: existing.hsl
+          ? {
+              red: { ...defaultHsl.red, ...existing.hsl.red },
+              orange: { ...defaultHsl.orange, ...existing.hsl.orange },
+              yellow: { ...defaultHsl.yellow, ...existing.hsl.yellow },
+              green: { ...defaultHsl.green, ...existing.hsl.green },
+              aqua: { ...defaultHsl.aqua, ...existing.hsl.aqua },
+              blue: { ...defaultHsl.blue, ...existing.hsl.blue },
+              purple: { ...defaultHsl.purple, ...existing.hsl.purple },
+              magenta: { ...defaultHsl.magenta, ...existing.hsl.magenta },
+            }
+          : defaultHsl,
       };
       saveStatus.value = 'Saved';
       autosaveDisabled.value = false;
@@ -490,7 +538,52 @@ function onCurvesChange(curves: ToneCurves) {
   onRecipeValueChange();
 }
 
-function resetHsl() {}
+function isBandModified(key: keyof HslAdjustments): boolean {
+  const b = recipe.value.hsl?.[key];
+  if (!b) return false;
+  return b.hue !== 0 || b.saturation !== 0 || b.luminance !== 0;
+}
+
+function selectHslBand(key: keyof HslAdjustments) {
+  selectedHslBand.value = key;
+}
+
+function resetCurrentHslBand() {
+  if (recipe.value.hsl) {
+    recipe.value.hsl[selectedHslBand.value] = { hue: 0, saturation: 0, luminance: 0 };
+    onRecipeValueChange();
+  }
+}
+
+function resetHsl() {
+  recipe.value.hsl = {
+    red: { hue: 0, saturation: 0, luminance: 0 },
+    orange: { hue: 0, saturation: 0, luminance: 0 },
+    yellow: { hue: 0, saturation: 0, luminance: 0 },
+    green: { hue: 0, saturation: 0, luminance: 0 },
+    aqua: { hue: 0, saturation: 0, luminance: 0 },
+    blue: { hue: 0, saturation: 0, luminance: 0 },
+    purple: { hue: 0, saturation: 0, luminance: 0 },
+    magenta: { hue: 0, saturation: 0, luminance: 0 },
+  };
+  onRecipeValueChange();
+}
+
+function onHslSliderInput(prop: 'hue' | 'saturation' | 'luminance', val: number) {
+  if (!recipe.value.hsl) {
+    recipe.value.hsl = createIdentityRecipe().hsl!;
+  }
+  recipe.value.hsl[selectedHslBand.value][prop] = val;
+  onRecipeValueInput();
+}
+
+function onHslSliderChange(prop: 'hue' | 'saturation' | 'luminance', val: number) {
+  if (!recipe.value.hsl) {
+    recipe.value.hsl = createIdentityRecipe().hsl!;
+  }
+  recipe.value.hsl[selectedHslBand.value][prop] = val;
+  onRecipeValueChange();
+}
 
 function resetGrading() {}
 
@@ -791,7 +884,88 @@ onUnmounted(() => {
             :default-open="false"
             @reset="resetHsl"
           >
-            <div class="section-placeholder">8-band HSL available in ED-11</div>
+            <div class="hsl-panel" data-testid="hsl-panel">
+              <div class="hsl-swatches" role="tablist" aria-label="HSL Colour Bands">
+                <button
+                  v-for="band in HSL_BANDS"
+                  :key="band.key"
+                  type="button"
+                  class="hsl-swatch"
+                  :class="{ active: selectedHslBand === band.key, modified: isBandModified(band.key) }"
+                  :style="{ backgroundColor: `oklch(0.7 0.2 ${band.hueDeg}deg)` }"
+                  :title="band.label"
+                  :aria-label="band.label"
+                  :aria-selected="selectedHslBand === band.key"
+                  role="tab"
+                  tabindex="0"
+                  :data-testid="`hsl-swatch-${band.key}`"
+                  @click="selectHslBand(band.key)"
+                  @keydown.enter="selectHslBand(band.key)"
+                  @keydown.space.prevent="selectHslBand(band.key)"
+                >
+                  <span
+                    v-if="isBandModified(band.key)"
+                    class="hsl-swatch-dot"
+                    :data-testid="`hsl-dot-${band.key}`"
+                    aria-hidden="true"
+                  />
+                </button>
+              </div>
+
+              <div class="hsl-controls">
+                <div class="hsl-band-header">
+                  <span class="hsl-band-title">{{ currentBandDef.label }}</span>
+                  <button
+                    type="button"
+                    class="hsl-reset-band-btn"
+                    :disabled="!isBandModified(selectedHslBand) || loading || isReadOnly"
+                    data-testid="hsl-reset-band-btn"
+                    @click="resetCurrentHslBand"
+                  >
+                    Reset {{ currentBandDef.label }}
+                  </button>
+                </div>
+
+                <AdjustmentSlider
+                  label="Hue"
+                  :model-value="recipe.hsl?.[selectedHslBand]?.hue ?? 0"
+                  :min="-180"
+                  :max="180"
+                  :step="1"
+                  unit="°"
+                  :disabled="loading || isReadOnly"
+                  test-id="hsl-slider-hue"
+                  @update:model-value="(v) => onHslSliderInput('hue', v)"
+                  @change="(v) => onHslSliderChange('hue', v)"
+                />
+
+                <AdjustmentSlider
+                  label="Saturation"
+                  :model-value="recipe.hsl?.[selectedHslBand]?.saturation ?? 0"
+                  :min="-100"
+                  :max="100"
+                  :step="1"
+                  unit="%"
+                  :disabled="loading || isReadOnly"
+                  test-id="hsl-slider-saturation"
+                  @update:model-value="(v) => onHslSliderInput('saturation', v)"
+                  @change="(v) => onHslSliderChange('saturation', v)"
+                />
+
+                <AdjustmentSlider
+                  label="Luminance"
+                  :model-value="recipe.hsl?.[selectedHslBand]?.luminance ?? 0"
+                  :min="-100"
+                  :max="100"
+                  :step="1"
+                  unit="%"
+                  :disabled="loading || isReadOnly"
+                  test-id="hsl-slider-luminance"
+                  @update:model-value="(v) => onHslSliderInput('luminance', v)"
+                  @change="(v) => onHslSliderChange('luminance', v)"
+                />
+              </div>
+            </div>
           </CollapsibleSection>
 
           <!-- 4. Colour Grading -->
@@ -1066,5 +1240,93 @@ onUnmounted(() => {
   color: var(--text-muted);
   font-style: italic;
   padding: var(--space-2) 0;
+}
+
+.hsl-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+}
+
+.hsl-swatches {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: var(--space-1);
+}
+
+.hsl-swatch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.hsl-swatch:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+}
+
+.hsl-swatch.active {
+  border: var(--border-active);
+}
+
+.hsl-swatch-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-none);
+  background-color: var(--text);
+  border: 1px solid var(--bg);
+}
+
+.hsl-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-1);
+}
+
+.hsl-band-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+}
+
+.hsl-band-title {
+  font-family: var(--font-label);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.hsl-reset-band-btn {
+  font-family: var(--font-label);
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  min-height: 32px;
+  border-radius: var(--radius-none);
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.hsl-reset-band-btn:hover:not(:disabled) {
+  color: var(--text-heading);
+}
+
+.hsl-reset-band-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 </style>

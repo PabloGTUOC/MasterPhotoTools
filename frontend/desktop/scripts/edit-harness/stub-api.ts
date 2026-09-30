@@ -194,6 +194,16 @@ export class StubDesktopApiClient {
             { x: 1, y: 1 },
           ],
         },
+        hsl: {
+          red: { hue: 15, saturation: 20, luminance: -10 },
+          orange: { hue: 0, saturation: 0, luminance: 0 },
+          yellow: { hue: 0, saturation: 0, luminance: 0 },
+          green: { hue: 0, saturation: 0, luminance: 0 },
+          aqua: { hue: 0, saturation: 0, luminance: 0 },
+          blue: { hue: -25, saturation: 40, luminance: 15 },
+          purple: { hue: 0, saturation: 0, luminance: 0 },
+          magenta: { hue: 0, saturation: 0, luminance: 0 },
+        },
       };
     }
     if (path.includes('existing_edits')) {

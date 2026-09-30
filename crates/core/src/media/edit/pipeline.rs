@@ -60,10 +60,13 @@ pub struct AdjustmentRecipe {
     #[serde(default)]
     pub hue: f32,
 
-    // Round 2 structured groups (ED-10):
+    // Round 2 structured groups (ED-10, ED-11):
     /// Optional tone curves (Luma, R, G, B) evaluated in display-encoded space.
     #[serde(default)]
     pub curves: Option<super::curves::ToneCurves>,
+    /// Optional 8-band HSL adjustments evaluated in OkLCh color space.
+    #[serde(default)]
+    pub hsl: Option<super::hsl::HslAdjustments>,
 }
 
 impl Default for AdjustmentRecipe {
@@ -86,12 +89,13 @@ impl Default for AdjustmentRecipe {
             brightness: 0.0,
             hue: 0.0,
             curves: None,
+            hsl: None,
         }
     }
 }
 
 impl AdjustmentRecipe {
-    /// True if all sliders are at rest (0.0), no curves are active, and no LUT is attached.
+    /// True if all sliders are at rest (0.0), no curves are active, no HSL is applied, and no LUT is attached.
     pub fn is_identity(&self) -> bool {
         self.exposure == 0.0
             && self.temperature == 0.0
@@ -107,6 +111,7 @@ impl AdjustmentRecipe {
             && self.brightness == 0.0
             && self.hue == 0.0
             && self.curves.as_ref().map_or(true, |c| c.is_identity())
+            && self.hsl.as_ref().map_or(true, |h| h.is_identity())
     }
 }
 
@@ -413,13 +418,9 @@ impl LinearBuffer {
         let vib = recipe.vibrance / 100.0;
         let has_sat_vib = sat != 0.0 || vib != 0.0;
 
-        let has_hue = recipe.hue != 0.0;
-        let (hue_cos, hue_sin) = if has_hue {
-            let rad = recipe.hue.to_radians();
-            (rad.cos(), rad.sin())
-        } else {
-            (1.0, 0.0)
-        };
+        let compiled_hsl =
+            super::hsl::CompiledHslTable::from_recipe(recipe.hsl.as_ref(), recipe.hue);
+        let has_oklab = !compiled_hsl.is_identity;
 
         self.data.par_chunks_exact_mut(3).for_each(|px| {
             let mut r = px[0];
@@ -483,9 +484,9 @@ impl LinearBuffer {
                 b = (y + k * (b - y)).max(0.0);
             }
 
-            // Hue rotation in OkLCh perceptual color space
-            if has_hue {
-                let (hr, hg, hb) = super::color::rotate_hue_oklch_sincos(r, g, b, hue_cos, hue_sin);
+            // Oklab stage: Global Hue rotation and 8-band HSL in ONE pass
+            if has_oklab {
+                let (hr, hg, hb) = compiled_hsl.apply_linear_srgb(r, g, b);
                 r = hr;
                 g = hg;
                 b = hb;

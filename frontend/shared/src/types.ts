@@ -896,3 +896,22 @@ export interface ToneCurves {
   blue?: CurvePoint[];
 }
 
+/** Adjustments for an individual color band (ED-11). */
+export interface HslBand {
+  hue: number;
+  saturation: number;
+  luminance: number;
+}
+
+/** 8-band selective color adjustments in OkLCh (ED-11). */
+export interface HslAdjustments {
+  red: HslBand;
+  orange: HslBand;
+  yellow: HslBand;
+  green: HslBand;
+  aqua: HslBand;
+  blue: HslBand;
+  purple: HslBand;
+  magenta: HslBand;
+}
+

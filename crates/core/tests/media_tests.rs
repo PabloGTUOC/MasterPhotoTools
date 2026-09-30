@@ -1459,11 +1459,55 @@ LUT_3D_SIZE 2
         exposure: 0.4,
         highlights: -20.0,
         shadows: 15.0,
+        whites: 10.0,
+        blacks: -10.0,
+        brightness: 5.0,
         contrast: 12.0,
         saturation: 10.0,
         vibrance: -8.0,
         temperature: 15.0,
         tint: -10.0,
+        hue: 12.0,
+        curves: Some(phototools_core::media::edit::ToneCurves {
+            luma: vec![
+                phototools_core::media::edit::CurvePoint::new(0.0, 0.0),
+                phototools_core::media::edit::CurvePoint::new(0.25, 0.20),
+                phototools_core::media::edit::CurvePoint::new(0.75, 0.80),
+                phototools_core::media::edit::CurvePoint::new(1.0, 1.0),
+            ],
+            red: vec![
+                phototools_core::media::edit::CurvePoint::new(0.0, 0.0),
+                phototools_core::media::edit::CurvePoint::new(0.5, 0.55),
+                phototools_core::media::edit::CurvePoint::new(1.0, 1.0),
+            ],
+            green: vec![
+                phototools_core::media::edit::CurvePoint::new(0.0, 0.0),
+                phototools_core::media::edit::CurvePoint::new(1.0, 1.0),
+            ],
+            blue: vec![
+                phototools_core::media::edit::CurvePoint::new(0.0, 0.0),
+                phototools_core::media::edit::CurvePoint::new(0.5, 0.45),
+                phototools_core::media::edit::CurvePoint::new(1.0, 1.0),
+            ],
+        }),
+        hsl: Some(phototools_core::media::edit::HslAdjustments {
+            red: phototools_core::media::edit::HslBand {
+                hue: 15.0,
+                saturation: 20.0,
+                luminance: 10.0,
+            },
+            green: phototools_core::media::edit::HslBand {
+                hue: -10.0,
+                saturation: -15.0,
+                luminance: 5.0,
+            },
+            blue: phototools_core::media::edit::HslBand {
+                hue: 20.0,
+                saturation: 25.0,
+                luminance: -10.0,
+            },
+            ..Default::default()
+        }),
         lut: Some(LutRef {
             name: "test.cube".into(),
             sha256: lut.sha256.clone(),
@@ -1643,6 +1687,48 @@ fn benchmark_edit_preview() {
                 CurvePoint::new(1.0, 1.0),
             ],
         }),
+        hsl: Some(phototools_core::media::edit::HslAdjustments {
+            red: phototools_core::media::edit::HslBand {
+                hue: 15.0,
+                saturation: 20.0,
+                luminance: 10.0,
+            },
+            orange: phototools_core::media::edit::HslBand {
+                hue: 5.0,
+                saturation: 10.0,
+                luminance: -5.0,
+            },
+            yellow: phototools_core::media::edit::HslBand {
+                hue: -10.0,
+                saturation: 15.0,
+                luminance: 0.0,
+            },
+            green: phototools_core::media::edit::HslBand {
+                hue: -15.0,
+                saturation: -20.0,
+                luminance: 5.0,
+            },
+            aqua: phototools_core::media::edit::HslBand {
+                hue: 10.0,
+                saturation: 10.0,
+                luminance: -10.0,
+            },
+            blue: phototools_core::media::edit::HslBand {
+                hue: 20.0,
+                saturation: 25.0,
+                luminance: -15.0,
+            },
+            purple: phototools_core::media::edit::HslBand {
+                hue: -10.0,
+                saturation: 15.0,
+                luminance: 5.0,
+            },
+            magenta: phototools_core::media::edit::HslBand {
+                hue: 10.0,
+                saturation: -10.0,
+                luminance: 0.0,
+            },
+        }),
         lut: Some(LutRef {
             name: "synth33.cube".into(),
             sha256: lut33.sha256.clone(),
@@ -1770,10 +1856,11 @@ fn benchmark_edit_preview() {
     }
     let lin_time = t_lin.elapsed() / 10;
 
-    // 2. Oklab Hue rotation
-    let rad = recipe.hue.to_radians();
-    let (h_sin, h_cos) = rad.sin_cos();
-    let hue_mat = phototools_core::media::edit::color::oklab_hue_rotation_matrix(h_cos, h_sin);
+    // 2. Oklab stage: Global Hue rotation and 8-band HSL in ONE pass
+    let compiled_hsl = phototools_core::media::edit::hsl::CompiledHslTable::from_recipe(
+        recipe.hsl.as_ref(),
+        recipe.hue,
+    );
     let t_hue = Instant::now();
     for _ in 0..10 {
         settle_proxy
@@ -1781,9 +1868,7 @@ fn benchmark_edit_preview() {
             .par_chunks_exact(row_in_len)
             .for_each(|row| {
                 for px in row.chunks_exact(3) {
-                    let out = phototools_core::media::edit::color::rotate_hue_oklch_matrix(
-                        px[0], px[1], px[2], &hue_mat,
-                    );
+                    let out = compiled_hsl.apply_linear_srgb(px[0], px[1], px[2]);
                     std::hint::black_box(out);
                 }
             });
@@ -1872,7 +1957,7 @@ fn benchmark_edit_preview() {
         lin_time
     );
     println!(
-        "    2. Oklab hue rotation (planar rotation on 4.37M pixels): {:?}",
+        "    2. Oklab stage (global hue + 8-band HSL in one pass on 4.37M pixels): {:?}",
         hue_time
     );
     println!(

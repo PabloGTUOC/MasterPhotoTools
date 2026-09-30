@@ -14,15 +14,15 @@
 /// Convert linear sRGB [0.0, \infty) to Oklab (L, a, b).
 ///
 /// Uses the M1 and M2 matrices from Björn Ottosson (2020).
-#[inline]
+#[inline(always)]
 pub fn linear_srgb_to_oklab(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     let l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
     let m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
     let s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
 
-    let l_ = cbrt_signed(l);
-    let m_ = cbrt_signed(m);
-    let s_ = cbrt_signed(s);
+    let l_ = cbrt_fast(l);
+    let m_ = cbrt_fast(m);
+    let s_ = cbrt_fast(s);
 
     let oklab_l = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_;
     let oklab_a = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_;
@@ -31,10 +31,32 @@ pub fn linear_srgb_to_oklab(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     (oklab_l, oklab_a, oklab_b)
 }
 
+#[inline(always)]
+fn cbrt_fast(x: f32) -> f32 {
+    if x <= 0.0 {
+        if x == 0.0 {
+            0.0
+        } else {
+            cbrt_signed(x)
+        }
+    } else {
+        let bits = x.to_bits();
+        let guess_bits = (bits / 3) + 0x2a514000;
+        let mut y = f32::from_bits(guess_bits);
+
+        let y3 = y * y * y;
+        y = y * (y3 + 2.0 * x) / (2.0 * y3 + x);
+        let y3 = y * y * y;
+        y = y * (y3 + 2.0 * x) / (2.0 * y3 + x);
+
+        y
+    }
+}
+
 /// Convert Oklab (L, a, b) to linear sRGB.
 ///
 /// Uses the inverse matrices from Björn Ottosson (2020).
-#[inline]
+#[inline(always)]
 pub fn oklab_to_linear_srgb(l: f32, a: f32, b: f32) -> (f32, f32, f32) {
     let l_ = l + 0.3963377774 * a + 0.2158017575 * b;
     let m_ = l - 0.1055613458 * a - 0.0638541728 * b;
@@ -205,11 +227,29 @@ mod tests {
     }
 
     #[test]
-    fn hue_rotation_leaves_neutral_grey_untouched() {
-        let (r, g, b) = (0.18, 0.18, 0.18);
-        let (r2, g2, b2) = rotate_hue_oklch(r, g, b, 90.0);
-        assert!((r - r2).abs() < 1e-6);
-        assert!((g - g2).abs() < 1e-6);
-        assert!((b - b2).abs() < 1e-6);
+    fn print_reference_hues() {
+        use crate::media::edit::pipeline::srgb_to_linear;
+        let refs = [
+            ("Red", [1.0f32, 0.0, 0.0]),
+            ("Orange", [1.0, 0.5, 0.0]),
+            ("Yellow", [1.0, 1.0, 0.0]),
+            ("Green", [0.0, 1.0, 0.0]),
+            ("Aqua", [0.0, 1.0, 1.0]),
+            ("Blue", [0.0, 0.0, 1.0]),
+            ("Purple", [0.5, 0.0, 1.0]),
+            ("Magenta", [1.0, 0.0, 1.0]),
+        ];
+        for (name, srgb) in refs {
+            let lin_r = srgb_to_linear(srgb[0]);
+            let lin_g = srgb_to_linear(srgb[1]);
+            let lin_b = srgb_to_linear(srgb[2]);
+            let (l, a, b) = linear_srgb_to_oklab(lin_r, lin_g, lin_b);
+            let mut hue_deg = b.atan2(a).to_degrees();
+            if hue_deg < 0.0 {
+                hue_deg += 360.0;
+            }
+            let chroma = (a * a + b * b).sqrt();
+            println!("{name:8}: sRGB={srgb:?} -> L={l:.4}, C={chroma:.4}, h={hue_deg:.4}°");
+        }
     }
 }

@@ -557,6 +557,139 @@ try {
     console.log('  Tone Curve section reset successfully restored identity curve [(0,0), (1,1)].');
   }
 
+  // 9e. Assert 8-band HSL selective adjustments panel (ED-11)
+  console.log('Asserting 8-band HSL panel (swatches, oklch backgrounds, slider values, markers, and resets)...');
+  // First load v2_edits.jpg so HSL has non-zero values
+  await pathInput.fill('/Volumes/Photos/v2_edits.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(100);
+
+  // Expand Colour / HSL section
+  const hslToggle = page.locator('button[data-testid="section-hsl-toggle"]');
+  await hslToggle.click();
+  await page.waitForTimeout(50);
+
+  // Check that all 8 swatches exist and have oklch backgrounds
+  const swatchData = await page.evaluate(() => {
+    const swatches = Array.from(document.querySelectorAll('.hsl-swatch'));
+    return swatches.map((s) => ({
+      testId: s.getAttribute('data-testid'),
+      title: s.getAttribute('title'),
+      styleBg: s.style.backgroundColor,
+      hasDot: Boolean(s.querySelector('.hsl-swatch-dot')),
+      isActive: s.classList.contains('active'),
+      width: s.getBoundingClientRect().width,
+      height: s.getBoundingClientRect().height,
+    }));
+  });
+
+  if (swatchData.length !== 8) {
+    failures.push(`Expected 8 HSL swatches, found ${swatchData.length}`);
+  } else {
+    console.log('  Found all 8 HSL swatches.');
+  }
+
+  // Verify swatch target dimensions >= 40px
+  const undersized = swatchData.filter((s) => s.width < 40 || s.height < 40);
+  if (undersized.length > 0) {
+    failures.push(`Some HSL swatches have hit target < 40px: ${JSON.stringify(undersized)}`);
+  } else {
+    console.log('  All HSL swatches satisfy >= 40px hit target.');
+  }
+
+  // Verify swatch backgrounds are computed using oklch
+  const nonOklch = swatchData.filter((s) => !s.styleBg.includes('oklch'));
+  if (nonOklch.length > 0) {
+    failures.push(`HSL swatches must compute background via oklch; found: ${JSON.stringify(nonOklch)}`);
+  } else {
+    console.log('  All HSL swatches compute backgrounds via dynamic CSS oklch().');
+  }
+
+  // In v2_edits: Red and Blue have non-zero edits, so their swatches must have modified markers
+  const redSwatch = swatchData.find((s) => s.testId === 'hsl-swatch-red');
+  const blueSwatch = swatchData.find((s) => s.testId === 'hsl-swatch-blue');
+  const greenSwatch = swatchData.find((s) => s.testId === 'hsl-swatch-green');
+
+  if (!redSwatch?.hasDot) {
+    failures.push('Red swatch should show modified dot indicator for loaded v2 edits');
+  }
+  if (!blueSwatch?.hasDot) {
+    failures.push('Blue swatch should show modified dot indicator for loaded v2 edits');
+  }
+  if (greenSwatch?.hasDot) {
+    failures.push('Green swatch should NOT show modified dot indicator for untouched band');
+  }
+  console.log('  Modified indicators correctly present only on edited bands (Red, Blue).');
+
+  // Verify Red band slider values: hue=15, sat=20, lum=-10
+  const redSliders = await page.evaluate(() => {
+    const hue = document.querySelector('input[data-testid="hsl-slider-hue-number"]')?.value;
+    const sat = document.querySelector('input[data-testid="hsl-slider-saturation-number"]')?.value;
+    const lum = document.querySelector('input[data-testid="hsl-slider-luminance-number"]')?.value;
+    return { hue, sat, lum };
+  });
+
+  if (redSliders.hue !== '15' || redSliders.sat !== '20' || redSliders.lum !== '-10') {
+    failures.push(`Red band sliders mismatch: expected hue=15, sat=20, lum=-10; got ${JSON.stringify(redSliders)}`);
+  } else {
+    console.log(`  Red band sliders correctly display loaded values: hue=${redSliders.hue}, sat=${redSliders.sat}, lum=${redSliders.lum}`);
+  }
+
+  // Switch to Blue band and verify values: hue=-25, sat=40, lum=15
+  const blueBtn = page.locator('button[data-testid="hsl-swatch-blue"]');
+  await blueBtn.click();
+  await page.waitForTimeout(50);
+
+  const blueSliders = await page.evaluate(() => {
+    const hue = document.querySelector('input[data-testid="hsl-slider-hue-number"]')?.value;
+    const sat = document.querySelector('input[data-testid="hsl-slider-saturation-number"]')?.value;
+    const lum = document.querySelector('input[data-testid="hsl-slider-luminance-number"]')?.value;
+    return { hue, sat, lum };
+  });
+
+  if (blueSliders.hue !== '-25' || blueSliders.sat !== '40' || blueSliders.lum !== '15') {
+    failures.push(`Blue band sliders mismatch: expected hue=-25, sat=40, lum=15; got ${JSON.stringify(blueSliders)}`);
+  } else {
+    console.log(`  Blue band sliders correctly display loaded values: hue=${blueSliders.hue}, sat=${blueSliders.sat}, lum=${blueSliders.lum}`);
+  }
+
+  // Reset Blue band via per-band reset button
+  const resetBandBtn = page.locator('button[data-testid="hsl-reset-band-btn"]');
+  await resetBandBtn.click();
+  await page.waitForTimeout(50);
+
+  const blueAfterReset = await page.evaluate(() => {
+    const hue = document.querySelector('input[data-testid="hsl-slider-hue-number"]')?.value;
+    const sat = document.querySelector('input[data-testid="hsl-slider-saturation-number"]')?.value;
+    const lum = document.querySelector('input[data-testid="hsl-slider-luminance-number"]')?.value;
+    const dot = Boolean(document.querySelector('[data-testid="hsl-dot-blue"]'));
+    return { hue, sat, lum, dot };
+  });
+
+  if (blueAfterReset.hue !== '0' || blueAfterReset.sat !== '0' || blueAfterReset.lum !== '0' || blueAfterReset.dot) {
+    failures.push(`Reset band failed: expected 0, 0, 0 and no dot; got ${JSON.stringify(blueAfterReset)}`);
+  } else {
+    console.log('  Per-band reset successfully reset Blue band to 0 and cleared modified dot.');
+  }
+
+  // Red should still have its modified dot
+  const redDotStillThere = await page.evaluate(() => Boolean(document.querySelector('[data-testid="hsl-dot-red"]')));
+  if (!redDotStillThere) {
+    failures.push('Red swatch should still have modified dot after resetting only Blue');
+  }
+
+  // Section reset for Colour / HSL: clears all bands
+  const hslResetBtn = page.locator('button[data-testid="section-hsl-reset"]');
+  await hslResetBtn.click();
+  await page.waitForTimeout(50);
+
+  const dotsAfterSectionReset = await page.evaluate(() => document.querySelectorAll('.hsl-swatch-dot').length);
+  if (dotsAfterSectionReset !== 0) {
+    failures.push(`Section reset failed: expected 0 modified dots, found ${dotsAfterSectionReset}`);
+  } else {
+    console.log('  Section reset successfully reset all HSL bands to identity.');
+  }
+
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');
   await pathInput.press('Enter');

@@ -513,14 +513,14 @@ flowchart TD
     Exp --> Tones["5. Basic Tones<br>(Highlights, Shadows, Whites, Blacks, Mid-tone Brightness)"]
     Tones --> Contrast["6. Linear Contrast<br>(Pivoting at 0.18)"]
     Contrast --> Sat["7. Saturation & Vibrance<br>(Skin-tone weighted)"]
-    Sat --> ToneMap{"8. Tone Mapper?<br>(Optional: Narkowicz ACES)"}
+    Sat --> Oklab["8. Oklab Perceptual Stage<br>(Global Hue Rotation + 8-Band HSL in One Pass)"]
+    Oklab --> ToneMap{"9. Tone Mapper?<br>(Optional: Narkowicz ACES)"}
     ToneMap -- "Enabled" --> ACES["ACES Filmic Curve<br>(Highlights compressed)"]
     ToneMap -- "Disabled (Default)" --> HardClamp["Hard Clip at 1.0<br>(Exact Identity Preserved)"]
-    ACES --> Display["9. Display sRGB Transfer Function"]
+    ACES --> Display["10. Display sRGB Transfer Function"]
     HardClamp --> Display
-    Display --> Curves["10. Tone Curves<br>(Monotone Splines: Luma, R, G, B)"]
-    Curves --> HSL["11. 8-Band HSL<br>(Hue, Saturation, Luminance per band)"]
-    HSL --> Wheels["12. 3-Way Colour Grading<br>(Shadows, Mids, Highlights, Global Lift/Gamma/Gain)"]
+    Display --> Curves["11. Tone Curves<br>(Monotone Splines: Luma, R, G, B)"]
+    Curves --> Wheels["12. 3-Way Colour Grading<br>(Shadows, Mids, Highlights, Global Lift/Gamma/Gain)"]
     Wheels --> LUT["13. 3D LUT Application<br>(Tetrahedral Interpolation + Intensity Blend)"]
     LUT --> Looks["14. Photographic Looks<br>(Multi-scale Gaussian Glow & Halation)"]
     Looks --> Vignette["15. Scale-Independent Vignette<br>(Normalised radial cosine/poly falloff)"]
@@ -694,17 +694,27 @@ verification case. Every commit can be launched, tested, and visually evaluated.
   - `check:edit`: curve editor interactions, point dragging, and channel switching verified in headless Chromium.
 
 ### `ED-11` · 8-band HSL, selective colour panel & `check:edit`
-- **Core**: Implement 8-band HSL in `media::edit::hsl`: Red ($0^\circ$), Orange ($30^\circ$), Yellow ($60^\circ$), Green ($120^\circ$), Aqua ($180^\circ$), Blue ($240^\circ$), Purple ($280^\circ$), Magenta ($320^\circ$). Apply raised-cosine spectral windowing across hue intervals with smooth $C^1$ continuity. Apply Hue rotation ($\pm 180^\circ$), Saturation scaling ($\pm 100\%$), and Luminance offset ($\pm 100\%$) per band.
-- **Desktop UI**: Build 8-band HSL control panel in `Edit.vue` under "Colour / HSL" section with color swatch pill selectors and dedicated sliders for Hue, Saturation, and Luminance with double-click label reset.
+- **Core**: Implement 8-band selective color adjustments in `media::edit::hsl` evaluated in OkLCh perceptual color space:
+  - **Band Centres in OkLCh**: Knots are positioned at the exact OkLCh hue angles of pure reference sRGB colors (Red $29.23^\circ$, Orange $52.78^\circ$, Yellow $109.77^\circ$, Green $142.50^\circ$, Aqua $194.77^\circ$, Blue $264.05^\circ$, Purple $293.77^\circ$, Magenta $328.36^\circ$), avoiding HSV distortion.
+  - **Partition of Unity**: Spectral raised-cosine windows across uneven knot intervals sum identically to 1.0 at every angle on the circle ($\sum_{i=0}^7 w_i(h) \equiv 1.0$), guaranteeing that moving all bands equally matches a uniform global shift.
+  - **Low-Chroma Fade & Gamut Handling**: Smooth cubic Hermite fade factor over $C \in [0.005, 0.025]$ protects neutral greys and near-greys from sensor noise and color flipping. Global hue rotation applies at full strength across all chromas (preserving ED-9 behavior). Gamut handling bounds luminance via linear scale and bias within $[0.0, 1.0]$.
+  - **Unified Single Oklab Pass**: Global hue rotation and 8-band HSL adjustments evaluate together in a single Oklab stage, eliminating redundant round-trips. Precompiled 3600-entry LUT (`CompiledHslTable`) with degree-accurate minimax rational atan2 approximation (`fast_atan2_lut_idx`) achieves sub-10 ms execution on 4.37 MP previews.
+- **Desktop UI**: Build 8-band HSL control panel in `Edit.vue` under "Colour / HSL" collapsible section. Color swatch pill selectors compute their CSS background dynamically via `oklch(0.7 0.2 <hue>deg)` using the band's OkLCh knot angle (content, not hardcoded hex), with $\ge 40$px hit targets and full keyboard accessibility. Modified indicators appear on swatches with non-zero adjustments. Dedicated sliders for Hue ($\pm 180^\circ$), Saturation ($\pm 100\%$), and Luminance ($\pm 100\%$) with double-click reset, per-band reset button, and section-level reset button.
 - **Verification**:
-  - Re-run `benchmark_edit_preview` in release profile.
-  - Add `check:edit` cases verifying selective hue shifting, saturation scaling, and luminance offset on targeted color patches.
+  - Re-run `benchmark_edit_preview` in release profile asserting 720p drag p95 $\le 12$ ms, 1440p settle p95 $\le 40$ ms.
+  - Add `check:edit` cases verifying 8-band swatches, dynamic `oklch()` backgrounds, slider responsiveness, modified indicators, per-band reset, and section reset.
 - **Tests**:
-  - `untouched_hsl_bands_are_exact_identity`
+  - `each_band_is_centred_on_its_reference_colour`
+  - `band_weights_sum_to_one_at_every_hue`
   - `red_hue_shift_only_affects_red_band_with_smooth_boundary_falloff`
   - `saturation_and_luminance_shifts_within_a_band_preserve_other_hues`
-  - `pure_grey_pixels_are_unaffected_by_hue_and_saturation_adjustments`
-  - `benchmark_edit_preview` (re-asserted in release)
+  - `moving_every_band_equally_matches_a_global_shift`
+  - `low_chroma_fade_protects_neutral_greys_and_near_greys`
+  - `gamut_handling_prevents_negative_or_nan_escapes`
+  - `the_global_hue_slider_rotates_low_chroma_colours_as_it_did_in_ed9`
+  - `untouched_hsl_is_exact_identity`
+  - `fast_atan2_deg_matches_atan2_within_fraction_of_lut_bin`
+  - `benchmark_edit_preview` (re-asserted in release: drag $\le 12$ ms, settle $\le 40$ ms)
   - `check:edit`: 8-band HSL selective adjustments and swatches verified in headless Chromium.
 
 ### `ED-12` · 3-way colour grading wheels, `ColorWheel` component & `check:edit`

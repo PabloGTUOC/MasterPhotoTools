@@ -504,7 +504,26 @@ export interface ToneCurves {
   blue?: CurvePoint[];
 }
 
-/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10). */
+/** Adjustments for an individual color band (ED-11). */
+export interface HslBand {
+  hue: number;
+  saturation: number;
+  luminance: number;
+}
+
+/** 8-band selective color adjustments in OkLCh (ED-11). */
+export interface HslAdjustments {
+  red: HslBand;
+  orange: HslBand;
+  yellow: HslBand;
+  green: HslBand;
+  aqua: HslBand;
+  blue: HslBand;
+  purple: HslBand;
+  magenta: HslBand;
+}
+
+/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11). */
 export interface AdjustmentRecipe {
   version?: number;
   source_sha256?: string;
@@ -523,6 +542,7 @@ export interface AdjustmentRecipe {
   brightness?: number;
   hue?: number;
   curves?: ToneCurves | null;
+  hsl?: HslAdjustments | null;
 }
 
 /** Stage for preview rendering. */

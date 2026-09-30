@@ -1,8 +1,10 @@
 # Editing — development plan
 
-> **Built.** Where the build diverged from this plan
-> the text has been corrected in place and the rationale recorded in
-> [`docs/phase-reports/edit.md`](phase-reports/edit.md).
+> **Round 1 built (ED-1–ED-8); Round 2 planned (ED-9–ED-18).**
+> Where the Round 1 build diverged from this plan the text has been corrected in place and
+> the rationale recorded in [`docs/phase-reports/edit.md`](phase-reports/edit.md).
+> Round 2 specifies advanced photographic adjustments, tone curves, 8-band HSL,
+> colour grading wheels, geometry, film grain, looks, and workflow presets.
 
 Non-destructive photographic adjustments for individual frames on the desktop, and bulk 3D LUT
 grading for folders.
@@ -366,21 +368,465 @@ impl Default for AdjustmentRecipe {
 
 ---
 
-## Not in this plan
+## Round 2 — Advanced editing, colour, geometry, and workflow
 
-Excluded per Ground Rule G11 to keep scope disciplined:
-- **True RAW development**: In v1, camera RAWs are decoded to 8-bit JPEGs via `media::raw` (often the camera's embedded preview), editing the camera's rendering without sensor-level headroom above clipping. Sensor-level demosaicing, highlight reconstruction from raw sensor data, and 14-bit linear RAW pipelines are excluded.
-- **Carrying `.xmp` sidecars in Rename**: Rename carries `.photoedit` companion files only. If external raw processors' `.xmp` sidecars ever need atomic renaming, that belongs in a separate request.
-- **Web browser editing**: Version 1 is strictly desktop-focused.
-- **GPU compute shaders (`wgpu`)**: The CPU renderer in `core` is the authority. Adding GPU pipelines is deferred to avoid headless CI driver complications and new dependencies (G8).
-- **Local adjustments & geometric corrections**: Selective brush masks, radial gradients, keystoning, and lens distortion corrections are outside the single-exposure balancing scope.
-- **1D LUTs**: Only 3D LUTs (`.cube`, `.3dl`, and square HALD `.png`) are supported in v1; 1D LUTs (`LUT_1D_SIZE`) are explicitly refused with a clear message rather than mis-parsed.
+Round 2 broadens the Edit tab from single-exposure tuning into a complete, non-destructive
+photographic darkroom and batch grading workspace, scoped from RapidRAW's feature set under
+strict clean-room discipline.
+
+### Clean-room declaration and licence analysis
+
+- **Source of scope only**: RapidRAW (AGPL) is the inspiration for the **feature list only**.
+  No code from RapidRAW was opened, inspected, referenced, decompiled, or adapted. Every
+  algorithm is designed from independent mathematical formulations and public-domain or
+  permissively licensed specifications.
+- **Tone mapper licence analysis**:
+  - *Blender's AgX*: While AgX is widely praised for highlight handling, implementations in
+    Blender reside under the GNU General Public License (GPLv2/v3). Incorporating or porting
+    GPL-licensed AgX code into PhotoTools would impose copyleft obligations or create acute
+    licensing conflicts with PhotoTools' architectural boundaries. **AgX is therefore formally
+    rejected and excluded from this plan.**
+  - *Krzysztof Narkowicz ACES fit*: Krzysztof Narkowicz published a closed-form rational curve
+    approximation of the Academy Color Encoding System (ACES) filmic tone mapper in 2015 under
+    the **Public Domain (CC0)**. It is mathematically compact, computationally efficient, and
+    free of copyleft encumbrances:
+    $$f(x) = \frac{x(2.51x + 0.03)}{x(2.43x + 0.59) + 0.14}$$
+    Narkowicz ACES is adopted as PhotoTools' optional filmic tone mapper.
+  - *Reinhard (2002)*: Simple photographic tone reproduction ($f(x) = \frac{x}{1 + x}$) is
+    documented in standard academic literature as public mathematics.
+- **Published algorithm citations**:
+  - *Tone curves*: Fritsch & Carlson (1980), "Monotone Piecewise Cubic Interpolation", *SIAM
+    Journal on Numerical Analysis*. Guarantees strict monotonicity without overshoot.
+  - *HSL 8-band color model*: Joblove & Greenberg (1978), "Color spaces for computer graphics",
+    extended with raised-cosine windowing across the hue circle ($C^1$ continuity).
+  - *Colour grading 3-way wheels*: Lift / Gamma / Gain model conforming to the public ASC CDL
+    specification (American Society of Cinematographers Color Decision List, SMPTE ST 2093).
+  - *Vignette*: Cosine fourth law of illumination ($\cos^4\theta$) with polynomial falloff in
+    normalised coordinates.
+  - *Deterministic grain*: MurmurHash3 / SplitMix64 pseudo-random generation with Box-Muller
+    Gaussian distribution in normalised spatial frequency.
+  - *Glow & Halation*: Marius Bjørge (SIGGRAPH 2015), "Bandwidth-Efficient Graphics", dual-filter
+    separable downsampling/upsampling blur pyramid.
+  - *Lens flare evaluation*: Evaluated and rejected. Physical lens flare is an uncontrolled
+    optical artifact arising from bright light reflecting across internal elements. Synthetic
+    post-processing flare (polygonal ghosts, streak lines) is an artificial CGI overlay that
+    compromises photographic authenticity and violates PhotoTools' darkroom design principles.
 
 ---
 
-## Verification and acceptance plan (MV-20)
+### Scope breakdown
 
-Judgement checks in the style of [`docs/manual-verification.md`](manual-verification.md). They live in this plan until implementation begins.
+| Group | Included features | Excluded features |
+|---|---|---|
+| **A. Basic + Crop** | Whites ($\pm 100$), Blacks ($\pm 100$), Brightness ($\pm 100$, mid-tone power), Hue ($\pm 180^\circ$); Crop with aspect presets (Original, Free, 1:1, 3:2, 2:3, 4:3, 3:4, 16:9, 9:16, 5:4, 4:5); Rotate 90° (CW/CCW); Straighten ($\pm 45.0^\circ$ with automatic inscribed crop-to-fit); Flip H/V; Vignette (amount, midpoint, roundness, feather); Deterministic Grain (amount, size, roughness); Live 256-bin Histogram (R, G, B, Luma); Clipping Warning (shadow crush & highlight burnout overlay). | Local adjustment brushes, radial masks, keystone/perspective tilt-shift correction. |
+| **B. Colour** | Tone Curves (Luma/Master, plus independent Red, Green, Blue splines with arbitrary control points); HSL across 8 hue bands (Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta — with individual Hue shift, Saturation scale, and Luminance offset); Colour Grading (Shadows, Midtones, Highlights, and Global 3-way color wheels, plus Range Blending and Tonal Balance sliders). | Selective color replacement palettes, gradient map grading. |
+| **C. Detail & Optics** | *None.* | **Entirely excluded (G11)**: Sharpening (unsharp mask, Richardson-Lucy deconvolution), Clarity / Local Contrast, Noise Reduction (wavelet/bilateral), Dehaze (dark channel prior), and Chromatic Aberration defringing. |
+| **D. Look** | Glow / Bloom (multi-scale highlight diffusion); Halation (red-orange emulsion scattering); Optional Tone Mapper (Narkowicz ACES filmic curve, off by default). | Synthetic lens flare (polygonal ghosts, anamorphic streaks). |
+| **E. Workflow** | Presets (save, apply, rename, delete; stored in managed app directory); Copy/Paste settings between photographs via system clipboard (`Cmd+C` / `Cmd+V`); Presets in Bulk (`BulkEditTool` generalising Bulk LUT to batch-apply complete recipes with recipe content-hash dry-run locking). | Multi-version virtual branching, cloud preset sync. |
+
+---
+
+### Key architectural decisions and invariants for Round 2
+
+1. **Recipe v2 & backward compatibility**:
+   - `AdjustmentRecipe` version is bumped to `2`.
+   - All Round 2 additions default to exact identity. Using Serde's `#[serde(default)]`, any
+     existing v1 `.photoedit` sidecar deserializes cleanly into a v2 recipe with all new
+     parameters at rest.
+   - Any sidecar declaring a version above the running binary (`version > 2`) is rejected with an
+     actionable error message (G10).
+   - *Identity Invariant*: An untouched v2 recipe produces bit-for-bit identical output to the
+     original source file. The ED-1 identity test is extended across all new controls.
+2. **Pipeline order & color spaces**:
+   - Operations follow a strict photographic hierarchy:
+     1. Spatial geometry (Crop, Rotate, Straighten, Flip) runs on the decoded buffer first to
+        minimize redundant pixel processing down the pipeline.
+     2. Linear light ($[0.0, \infty)$): White Balance, Optical Exposure, Tone Recovery
+        (Highlights, Shadows, Whites, Blacks, Mid-tone Brightness), and Linear Contrast.
+     3. Tone Mapping (optional): Compresses linear dynamic range to $[0.0, 1.0]$. When disabled
+        (default), hard clamping at $1.0$ preserves numerical identity.
+     4. Display sRGB transfer ($[0.0, 1.0]$).
+     5. Perceptual adjustments: Tone Curves (Luma, R, G, B), 8-Band HSL, and 3-Way Colour
+        Grading wheels operate in display-encoded space as photographers expect.
+     6. 3D LUT: Tetrahedral interpolation with intensity blend.
+     7. Looks: Multi-scale Glow and Halation.
+     8. Finishing: Scale-independent Vignette and Deterministic Film Grain.
+     9. Output encoding (8-bit JPEG / 16-bit TIFF).
+3. **Scale-dependent effects in normalised coordinates**:
+   - Vignette, grain, glow, and halation parameters are calculated in normalised coordinates
+     ($[0.0, 1.0]$) relative to image dimensions and diagonal ($D = \sqrt{W^2 + H^2}$).
+   - The 720p dragging proxy, 1440p settling proxy, and full-resolution export (e.g. 36 MP)
+     produce visually identical softness, falloff, and grain structure.
+   - Tested by comparing proxy render against a downscaled full export ($\Delta E \le 1.5$).
+4. **Deterministic film grain**:
+   - Grain is generated procedurally via a high-performance hash PRNG (SplitMix64) initialized
+     with the photograph's `source_sha256`, normalised coordinates, and grain scale:
+     $$\text{seed} = \text{hash}(\text{source\_sha256}, \lfloor x_{norm} \cdot S \rfloor, \lfloor y_{norm} \cdot S \rfloor)$$
+   - Two exports of the same recipe on the same photograph are byte-for-byte identical.
+5. **Geometry and upright orientation baking**:
+   - Crop, rotate 90°, and straighten are defined in the **displayed (upright)** frame.
+   - When any geometric transformation is active, the export renders pixels in the upright frame
+     and writes EXIF `Orientation = 1` (`carry_metadata(..., upright: true)`).
+   - When geometry is identity, original EXIF orientation tags are preserved (`upright: false`),
+     allowing direct byte-copy optimization if color adjustments are also untouched.
+   - *Straighten crop-to-fit*: Rotating by angle $\alpha = |\theta|$ inscribes the largest
+     rectangle sharing the original aspect ratio $R = W/H$:
+     $$s(\theta, W, H) = \begin{cases} \frac{1}{\cos\alpha + R \sin\alpha} & W \ge H \\ \frac{1}{\cos\alpha + \frac{1}{R} \sin\alpha} & W < H \end{cases}$$
+     Scaling coordinate sampling by $s(\theta, W, H)$ guarantees that no unrendered transparent
+     voids or black wedges enter the frame.
+6. **Optional tone mapper**:
+   - Disabled by default. When disabled, standard hard clipping at $1.0$ maintains exact
+     mathematical identity.
+   - When enabled, Narkowicz ACES compresses dynamic range into display white. The UI displays an
+     alert notice: *"Tone Mapper active (exact identity no longer holds)"*.
+7. **Performance & latency budgets**:
+   - Per-pixel additions (curves, HSL, grading, vignette, grain) are parallelized with Rayon and
+     vectorized with SIMD.
+   - The core render budgets from ED-4 are sustained with **all** controls active:
+     - Drag proxy (720p): **p95 ≤ 25 ms**
+     - Settle proxy (1440p): **p95 ≤ 60 ms**
+   - Glow and halation execute on a quarter-resolution pyramid during drag (≤ 8 ms overhead).
+   - End-to-end UI responsiveness in `check:edit` preserves the **50 ms (drag)** and **120 ms
+     (settle)** budgets.
+8. **Histogram and clipping warnings**:
+   - Computed inside `core` during proxy render (taking < 0.5 ms for 720p). Returns 256-bin
+     histograms for R, G, B, and Luminance along with shadow/highlight clipping flags.
+   - The clipping warning is an interactive preview overlay on the canvas and is never burned
+     into exported files.
+9. **UI & ergonomics**:
+   - The Edit panel is organized into collapsible, individually resettable sections:
+     Basic, Tone Curve, Colour / HSL, Colour Grading, Look, Geometry, Effects.
+   - New transport-free shared components: `CurveEditor.vue` and `ColorWheel.vue`.
+   - Adheres strictly to design rules: tokens, $\le 2$px radius, 16px labels, $\ge 40$px hit targets.
+
+---
+
+### Pipeline architecture (Round 2)
+
+```mermaid
+flowchart TD
+    Input["Input Image<br>(JPEG / 16-bit TIFF / RAW)"] --> Decode["Decode to RGB<br>(JPEG, TIFF, or RAW embedded/ladder)"]
+    Decode --> Geom["1. Geometry Transforms<br>(Crop, Rotate 90, Straighten, Flip)"]
+    Geom --> Linear["2. Linearize sRGB<br>(to f32 [0.0, ∞))"]
+    Linear --> WB["3. White Balance<br>(Temp & Tint gains)"]
+    WB --> Exp["4. Exposure<br>(C * 2^EV)"]
+    Exp --> Tones["5. Basic Tones<br>(Highlights, Shadows, Whites, Blacks, Mid-tone Brightness)"]
+    Tones --> Contrast["6. Linear Contrast<br>(Pivoting at 0.18)"]
+    Contrast --> Sat["7. Saturation & Vibrance<br>(Skin-tone weighted)"]
+    Sat --> ToneMap{"8. Tone Mapper?<br>(Optional: Narkowicz ACES)"}
+    ToneMap -- "Enabled" --> ACES["ACES Filmic Curve<br>(Highlights compressed)"]
+    ToneMap -- "Disabled (Default)" --> HardClamp["Hard Clip at 1.0<br>(Exact Identity Preserved)"]
+    ACES --> Display["9. Display sRGB Transfer Function"]
+    HardClamp --> Display
+    Display --> Curves["10. Tone Curves<br>(Monotone Splines: Luma, R, G, B)"]
+    Curves --> HSL["11. 8-Band HSL<br>(Hue, Saturation, Luminance per band)"]
+    HSL --> Wheels["12. 3-Way Colour Grading<br>(Shadows, Mids, Highlights, Global Lift/Gamma/Gain)"]
+    Wheels --> LUT["13. 3D LUT Application<br>(Tetrahedral Interpolation + Intensity Blend)"]
+    LUT --> Looks["14. Photographic Looks<br>(Multi-scale Gaussian Glow & Halation)"]
+    Looks --> Vignette["15. Scale-Independent Vignette<br>(Normalised radial cosine/poly falloff)"]
+    Vignette --> Grain["16. Deterministic Film Grain<br>(Seeded PRNG in normalised coords)"]
+    Grain --> Encode["17. 8-bit JPEG / 16-bit TIFF Output"]
+```
+
+---
+
+### Recipe v2 definition
+
+```rust
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CurvePoint {
+    pub x: f32, // [0.0, 1.0]
+    pub y: f32, // [0.0, 1.0]
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToneCurves {
+    #[serde(default)] pub luma: Vec<CurvePoint>,
+    #[serde(default)] pub red: Vec<CurvePoint>,
+    #[serde(default)] pub green: Vec<CurvePoint>,
+    #[serde(default)] pub blue: Vec<CurvePoint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct HslBand {
+    #[serde(default)] pub hue: f32,        // -180.0 to +180.0 degrees
+    #[serde(default)] pub saturation: f32, // -100.0 to +100.0 percent
+    #[serde(default)] pub luminance: f32,  // -100.0 to +100.0 percent
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct HslAdjustments {
+    #[serde(default)] pub red: HslBand,
+    #[serde(default)] pub orange: HslBand,
+    #[serde(default)] pub yellow: HslBand,
+    #[serde(default)] pub green: HslBand,
+    #[serde(default)] pub aqua: HslBand,
+    #[serde(default)] pub blue: HslBand,
+    #[serde(default)] pub purple: HslBand,
+    #[serde(default)] pub magenta: HslBand,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ColorWheel {
+    #[serde(default)] pub hue: f32,        // 0.0 to 360.0 degrees
+    #[serde(default)] pub saturation: f32, // 0.0 to 1.0 intensity
+    #[serde(default)] pub luminance: f32,  // -1.0 to +1.0 lift/offset
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ColorGrading {
+    #[serde(default)] pub shadows: ColorWheel,
+    #[serde(default)] pub midtones: ColorWheel,
+    #[serde(default)] pub highlights: ColorWheel,
+    #[serde(default)] pub global: ColorWheel,
+    #[serde(default = "default_fifty")] pub blending: f32, // 0.0 to 100.0 (default 50.0)
+    #[serde(default)] pub balance: f32,                     // -100.0 to +100.0 (default 0.0)
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Geometry {
+    #[serde(default)] pub crop: Option<[f32; 4]>, // [xmin, ymin, xmax, ymax] in [0.0, 1.0]
+    #[serde(default)] pub rotate_90: i32,         // -3..=3 (quadrant steps)
+    #[serde(default)] pub straighten: f32,        // -45.0 to +45.0 degrees
+    #[serde(default)] pub flip_h: bool,
+    #[serde(default)] pub flip_v: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Vignette {
+    #[serde(default)] pub amount: f32,                     // -100.0 to +100.0
+    #[serde(default = "default_fifty")] pub midpoint: f32, // 0.0 to 100.0 (default 50.0)
+    #[serde(default)] pub roundness: f32,                  // -100.0 to +100.0 (default 0.0: oval)
+    #[serde(default = "default_fifty")] pub feather: f32,  // 0.0 to 100.0 (default 50.0)
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FilmGrain {
+    #[serde(default)] pub amount: f32,                      // 0.0 to 100.0
+    #[serde(default = "default_twenty_five")] pub size: f32,// 0.0 to 100.0 (default 25.0)
+    #[serde(default = "default_fifty")] pub roughness: f32, // 0.0 to 100.0 (default 50.0)
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LookEffects {
+    #[serde(default)] pub glow_amount: f32,
+    #[serde(default = "default_seventy")] pub glow_threshold: f32,
+    #[serde(default = "default_thirty")] pub glow_radius: f32,
+    #[serde(default)] pub halation_amount: f32,
+    #[serde(default = "default_eighty")] pub halation_threshold: f32,
+    #[serde(default = "default_twenty")] pub halation_radius: f32,
+    #[serde(default)] pub tone_mapper: Option<String>, // None (default: hard clip) or Some("aces")
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdjustmentRecipe {
+    pub version: u32, // 2
+    pub source_sha256: String,
+    // Round 1 basic parameters:
+    pub exposure: f32,
+    pub temperature: f32,
+    pub tint: f32,
+    pub highlights: f32,
+    pub shadows: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub vibrance: f32,
+    pub lut: Option<LutRef>,
+    pub lut_intensity: f32,
+
+    // Round 2 basic additions:
+    #[serde(default)] pub whites: f32,
+    #[serde(default)] pub blacks: f32,
+    #[serde(default)] pub brightness: f32,
+    #[serde(default)] pub hue: f32,
+
+    // Round 2 structured groups:
+    #[serde(default)] pub curves: Option<ToneCurves>,
+    #[serde(default)] pub hsl: Option<HslAdjustments>,
+    #[serde(default)] pub grading: Option<ColorGrading>,
+    #[serde(default)] pub geometry: Option<Geometry>,
+    #[serde(default)] pub vignette: Option<Vignette>,
+    #[serde(default)] pub grain: Option<FilmGrain>,
+    #[serde(default)] pub looks: Option<LookEffects>,
+}
+```
+
+---
+
+### Steps (ED-9 to ED-18: Vertical Slices)
+
+Each step delivers **everything for its feature**: core algorithms, desktop commands and IPC
+where needed, **its controls in the Edit tab**, its unit tests (identity at rest and preview
+matches export), re-runs the ED-4 release benchmark (`benchmark_edit_preview`) to catch any
+budget regression immediately, and adds an automated `check:edit` (or `check:bulk-lut`) browser
+verification case. Every commit can be launched, tested, and visually evaluated.
+
+### `ED-9` · Recipe v2, basic tone controls, collapsible panels & `check:edit`
+- **Core**: Bump `AdjustmentRecipe` version to 2. Add Serde defaults (`#[serde(default)]`) ensuring all existing v1 `.photoedit` sidecars deserialize cleanly with new controls at identity. Reject `version > 2` with an actionable error (G10). Implement Whites and Blacks shoulder/toe curves in linear space (crossover anchored at $0.18$). Implement Brightness as a mid-tone power curve pivoting on mid-grey, keeping $0.0$ and $1.0$ pinned. Implement Hue rotation in perceptual color space.
+- **Desktop UI**: Refactor `frontend/desktop/src/views/Edit.vue` side panel into structured, keyboard-accessible collapsible sections: Basic, Tone Curve, Colour / HSL, Colour Grading, Look, Geometry, Effects. Each section features an individual reset button. Populate the Basic section with `AdjustmentSlider` controls for Whites, Blacks, Brightness, and Hue alongside existing controls (Exposure, WB, Contrast, Highlights, Shadows, Vibrance/Saturation).
+- **Verification**:
+  - Re-run `benchmark_edit_preview` in release profile asserting 720p drag p95 $\le 25$ ms, 1440p settle p95 $\le 60$ ms.
+  - Add `check:edit` cases verifying collapsible section toggling, basic slider adjustments, double-click label reset to 0.0, and interactive canvas updating within the 50 ms / 120 ms latency budget.
+- **Tests**:
+  - `an_untouched_v2_recipe_is_exact_identity`
+  - `a_v1_sidecar_loads_into_v2_with_default_identities`
+  - `a_recipe_version_three_is_refused_as_unsupported`
+  - `whites_plus_one_boosts_upper_highlights_and_leaves_mid_grey_untouched`
+  - `blacks_minus_one_crushes_deep_shadows_and_leaves_mid_grey_untouched`
+  - `brightness_shifts_mid_tones_without_changing_black_or_white`
+  - `hue_rotation_preserves_luma_and_saturation`
+  - `benchmark_edit_preview` (re-asserted in release)
+  - `check:edit`: collapsible section toggling and basic sliders verified in headless Chromium.
+
+### `ED-10` · Monotone tone curves, `CurveEditor` component & `check:edit`
+- **Core**: Implement monotone cubic Hermite spline interpolation (Fritsch & Carlson 1980) in `media::edit::curves`. Evaluate Luma/Master curve and independent Red, Green, Blue curves in display-encoded space. Enforce strict endpoint clamping at $(0, 0)$ and $(1, 1)$, guaranteeing monotonic response with zero overshoot, oscillations, or gradient inversion.
+- **Desktop UI**: Build `frontend/shared/src/ui/components/CurveEditor.vue`: transport-free SVG/Canvas curve editor with draggable control points, point insertion on click, deletion on double-click/right-click, and channel selector pills (Luma, R, G, B) with touch targets $\ge 40$px. Integrate into the "Tone Curve" collapsible section of `Edit.vue`.
+- **Verification**:
+  - Re-run `benchmark_edit_preview` in release profile.
+  - Add `check:edit` cases testing curve point addition, dragging, deletion, channel switching, live canvas rendering, and before/after comparison.
+- **Tests**:
+  - `an_untouched_curve_is_exact_identity`
+  - `luma_curve_preserves_chromaticity_ratios`
+  - `rgb_curves_shift_individual_channels_independently`
+  - `curve_interpolation_is_strictly_monotonic_without_overshoot`
+  - `curve_evaluation_handles_unordered_control_points_safely`
+  - `benchmark_edit_preview` (re-asserted in release)
+  - `check:edit`: curve editor interactions, point dragging, and channel switching verified in headless Chromium.
+
+### `ED-11` · 8-band HSL, selective colour panel & `check:edit`
+- **Core**: Implement 8-band HSL in `media::edit::hsl`: Red ($0^\circ$), Orange ($30^\circ$), Yellow ($60^\circ$), Green ($120^\circ$), Aqua ($180^\circ$), Blue ($240^\circ$), Purple ($280^\circ$), Magenta ($320^\circ$). Apply raised-cosine spectral windowing across hue intervals with smooth $C^1$ continuity. Apply Hue rotation ($\pm 180^\circ$), Saturation scaling ($\pm 100\%$), and Luminance offset ($\pm 100\%$) per band.
+- **Desktop UI**: Build 8-band HSL control panel in `Edit.vue` under "Colour / HSL" section with color swatch pill selectors and dedicated sliders for Hue, Saturation, and Luminance with double-click label reset.
+- **Verification**:
+  - Re-run `benchmark_edit_preview` in release profile.
+  - Add `check:edit` cases verifying selective hue shifting, saturation scaling, and luminance offset on targeted color patches.
+- **Tests**:
+  - `untouched_hsl_bands_are_exact_identity`
+  - `red_hue_shift_only_affects_red_band_with_smooth_boundary_falloff`
+  - `saturation_and_luminance_shifts_within_a_band_preserve_other_hues`
+  - `pure_grey_pixels_are_unaffected_by_hue_and_saturation_adjustments`
+  - `benchmark_edit_preview` (re-asserted in release)
+  - `check:edit`: 8-band HSL selective adjustments and swatches verified in headless Chromium.
+
+### `ED-12` · 3-way colour grading wheels, `ColorWheel` component & `check:edit`
+- **Core**: Implement 3-way grading (Shadows, Midtones, Highlights) plus Global color wheel in `media::edit::grading`. Use ASC CDL Lift/Gamma/Gain color model with smooth luminance-weighted power ramps. Implement Range Blending ($0.0$ to $100.0$) and Tonal Balance ($-100.0$ to $+100.0$) controls. Convert polar coordinates $(\text{angle}, \text{intensity})$ to chromatic shifts stably without gamut distortion.
+- **Desktop UI**: Build `frontend/shared/src/ui/components/ColorWheel.vue`: interactive polar wheel with draggable reticle, hue ring, saturation radius, luminance slider, and numeric readouts ($\ge 40$px hit targets). Embed in "Colour Grading" section of `Edit.vue` with tabbed/quadrant view for Shadows, Midtones, Highlights, and Global wheels, plus Blending and Balance sliders.
+- **Verification**:
+  - Re-run `benchmark_edit_preview` in release profile.
+  - Add `check:edit` cases verifying reticle dragging, balance slider adjustments, live split-toning canvas updates, and double-click reset.
+- **Tests**:
+  - `untouched_grading_wheels_are_exact_identity`
+  - `shadows_wheel_tints_shadows_and_decays_smoothly_at_high_luminance`
+  - `highlights_wheel_tints_highlights_and_decays_smoothly_at_low_luminance`
+  - `grading_balance_and_blending_adjust_tonal_overlap_stably`
+  - `global_wheel_tints_all_luminance_levels_uniformly`
+  - `benchmark_edit_preview` (re-asserted in release)
+  - `check:edit`: color wheel reticle dragging and balance controls verified in headless Chromium.
+
+### `ED-13` · Geometry, upright orientation baking, crop/straighten UI & `check:edit`
+- **Core**: Implement spatial transforms in `media::edit::geometry`: normalised crop $[x_{min}, y_{min}, x_{max}, y_{max}]$, 90° quadrant rotations, fine straighten $[-45.0^\circ, +45.0^\circ]$ with automatic inscribed crop-to-fit scale factor $s(\theta, W, H)$, and horizontal/vertical flips. Enforce upright orientation invariant: if any geometric transform is active, export renders upright pixels and writes EXIF `Orientation = 1` (`carry_metadata(..., upright: true)`). If untouched, preserve original orientation tag (`upright: false`) and support direct byte-copy stream export for unmodified images.
+- **Desktop UI**: Geometry controls in `Edit.vue`: interactive canvas crop overlay with rule-of-thirds grid, aspect ratio preset dropdown (Original, Free, 1:1, 3:2, 2:3, 4:3, 3:4, 16:9, 9:16, 5:4, 4:5), Rotate 90° buttons (CW/CCW), Straighten slider with degree readout, and Flip H / Flip V buttons.
+- **Verification**:
+  - Re-run `benchmark_edit_preview` in release profile.
+  - Add `check:edit` cases testing interactive crop box resizing, 90° rotation, straighten without void borders, and orientation baking across all 8 EXIF orientations.
+- **Tests**:
+  - `untouched_geometry_preserves_original_dimensions_and_orientation_tag`
+  - `crop_extracts_exact_normalized_subregion`
+  - `straighten_inscribes_and_crops_without_transparent_voids`
+  - `geometric_transforms_bake_orientation_to_one_across_all_eight_exif_orientations`
+  - `ninety_degree_rotation_swaps_dimensions_and_transposes_pixels`
+  - `horizontal_and_vertical_flips_mirror_pixels_accurately`
+  - `benchmark_edit_preview` (re-asserted in release)
+  - `check:edit`: crop overlays, aspect presets, rotation, and straighten verified in headless Chromium.
+
+### `ED-14` · Scale-independent vignette, deterministic grain, effects UI & `check:edit`
+- **Core**: Implement scale-independent vignette in `media::edit::vignette`: amount, midpoint, roundness, and feather defined in normalised image aspect coordinates. Implement deterministic film grain in `media::edit::grain`: SplitMix64 pseudo-random generation initialized with `source_sha256` and normalised coordinates, with scale and roughness controls. Enforce resolution invariance: 720p preview matches downscaled 36 MP export within $\Delta E \le 1.5$.
+- **Desktop UI**: "Effects" section in `Edit.vue` with sliders for Vignette (Amount, Midpoint, Roundness, Feather) and Film Grain (Amount, Size, Roughness) with double-click reset.
+- **Verification**:
+  - Re-run `benchmark_edit_preview` in release profile.
+  - Add `check:edit` cases verifying vignette and grain slider changes, live canvas updates, and reset behavior.
+- **Tests**:
+  - `untouched_vignette_and_grain_are_exact_identity`
+  - `vignette_attenuation_is_identical_on_preview_proxy_and_full_export`
+  - `grain_is_byte_identical_between_two_runs_of_the_same_photo`
+  - `grain_appearance_and_density_are_scale_independent_between_proxy_and_export`
+  - `grain_evaluation_is_fully_deterministic_across_threads`
+  - `benchmark_edit_preview` (re-asserted in release)
+  - `check:edit`: vignette and grain effects sliders and live preview verified in headless Chromium.
+
+### `ED-15` · Histogram, clipping warnings, live preview overlay & `check:edit`
+- **Core & IPC**: Compute 256-bin histograms for Red, Green, Blue, and Luminance on proxy frames in `core`. Detect shadow crush ($C \le 0.001$) and highlight blowout ($C \ge 0.999$), populating `ClippingInfo` flags. Extend `tauri::ipc::Response` binary preview IPC protocol with a 1032-byte header containing histogram bin data and clipping booleans alongside width and height. Enforce display invariant: clipping warnings are rendered as client-side canvas overlays and never modify exported pixels.
+- **Desktop UI**: Live SVG histogram widget atop the Edit panel with toggleable channel curves (RGB, Luma, R, G, B). Highlight clipping and shadow clipping toggle buttons in the viewport toolbar. When active, viewport renders non-destructive blue (crushed shadow) and red (blown highlight) zebra/mask overlays on the canvas without altering exported pixels.
+- **Verification**:
+  - Re-run `benchmark_edit_preview` in release profile.
+  - Add `check:edit` cases testing live histogram rendering, clipping toggle overlay on canvas, and verifying exported pixels are untouched by overlay.
+- **Tests**:
+  - `histogram_bins_match_frame_pixels_exactly`
+  - `clipping_flags_detect_crushed_blacks_and_blown_highlights`
+  - `binary_preview_ipc_header_encodes_histograms_and_clipping_accurately`
+  - `clipping_warning_overlay_does_not_affect_exported_pixels`
+  - `benchmark_edit_preview` (re-asserted in release)
+  - `check:edit`: histogram SVG curves and clipping canvas overlay verified in headless Chromium.
+
+### `ED-16` · Photographic looks, optional tone mapper, look UI & `check:edit`
+- **Core**: Implement multi-scale dual-filter Gaussian blur pyramid in `media::edit::looks` for Glow/Bloom and Halation. Quarter-resolution pyramid during drag (≤ 8 ms overhead). Implement optional Narkowicz ACES filmic tone mapping curve: disabled by default; when enabled, compresses high linear values smoothly into display range. Formally exclude synthetic lens flare.
+- **Desktop UI**: "Look" section in `Edit.vue`: sliders for Glow (Amount, Threshold, Radius) and Halation (Amount, Threshold, Radius). Tone Mapper dropdown/toggle ("None (Hard Clip)", "ACES Filmic") with prominent banner notice when active: *"Tone Mapper active (exact identity no longer holds)"*.
+- **Verification**:
+  - Re-run `benchmark_edit_preview` in release profile.
+  - Add `check:edit` cases testing glow, halation, and ACES tone mapping toggling with identity notice.
+- **Tests**:
+  - `tone_mapper_off_preserves_exact_identity`
+  - `narkowicz_aces_compresses_highlights_monotonically_without_inversion`
+  - `glow_and_halation_decay_smoothly_and_scale_with_image_resolution`
+  - `glow_pyramid_executes_within_interactive_budget_during_drag`
+  - `benchmark_edit_preview` (re-asserted in release)
+  - `check:edit`: glow, halation, and tone mapper UI and advisory banner verified in headless Chromium.
+
+### `ED-17` · Workflow: Presets library, clipboard copy/paste, preset picker & `check:edit`
+- **Core & Desktop IPC**: Implement preset library in `core::tools::presets`: `.photopreset` files stored under app config (`config.presets_dir()`). Implement preset listing, save, rename, and atomic delete commands in Tauri desktop IPC. Implement recipe clipboard serialization (`Cmd+C` / `Cmd+V`) allowing rapid transfer of adjustment parameters between photographs.
+- **Desktop UI**: Preset header bar in `Edit.vue`: preset selector dropdown, "Save as Preset" modal dialog, rename and delete actions. Edit menu / hotkey support for Copy Settings (`Cmd+C`) and Paste Settings (`Cmd+V`) with visual toast notification.
+- **Verification**:
+  - Re-run `benchmark_edit_preview` in release profile.
+  - Add `check:edit` cases testing preset saving, applying from dropdown, deleting from disk, and clipboard copy/paste between test images.
+- **Tests**:
+  - `preset_round_trips_to_disk_and_appears_in_preset_library`
+  - `preset_deletion_and_rename_are_safe_and_atomic`
+  - `recipe_copies_to_and_pastes_from_clipboard_accurately`
+  - `pasting_recipe_overwrites_target_photo_parameters_in_memory_only_until_saved`
+  - `benchmark_edit_preview` (re-asserted in release)
+  - `check:edit`: preset save, apply, and copy/paste workflows verified in headless Chromium.
+
+### `ED-18` · Workflow: Bulk presets, batch grading view & `check:bulk-lut`
+- **Core & Desktop IPC**: Generalise `BulkLutTool` into `BulkEditTool` (`tools::bulk_edit`). Support applying a full `AdjustmentRecipe` or named preset to a folder of images. Dry run calculates actions count, skipped files, sample previews, and locks the batch to `recipe_sha256`. Implement background job execution with cancellation support (`cancelJob`), atomic non-overwriting output (`_edit.<ext>`), and single-pass metadata retention.
+- **Desktop UI**: Update `frontend/desktop/src/views/BulkLut.vue` into a unified Batch Grade view supporting both 3D LUTs and full Presets/recipes. Selection toggle between "3D LUT" and "Preset Recipe". Dry-run lock discipline matching Publish: run button disabled until reviewed dry run matches exact current recipe and settings; recipe changes immediately invalidate dry run. Job progress with cancellation and summary counts.
+- **Verification**:
+  - Update `check:bulk-lut` asserting batch preset dry run, recipe invalidation upon setting change, cancellation stopping between files, and touch targets $\ge 40$px with screenshot proof in `layout-proof/bulk-lut.png`.
+- **Tests**:
+  - `bulk_preset_refuses_when_recipe_changed_since_reviewed_plan`
+  - `bulk_preset_applies_full_recipe_identically_to_single_export`
+  - `bulk_preset_cancellation_cleans_up_and_reports_accurate_counts`
+  - `bulk_preset_never_overwrites_existing_files`
+  - `bulk_preset_preserves_capture_date_and_gps_on_all_outputs`
+  - `check:bulk-lut`: batch preset dry run, recipe invalidation, cancellation, and progress reporting verified in headless Chromium.
+
+---
+
+## Not in this plan (Rounds 1 & 2)
+
+Excluded per Ground Rule G11 to maintain architectural purity and scope discipline:
+- **Group C features (Detail & Optics)**: Sharpening (unsharp mask, Richardson-Lucy), Clarity / Local Contrast, Noise Reduction (chrominance/luminance wavelet smoothing), Dehaze (dark channel prior), and Chromatic Aberration defringing.
+- **Synthetic lens flare**: Excluded on photographic integrity grounds; artificial CGI overlays contradict PhotoTools' darkroom principles.
+- **True RAW sensor development**: Camera RAWs continue to be decoded via `media::raw`'s ladder (often the camera's embedded JPEG preview). True Bayer demosaicing, sensor highlight reconstruction, and 14-bit linear camera pipelines remain excluded.
+- **GPL-licensed AgX tone mapper**: Excluded to avoid copyleft contamination; Narkowicz ACES (public domain) is used instead.
+- **Carrying `.xmp` sidecars in Rename**: Rename carries `.photoedit` companion files only.
+- **Web browser editing**: Editing and batch grading remain strictly desktop-focused.
+- **GPU compute shaders (`wgpu`)**: The CPU renderer in `core` remains the authority for exports and CI verification.
+- **Selective local brush masks and gradients**: Kept out of scope to focus on whole-frame darkroom adjustments.
+
+---
+
+## Verification and acceptance plan (MV-20: Round 1)
+
+Judgement checks in the style of [`docs/manual-verification.md`](manual-verification.md).
 
 - [ ] **MV-20.1 — Exposure matching against camera JPEG.**
       Linear exposure compensation must match optical exposure shifts without flattening highlights.
@@ -429,4 +875,71 @@ Judgement checks in the style of [`docs/manual-verification.md`](manual-verifica
       **Run:** open a 36 MP RAW/JPEG in the desktop Editor; rapidly scrub an adjustment slider (Exposure or Highlights) back and forth across its full range for 5 seconds, then release the mouse.
       **Pass:** the preview updates fluidly during dragging without perceptible stutter or event backlog (sustaining ≥ 20 fps interactive response), and settles cleanly to the sharp 1440p frame within ~120 ms of mouse release.
       **Result:**
+
+---
+
+## Verification and acceptance plan (MV-21: Round 2)
+
+Judgement checks for Round 2 additions in the style of [`docs/manual-verification.md`](manual-verification.md).
+
+- [ ] **MV-21.1 — Monotone tone curves and S-curve contrast.**
+      Tone curve adjustments must create smooth photographic contrast curves without banding, overshoot, or channel cross-talk.
+      **Run:** in the Editor, create an S-curve on the Luma channel; adjust individual Red and Blue curves to warm the highlights and cool the shadows; compare against a reference grading tool.
+      **Pass:** curve transitions are completely smooth; no overshoot or gradient reversals occur near extreme highlights or deep blacks; chromaticity ratios are preserved.
+      **Result:**
+
+- [ ] **MV-21.2 — 8-band HSL selective hue isolation.**
+      HSL adjustments must isolate designated color bands smoothly without contouring or fringing artifacts along color boundaries.
+      **Run:** select a portrait with green foliage and blue sky; shift Green hue towards yellow, drop Blue saturation by 50%, and increase Red/Orange luminance by +20%.
+      **Pass:** foliage turns autumn yellow, sky desaturates cleanly, and skin tones gain exposure without haloing, banding, or color stepping.
+      **Result:**
+
+- [ ] **MV-21.3 — 3-way colour grading mood and tonal balance.**
+      Shadows, Midtones, and Highlights wheels must apply photographic split-toning while preserving natural skin tones.
+      **Run:** drag Shadows wheel to teal/cyan, Highlights wheel to warm amber/gold, and adjust the Tonal Balance slider.
+      **Pass:** shadows are cleanly tinted without muddying mid-tones; highlight rolloff stays natural; adjusting Balance shifts the transition boundary predictably.
+      **Result:**
+
+- [ ] **MV-21.4 — Geometry: Straighten crop-to-fit and orientation baking.**
+      Straightening an off-level horizon must automatically crop unrendered corners without black wedges, baking orientation to 1 on export.
+      **Run:** open an image captured in portrait orientation (EXIF Orientation 6); apply +7.5° straighten and a 4:5 crop preset; export. Inspect the exported file with `exiftool`.
+      **Pass:** the horizon is level; the frame fills the 4:5 aspect ratio without unrendered borders; `exiftool` reports `Orientation: Horizontal (normal) (1)` and pixels display upright in all viewers.
+      **Result:**
+
+- [ ] **MV-21.5 — Scale-independent vignette and grain on preview vs export.**
+      Vignette falloff and film grain structure must appear identical on the 1280px interactive preview and the full-resolution export.
+      **Run:** apply a strong vignette and medium grain to a 36 MP photograph; view the interactive preview at 100% zoom; export the image; downscale the export to 1280px and compare side-by-side.
+      **Pass:** vignette falloff profile and grain density/appearance are visually identical between proxy preview and full export.
+      **Result:**
+
+- [ ] **MV-21.6 — Deterministic grain byte-for-byte reproducibility.**
+      Procedural grain generation must be strictly deterministic and seeded from the source photograph.
+      **Run:** export a photograph with grain twice in succession to separate files; run `cmp` or `shasum` on the pixel buffers.
+      **Pass:** the two output files are bit-for-bit identical.
+      **Result:**
+
+- [ ] **MV-21.7 — Optional Narkowicz ACES tone mapper highlight compression.**
+      Enabling the filmic tone mapper must compress blown specular highlights into display white smoothly without harsh clipping.
+      **Run:** open an over-exposed photograph with blown sky; toggle the Tone Mapper option on and off.
+      **Pass:** with the tone mapper on, harsh white blowout transitions into a soft, photographic rolloff; the UI displays the alert stating that exact identity is broken.
+      **Result:**
+
+- [ ] **MV-21.8 — Preset saving, library management, and clipboard copy/paste.**
+      Saving custom adjustments as a preset and copying settings between frames must work seamlessly.
+      **Run:** tune a photograph with curves, HSL, and grading; save as a preset named "Summer Portra"; press `Cmd+C`; open a different photograph; press `Cmd+V`; verify adjustments match; delete the preset.
+      **Pass:** settings transfer instantly on paste; the saved preset appears in the preset picker; deleting the preset removes it cleanly from disk.
+      **Result:**
+
+- [ ] **MV-21.9 — Bulk preset folder run with content hash lock discipline.**
+      Applying a full preset across a batch of photographs must enforce dry-run verification and content hash locking.
+      **Run:** open the Batch Grade view; select a folder and a preset; run dry run; verify sample previews; alter a slider in the preset; observe that Run is locked; re-run dry run and execute.
+      **Pass:** Run button remains disabled until reviewed dry run matches exact current settings; batch finishes writing `_edit` outputs with all metadata preserved.
+      **Result:**
+
+- [ ] **MV-21.10 — Interactive slider responsiveness with all Round 2 controls active.**
+      The application must maintain fluid interactive scrubbing with all Round 2 additions enabled on a 36 MP frame.
+      **Run:** open a 36 MP photograph; enable curves, 8-band HSL, 3-way grading, vignette, grain, and glow; rapidly scrub the Exposure slider for 5 seconds; release.
+      **Pass:** scrubbing remains responsive and fluid (sustaining $\ge 20$ fps interactive updates without backlog), settling to retina sharpness within ~120 ms of release.
+      **Result:**
+
 

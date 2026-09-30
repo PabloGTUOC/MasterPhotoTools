@@ -39,7 +39,15 @@ fn notify_card(handle: AppHandle) -> impl Fn(CardDetected) + Send + 'static {
 }
 
 fn main() {
-    let config = Config::load().unwrap_or_else(|_| Config::default());
+    // The server refuses to start on a bad configuration; a window cannot, because a
+    // window that never opens explains nothing. Safe defaults, and say why (G10).
+    let config = Config::load().unwrap_or_else(|e| {
+        eprintln!(
+            "Could not load configuration from {}: {e}. Using default configuration instead.",
+            Config::config_path().display()
+        );
+        Config::default()
+    });
 
     let ledger = match Ledger::open(&config.database) {
         Ok(ledger) => ledger,

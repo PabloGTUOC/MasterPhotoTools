@@ -164,8 +164,9 @@ problem later and more confusingly.
 | 7 | **The UI** | MV-13.1 – MV-13.6, MV-6.1 | Judgement about screens, once there is real data behind them. |
 | 8 | **Scans** | MV-4.1 – MV-4.4 | Independent of everything above; do whenever you have scans. |
 | 9 | **Geotagging** | MV-15.1 – MV-15.13 | Needs the Mac and photographs from days a track covers. Independent of the NAS and of Google. |
-| 10 | **Publishing a folder** | MV-16.1 – MV-16.8 | Needs the NAS and the Google client. MV-16.8 is the whole pipeline in one go. |
-| 11 | **Packaging** | MV-14.1 – MV-14.3 | Last, because it is the only session that needs everything else to have worked. |
+| 10 | **Edit tab and Bulk LUT** | MV-20.1 – MV-20.8 | Needs the Mac. All checks run locally and need no server, but MV-20.7 needs a card and a mounted share. MV-20.8 is run on a release build (`cargo tauri build`) for accurate timing. |
+| 11 | **Publishing a folder** | MV-16.1 – MV-16.8 | Needs the NAS and the Google client. MV-16.8 is the whole pipeline in one go. |
+| 12 | **Packaging** | MV-14.1 – MV-14.3 | Last, because it is the only session that needs everything else to have worked. |
 
 ### If you only have an hour
 

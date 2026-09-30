@@ -874,3 +874,56 @@ MV-19.7 are not optional.
       **Run:** deploy with `OWNTRACKS_USER` and `OWNTRACKS_TOKEN` unset, and post to it.
       **Pass:** `404`, and everything else about the server is unaffected.
       **Result:**
+
+## MV-20 — the Edit tab and Bulk LUT
+
+[`edit-plan.md`](edit-plan.md), built. Needs a Mac to run the desktop application. All checks
+run locally and need no server, but MV-20.7 needs a card and a mounted share.
+
+- [ ] **MV-20.1 — Exposure matching against camera JPEG.**
+      Linear exposure compensation must match optical exposure shifts without flattening highlights.
+      **Run:** shoot a RAW frame at 0 EV and +1 EV; adjust the 0 EV RAW to +1 EV in the Editor; compare the result against the camera's native +1 EV JPEG.
+      **Pass:** mid-tone luminance and highlight rolloff match the optical +1 EV frame within visual tolerance (highlight recovery beyond the camera JPEG is not expected in v1).
+      **Result:**
+
+- [ ] **MV-20.2 — Film simulation LUT comparison.**
+      Display-encoded 3D LUT sampling must reproduce film simulations identically to reference software.
+      **Run:** apply a known film `.cube` LUT at 100% intensity in the Editor; compare the exported output side-by-side with the same LUT applied in reference grading software.
+      **Pass:** color rendition, shadow tint, and contrast curve are visually indistinguishable from reference output.
+      **Result:**
+
+- [ ] **MV-20.3 — Neutral surround calibration.**
+      The canvas surround must provide a true radiometric mid-grey ground that does not skew human exposure perception.
+      **Run:** view the Editor canvas in dark and light modes beside an X-Rite 18% neutral grey card in daylight.
+      **Pass:** the surround matches the card's lightness; mid-tones do not appear artificially washed out or crushed.
+      **Result:**
+
+- [ ] **MV-20.4 — Metadata and GPS preservation on export.**
+      Exported derivatives must carry the original capture date, camera model, lens metadata, and GPS position, respecting naming and collision rules.
+      **Run:** run `exiftool -s` on a photograph before and after exporting from the Editor; export a second time.
+      **Pass:** `DateTimeOriginal`, camera tags, lens tags, and GPS coordinates match; output filename appends `_edit`; second export increments to `_edit_1` without overwriting; exporting to `Publishing` is refused.
+      **Result:**
+
+- [ ] **MV-20.5 — Bulk LUT folder run.**
+      Grading an entire folder must operate reliably, non-destructively, and with full metadata retention.
+      **Run:** run the Bulk LUT tool over a folder of 50 images; cancel halfway through, then re-run to completion.
+      **Pass:** cancellation stops cleanly without corrupted files; completed run writes all 50 files with `_lut` suffix; no originals are overwritten.
+      **Result:**
+
+- [ ] **MV-20.6 — Bulk LUT refusal on Publishing folder.**
+      Bulk LUT must refuse to output directly into the `Publishing` folder (MV-16.7).
+      **Run:** attempt to set the Bulk LUT output destination to the active `Publishing` directory.
+      **Pass:** the tool refuses to start and displays an actionable error explaining that `Publishing` is reserved for reviewed outputs.
+      **Result:**
+
+- [ ] **MV-20.7 — Card media read-only safety.**
+      Opening files directly from an SD card volume must never create sidecar files on the removable card (G5), while mounted network shares remain writable.
+      **Run:** open a photograph directly from an SD card volume whose root contains a `DCIM` directory in the Editor; adjust sliders. Then open a photograph from a mounted SMB share without `DCIM`.
+      **Pass:** on the card volume, the read-only banner is displayed and no `.photoedit` file is written; exporting requires selecting a destination on a local disk. On the mounted SMB share, sidecar saving works normally.
+      **Result:**
+
+- [ ] **MV-20.8 — Interactive slider drag timing on a 36 MP file in the running app.**
+      Real Tauri IPC cannot be driven headless, so end-to-end responsiveness with real IPC and a full-resolution 36 MP frame must be verified interactively.
+      **Run:** open a 36 MP RAW/JPEG in the desktop Editor (release build from `cargo tauri build`, not debug from `cargo tauri dev`); rapidly scrub an adjustment slider (Exposure or Highlights) back and forth across its full range for 5 seconds, then release the mouse.
+      **Pass:** the preview updates fluidly during dragging without perceptible stutter or event backlog (sustaining ≥ 20 fps interactive response), and settles cleanly to the sharp 1440p frame within ~120 ms of mouse release.
+      **Result:**

@@ -375,6 +375,74 @@ try {
     console.log(`  Saved edits successfully reloaded: exp=${reloadedValues.exp}, temp=${reloadedValues.temp}, hl=${reloadedValues.hl}`);
   }
 
+  // 9b. Assert recipe v2 loading with non-zero whites, blacks, brightness, hue (ED-9)
+  console.log('Asserting recipe v2 loading (whites, blacks, brightness, hue)...');
+  await pathInput.fill('/Volumes/Photos/v2_edits.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(100);
+
+  const v2Values = await page.evaluate(() => {
+    const whites = (document.querySelector('input[data-testid="whites-number"]'))?.value;
+    const blacks = (document.querySelector('input[data-testid="blacks-number"]'))?.value;
+    const brightness = (document.querySelector('input[data-testid="brightness-number"]'))?.value;
+    const hue = (document.querySelector('input[data-testid="hue-number"]'))?.value;
+    return { whites, blacks, brightness, hue };
+  });
+
+  if (v2Values.whites !== '25' || v2Values.blacks !== '-35' || v2Values.brightness !== '20' || v2Values.hue !== '45') {
+    failures.push(`Recipe v2 values mismatch: expected whites=25, blacks=-35, brightness=20, hue=45; got ${JSON.stringify(v2Values)}`);
+  } else {
+    console.log(`  Recipe v2 values successfully reloaded: whites=${v2Values.whites}, blacks=${v2Values.blacks}, brightness=${v2Values.brightness}, hue=${v2Values.hue}`);
+  }
+
+  // 9c. Assert collapsible section toggling and section reset (ED-9)
+  console.log('Asserting collapsible section toggles and section reset...');
+  const toneCurveToggle = page.locator('button[data-testid="section-tone-curve-toggle"]');
+  const toneCurveContent = page.locator('[data-testid="section-tone-curve-content"]');
+
+  // Initially Tone Curve is collapsed
+  let isToneVisible = await toneCurveContent.isVisible();
+  if (isToneVisible) {
+    failures.push('Tone Curve section should be collapsed by default');
+  }
+
+  // Click to open Tone Curve
+  await toneCurveToggle.click();
+  await page.waitForTimeout(50);
+  isToneVisible = await toneCurveContent.isVisible();
+  if (!isToneVisible) {
+    failures.push('Tone Curve section failed to expand on click');
+  } else {
+    console.log('  Tone Curve section expanded successfully.');
+  }
+
+  // Click to collapse Tone Curve
+  await toneCurveToggle.click();
+  await page.waitForTimeout(50);
+  isToneVisible = await toneCurveContent.isVisible();
+  if (isToneVisible) {
+    failures.push('Tone Curve section failed to collapse on second click');
+  } else {
+    console.log('  Tone Curve section collapsed successfully.');
+  }
+
+  // Test section reset on Basic
+  const basicResetBtn = page.locator('button[data-testid="section-basic-reset"]');
+  await basicResetBtn.click();
+  await page.waitForTimeout(50);
+  const resetV2Values = await page.evaluate(() => {
+    const whites = (document.querySelector('input[data-testid="whites-number"]'))?.value;
+    const blacks = (document.querySelector('input[data-testid="blacks-number"]'))?.value;
+    const exp = (document.querySelector('input[data-testid="exposure-number"]'))?.value;
+    return { whites, blacks, exp };
+  });
+
+  if (resetV2Values.whites !== '0' || resetV2Values.blacks !== '0' || resetV2Values.exp !== '0.0') {
+    failures.push(`Section reset failed: expected whites=0, blacks=0, exp=0.0; got ${JSON.stringify(resetV2Values)}`);
+  } else {
+    console.log('  Section reset successfully reset all Basic controls to 0.');
+  }
+
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');
   await pathInput.press('Enter');

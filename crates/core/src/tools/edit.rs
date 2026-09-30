@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const SIDECAR_EXTENSION: &str = "photoedit";
-pub const CURRENT_RECIPE_VERSION: u32 = 1;
+pub const CURRENT_RECIPE_VERSION: u32 = 2;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -174,6 +174,7 @@ where
     }
 
     let mut to_save = recipe.clone();
+    to_save.version = CURRENT_RECIPE_VERSION;
     if to_save.source_sha256.is_empty() {
         let bytes = std::fs::read(image_path)?;
         to_save.source_sha256 = crate::ingest::scanner::hex(&Sha256::digest(&bytes));

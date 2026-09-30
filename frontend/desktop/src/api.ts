@@ -490,7 +490,7 @@ export interface LutRef {
   sha256: string;
 }
 
-/** Non-destructive adjustment recipe (ED-1, ED-6). */
+/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9). */
 export interface AdjustmentRecipe {
   version?: number;
   source_sha256?: string;
@@ -504,6 +504,10 @@ export interface AdjustmentRecipe {
   vibrance?: number;
   lut?: LutRef | null;
   lut_intensity?: number;
+  whites?: number;
+  blacks?: number;
+  brightness?: number;
+  hue?: number;
 }
 
 /** Stage for preview rendering. */

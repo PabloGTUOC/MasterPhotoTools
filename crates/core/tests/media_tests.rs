@@ -1617,8 +1617,12 @@ fn benchmark_edit_preview() {
         exposure: 0.5,
         highlights: -25.0,
         shadows: 20.0,
+        whites: 15.0,
+        blacks: -10.0,
+        brightness: 5.0,
         contrast: 15.0,
         saturation: 12.0,
+        hue: 10.0,
         lut: Some(LutRef {
             name: "synth33.cube".into(),
             sha256: lut33.sha256.clone(),

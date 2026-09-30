@@ -154,6 +154,26 @@ export class StubDesktopApiClient {
   async closePreview(_sessionId: string): Promise<void> {}
 
   async loadRecipe(path: string): Promise<AdjustmentRecipe | null> {
+    if (path.includes('v2_edits')) {
+      return {
+        version: 2,
+        source_sha256: 'sha_v2',
+        exposure: 0.5,
+        temperature: -10,
+        tint: 5,
+        highlights: -15,
+        shadows: 15,
+        contrast: 10,
+        saturation: 5,
+        vibrance: -5,
+        whites: 25,
+        blacks: -35,
+        brightness: 20,
+        hue: 45,
+        lut: null,
+        lut_intensity: 1.0,
+      };
+    }
     if (path.includes('existing_edits')) {
       return {
         version: 1,

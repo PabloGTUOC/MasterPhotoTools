@@ -45,12 +45,26 @@ pub struct AdjustmentRecipe {
     pub lut: Option<LutRef>,
     /// LUT blend factor: 0.0 to 1.0 (1.0 = 100% LUT effect).
     pub lut_intensity: f32,
+
+    // Round 2 basic additions (ED-9):
+    /// Whites shoulder boost/recovery: -100.0 to +100.0 (anchored at 0.18).
+    #[serde(default)]
+    pub whites: f32,
+    /// Blacks toe crushing/lifting: -100.0 to +100.0 (anchored at 0.18).
+    #[serde(default)]
+    pub blacks: f32,
+    /// Mid-tone brightness power curve: -100.0 to +100.0 (pins 0.0 and 1.0, shifts 0.18).
+    #[serde(default)]
+    pub brightness: f32,
+    /// Hue rotation in OkLCh perceptual color space: -180.0 to +180.0 degrees.
+    #[serde(default)]
+    pub hue: f32,
 }
 
 impl Default for AdjustmentRecipe {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             source_sha256: String::new(),
             exposure: 0.0,
             temperature: 0.0,
@@ -62,6 +76,10 @@ impl Default for AdjustmentRecipe {
             vibrance: 0.0,
             lut: None,
             lut_intensity: 1.0,
+            whites: 0.0,
+            blacks: 0.0,
+            brightness: 0.0,
+            hue: 0.0,
         }
     }
 }
@@ -78,6 +96,10 @@ impl AdjustmentRecipe {
             && self.saturation == 0.0
             && self.vibrance == 0.0
             && self.lut.is_none()
+            && self.whites == 0.0
+            && self.blacks == 0.0
+            && self.brightness == 0.0
+            && self.hue == 0.0
     }
 }
 
@@ -334,7 +356,13 @@ impl LinearBuffer {
 
         let h = recipe.highlights / 100.0;
         let s = recipe.shadows / 100.0;
-        let has_tone = h != 0.0 || s != 0.0;
+        let w = recipe.whites / 100.0;
+        let b_val = recipe.blacks / 100.0;
+        let has_tone = h != 0.0 || s != 0.0 || w != 0.0 || b_val != 0.0;
+
+        let bright = recipe.brightness / 100.0;
+        let has_brightness = bright != 0.0;
+        let bright_exp = 2.0f32.powf(-0.5 * bright) - 1.0;
 
         let c = recipe.contrast / 100.0;
         let has_contrast = c != 0.0;
@@ -343,6 +371,14 @@ impl LinearBuffer {
         let sat = recipe.saturation / 100.0;
         let vib = recipe.vibrance / 100.0;
         let has_sat_vib = sat != 0.0 || vib != 0.0;
+
+        let has_hue = recipe.hue != 0.0;
+        let (hue_cos, hue_sin) = if has_hue {
+            let rad = recipe.hue.to_radians();
+            (rad.cos(), rad.sin())
+        } else {
+            (1.0, 0.0)
+        };
 
         self.data.par_chunks_exact_mut(3).for_each(|px| {
             let mut r = px[0];
@@ -354,13 +390,25 @@ impl LinearBuffer {
             g *= gain_g;
             b *= gain_b;
 
-            // 3. Highlights & Shadows (crossover at 0.18, 0.18 strictly stationary)
+            // 3. Highlights, Shadows, Whites, Blacks (crossover at 0.18, 0.18 strictly stationary)
             if has_tone {
                 let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
                 let (w_h, w_s) = tone_weights(y);
-                let delta_ev = w_h * h + w_s * s;
+                let (w_w, w_b) = white_black_weights(y);
+                let delta_ev = w_h * h + w_s * s + w_w * w + w_b * b_val;
                 if delta_ev != 0.0 {
-                    let factor = 2.0f32.powf(delta_ev);
+                    let factor = delta_ev.exp2();
+                    r *= factor;
+                    g *= factor;
+                    b *= factor;
+                }
+            }
+
+            // Brightness (mid-tone power curve pivoting on mid-grey, keeping 0.0 and 1.0 pinned)
+            if has_brightness {
+                let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                if y > 1e-7 && (y - 1.0).abs() > 1e-7 {
+                    let factor = y.powf(bright_exp);
                     r *= factor;
                     g *= factor;
                     b *= factor;
@@ -392,6 +440,14 @@ impl LinearBuffer {
                 r = (y + k * (r - y)).max(0.0);
                 g = (y + k * (g - y)).max(0.0);
                 b = (y + k * (b - y)).max(0.0);
+            }
+
+            // Hue rotation in OkLCh perceptual color space
+            if has_hue {
+                let (hr, hg, hb) = super::color::rotate_hue_oklch_sincos(r, g, b, hue_cos, hue_sin);
+                r = hr;
+                g = hg;
+                b = hb;
             }
 
             px[0] = r;
@@ -487,6 +543,34 @@ pub fn tone_weights(y: f32) -> (f32, f32) {
     (w_h, w_s)
 }
 
+/// Whites and blacks weights for linear luminance `y`.
+///
+/// Guarantees that at `y = 0.18`, both weights are identically 0.0.
+/// Whites smoothly ramps up above 0.18 towards 1.0 at y >= 1.0.
+/// Blacks smoothly ramps up below 0.18 towards 1.0 at y <= 0.02.
+#[inline]
+pub fn white_black_weights(y: f32) -> (f32, f32) {
+    let w_w = if y <= 0.18 {
+        0.0
+    } else if y >= 1.0 {
+        1.0
+    } else {
+        let t = (y - 0.18) / (1.0 - 0.18);
+        t * t * (3.0 - 2.0 * t)
+    };
+
+    let w_b = if y >= 0.18 {
+        0.0
+    } else if y <= 0.02 {
+        1.0
+    } else {
+        let t = (0.18 - y) / (0.18 - 0.02);
+        t * t * (3.0 - 2.0 * t)
+    };
+
+    (w_w, w_b)
+}
+
 /// Validates that if a recipe specifies a LUT, the provided LUT matches its sha256,
 /// and that if no LUT is specified, no LUT was provided.
 pub fn validate_lut(recipe: &AdjustmentRecipe, lut: Option<&Lut>) -> Result<(), Error> {
@@ -572,8 +656,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_untouched_recipe_is_exact_identity() {
+    fn an_untouched_v2_recipe_is_exact_identity() {
         let default_recipe = AdjustmentRecipe::default();
+        assert_eq!(default_recipe.version, 2);
+        assert!(default_recipe.is_identity());
 
         // 8-bit buffer: exercise various levels and shades
         let w = 8;
@@ -1116,6 +1202,101 @@ mod tests {
             assert_eq!(data[i * 3], expected_luma, "R mismatch at pixel {i}");
             assert_eq!(data[i * 3 + 1], expected_luma, "G mismatch at pixel {i}");
             assert_eq!(data[i * 3 + 2], expected_luma, "B mismatch at pixel {i}");
+        }
+    }
+
+    #[test]
+    fn whites_plus_one_boosts_upper_highlights_and_leaves_mid_grey_untouched() {
+        for whites in [1.0f32, 100.0f32] {
+            let mut lin = LinearBuffer {
+                width: 2,
+                height: 1,
+                data: vec![0.18, 0.18, 0.18, 0.9, 0.9, 0.9],
+            };
+            let recipe = AdjustmentRecipe {
+                whites,
+                ..AdjustmentRecipe::default()
+            };
+            lin.apply_adjustments(&recipe);
+            assert_eq!(lin.data[0], 0.18);
+            assert_eq!(lin.data[1], 0.18);
+            assert_eq!(lin.data[2], 0.18);
+            assert!(lin.data[3] > 0.9);
+            assert!(lin.data[4] > 0.9);
+            assert!(lin.data[5] > 0.9);
+        }
+    }
+
+    #[test]
+    fn blacks_minus_one_crushes_deep_shadows_and_leaves_mid_grey_untouched() {
+        for blacks in [-1.0f32, -100.0f32] {
+            let mut lin = LinearBuffer {
+                width: 2,
+                height: 1,
+                data: vec![0.18, 0.18, 0.18, 0.01, 0.01, 0.01],
+            };
+            let recipe = AdjustmentRecipe {
+                blacks,
+                ..AdjustmentRecipe::default()
+            };
+            lin.apply_adjustments(&recipe);
+            assert_eq!(lin.data[0], 0.18);
+            assert_eq!(lin.data[1], 0.18);
+            assert_eq!(lin.data[2], 0.18);
+            assert!(lin.data[3] < 0.01);
+            assert!(lin.data[4] < 0.01);
+            assert!(lin.data[5] < 0.01);
+        }
+    }
+
+    #[test]
+    fn brightness_shifts_mid_tones_without_changing_black_or_white() {
+        for brightness in [-50.0f32, 50.0f32] {
+            let mut lin = LinearBuffer {
+                width: 3,
+                height: 1,
+                data: vec![0.0, 0.0, 0.0, 0.18, 0.18, 0.18, 1.0, 1.0, 1.0],
+            };
+            let recipe = AdjustmentRecipe {
+                brightness,
+                ..AdjustmentRecipe::default()
+            };
+            lin.apply_adjustments(&recipe);
+            assert_eq!(lin.data[0], 0.0);
+            assert_eq!(lin.data[1], 0.0);
+            assert_eq!(lin.data[2], 0.0);
+            assert!((lin.data[3] - 0.18).abs() > 0.01);
+            assert!((lin.data[6] - 1.0).abs() < 1e-6);
+            assert!((lin.data[7] - 1.0).abs() < 1e-6);
+            assert!((lin.data[8] - 1.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn hue_rotation_preserves_luma_and_saturation() {
+        use super::super::color::{linear_srgb_to_oklab, rotate_hue_oklch};
+        // In Björn Ottosson's Oklab / OkLCh perceptual color space, rotating hue
+        // angle at constant L and C preserves perceptual Lightness (L) and Chroma (C)
+        // within floating-point tolerance.
+        let colors = [(0.8f32, 0.2f32, 0.3f32), (0.2, 0.7, 0.4), (0.3, 0.4, 0.8)];
+        for &(r, g, b) in &colors {
+            let (orig_l, orig_a, orig_b) = linear_srgb_to_oklab(r, g, b);
+            let orig_chroma = (orig_a * orig_a + orig_b * orig_b).sqrt();
+
+            for delta in [30.0f32, 60.0, 90.0, 180.0, -45.0, -120.0] {
+                let (rot_r, rot_g, rot_b) = rotate_hue_oklch(r, g, b, delta);
+                let (rot_l, rot_a, rot_b) = linear_srgb_to_oklab(rot_r, rot_g, rot_b);
+                let rot_chroma = (rot_a * rot_a + rot_b * rot_b).sqrt();
+
+                assert!(
+                    (orig_l - rot_l).abs() < 1e-5,
+                    "Oklab L changed: orig {orig_l}, rot {rot_l} for delta {delta}"
+                );
+                assert!(
+                    (orig_chroma - rot_chroma).abs() < 1e-5,
+                    "Oklab C (saturation) changed: orig {orig_chroma}, rot {rot_chroma} for delta {delta}"
+                );
+            }
         }
     }
 }

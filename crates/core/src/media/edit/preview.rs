@@ -34,10 +34,9 @@
 //!   (measured on Apple Silicon), restoring full retina sharpness on mouse release within the
 //!   60 ms core render budget.
 
+use super::color::rotate_hue_oklch_sincos;
 use super::lut::Lut;
-use super::pipeline::{
-    linear_to_srgb, tone_weights, validate_lut, AdjustmentRecipe, ImageBuffer, LinearBuffer,
-};
+use super::pipeline::{linear_to_srgb, validate_lut, AdjustmentRecipe, ImageBuffer, LinearBuffer};
 use crate::error::Error;
 use fast_image_resize as fr;
 use rayon::prelude::*;
@@ -227,15 +226,47 @@ pub fn render_rgba_frame(
 
     let h_val = recipe.highlights / 100.0;
     let s_val = recipe.shadows / 100.0;
-    let has_tone = h_val != 0.0 || s_val != 0.0;
+    let w_val = recipe.whites / 100.0;
+    let b_val = recipe.blacks / 100.0;
+    let has_tone = h_val != 0.0 || s_val != 0.0 || w_val != 0.0 || b_val != 0.0;
+
+    let bright = recipe.brightness / 100.0;
+    let has_brightness = bright != 0.0;
+    let bright_gamma = (-0.5 * bright).exp2();
 
     let c = recipe.contrast / 100.0;
     let has_contrast = c != 0.0;
     let gamma_minus_one = 0.5 * c;
 
+    let (has_tone_curve, combined_exp, combined_scale) = match (has_brightness, has_contrast) {
+        (true, true) => {
+            let b_exp = bright_gamma - 1.0;
+            let c_scale = (1.0f32 / 0.18f32).powf(gamma_minus_one);
+            let comb_exp = b_exp + bright_gamma * gamma_minus_one;
+            (true, comb_exp, c_scale)
+        }
+        (true, false) => {
+            let b_exp = bright_gamma - 1.0;
+            (true, b_exp, 1.0f32)
+        }
+        (false, true) => {
+            let c_scale = (1.0f32 / 0.18f32).powf(gamma_minus_one);
+            (true, gamma_minus_one, c_scale)
+        }
+        (false, false) => (false, 0.0f32, 1.0f32),
+    };
+
     let sat = recipe.saturation / 100.0;
     let vib = recipe.vibrance / 100.0;
     let has_sat_vib = sat != 0.0 || vib != 0.0;
+
+    let has_hue = recipe.hue != 0.0;
+    let (hue_cos, hue_sin) = if has_hue {
+        let rad = recipe.hue.to_radians();
+        (rad.cos(), rad.sin())
+    } else {
+        (1.0, 0.0)
+    };
 
     let intensity = if recipe.lut.is_some() {
         recipe.lut_intensity.clamp(0.0, 1.0)
@@ -246,81 +277,121 @@ pub fn render_rgba_frame(
 
     let mut out_bytes = vec![0u8; out_len];
 
+    let row_out_len = (w * 4) as usize;
+    let row_in_len = (w * 3) as usize;
+
     out_bytes
-        .par_chunks_exact_mut(4)
-        .zip(proxy.data.par_chunks_exact(3))
-        .for_each(|(out_px, in_px)| {
-            let mut r = in_px[0];
-            let mut g = in_px[1];
-            let mut b = in_px[2];
+        .par_chunks_exact_mut(row_out_len)
+        .zip(proxy.data.par_chunks_exact(row_in_len))
+        .for_each(|(out_row, in_row)| {
+            for (out_px, in_px) in out_row.chunks_exact_mut(4).zip(in_row.chunks_exact(3)) {
+                let mut r = in_px[0];
+                let mut g = in_px[1];
+                let mut b = in_px[2];
 
-            // 1 & 2. White Balance & Exposure
-            r *= gain_r;
-            g *= gain_g;
-            b *= gain_b;
+                // 1 & 2. White Balance & Exposure
+                r *= gain_r;
+                g *= gain_g;
+                b *= gain_b;
 
-            // 3. Highlights & Shadows (crossover at 0.18, 0.18 strictly stationary)
-            if has_tone {
-                let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                let (w_h, w_s) = tone_weights(y);
-                let delta_ev = w_h * h_val + w_s * s_val;
-                if delta_ev != 0.0 {
-                    let factor = 2.0f32.powf(delta_ev);
-                    r *= factor;
-                    g *= factor;
-                    b *= factor;
+                // 3. Highlights, Shadows, Whites, Blacks (crossover at 0.18, 0.18 strictly stationary)
+                if has_tone {
+                    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    let delta_ev = if y >= 0.18 {
+                        let w_h = if y >= 0.65 {
+                            1.0
+                        } else {
+                            let t = (y - 0.18) * (1.0 / (0.65 - 0.18));
+                            t * t * (3.0 - 2.0 * t)
+                        };
+                        let w_w = if y >= 1.0 {
+                            1.0
+                        } else {
+                            let t = (y - 0.18) * (1.0 / (1.0 - 0.18));
+                            t * t * (3.0 - 2.0 * t)
+                        };
+                        w_h * h_val + w_w * w_val
+                    } else {
+                        let w_s = if y <= 0.05 {
+                            1.0
+                        } else {
+                            let t = (0.18 - y) * (1.0 / (0.18 - 0.05));
+                            t * t * (3.0 - 2.0 * t)
+                        };
+                        let w_b = if y <= 0.02 {
+                            1.0
+                        } else {
+                            let t = (0.18 - y) * (1.0 / (0.18 - 0.02));
+                            t * t * (3.0 - 2.0 * t)
+                        };
+                        w_s * s_val + w_b * b_val
+                    };
+                    if delta_ev != 0.0 {
+                        let factor = delta_ev.exp2();
+                        r *= factor;
+                        g *= factor;
+                        b *= factor;
+                    }
                 }
-            }
 
-            // 4. Contrast (power curve pivoting at 0.18)
-            if has_contrast {
-                let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                if y > 1e-7 {
-                    let factor = (y / 0.18).powf(gamma_minus_one);
-                    r *= factor;
-                    g *= factor;
-                    b *= factor;
+                // 4. Brightness & Contrast (combined power curve pivoting on mid-grey)
+                if has_tone_curve {
+                    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    if y > 1e-7 && (!has_brightness || (y - 1.0).abs() > 1e-7) {
+                        let factor = (combined_exp * y.log2()).exp2() * combined_scale;
+                        r *= factor;
+                        g *= factor;
+                        b *= factor;
+                    }
                 }
-            }
 
-            // 5. Saturation & Vibrance (preserves neutral grey)
-            if has_sat_vib {
-                let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                let max = r.max(g).max(b);
-                let min = r.min(g).min(b);
-                let current_sat = if max > 1e-7 {
-                    ((max - min) / max).min(1.0)
+                // 5. Saturation & Vibrance (preserves neutral grey)
+                if has_sat_vib {
+                    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    let max = r.max(g).max(b);
+                    let min = r.min(g).min(b);
+                    let current_sat = if max > 1e-7 {
+                        ((max - min) / max).min(1.0)
+                    } else {
+                        0.0
+                    };
+                    let k = ((1.0 + sat) * (1.0 + vib * (1.0 - current_sat))).max(0.0);
+                    r = (y + k * (r - y)).max(0.0);
+                    g = (y + k * (g - y)).max(0.0);
+                    b = (y + k * (b - y)).max(0.0);
+                }
+
+                // Hue rotation in OkLCh perceptual color space
+                if has_hue {
+                    let (hr, hg, hb) = rotate_hue_oklch_sincos(r, g, b, hue_cos, hue_sin);
+                    r = hr;
+                    g = hg;
+                    b = hb;
+                }
+
+                // Display transfer (linear light to display-encoded sRGB [0.0, 1.0])
+                let disp_r = linear_to_srgb(r);
+                let disp_g = linear_to_srgb(g);
+                let disp_b = linear_to_srgb(b);
+
+                // 3D LUT sampling & blending in display space
+                let (final_r, final_g, final_b) = if has_lut {
+                    let lut_inst = lut.unwrap();
+                    let lut_out = lut_inst.sample([disp_r, disp_g, disp_b]);
+                    (
+                        ((1.0 - intensity) * disp_r + intensity * lut_out[0]).clamp(0.0, 1.0),
+                        ((1.0 - intensity) * disp_g + intensity * lut_out[1]).clamp(0.0, 1.0),
+                        ((1.0 - intensity) * disp_b + intensity * lut_out[2]).clamp(0.0, 1.0),
+                    )
                 } else {
-                    0.0
+                    (disp_r, disp_g, disp_b)
                 };
-                let k = ((1.0 + sat) * (1.0 + vib * (1.0 - current_sat))).max(0.0);
-                r = (y + k * (r - y)).max(0.0);
-                g = (y + k * (g - y)).max(0.0);
-                b = (y + k * (b - y)).max(0.0);
+
+                out_px[0] = (final_r * 255.0).round().clamp(0.0, 255.0) as u8;
+                out_px[1] = (final_g * 255.0).round().clamp(0.0, 255.0) as u8;
+                out_px[2] = (final_b * 255.0).round().clamp(0.0, 255.0) as u8;
+                out_px[3] = 255;
             }
-
-            // Display transfer (linear light to display-encoded sRGB [0.0, 1.0])
-            let disp_r = linear_to_srgb(r);
-            let disp_g = linear_to_srgb(g);
-            let disp_b = linear_to_srgb(b);
-
-            // 3D LUT sampling & blending in display space
-            let (final_r, final_g, final_b) = if has_lut {
-                let lut_inst = lut.unwrap();
-                let lut_out = lut_inst.sample([disp_r, disp_g, disp_b]);
-                (
-                    ((1.0 - intensity) * disp_r + intensity * lut_out[0]).clamp(0.0, 1.0),
-                    ((1.0 - intensity) * disp_g + intensity * lut_out[1]).clamp(0.0, 1.0),
-                    ((1.0 - intensity) * disp_b + intensity * lut_out[2]).clamp(0.0, 1.0),
-                )
-            } else {
-                (disp_r, disp_g, disp_b)
-            };
-
-            out_px[0] = (final_r * 255.0).round().clamp(0.0, 255.0) as u8;
-            out_px[1] = (final_g * 255.0).round().clamp(0.0, 255.0) as u8;
-            out_px[2] = (final_b * 255.0).round().clamp(0.0, 255.0) as u8;
-            out_px[3] = 255;
         });
 
     Ok(RgbaFrame {

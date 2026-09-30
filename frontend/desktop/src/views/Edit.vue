@@ -21,6 +21,7 @@ import type {
 } from '@host/api';
 import { desktop } from '@host/api';
 import AdjustmentSlider from '@ui/components/AdjustmentSlider.vue';
+import CollapsibleSection from '@ui/components/CollapsibleSection.vue';
 import LutPicker from '@ui/components/LutPicker.vue';
 import PathField from '@ui/components/PathField.vue';
 import { useRoots } from '@ui/useRoots';
@@ -57,7 +58,7 @@ const lutList = ref<LutLibraryList>({ luts: [], errors: [] });
 
 function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
   return {
-    version: 1,
+    version: 2,
     source_sha256: sourceSha,
     exposure: 0.0,
     temperature: 0.0,
@@ -69,6 +70,10 @@ function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
     vibrance: 0.0,
     lut: null,
     lut_intensity: 1.0,
+    whites: 0.0,
+    blacks: 0.0,
+    brightness: 0.0,
+    hue: 0.0,
   };
 }
 
@@ -433,6 +438,38 @@ function resetAll() {
   onRecipeValueChange();
 }
 
+function resetBasic() {
+  recipe.value.exposure = 0.0;
+  recipe.value.contrast = 0.0;
+  recipe.value.highlights = 0.0;
+  recipe.value.shadows = 0.0;
+  recipe.value.whites = 0.0;
+  recipe.value.blacks = 0.0;
+  recipe.value.brightness = 0.0;
+  recipe.value.temperature = 0.0;
+  recipe.value.tint = 0.0;
+  recipe.value.saturation = 0.0;
+  recipe.value.vibrance = 0.0;
+  recipe.value.hue = 0.0;
+  onRecipeValueChange();
+}
+
+function resetToneCurve() {}
+
+function resetHsl() {}
+
+function resetGrading() {}
+
+function resetLook() {
+  recipe.value.lut = null;
+  recipe.value.lut_intensity = 1.0;
+  onRecipeValueChange();
+}
+
+function resetGeometry() {}
+
+function resetEffects() {}
+
 watch(sourcePath, (newPath) => {
   if (newPath) {
     openImage(newPath);
@@ -554,118 +591,221 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <div class="adjustment-panel__group">
-          <span class="adjustment-panel__group-title">Exposure & Tone</span>
-          <AdjustmentSlider
-            v-model="recipe.exposure"
-            label="Exposure"
-            :min="-5.0"
-            :max="5.0"
-            :step="0.1"
-            unit="EV"
-            test-id="exposure"
-            @update:model-value="onRecipeValueInput"
-            @change="onRecipeValueChange"
-          />
+        <div class="adjustment-panel__sections">
+          <!-- 1. Basic -->
+          <CollapsibleSection
+            title="Basic"
+            test-id="section-basic"
+            :default-open="true"
+            @reset="resetBasic"
+          >
+            <AdjustmentSlider
+              v-model="recipe.exposure"
+              label="Exposure"
+              :min="-5.0"
+              :max="5.0"
+              :step="0.1"
+              unit="EV"
+              test-id="exposure"
+              @update:model-value="onRecipeValueInput"
+              @change="onRecipeValueChange"
+            />
 
-          <AdjustmentSlider
-            v-model="recipe.contrast"
-            label="Contrast"
-            :min="-100"
-            :max="100"
-            :step="1"
-            test-id="contrast"
-            @update:model-value="onRecipeValueInput"
-            @change="onRecipeValueChange"
-          />
+            <AdjustmentSlider
+              v-model="recipe.contrast"
+              label="Contrast"
+              :min="-100"
+              :max="100"
+              :step="1"
+              test-id="contrast"
+              @update:model-value="onRecipeValueInput"
+              @change="onRecipeValueChange"
+            />
 
-          <AdjustmentSlider
-            v-model="recipe.highlights"
-            label="Highlights"
-            :min="-100"
-            :max="100"
-            :step="1"
-            test-id="highlights"
-            @update:model-value="onRecipeValueInput"
-            @change="onRecipeValueChange"
-          />
+            <AdjustmentSlider
+              v-model="recipe.highlights"
+              label="Highlights"
+              :min="-100"
+              :max="100"
+              :step="1"
+              test-id="highlights"
+              @update:model-value="onRecipeValueInput"
+              @change="onRecipeValueChange"
+            />
 
-          <AdjustmentSlider
-            v-model="recipe.shadows"
-            label="Shadows"
-            :min="-100"
-            :max="100"
-            :step="1"
-            test-id="shadows"
-            @update:model-value="onRecipeValueInput"
-            @change="onRecipeValueChange"
-          />
+            <AdjustmentSlider
+              v-model="recipe.shadows"
+              label="Shadows"
+              :min="-100"
+              :max="100"
+              :step="1"
+              test-id="shadows"
+              @update:model-value="onRecipeValueInput"
+              @change="onRecipeValueChange"
+            />
+
+            <AdjustmentSlider
+              v-model="recipe.whites"
+              label="Whites"
+              :min="-100"
+              :max="100"
+              :step="1"
+              test-id="whites"
+              @update:model-value="onRecipeValueInput"
+              @change="onRecipeValueChange"
+            />
+
+            <AdjustmentSlider
+              v-model="recipe.blacks"
+              label="Blacks"
+              :min="-100"
+              :max="100"
+              :step="1"
+              test-id="blacks"
+              @update:model-value="onRecipeValueInput"
+              @change="onRecipeValueChange"
+            />
+
+            <AdjustmentSlider
+              v-model="recipe.brightness"
+              label="Brightness"
+              :min="-100"
+              :max="100"
+              :step="1"
+              test-id="brightness"
+              @update:model-value="onRecipeValueInput"
+              @change="onRecipeValueChange"
+            />
+
+            <AdjustmentSlider
+              v-model="recipe.temperature"
+              label="Temperature"
+              :min="-100"
+              :max="100"
+              :step="1"
+              test-id="temperature"
+              @update:model-value="onRecipeValueInput"
+              @change="onRecipeValueChange"
+            />
+
+            <AdjustmentSlider
+              v-model="recipe.tint"
+              label="Tint"
+              :min="-100"
+              :max="100"
+              :step="1"
+              test-id="tint"
+              @update:model-value="onRecipeValueInput"
+              @change="onRecipeValueChange"
+            />
+
+            <AdjustmentSlider
+              v-model="recipe.saturation"
+              label="Saturation"
+              :min="-100"
+              :max="100"
+              :step="1"
+              test-id="saturation"
+              @update:model-value="onRecipeValueInput"
+              @change="onRecipeValueChange"
+            />
+
+            <AdjustmentSlider
+              v-model="recipe.vibrance"
+              label="Vibrance"
+              :min="-100"
+              :max="100"
+              :step="1"
+              test-id="vibrance"
+              @update:model-value="onRecipeValueInput"
+              @change="onRecipeValueChange"
+            />
+
+            <AdjustmentSlider
+              v-model="recipe.hue"
+              label="Hue"
+              :min="-180"
+              :max="180"
+              :step="1"
+              unit="°"
+              test-id="hue"
+              @update:model-value="onRecipeValueInput"
+              @change="onRecipeValueChange"
+            />
+          </CollapsibleSection>
+
+          <!-- 2. Tone Curve -->
+          <CollapsibleSection
+            title="Tone Curve"
+            test-id="section-tone-curve"
+            :default-open="false"
+            @reset="resetToneCurve"
+          >
+            <div class="section-placeholder">Curve editor available in ED-10</div>
+          </CollapsibleSection>
+
+          <!-- 3. Colour / HSL -->
+          <CollapsibleSection
+            title="Colour / HSL"
+            test-id="section-hsl"
+            :default-open="false"
+            @reset="resetHsl"
+          >
+            <div class="section-placeholder">8-band HSL available in ED-11</div>
+          </CollapsibleSection>
+
+          <!-- 4. Colour Grading -->
+          <CollapsibleSection
+            title="Colour Grading"
+            test-id="section-grading"
+            :default-open="false"
+            @reset="resetGrading"
+          >
+            <div class="section-placeholder">3-way colour grading available in ED-12</div>
+          </CollapsibleSection>
+
+          <!-- 5. Look -->
+          <CollapsibleSection
+            title="Look"
+            test-id="section-look"
+            :default-open="true"
+            @reset="resetLook"
+          >
+            <LutPicker
+              :model-value="recipe.lut ?? null"
+              :intensity="recipe.lut_intensity ?? 1.0"
+              :luts="lutList.luts"
+              :errors="lutList.errors"
+              :roots="roots"
+              :roots-error="rootsError"
+              :list="listRoots"
+              @update:model-value="setLut"
+              @update:intensity="setLutIntensity"
+              @change="onLutIntensityChange"
+              @import="handleImportLut"
+            />
+          </CollapsibleSection>
+
+          <!-- 6. Geometry -->
+          <CollapsibleSection
+            title="Geometry"
+            test-id="section-geometry"
+            :default-open="false"
+            @reset="resetGeometry"
+          >
+            <div class="section-placeholder">Crop, rotate, and straighten available in ED-13</div>
+          </CollapsibleSection>
+
+          <!-- 7. Effects -->
+          <CollapsibleSection
+            title="Effects"
+            test-id="section-effects"
+            :default-open="false"
+            @reset="resetEffects"
+          >
+            <div class="section-placeholder">Vignette and film grain available in ED-15 & ED-16</div>
+          </CollapsibleSection>
         </div>
-
-        <div class="adjustment-panel__group">
-          <span class="adjustment-panel__group-title">White Balance</span>
-          <AdjustmentSlider
-            v-model="recipe.temperature"
-            label="Temperature"
-            :min="-100"
-            :max="100"
-            :step="1"
-            test-id="temperature"
-            @update:model-value="onRecipeValueInput"
-            @change="onRecipeValueChange"
-          />
-
-          <AdjustmentSlider
-            v-model="recipe.tint"
-            label="Tint"
-            :min="-100"
-            :max="100"
-            :step="1"
-            test-id="tint"
-            @update:model-value="onRecipeValueInput"
-            @change="onRecipeValueChange"
-          />
-        </div>
-
-        <div class="adjustment-panel__group">
-          <span class="adjustment-panel__group-title">Color</span>
-          <AdjustmentSlider
-            v-model="recipe.saturation"
-            label="Saturation"
-            :min="-100"
-            :max="100"
-            :step="1"
-            test-id="saturation"
-            @update:model-value="onRecipeValueInput"
-            @change="onRecipeValueChange"
-          />
-
-          <AdjustmentSlider
-            v-model="recipe.vibrance"
-            label="Vibrance"
-            :min="-100"
-            :max="100"
-            :step="1"
-            test-id="vibrance"
-            @update:model-value="onRecipeValueInput"
-            @change="onRecipeValueChange"
-          />
-        </div>
-
-        <!-- 3D LUT Selector -->
-        <LutPicker
-          :model-value="recipe.lut ?? null"
-          :intensity="recipe.lut_intensity ?? 1.0"
-          :luts="lutList.luts"
-          :errors="lutList.errors"
-          :roots="roots"
-          :roots-error="rootsError"
-          :list="listRoots"
-          @update:model-value="setLut"
-          @update:intensity="setLutIntensity"
-          @change="onLutIntensityChange"
-          @import="handleImportLut"
-        />
 
         <!-- Save Status Line -->
         <div class="adjustment-panel__status" data-testid="save-status">
@@ -878,5 +1018,13 @@ onUnmounted(() => {
 .adjustment-panel__export-error {
   font-size: 12px;
   word-break: break-all;
+}
+
+.section-placeholder {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: var(--space-2) 0;
 }
 </style>

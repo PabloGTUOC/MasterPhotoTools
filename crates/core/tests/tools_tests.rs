@@ -993,6 +993,113 @@ fn a_sidecar_round_trips_and_a_future_version_is_refused() {
 }
 
 #[test]
+fn a_v1_sidecar_loads_into_v2_with_default_identities() {
+    use phototools_core::tools::edit::load_recipe;
+
+    let f = Fixtures::new();
+    let sidecar = f.path().join("test_v1.jpg.photoedit");
+    let v1_json = serde_json::json!({
+        "version": 1,
+        "source_sha256": "abcdef123456",
+        "exposure": 0.75,
+        "temperature": -15.0,
+        "tint": 10.0,
+        "highlights": -25.0,
+        "shadows": 20.0,
+        "contrast": 15.0,
+        "saturation": 5.0,
+        "vibrance": -5.0,
+        "lut": null,
+        "lut_intensity": 1.0
+    });
+    fs::write(&sidecar, v1_json.to_string()).unwrap();
+
+    let loaded = load_recipe(&sidecar).expect("v1 sidecar must load cleanly into v2");
+    assert_eq!(loaded.version, 1);
+    assert_eq!(loaded.source_sha256, "abcdef123456");
+    assert_eq!(loaded.exposure, 0.75);
+    assert_eq!(loaded.temperature, -15.0);
+    assert_eq!(loaded.tint, 10.0);
+    assert_eq!(loaded.highlights, -25.0);
+    assert_eq!(loaded.shadows, 20.0);
+    assert_eq!(loaded.contrast, 15.0);
+    assert_eq!(loaded.saturation, 5.0);
+    assert_eq!(loaded.vibrance, -5.0);
+    // New v2 fields must have default identity values
+    assert_eq!(loaded.whites, 0.0);
+    assert_eq!(loaded.blacks, 0.0);
+    assert_eq!(loaded.brightness, 0.0);
+    assert_eq!(loaded.hue, 0.0);
+}
+
+#[test]
+fn a_recipe_version_three_is_refused_as_unsupported() {
+    use phototools_core::tools::edit::load_recipe;
+
+    let f = Fixtures::new();
+    let sidecar = f.path().join("version3.jpg.photoedit");
+    let v3_json = serde_json::json!({
+        "version": 3,
+        "source_sha256": "abcdef123456",
+        "exposure": 1.0
+    });
+    fs::write(&sidecar, v3_json.to_string()).unwrap();
+
+    let err = load_recipe(&sidecar).expect_err("version 3 must be refused");
+    assert!(
+        err.to_string().contains("unsupported sidecar version 3"),
+        "expected unsupported version error, got: {err}"
+    );
+}
+
+#[test]
+fn a_v1_sidecar_saved_again_is_written_as_v2() {
+    use phototools_core::tools::edit::{load_recipe, save_recipe};
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("v1_to_v2.jpg", 100, 100);
+    let sidecar = phototools_core::tools::edit::sidecar_path(&img);
+
+    let v1_json = serde_json::json!({
+        "version": 1,
+        "source_sha256": "original_sha",
+        "exposure": 0.5,
+        "temperature": 12.0,
+        "tint": -8.0,
+        "highlights": 30.0,
+        "shadows": -20.0,
+        "contrast": 10.0,
+        "saturation": 8.0,
+        "vibrance": 4.0,
+        "lut": null,
+        "lut_intensity": 1.0
+    });
+    fs::write(&sidecar, v1_json.to_string()).unwrap();
+
+    // Load v1 recipe
+    let loaded = load_recipe(&sidecar).expect("v1 sidecar must load");
+    assert_eq!(loaded.version, 1);
+    assert_eq!(loaded.exposure, 0.5);
+
+    // Save recipe again
+    let written = save_recipe(&img, &loaded).expect("re-saving v1 must succeed");
+    assert_eq!(written, sidecar);
+
+    // Read the file: must now have "version": 2 and preserved original values
+    let file_content = fs::read_to_string(&sidecar).unwrap();
+    let saved_val: serde_json::Value = serde_json::from_str(&file_content).unwrap();
+    assert_eq!(saved_val["version"], 2);
+    assert_eq!(saved_val["exposure"], 0.5);
+    assert_eq!(saved_val["temperature"], 12.0);
+    assert_eq!(saved_val["tint"], -8.0);
+    assert_eq!(saved_val["highlights"], 30.0);
+    assert_eq!(saved_val["shadows"], -20.0);
+    assert_eq!(saved_val["contrast"], 10.0);
+    assert_eq!(saved_val["saturation"], 8.0);
+    assert_eq!(saved_val["vibrance"], 4.0);
+}
+
+#[test]
 fn a_sidecar_is_written_atomically() {
     use phototools_core::media::edit::AdjustmentRecipe;
     use phototools_core::tools::edit::{save_recipe, sidecar_path};

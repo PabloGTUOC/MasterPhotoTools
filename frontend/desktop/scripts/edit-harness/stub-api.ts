@@ -172,6 +172,28 @@ export class StubDesktopApiClient {
         hue: 45,
         lut: null,
         lut_intensity: 1.0,
+        curves: {
+          luma: [
+            { x: 0, y: 0 },
+            { x: 0.25, y: 0.18 },
+            { x: 0.75, y: 0.82 },
+            { x: 1, y: 1 },
+          ],
+          red: [
+            { x: 0, y: 0 },
+            { x: 0.5, y: 0.55 },
+            { x: 1, y: 1 },
+          ],
+          green: [
+            { x: 0, y: 0 },
+            { x: 1, y: 1 },
+          ],
+          blue: [
+            { x: 0, y: 0 },
+            { x: 0.5, y: 0.45 },
+            { x: 1, y: 1 },
+          ],
+        },
       };
     }
     if (path.includes('existing_edits')) {

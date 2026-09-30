@@ -881,3 +881,18 @@ export interface GeotagRequest {
   overwrite_existing: boolean;
   write_altitude: boolean;
 }
+
+/** A 2D control point for tone curves (ED-10). Coordinates are normalised in [0.0, 1.0]. */
+export interface CurvePoint {
+  x: number;
+  y: number;
+}
+
+/** Evaluated tone curves for Luma and individual RGB color channels (ED-10). */
+export interface ToneCurves {
+  luma?: CurvePoint[];
+  red?: CurvePoint[];
+  green?: CurvePoint[];
+  blue?: CurvePoint[];
+}
+

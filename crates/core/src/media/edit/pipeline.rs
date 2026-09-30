@@ -59,6 +59,11 @@ pub struct AdjustmentRecipe {
     /// Hue rotation in OkLCh perceptual color space: -180.0 to +180.0 degrees.
     #[serde(default)]
     pub hue: f32,
+
+    // Round 2 structured groups (ED-10):
+    /// Optional tone curves (Luma, R, G, B) evaluated in display-encoded space.
+    #[serde(default)]
+    pub curves: Option<super::curves::ToneCurves>,
 }
 
 impl Default for AdjustmentRecipe {
@@ -80,12 +85,13 @@ impl Default for AdjustmentRecipe {
             blacks: 0.0,
             brightness: 0.0,
             hue: 0.0,
+            curves: None,
         }
     }
 }
 
 impl AdjustmentRecipe {
-    /// True if all sliders are at rest (0.0) and no LUT is attached.
+    /// True if all sliders are at rest (0.0), no curves are active, and no LUT is attached.
     pub fn is_identity(&self) -> bool {
         self.exposure == 0.0
             && self.temperature == 0.0
@@ -100,6 +106,7 @@ impl AdjustmentRecipe {
             && self.blacks == 0.0
             && self.brightness == 0.0
             && self.hue == 0.0
+            && self.curves.as_ref().map_or(true, |c| c.is_identity())
     }
 }
 
@@ -263,7 +270,16 @@ impl LinearBuffer {
         self.to_rgb8_with_lut(None, 0.0)
     }
 
-    fn to_rgb8_with_lut(&self, lut: Option<&Lut>, intensity: f32) -> ImageBuffer {
+    pub fn to_rgb8_with_lut(&self, lut: Option<&Lut>, intensity: f32) -> ImageBuffer {
+        self.to_rgb8_with_lut_and_curves(lut, intensity, &super::curves::ToneCurvesTable::default())
+    }
+
+    pub fn to_rgb8_with_lut_and_curves(
+        &self,
+        lut: Option<&Lut>,
+        intensity: f32,
+        curves_table: &super::curves::ToneCurvesTable,
+    ) -> ImageBuffer {
         let intensity = intensity.clamp(0.0, 1.0);
         let mut out = vec![0u8; self.data.len()];
         out.par_chunks_exact_mut(3)
@@ -273,19 +289,25 @@ impl LinearBuffer {
                 let disp_g = linear_to_srgb(in_px[1]);
                 let disp_b = linear_to_srgb(in_px[2]);
 
-                let (final_r, final_g, final_b) = if let Some(lut) = lut {
-                    if intensity > 0.0 {
-                        let lut_out = lut.sample([disp_r, disp_g, disp_b]);
-                        (
-                            ((1.0 - intensity) * disp_r + intensity * lut_out[0]).clamp(0.0, 1.0),
-                            ((1.0 - intensity) * disp_g + intensity * lut_out[1]).clamp(0.0, 1.0),
-                            ((1.0 - intensity) * disp_b + intensity * lut_out[2]).clamp(0.0, 1.0),
-                        )
-                    } else {
-                        (disp_r, disp_g, disp_b)
-                    }
+                let (curved_r, curved_g, curved_b) = if curves_table.has_any {
+                    curves_table.apply(disp_r, disp_g, disp_b)
                 } else {
                     (disp_r, disp_g, disp_b)
+                };
+
+                let (final_r, final_g, final_b) = if let Some(lut) = lut {
+                    if intensity > 0.0 {
+                        let lut_out = lut.sample([curved_r, curved_g, curved_b]);
+                        (
+                            ((1.0 - intensity) * curved_r + intensity * lut_out[0]).clamp(0.0, 1.0),
+                            ((1.0 - intensity) * curved_g + intensity * lut_out[1]).clamp(0.0, 1.0),
+                            ((1.0 - intensity) * curved_b + intensity * lut_out[2]).clamp(0.0, 1.0),
+                        )
+                    } else {
+                        (curved_r, curved_g, curved_b)
+                    }
+                } else {
+                    (curved_r, curved_g, curved_b)
                 };
 
                 out_px[0] = (final_r * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -303,7 +325,20 @@ impl LinearBuffer {
         self.to_rgb16_with_lut(None, 0.0)
     }
 
-    fn to_rgb16_with_lut(&self, lut: Option<&Lut>, intensity: f32) -> ImageBuffer {
+    pub fn to_rgb16_with_lut(&self, lut: Option<&Lut>, intensity: f32) -> ImageBuffer {
+        self.to_rgb16_with_lut_and_curves(
+            lut,
+            intensity,
+            &super::curves::ToneCurvesTable::default(),
+        )
+    }
+
+    pub fn to_rgb16_with_lut_and_curves(
+        &self,
+        lut: Option<&Lut>,
+        intensity: f32,
+        curves_table: &super::curves::ToneCurvesTable,
+    ) -> ImageBuffer {
         let intensity = intensity.clamp(0.0, 1.0);
         let mut out = vec![0u16; self.data.len()];
         out.par_chunks_exact_mut(3)
@@ -313,19 +348,25 @@ impl LinearBuffer {
                 let disp_g = linear_to_srgb(in_px[1]);
                 let disp_b = linear_to_srgb(in_px[2]);
 
-                let (final_r, final_g, final_b) = if let Some(lut) = lut {
-                    if intensity > 0.0 {
-                        let lut_out = lut.sample([disp_r, disp_g, disp_b]);
-                        (
-                            ((1.0 - intensity) * disp_r + intensity * lut_out[0]).clamp(0.0, 1.0),
-                            ((1.0 - intensity) * disp_g + intensity * lut_out[1]).clamp(0.0, 1.0),
-                            ((1.0 - intensity) * disp_b + intensity * lut_out[2]).clamp(0.0, 1.0),
-                        )
-                    } else {
-                        (disp_r, disp_g, disp_b)
-                    }
+                let (curved_r, curved_g, curved_b) = if curves_table.has_any {
+                    curves_table.apply(disp_r, disp_g, disp_b)
                 } else {
                     (disp_r, disp_g, disp_b)
+                };
+
+                let (final_r, final_g, final_b) = if let Some(lut) = lut {
+                    if intensity > 0.0 {
+                        let lut_out = lut.sample([curved_r, curved_g, curved_b]);
+                        (
+                            ((1.0 - intensity) * curved_r + intensity * lut_out[0]).clamp(0.0, 1.0),
+                            ((1.0 - intensity) * curved_g + intensity * lut_out[1]).clamp(0.0, 1.0),
+                            ((1.0 - intensity) * curved_b + intensity * lut_out[2]).clamp(0.0, 1.0),
+                        )
+                    } else {
+                        (curved_r, curved_g, curved_b)
+                    }
+                } else {
+                    (curved_r, curved_g, curved_b)
                 };
 
                 out_px[0] = (final_r * 65535.0).round().clamp(0.0, 65535.0) as u16;
@@ -622,9 +663,15 @@ pub fn apply_recipe(
         0.0
     };
 
+    let curves_table = super::curves::ToneCurvesTable::from_recipe(recipe.curves.as_ref());
+
     match image {
-        ImageBuffer::Rgb8 { .. } => Ok(linear.to_rgb8_with_lut(lut, intensity)),
-        ImageBuffer::Rgb16 { .. } => Ok(linear.to_rgb16_with_lut(lut, intensity)),
+        ImageBuffer::Rgb8 { .. } => {
+            Ok(linear.to_rgb8_with_lut_and_curves(lut, intensity, &curves_table))
+        }
+        ImageBuffer::Rgb16 { .. } => {
+            Ok(linear.to_rgb16_with_lut_and_curves(lut, intensity, &curves_table))
+        }
     }
 }
 

@@ -18,10 +18,12 @@ import type {
   LutRef,
   OpenPreviewResult,
   PreviewStage,
+  ToneCurves,
 } from '@host/api';
 import { desktop } from '@host/api';
 import AdjustmentSlider from '@ui/components/AdjustmentSlider.vue';
 import CollapsibleSection from '@ui/components/CollapsibleSection.vue';
+import CurveEditor from '@ui/components/CurveEditor.vue';
 import LutPicker from '@ui/components/LutPicker.vue';
 import PathField from '@ui/components/PathField.vue';
 import { useRoots } from '@ui/useRoots';
@@ -74,6 +76,12 @@ function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
     blacks: 0.0,
     brightness: 0.0,
     hue: 0.0,
+    curves: {
+      luma: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+      red: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+      green: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+      blue: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+    },
   };
 }
 
@@ -388,6 +396,14 @@ async function openImage(path: string) {
       recipe.value = {
         ...createIdentityRecipe(),
         ...existing,
+        curves: existing.curves
+          ? {
+              luma: existing.curves.luma ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+              red: existing.curves.red ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+              green: existing.curves.green ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+              blue: existing.curves.blue ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+            }
+          : createIdentityRecipe().curves,
       };
       saveStatus.value = 'Saved';
       autosaveDisabled.value = false;
@@ -454,7 +470,25 @@ function resetBasic() {
   onRecipeValueChange();
 }
 
-function resetToneCurve() {}
+function resetToneCurve() {
+  recipe.value.curves = {
+    luma: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+    red: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+    green: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+    blue: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+  };
+  onRecipeValueChange();
+}
+
+function onCurvesInput(curves: ToneCurves) {
+  recipe.value.curves = curves;
+  onRecipeValueInput();
+}
+
+function onCurvesChange(curves: ToneCurves) {
+  recipe.value.curves = curves;
+  onRecipeValueChange();
+}
 
 function resetHsl() {}
 
@@ -741,7 +775,13 @@ onUnmounted(() => {
             :default-open="false"
             @reset="resetToneCurve"
           >
-            <div class="section-placeholder">Curve editor available in ED-10</div>
+            <CurveEditor
+              :model-value="recipe.curves"
+              test-id="tone-curve-editor"
+              :disabled="loading || isReadOnly"
+              @update:model-value="onCurvesInput"
+              @change="onCurvesChange"
+            />
           </CollapsibleSection>
 
           <!-- 3. Colour / HSL -->

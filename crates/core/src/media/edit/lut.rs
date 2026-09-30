@@ -627,60 +627,99 @@ impl Lut {
     /// 1. Clamps coordinates to `[domain_min, domain_max]` per channel.
     /// 2. Maps through domain boundaries to continuous lattice coordinates in `[0, N-1]`.
     /// 3. Performs tetrahedral interpolation across the 6 simplex partitions.
+    ///
+    /// Returns true if this LUT's domain is the standard unit cube [0.0, 1.0]^3.
+    #[inline(always)]
+    pub fn is_unit_domain(&self) -> bool {
+        self.domain_min[0] == 0.0
+            && self.domain_min[1] == 0.0
+            && self.domain_min[2] == 0.0
+            && self.domain_max[0] == 1.0
+            && self.domain_max[1] == 1.0
+            && self.domain_max[2] == 1.0
+    }
+
+    /// Fast-path sampling when coordinates are known to be in [0.0, 1.0] and the LUT
+    /// domain is the unit cube [0.0, 1.0]^3.
+    #[inline(always)]
+    pub fn sample_unit(&self, rgb: [f32; 3]) -> [f32; 3] {
+        let n = self.size;
+        let n_minus_1 = (n - 1) as f32;
+        let u = rgb[0].clamp(0.0, 1.0) * n_minus_1;
+        let v = rgb[1].clamp(0.0, 1.0) * n_minus_1;
+        let w = rgb[2].clamp(0.0, 1.0) * n_minus_1;
+        self.interpolate_lattice(u, v, w)
+    }
+
+    /// Samples the 3D LUT at display-encoded RGB coordinate in [0.0, 1.0] using tetrahedral interpolation.
     #[inline]
     pub fn sample(&self, rgb: [f32; 3]) -> [f32; 3] {
         let n = self.size;
         let n_minus_1 = (n - 1) as f32;
 
-        // 1. Clamp to domain
-        let r_clamped = rgb[0].clamp(self.domain_min[0], self.domain_max[0]);
-        let g_clamped = rgb[1].clamp(self.domain_min[1], self.domain_max[1]);
-        let b_clamped = rgb[2].clamp(self.domain_min[2], self.domain_max[2]);
-
-        // 2. Map through domain to continuous lattice coordinates [0, N-1]
-        let r_span = self.domain_max[0] - self.domain_min[0];
-        let g_span = self.domain_max[1] - self.domain_min[1];
-        let b_span = self.domain_max[2] - self.domain_min[2];
-
-        let u = if r_span > 1e-7 {
-            ((r_clamped - self.domain_min[0]) / r_span * n_minus_1).clamp(0.0, n_minus_1)
+        // 1 & 2. Map coordinates to continuous lattice coordinates [0, N-1]
+        let (u, v, w) = if self.is_unit_domain() {
+            (
+                (rgb[0].clamp(0.0, 1.0) * n_minus_1),
+                (rgb[1].clamp(0.0, 1.0) * n_minus_1),
+                (rgb[2].clamp(0.0, 1.0) * n_minus_1),
+            )
         } else {
-            0.0
-        };
-        let v = if g_span > 1e-7 {
-            ((g_clamped - self.domain_min[1]) / g_span * n_minus_1).clamp(0.0, n_minus_1)
-        } else {
-            0.0
-        };
-        let w = if b_span > 1e-7 {
-            ((b_clamped - self.domain_min[2]) / b_span * n_minus_1).clamp(0.0, n_minus_1)
-        } else {
-            0.0
+            let r_clamped = rgb[0].clamp(self.domain_min[0], self.domain_max[0]);
+            let g_clamped = rgb[1].clamp(self.domain_min[1], self.domain_max[1]);
+            let b_clamped = rgb[2].clamp(self.domain_min[2], self.domain_max[2]);
+
+            let r_span = self.domain_max[0] - self.domain_min[0];
+            let g_span = self.domain_max[1] - self.domain_min[1];
+            let b_span = self.domain_max[2] - self.domain_min[2];
+
+            let u = if r_span > 1e-7 {
+                ((r_clamped - self.domain_min[0]) / r_span * n_minus_1).clamp(0.0, n_minus_1)
+            } else {
+                0.0
+            };
+            let v = if g_span > 1e-7 {
+                ((g_clamped - self.domain_min[1]) / g_span * n_minus_1).clamp(0.0, n_minus_1)
+            } else {
+                0.0
+            };
+            let w = if b_span > 1e-7 {
+                ((b_clamped - self.domain_min[2]) / b_span * n_minus_1).clamp(0.0, n_minus_1)
+            } else {
+                0.0
+            };
+            (u, v, w)
         };
 
-        // 3. Base lattice index and fractional offsets
+        self.interpolate_lattice(u, v, w)
+    }
+
+    #[inline(always)]
+    fn interpolate_lattice(&self, u: f32, v: f32, w: f32) -> [f32; 3] {
+        let n = self.size;
         let max_idx = n - 2;
-        let i = (u.floor() as usize).min(max_idx);
-        let j = (v.floor() as usize).min(max_idx);
-        let k = (w.floor() as usize).min(max_idx);
+        let i = (u as usize).min(max_idx);
+        let j = (v as usize).min(max_idx);
+        let k = (w as usize).min(max_idx);
 
-        let dr = (u - i as f32).clamp(0.0, 1.0);
-        let dg = (v - j as f32).clamp(0.0, 1.0);
-        let db = (w - k as f32).clamp(0.0, 1.0);
+        let dr = u - i as f32;
+        let dg = v - j as f32;
+        let db = w - k as f32;
 
-        let node = |di: usize, dj: usize, dk: usize| -> [f32; 3] {
-            let idx = (i + di) + (j + dj) * n + (k + dk) * n * n;
-            self.data[idx]
-        };
+        let n2 = n * n;
+        let base = i + j * n + k * n2;
+        // Invariant: base + 1 + n + n2 <= (n-1) + (n-1)*n + (n-1)*n^2 = n^3 - 1 < self.data.len()
+        let get_node =
+            |offset: usize| -> [f32; 3] { unsafe { *self.data.get_unchecked(base + offset) } };
 
-        let p000 = node(0, 0, 0);
-        let p111 = node(1, 1, 1);
+        let p000 = get_node(0);
+        let p111 = get_node(1 + n + n2);
 
         // Tetrahedral interpolation over 6 simplices
         if dr >= dg && dg >= db {
             // Simplex 1: dr >= dg >= db
-            let p100 = node(1, 0, 0);
-            let p110 = node(1, 1, 0);
+            let p100 = get_node(1);
+            let p110 = get_node(1 + n);
             [
                 p000[0]
                     + dr * (p100[0] - p000[0])
@@ -697,8 +736,8 @@ impl Lut {
             ]
         } else if dr >= db && db > dg {
             // Simplex 2: dr >= db > dg
-            let p100 = node(1, 0, 0);
-            let p101 = node(1, 0, 1);
+            let p100 = get_node(1);
+            let p101 = get_node(1 + n2);
             [
                 p000[0]
                     + dr * (p100[0] - p000[0])
@@ -715,8 +754,8 @@ impl Lut {
             ]
         } else if dg > dr && dr >= db {
             // Simplex 3: dg > dr >= db
-            let p010 = node(0, 1, 0);
-            let p110 = node(1, 1, 0);
+            let p010 = get_node(n);
+            let p110 = get_node(1 + n);
             [
                 p000[0]
                     + dg * (p010[0] - p000[0])
@@ -733,8 +772,8 @@ impl Lut {
             ]
         } else if dg >= db && db > dr {
             // Simplex 4: dg >= db > dr
-            let p010 = node(0, 1, 0);
-            let p011 = node(0, 1, 1);
+            let p010 = get_node(n);
+            let p011 = get_node(n + n2);
             [
                 p000[0]
                     + dg * (p010[0] - p000[0])
@@ -751,8 +790,8 @@ impl Lut {
             ]
         } else if db > dr && dr >= dg {
             // Simplex 5: db > dr >= dg
-            let p001 = node(0, 0, 1);
-            let p101 = node(1, 0, 1);
+            let p001 = get_node(n2);
+            let p101 = get_node(1 + n2);
             [
                 p000[0]
                     + db * (p001[0] - p000[0])
@@ -768,9 +807,9 @@ impl Lut {
                     + dg * (p111[2] - p101[2]),
             ]
         } else {
-            // Simplex 6: db > dg > dr
-            let p001 = node(0, 0, 1);
-            let p011 = node(0, 1, 1);
+            // Simplex 6: db >= dg > dr
+            let p001 = get_node(n2);
+            let p011 = get_node(n + n2);
             [
                 p000[0]
                     + db * (p001[0] - p000[0])

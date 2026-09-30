@@ -443,6 +443,120 @@ try {
     console.log('  Section reset successfully reset all Basic controls to 0.');
   }
 
+  // 9d. Assert Tone Curve editor displays loaded curves, channel selection, point insertion, keyboard move, and deletion (ED-10)
+  console.log('Asserting Tone Curve editor (loaded v2 curves, channel pills, point editing, and reset)...');
+  // Expand Tone Curve section
+  await toneCurveToggle.click();
+  await page.waitForTimeout(50);
+
+  const curveEditor = page.locator('[data-testid="tone-curve-editor"]');
+  const isEditorVisible = await curveEditor.isVisible();
+  if (!isEditorVisible) {
+    failures.push('Tone Curve editor is not visible in expanded section');
+  }
+
+  // Check that Luma channel has 4 control points from loaded v2 recipe
+  const lumaPointsCount = await page.evaluate(() => {
+    return document.querySelectorAll('[data-testid="tone-curve-editor"] .curve-editor__point-group').length;
+  });
+  if (lumaPointsCount !== 4) {
+    failures.push(`Expected 4 Luma curve points from loaded v2 recipe, found ${lumaPointsCount}`);
+  } else {
+    console.log('  Loaded v2 recipe correctly displays 4 control points on Luma curve.');
+  }
+
+  // Channel switching: Red (3 points), Green (2 points), Blue (3 points)
+  const redPill = page.locator('button[data-testid="curve-channel-red"]');
+  await redPill.click();
+  await page.waitForTimeout(30);
+  const redPointsCount = await page.evaluate(() => {
+    return document.querySelectorAll('[data-testid="tone-curve-editor"] .curve-editor__point-group').length;
+  });
+  if (redPointsCount !== 3) {
+    failures.push(`Expected 3 Red curve points, found ${redPointsCount}`);
+  }
+
+  const greenPill = page.locator('button[data-testid="curve-channel-green"]');
+  await greenPill.click();
+  await page.waitForTimeout(30);
+  const greenPointsCount = await page.evaluate(() => {
+    return document.querySelectorAll('[data-testid="tone-curve-editor"] .curve-editor__point-group').length;
+  });
+  if (greenPointsCount !== 2) {
+    failures.push(`Expected 2 Green curve points, found ${greenPointsCount}`);
+  }
+
+  const bluePill = page.locator('button[data-testid="curve-channel-blue"]');
+  await bluePill.click();
+  await page.waitForTimeout(30);
+  const bluePointsCount = await page.evaluate(() => {
+    return document.querySelectorAll('[data-testid="tone-curve-editor"] .curve-editor__point-group').length;
+  });
+  if (bluePointsCount !== 3) {
+    failures.push(`Expected 3 Blue curve points, found ${bluePointsCount}`);
+  } else {
+    console.log('  Channel switching verified across Red (3), Green (2), Blue (3) curves.');
+  }
+
+  // Switch back to Luma
+  const lumaPill = page.locator('button[data-testid="curve-channel-luma"]');
+  await lumaPill.click();
+  await page.waitForTimeout(30);
+
+  // Point insertion on click
+  const graph = page.locator('[data-testid="curve-graph"]');
+  const graphBox = await graph.boundingBox();
+  if (graphBox) {
+    // Click at ~45% width and 50% height
+    await page.mouse.click(graphBox.x + graphBox.width * 0.45, graphBox.y + graphBox.height * 0.5);
+    await page.waitForTimeout(50);
+    const addedPointsCount = await page.evaluate(() => {
+      return document.querySelectorAll('[data-testid="tone-curve-editor"] .curve-editor__point-group').length;
+    });
+    if (addedPointsCount !== 5) {
+      failures.push(`Point insertion failed: expected 5 points, found ${addedPointsCount}`);
+    } else {
+      console.log('  Point insertion via graph click successfully added control point (total 5).');
+    }
+
+    // Keyboard move on selected point (ArrowUp increases value)
+    const prevCoordText = await page.evaluate(() => {
+      return document.querySelector('.curve-editor__coord:last-child')?.textContent || '';
+    });
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    await page.waitForTimeout(30);
+    const newCoordText = await page.evaluate(() => {
+      return document.querySelector('.curve-editor__coord:last-child')?.textContent || '';
+    });
+    console.log(`  Keyboard navigation: ArrowUp adjusted coordinate from ${prevCoordText} to ${newCoordText}`);
+
+    // Point deletion: press Delete key
+    await page.keyboard.press('Delete');
+    await page.waitForTimeout(50);
+    const afterDeleteCount = await page.evaluate(() => {
+      return document.querySelectorAll('[data-testid="tone-curve-editor"] .curve-editor__point-group').length;
+    });
+    if (afterDeleteCount !== 4) {
+      failures.push(`Point deletion failed: expected 4 points after delete, found ${afterDeleteCount}`);
+    } else {
+      console.log('  Point deletion via Delete key successfully restored point count to 4.');
+    }
+  }
+
+  // Section reset for Tone Curve
+  const toneCurveResetBtn = page.locator('button[data-testid="section-tone-curve-reset"]');
+  await toneCurveResetBtn.click();
+  await page.waitForTimeout(50);
+  const afterResetPointsCount = await page.evaluate(() => {
+    return document.querySelectorAll('[data-testid="tone-curve-editor"] .curve-editor__point-group').length;
+  });
+  if (afterResetPointsCount !== 2) {
+    failures.push(`Tone Curve section reset failed: expected 2 identity points, found ${afterResetPointsCount}`);
+  } else {
+    console.log('  Tone Curve section reset successfully restored identity curve [(0,0), (1,1)].');
+  }
+
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');
   await pathInput.press('Enter');

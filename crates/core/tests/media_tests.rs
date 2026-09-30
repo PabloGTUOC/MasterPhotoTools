@@ -1568,7 +1568,8 @@ fn a_preview_frame_is_rgba_of_the_proxy_size() {
 #[test]
 fn benchmark_edit_preview() {
     use phototools_core::media::edit::{
-        AdjustmentRecipe, ImageBuffer, Lut, LutRef, PreviewSession, PreviewStage,
+        AdjustmentRecipe, CurvePoint, ImageBuffer, Lut, LutRef, PreviewSession, PreviewStage,
+        ToneCurves,
     };
 
     let w = 7360;
@@ -1623,6 +1624,25 @@ fn benchmark_edit_preview() {
         contrast: 15.0,
         saturation: 12.0,
         hue: 10.0,
+        curves: Some(ToneCurves {
+            luma: vec![
+                CurvePoint::new(0.0, 0.0),
+                CurvePoint::new(0.25, 0.18),
+                CurvePoint::new(0.75, 0.82),
+                CurvePoint::new(1.0, 1.0),
+            ],
+            red: vec![
+                CurvePoint::new(0.0, 0.0),
+                CurvePoint::new(0.5, 0.55),
+                CurvePoint::new(1.0, 1.0),
+            ],
+            green: vec![CurvePoint::new(0.0, 0.0), CurvePoint::new(1.0, 1.0)],
+            blue: vec![
+                CurvePoint::new(0.0, 0.0),
+                CurvePoint::new(0.5, 0.45),
+                CurvePoint::new(1.0, 1.0),
+            ],
+        }),
         lut: Some(LutRef {
             name: "synth33.cube".into(),
             sha256: lut33.sha256.clone(),
@@ -1664,6 +1684,168 @@ fn benchmark_edit_preview() {
     let p95_settle_idx = ((settle_times.len() as f64 * 0.95).ceil() as usize).saturating_sub(1);
     let p95_settle = settle_times[p95_settle_idx];
 
+    // Measure per-stage timing on 1440p settle frame proxy (2560x1708, ~4.37 MP)
+    let settle_proxy = session.settle_linear();
+    let w_s = settle_proxy.width;
+    let _h_s = settle_proxy.height;
+    let row_in_len = (w_s * 3) as usize;
+
+    use rayon::prelude::*;
+
+    // 1. Linear adjustments
+    let t_lin = Instant::now();
+    for _ in 0..10 {
+        let h_val = recipe.highlights / 100.0;
+        let s_val = recipe.shadows / 100.0;
+        let w_val = recipe.whites / 100.0;
+        let b_val = recipe.blacks / 100.0;
+        let bright = recipe.brightness / 100.0;
+        let bright_gamma = (-0.5 * bright).exp2();
+        let c = recipe.contrast / 100.0;
+        let gamma_minus_one = 0.5 * c;
+        let b_exp = bright_gamma - 1.0;
+        let c_scale = (1.0f32 / 0.18f32).powf(gamma_minus_one);
+        let comb_exp = b_exp + bright_gamma * gamma_minus_one;
+        let sat = recipe.saturation / 100.0;
+        let vib = recipe.vibrance / 100.0;
+
+        settle_proxy
+            .data
+            .par_chunks_exact(row_in_len)
+            .for_each(|row| {
+                for px in row.chunks_exact(3) {
+                    let mut r = px[0] * 1.414;
+                    let mut g = px[1] * 1.414;
+                    let mut b = px[2] * 1.414;
+                    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    let delta_ev = if y >= 0.18 {
+                        let w_h = if y >= 0.65 {
+                            1.0
+                        } else {
+                            let t = (y - 0.18) * 2.1276;
+                            t * t * (3.0 - 2.0 * t)
+                        };
+                        let w_w = if y >= 1.0 {
+                            1.0
+                        } else {
+                            let t = (y - 0.18) * 1.2195;
+                            t * t * (3.0 - 2.0 * t)
+                        };
+                        w_h * h_val + w_w * w_val
+                    } else {
+                        let w_s = if y <= 0.05 {
+                            1.0
+                        } else {
+                            let t = (0.18 - y) * 7.6923;
+                            t * t * (3.0 - 2.0 * t)
+                        };
+                        let w_b = if y <= 0.02 {
+                            1.0
+                        } else {
+                            let t = (0.18 - y) * 6.25;
+                            t * t * (3.0 - 2.0 * t)
+                        };
+                        w_s * s_val + w_b * b_val
+                    };
+                    let f = delta_ev.exp2();
+                    r *= f;
+                    g *= f;
+                    b *= f;
+                    let factor = (comb_exp * y.log2()).exp2() * c_scale;
+                    r *= factor;
+                    g *= factor;
+                    b *= factor;
+                    let max = r.max(g).max(b);
+                    let min = r.min(g).min(b);
+                    let cur_sat = if max > 1e-7 {
+                        ((max - min) / max).min(1.0)
+                    } else {
+                        0.0
+                    };
+                    let k = ((1.0 + sat) * (1.0 + vib * (1.0 - cur_sat))).max(0.0);
+                    let out_r = (y + k * (r - y)).max(0.0);
+                    std::hint::black_box(out_r);
+                }
+            });
+    }
+    let lin_time = t_lin.elapsed() / 10;
+
+    // 2. Oklab Hue rotation
+    let rad = recipe.hue.to_radians();
+    let (h_sin, h_cos) = rad.sin_cos();
+    let hue_mat = phototools_core::media::edit::color::oklab_hue_rotation_matrix(h_cos, h_sin);
+    let t_hue = Instant::now();
+    for _ in 0..10 {
+        settle_proxy
+            .data
+            .par_chunks_exact(row_in_len)
+            .for_each(|row| {
+                for px in row.chunks_exact(3) {
+                    let out = phototools_core::media::edit::color::rotate_hue_oklch_matrix(
+                        px[0], px[1], px[2], &hue_mat,
+                    );
+                    std::hint::black_box(out);
+                }
+            });
+    }
+    let hue_time = t_hue.elapsed() / 10;
+
+    // 3. Display transfer (fast linear-to-sRGB)
+    let t_disp = Instant::now();
+    for _ in 0..10 {
+        settle_proxy
+            .data
+            .par_chunks_exact(row_in_len)
+            .for_each(|row| {
+                for px in row.chunks_exact(3) {
+                    let out = (
+                        phototools_core::media::edit::preview::fast_linear_to_srgb(px[0]),
+                        phototools_core::media::edit::preview::fast_linear_to_srgb(px[1]),
+                        phototools_core::media::edit::preview::fast_linear_to_srgb(px[2]),
+                    );
+                    std::hint::black_box(out);
+                }
+            });
+    }
+    let disp_time = t_disp.elapsed() / 10;
+
+    // 4. Tone Curves (evaluated once into 1024-entry LUTs, sampled per pixel)
+    let curves_table =
+        phototools_core::media::edit::curves::ToneCurvesTable::from_recipe(recipe.curves.as_ref());
+    let t_curves = Instant::now();
+    for _ in 0..10 {
+        settle_proxy
+            .data
+            .par_chunks_exact(row_in_len)
+            .for_each(|row| {
+                for px in row.chunks_exact(3) {
+                    let out = curves_table.apply(px[0], px[1], px[2]);
+                    std::hint::black_box(out);
+                }
+            });
+    }
+    let curves_time = t_curves.elapsed() / 10;
+
+    // 5. 3D LUT Tetrahedral Sampling
+    let t_lut = Instant::now();
+    for _ in 0..10 {
+        settle_proxy
+            .data
+            .par_chunks_exact(row_in_len)
+            .for_each(|row| {
+                for px in row.chunks_exact(3) {
+                    let out = lut33.sample([px[0], px[1], px[2]]);
+                    std::hint::black_box(out);
+                }
+            });
+    }
+    let lut_time = t_lut.elapsed() / 10;
+
+    let min_drag = drag_times[0];
+    let median_drag = drag_times[drag_times.len() / 2];
+    let min_settle = settle_times[0];
+    let median_settle = settle_times[settle_times.len() / 2];
+
     println!(
         "Preview benchmark [36 MP 7360x4912, {} build]:",
         if cfg!(debug_assertions) {
@@ -1676,10 +1858,34 @@ fn benchmark_edit_preview() {
         "  Session creation (proxies + linearisation): {:?}",
         session_elapsed
     );
-    println!("  Drag frame (720p 1280x854) p95 over 40: {:?}", p95_drag);
     println!(
-        "  Settle frame (1440p 2560x1708) p95 over 40: {:?}",
-        p95_settle
+        "  Drag frame (720p 1280x854) over 40: min={:?}, median={:?}, p95={:?}",
+        min_drag, median_drag, p95_drag
+    );
+    println!(
+        "  Settle frame (1440p 2560x1708) over 40: min={:?}, median={:?}, p95={:?}",
+        min_settle, median_settle, p95_settle
+    );
+    println!("  Per-stage breakdown (1440p settle frame, 4.37 MP):");
+    println!(
+        "    1. Linear adjustments (tones, exposure, brightness, contrast, sat/vib): {:?}",
+        lin_time
+    );
+    println!(
+        "    2. Oklab hue rotation (planar rotation on 4.37M pixels): {:?}",
+        hue_time
+    );
+    println!(
+        "    3. Display transfer (4096-entry fast linear-to-sRGB table): {:?}",
+        disp_time
+    );
+    println!(
+        "    4. Tone curves (1024-entry Fritsch-Carlson LUTs, Luma + RGB): {:?}",
+        curves_time
+    );
+    println!(
+        "    5. 3D LUT sampling & blending (33x33x33 tetrahedral interpolation): {:?}",
+        lut_time
     );
 
     #[cfg(not(debug_assertions))]

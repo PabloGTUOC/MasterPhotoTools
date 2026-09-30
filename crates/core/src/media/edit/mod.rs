@@ -1,6 +1,7 @@
 //! The colour and adjustment engine (ED-1, ED-2, ED-4).
 
 pub mod color;
+pub mod curves;
 pub mod lut;
 pub mod pipeline;
 pub mod preview;
@@ -8,6 +9,7 @@ pub mod preview;
 pub use color::{
     linear_srgb_to_oklab, oklab_to_linear_srgb, rotate_hue_oklch, rotate_hue_oklch_sincos,
 };
+pub use curves::{CurvePoint, CurveTable, MonotoneSpline, ToneCurves, ToneCurvesTable};
 pub use lut::{Lut, MAX_LUT_SIZE, MIN_LUT_SIZE};
 pub use pipeline::{
     apply_recipe, decode_image, linear_to_srgb, linear_to_u16, linear_to_u8, srgb_to_linear,

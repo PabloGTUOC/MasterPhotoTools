@@ -490,7 +490,21 @@ export interface LutRef {
   sha256: string;
 }
 
-/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9). */
+/** A 2D control point for tone curves (ED-10). Coordinates are normalised in [0.0, 1.0]. */
+export interface CurvePoint {
+  x: number;
+  y: number;
+}
+
+/** Evaluated tone curves for Luma and individual RGB color channels (ED-10). */
+export interface ToneCurves {
+  luma?: CurvePoint[];
+  red?: CurvePoint[];
+  green?: CurvePoint[];
+  blue?: CurvePoint[];
+}
+
+/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10). */
 export interface AdjustmentRecipe {
   version?: number;
   source_sha256?: string;
@@ -508,6 +522,7 @@ export interface AdjustmentRecipe {
   blacks?: number;
   brightness?: number;
   hue?: number;
+  curves?: ToneCurves | null;
 }
 
 /** Stage for preview rendering. */

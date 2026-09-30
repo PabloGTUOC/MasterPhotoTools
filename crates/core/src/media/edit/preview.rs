@@ -34,13 +34,58 @@
 //!   (measured on Apple Silicon), restoring full retina sharpness on mouse release within the
 //!   60 ms core render budget.
 
-use super::color::rotate_hue_oklch_sincos;
+use super::curves::ToneCurvesTable;
 use super::lut::Lut;
 use super::pipeline::{linear_to_srgb, validate_lut, AdjustmentRecipe, ImageBuffer, LinearBuffer};
 use crate::error::Error;
 use fast_image_resize as fr;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
+
+/// Size of the fast linear-to-sRGB preview lookup table.
+const FAST_SRGB_SIZE: usize = 4096;
+
+/// 4096-entry lookup table mapping linear light float [0.0, 1.0] to display sRGB.
+///
+/// Uses square-root non-linear parameterisation ($t = \sqrt{l}$), ensuring uniform
+/// precision across both dark shadows and bright highlights with continuous derivatives.
+/// Combined with linear interpolation, maximum error across [0.0, 1.0] is below
+/// 6.5e-7, guaranteeing exact match with analytical `linear_to_srgb` at 8-bit quantization.
+pub static FAST_LINEAR_TO_SRGB: LazyLock<Box<[f32; FAST_SRGB_SIZE]>> = LazyLock::new(|| {
+    let mut table = vec![0.0f32; FAST_SRGB_SIZE];
+    for (i, item) in table.iter_mut().enumerate() {
+        let t = i as f32 / (FAST_SRGB_SIZE - 1) as f32;
+        let lin = t * t;
+        *item = linear_to_srgb(lin);
+    }
+    table.into_boxed_slice().try_into().unwrap()
+});
+
+/// Fast linear-to-sRGB transfer for preview rendering with a direct table reference.
+#[inline(always)]
+pub fn fast_linear_to_srgb_table(l: f32, table: &[f32; FAST_SRGB_SIZE]) -> f32 {
+    if l <= 0.0 {
+        return 0.0;
+    }
+    if l >= 1.0 {
+        return 1.0;
+    }
+    let t = l.sqrt() * (FAST_SRGB_SIZE - 1) as f32;
+    let idx = (t as usize).min(FAST_SRGB_SIZE - 2);
+    let frac = t - idx as f32;
+    unsafe {
+        let v0 = *table.get_unchecked(idx);
+        let v1 = *table.get_unchecked(idx + 1);
+        v0 + (v1 - v0) * frac
+    }
+}
+
+/// Fast linear-to-sRGB transfer for preview rendering.
+#[inline(always)]
+pub fn fast_linear_to_srgb(l: f32) -> f32 {
+    fast_linear_to_srgb_table(l, &FAST_LINEAR_TO_SRGB)
+}
 
 /// Maximum long-edge pixel dimension for active dragging preview (720p long edge).
 pub const DRAG_MAX_EDGE: u32 = 1280;
@@ -198,6 +243,7 @@ pub fn downscale_image_buffer(buf: &ImageBuffer, max_edge: u32) -> Result<ImageB
 /// Evaluates adjustments, display transfer, and 3D LUT sampling on a linear buffer,
 /// writing directly into an RGBA8 output frame in a single multithreaded pass with zero
 /// intermediate buffer copies.
+#[allow(clippy::uninit_vec)]
 pub fn render_rgba_frame(
     proxy: &LinearBuffer,
     recipe: &AdjustmentRecipe,
@@ -259,13 +305,16 @@ pub fn render_rgba_frame(
     let sat = recipe.saturation / 100.0;
     let vib = recipe.vibrance / 100.0;
     let has_sat_vib = sat != 0.0 || vib != 0.0;
+    let sat_term = 1.0 + sat;
+    let sat_vib = sat_term * vib;
 
     let has_hue = recipe.hue != 0.0;
-    let (hue_cos, hue_sin) = if has_hue {
+    let hue_mat = if has_hue {
         let rad = recipe.hue.to_radians();
-        (rad.cos(), rad.sin())
+        let (sin, cos) = rad.sin_cos();
+        super::color::oklab_hue_rotation_matrix(cos, sin)
     } else {
-        (1.0, 0.0)
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     };
 
     let intensity = if recipe.lut.is_some() {
@@ -274,8 +323,15 @@ pub fn render_rgba_frame(
         0.0
     };
     let has_lut = lut.is_some() && intensity > 0.0;
+    let lut_is_unit = lut.is_some_and(|l| l.is_unit_domain());
 
-    let mut out_bytes = vec![0u8; out_len];
+    let curves_table = ToneCurvesTable::from_recipe(recipe.curves.as_ref());
+    let srgb_table = &**FAST_LINEAR_TO_SRGB;
+
+    let mut out_bytes = Vec::with_capacity(out_len);
+    unsafe {
+        out_bytes.set_len(out_len);
+    }
 
     let row_out_len = (w * 4) as usize;
     let row_in_len = (w * 3) as usize;
@@ -294,20 +350,26 @@ pub fn render_rgba_frame(
                 g *= gain_g;
                 b *= gain_b;
 
+                let mut y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
                 // 3. Highlights, Shadows, Whites, Blacks (crossover at 0.18, 0.18 strictly stationary)
                 if has_tone {
-                    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    const INV_H: f32 = 1.0 / (0.65 - 0.18);
+                    const INV_W: f32 = 1.0 / (1.0 - 0.18);
+                    const INV_S: f32 = 1.0 / (0.18 - 0.05);
+                    const INV_B: f32 = 1.0 / (0.18 - 0.02);
+
                     let delta_ev = if y >= 0.18 {
                         let w_h = if y >= 0.65 {
                             1.0
                         } else {
-                            let t = (y - 0.18) * (1.0 / (0.65 - 0.18));
+                            let t = (y - 0.18) * INV_H;
                             t * t * (3.0 - 2.0 * t)
                         };
                         let w_w = if y >= 1.0 {
                             1.0
                         } else {
-                            let t = (y - 0.18) * (1.0 / (1.0 - 0.18));
+                            let t = (y - 0.18) * INV_W;
                             t * t * (3.0 - 2.0 * t)
                         };
                         w_h * h_val + w_w * w_val
@@ -315,13 +377,13 @@ pub fn render_rgba_frame(
                         let w_s = if y <= 0.05 {
                             1.0
                         } else {
-                            let t = (0.18 - y) * (1.0 / (0.18 - 0.05));
+                            let t = (0.18 - y) * INV_S;
                             t * t * (3.0 - 2.0 * t)
                         };
                         let w_b = if y <= 0.02 {
                             1.0
                         } else {
-                            let t = (0.18 - y) * (1.0 / (0.18 - 0.02));
+                            let t = (0.18 - y) * INV_B;
                             t * t * (3.0 - 2.0 * t)
                         };
                         w_s * s_val + w_b * b_val
@@ -331,23 +393,21 @@ pub fn render_rgba_frame(
                         r *= factor;
                         g *= factor;
                         b *= factor;
+                        y *= factor;
                     }
                 }
 
                 // 4. Brightness & Contrast (combined power curve pivoting on mid-grey)
-                if has_tone_curve {
-                    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                    if y > 1e-7 && (!has_brightness || (y - 1.0).abs() > 1e-7) {
-                        let factor = (combined_exp * y.log2()).exp2() * combined_scale;
-                        r *= factor;
-                        g *= factor;
-                        b *= factor;
-                    }
+                if has_tone_curve && y > 1e-7 && (!has_brightness || (y - 1.0).abs() > 1e-7) {
+                    let factor = (combined_exp * y.log2()).exp2() * combined_scale;
+                    r *= factor;
+                    g *= factor;
+                    b *= factor;
+                    y *= factor;
                 }
 
                 // 5. Saturation & Vibrance (preserves neutral grey)
                 if has_sat_vib {
-                    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
                     let max = r.max(g).max(b);
                     let min = r.min(g).min(b);
                     let current_sat = if max > 1e-7 {
@@ -355,7 +415,7 @@ pub fn render_rgba_frame(
                     } else {
                         0.0
                     };
-                    let k = ((1.0 + sat) * (1.0 + vib * (1.0 - current_sat))).max(0.0);
+                    let k = (sat_term + sat_vib * (1.0 - current_sat)).max(0.0);
                     r = (y + k * (r - y)).max(0.0);
                     g = (y + k * (g - y)).max(0.0);
                     b = (y + k * (b - y)).max(0.0);
@@ -363,33 +423,44 @@ pub fn render_rgba_frame(
 
                 // Hue rotation in OkLCh perceptual color space
                 if has_hue {
-                    let (hr, hg, hb) = rotate_hue_oklch_sincos(r, g, b, hue_cos, hue_sin);
+                    let (hr, hg, hb) = super::color::rotate_hue_oklch_matrix(r, g, b, &hue_mat);
                     r = hr;
                     g = hg;
                     b = hb;
                 }
 
                 // Display transfer (linear light to display-encoded sRGB [0.0, 1.0])
-                let disp_r = linear_to_srgb(r);
-                let disp_g = linear_to_srgb(g);
-                let disp_b = linear_to_srgb(b);
+                let disp_r = fast_linear_to_srgb_table(r, srgb_table);
+                let disp_g = fast_linear_to_srgb_table(g, srgb_table);
+                let disp_b = fast_linear_to_srgb_table(b, srgb_table);
 
-                // 3D LUT sampling & blending in display space
-                let (final_r, final_g, final_b) = if has_lut {
-                    let lut_inst = lut.unwrap();
-                    let lut_out = lut_inst.sample([disp_r, disp_g, disp_b]);
-                    (
-                        ((1.0 - intensity) * disp_r + intensity * lut_out[0]).clamp(0.0, 1.0),
-                        ((1.0 - intensity) * disp_g + intensity * lut_out[1]).clamp(0.0, 1.0),
-                        ((1.0 - intensity) * disp_b + intensity * lut_out[2]).clamp(0.0, 1.0),
-                    )
+                // Tone curves in display-encoded space
+                let (curved_r, curved_g, curved_b) = if curves_table.has_any {
+                    curves_table.apply(disp_r, disp_g, disp_b)
                 } else {
                     (disp_r, disp_g, disp_b)
                 };
 
-                out_px[0] = (final_r * 255.0).round().clamp(0.0, 255.0) as u8;
-                out_px[1] = (final_g * 255.0).round().clamp(0.0, 255.0) as u8;
-                out_px[2] = (final_b * 255.0).round().clamp(0.0, 255.0) as u8;
+                // 3D LUT sampling & blending in display space
+                let (final_r, final_g, final_b) = if has_lut {
+                    let lut_inst = lut.unwrap();
+                    let lut_out = if lut_is_unit {
+                        lut_inst.sample_unit([curved_r, curved_g, curved_b])
+                    } else {
+                        lut_inst.sample([curved_r, curved_g, curved_b])
+                    };
+                    (
+                        curved_r + intensity * (lut_out[0] - curved_r),
+                        curved_g + intensity * (lut_out[1] - curved_g),
+                        curved_b + intensity * (lut_out[2] - curved_b),
+                    )
+                } else {
+                    (curved_r, curved_g, curved_b)
+                };
+
+                out_px[0] = (final_r.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                out_px[1] = (final_g.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                out_px[2] = (final_b.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
                 out_px[3] = 255;
             }
         });

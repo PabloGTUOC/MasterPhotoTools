@@ -13,6 +13,7 @@ pub mod f9_browser;
 pub mod geotag;
 pub mod lut;
 pub mod lut_library;
+pub mod presets;
 
 pub use edit::{
     exclusive_create_target, export_edited_image, export_edited_image_with_resolver,
@@ -27,6 +28,10 @@ pub use lut::{
 pub use lut_library::{
     find_lut_by_name_or_sha256, find_lut_by_sha256, import_lut, list_luts, resolve_recipe_lut,
     LutEntry, LutError, LutLibraryList,
+};
+pub use presets::{
+    delete_preset, list_presets, load_preset, rename_preset, save_preset, PresetEntry, PresetError,
+    PresetList, PRESET_EXTENSION,
 };
 
 use crate::jobs::{Progress, ToolResult};

@@ -136,6 +136,21 @@ impl Config {
             })
     }
 
+    /// Directory where presets are stored (ED-17).
+    ///
+    /// Stored alongside the application database in the app data directory
+    /// (e.g. `~/Library/Application Support/masterphototools/presets` on macOS).
+    pub fn presets_dir(&self) -> PathBuf {
+        self.database
+            .parent()
+            .map(|p| p.join("presets"))
+            .unwrap_or_else(|| {
+                dirs::data_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("masterphototools/presets")
+            })
+    }
+
     pub fn load() -> Result<Self, Error> {
         let path = Self::config_path();
         if path.exists() {

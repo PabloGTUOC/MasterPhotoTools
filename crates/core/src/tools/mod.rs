@@ -1,5 +1,6 @@
 //! The archive operations (F1–F9)
 
+pub mod bulk_edit;
 pub mod edit;
 pub mod f1_dates;
 pub mod f2_takeout;
@@ -15,6 +16,7 @@ pub mod lut;
 pub mod lut_library;
 pub mod presets;
 
+pub use bulk_edit::{recipe_sha256, BulkEditAction, BulkEditParams, BulkEditSummary, BulkEditTool};
 pub use edit::{
     exclusive_create_target, export_edited_image, export_edited_image_with_resolver,
     find_volume_root, is_card_volume, is_card_volume_with_resolver, is_identity, is_sidecar,

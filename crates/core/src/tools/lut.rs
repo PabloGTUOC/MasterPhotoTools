@@ -60,7 +60,7 @@ pub struct BulkLutSummary {
     pub metadata_skipped: Vec<Skip>,
 }
 
-fn is_hidden(path: &Path) -> bool {
+pub(crate) fn is_hidden(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
         .map(|n| n.starts_with('.'))

@@ -107,7 +107,7 @@ export class StubDesktopApiClient {
     sessionId: string,
     recipe: AdjustmentRecipe,
     stage: PreviewStage = 'Drag',
-  ): Promise<{ width: number; height: number; pixels: Uint8ClampedArray }> {
+  ): Promise<{ width: number; height: number; pixels: Uint8ClampedArray; orientation: number }> {
     stubState.rendersIssued += 1;
     stubState.renders.push({
       recipe: { ...recipe },
@@ -128,9 +128,41 @@ export class StubDesktopApiClient {
     }
 
     const isSettle = stage === 'Settle';
-    const width = isSettle ? SETTLE_WIDTH : DRAG_WIDTH;
-    const height = isSettle ? SETTLE_HEIGHT : DRAG_HEIGHT;
-    const buf = isSettle ? settleBuffer : dragBuffer;
+    const isSwapped = [5, 6, 7, 8].includes(stubState.orientation);
+    let baseW = isSettle ? SETTLE_WIDTH : DRAG_WIDTH;
+    let baseH = isSettle ? SETTLE_HEIGHT : DRAG_HEIGHT;
+
+    // In ED-13: Backend bakes orientation whenever geometry is present (not only when non-identity)
+    const hasGeom = recipe.geometry !== null && recipe.geometry !== undefined;
+    const exifSwaps = [5, 6, 7, 8].includes(stubState.orientation);
+    const userSwaps = ((recipe.geometry?.rotate ?? 0) % 360 + 360) % 180 !== 0;
+    const uprightSwapped = hasGeom ? (exifSwaps !== userSwaps) : false;
+
+    if (uprightSwapped) {
+      const tmp = baseW;
+      baseW = baseH;
+      baseH = tmp;
+    }
+
+    let width = baseW;
+    let height = baseH;
+
+    if (recipe.geometry?.crop) {
+      width = Math.max(16, Math.round(baseW * recipe.geometry.crop.width));
+      height = Math.max(16, Math.round(baseH * recipe.geometry.crop.height));
+    }
+
+    const pixelCount = width * height;
+    let buf: Uint8ClampedArray;
+    if (width === (isSettle ? SETTLE_WIDTH : DRAG_WIDTH) && height === (isSettle ? SETTLE_HEIGHT : DRAG_HEIGHT)) {
+      buf = isSettle ? settleBuffer : dragBuffer;
+    } else {
+      buf = new Uint8ClampedArray(pixelCount * 4);
+      buf.fill(128);
+      for (let i = 3; i < buf.length; i += 4) {
+        buf[i] = 255;
+      }
+    }
 
     // Marked pixel at (0, 0) is RED (255, 0, 0, 255) for orientation corner testing
     buf[0] = 255;
@@ -148,7 +180,8 @@ export class StubDesktopApiClient {
     buf[6] = 128;
     buf[7] = 255;
 
-    return { width, height, pixels: buf };
+    const deliveredOrientation = hasGeom ? 1 : stubState.orientation;
+    return { width, height, pixels: buf, orientation: deliveredOrientation };
   }
 
   async closePreview(_sessionId: string): Promise<void> {}
@@ -211,6 +244,14 @@ export class StubDesktopApiClient {
           global: { hue: 0, saturation: 0, luminance: 0 },
           blending: 60,
           balance: -15,
+        },
+        geometry: {
+          crop: { x: 0.1, y: 0.1, width: 0.8, height: 0.6 },
+          rotate: 90,
+          straighten: 3.5,
+          flip_h: false,
+          flip_v: false,
+          aspect: '4:3',
         },
       };
     }

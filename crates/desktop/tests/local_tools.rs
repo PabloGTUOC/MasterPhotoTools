@@ -451,12 +451,14 @@ fn render_preview_returns_width_height_and_rgba_of_that_size() {
 
     let width = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
     let height = u32::from_be_bytes(bytes[4..8].try_into().unwrap());
+    let orientation = u32::from_be_bytes(bytes[8..12].try_into().unwrap());
     assert_eq!(width, 60);
     assert_eq!(height, 40);
+    assert_eq!(orientation, 1);
     assert_eq!(
         bytes.len(),
-        8 + (60 * 40 * 4),
-        "payload must contain 8-byte header and exactly width*height*4 RGBA bytes"
+        12 + (60 * 40 * 4),
+        "payload must contain 12-byte header and exactly width*height*4 RGBA bytes"
     );
 }
 

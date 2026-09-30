@@ -315,9 +315,10 @@ pub fn render_preview_impl(
         .render_preview(&session_id, &recipe, lut_opt.as_ref(), stage)
         .map_err(describe)?;
 
-    let mut payload = Vec::with_capacity(8 + frame.bytes.len());
+    let mut payload = Vec::with_capacity(12 + frame.bytes.len());
     payload.extend_from_slice(&frame.width.to_be_bytes());
     payload.extend_from_slice(&frame.height.to_be_bytes());
+    payload.extend_from_slice(&frame.orientation.to_be_bytes());
     payload.extend_from_slice(&frame.bytes);
     Ok(payload)
 }

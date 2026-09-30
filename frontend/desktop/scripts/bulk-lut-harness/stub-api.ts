@@ -159,13 +159,14 @@ export class StubDesktopApiClient {
     sessionId: string,
     recipe: AdjustmentRecipe,
     stage: PreviewStage = 'Settle',
-  ): Promise<{ width: number; height: number; pixels: Uint8ClampedArray }> {
+  ): Promise<{ width: number; height: number; pixels: Uint8ClampedArray; orientation: number }> {
     // Simulate render timing
     await new Promise((r) => setTimeout(r, 15));
     return {
       width: SAMPLE_WIDTH,
       height: SAMPLE_HEIGHT,
       pixels: sampleBuffer,
+      orientation: 1,
     };
   }
 

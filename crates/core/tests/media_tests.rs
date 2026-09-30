@@ -1777,6 +1777,16 @@ fn benchmark_edit_preview() {
             blending: 60.0,
             balance: 10.0,
         }),
+        geometry: Some(phototools_core::media::edit::Geometry {
+            crop: Some(phototools_core::media::edit::NormalizedCrop {
+                x: 0.05,
+                y: 0.05,
+                width: 0.9,
+                height: 0.9,
+            }),
+            straighten: 7.0,
+            ..Default::default()
+        }),
         lut: Some(LutRef {
             name: "synth33.cube".into(),
             sha256: lut33.sha256.clone(),
@@ -1799,11 +1809,30 @@ fn benchmark_edit_preview() {
             .render(&recipe, Some(&lut33), PreviewStage::Drag)
             .unwrap();
         drag_times.push(t0.elapsed());
-        assert_eq!(frame.width, 1280);
+        assert!(frame.width > 0);
     }
     drag_times.sort();
     let p95_drag_idx = ((drag_times.len() as f64 * 0.95).ceil() as usize).saturating_sub(1);
     let p95_drag = drag_times[p95_drag_idx];
+
+    let mut straighten_drag_times = Vec::with_capacity(40);
+    for i in 0..40 {
+        let angle = -5.0 + (i as f32) * 0.25;
+        let mut geom_recipe = recipe.clone();
+        if let Some(g) = geom_recipe.geometry.as_mut() {
+            g.straighten = angle;
+        }
+        let t0 = Instant::now();
+        let frame = session
+            .render(&geom_recipe, Some(&lut33), PreviewStage::Drag)
+            .unwrap();
+        straighten_drag_times.push(t0.elapsed());
+        assert!(frame.width > 0);
+    }
+    straighten_drag_times.sort();
+    let p95_straighten_drag_idx =
+        ((straighten_drag_times.len() as f64 * 0.95).ceil() as usize).saturating_sub(1);
+    let p95_straighten_drag = straighten_drag_times[p95_straighten_drag_idx];
 
     let mut settle_times = Vec::with_capacity(40);
     for _ in 0..40 {
@@ -1812,7 +1841,7 @@ fn benchmark_edit_preview() {
             .render(&recipe, Some(&lut33), PreviewStage::Settle)
             .unwrap();
         settle_times.push(t0.elapsed());
-        assert_eq!(frame.width, 2560);
+        assert!(frame.width > 0);
     }
     settle_times.sort();
     let p95_settle_idx = ((settle_times.len() as f64 * 0.95).ceil() as usize).saturating_sub(1);
@@ -2010,11 +2039,15 @@ fn benchmark_edit_preview() {
         session_elapsed
     );
     println!(
-        "  Drag frame (720p 1280x854) over 40: min={:?}, median={:?}, p95={:?}",
+        "  Colour Drag frame (720p 1280x854, cached geometry) over 40: min={:?}, median={:?}, p95={:?}",
         min_drag, median_drag, p95_drag
     );
     println!(
-        "  Settle frame (1440p 2560x1708) over 40: min={:?}, median={:?}, p95={:?}",
+        "  Straighten Drag frame (720p 1280x854, recomputed geometry) over 40: p95={:?}",
+        p95_straighten_drag
+    );
+    println!(
+        "  Settle frame (1440p 2560x1708, cached geometry) over 40: min={:?}, median={:?}, p95={:?}",
         min_settle, median_settle, p95_settle
     );
     println!("  Per-stage breakdown (1440p settle frame, 4.37 MP):");
@@ -2056,9 +2089,119 @@ fn benchmark_edit_preview() {
             p95_drag
         );
         assert!(
+            p95_straighten_drag <= Duration::from_millis(25),
+            "Straighten drag frame p95 budget is <= 25 ms, measured {:?}",
+            p95_straighten_drag
+        );
+        assert!(
             p95_settle <= Duration::from_millis(60),
             "Settle frame p95 budget is <= 60 ms, measured {:?}",
             p95_settle
         );
     }
+}
+
+#[test]
+fn a_colour_only_change_does_not_recompute_geometry() {
+    use phototools_core::media::edit::{
+        AdjustmentRecipe, Geometry, ImageBuffer, NormalizedCrop, PreviewSession, PreviewStage,
+    };
+    use std::sync::atomic::Ordering;
+
+    let buf = ImageBuffer::Rgb8 {
+        width: 100,
+        height: 100,
+        data: vec![128u8; 100 * 100 * 3],
+    };
+    let session = PreviewSession::new(&buf).unwrap();
+
+    let mut recipe = AdjustmentRecipe {
+        geometry: Some(Geometry {
+            crop: Some(NormalizedCrop {
+                x: 0.1,
+                y: 0.1,
+                width: 0.8,
+                height: 0.8,
+            }),
+            rotate: 90,
+            straighten: 5.0,
+            ..Default::default()
+        }),
+        exposure: 0.0,
+        temperature: 0.0,
+        ..Default::default()
+    };
+
+    // First render with geometry active: should compute geometry once
+    let frame1 = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    assert_eq!(frame1.orientation, 1);
+    assert_eq!(session.geom_recompute_count.load(Ordering::Relaxed), 1);
+
+    // Scrub exposure
+    recipe.exposure = 0.5;
+    let _ = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    assert_eq!(session.geom_recompute_count.load(Ordering::Relaxed), 1);
+
+    // Scrub temperature
+    recipe.temperature = 25.0;
+    let _ = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    assert_eq!(session.geom_recompute_count.load(Ordering::Relaxed), 1);
+
+    // Scrub contrast
+    recipe.contrast = 20.0;
+    let _ = session.render(&recipe, None, PreviewStage::Settle).unwrap();
+    assert_eq!(session.geom_recompute_count.load(Ordering::Relaxed), 1);
+
+    // Now change geometry: straighten angle from 5.0 to 7.0
+    if let Some(geom) = recipe.geometry.as_mut() {
+        geom.straighten = 7.0;
+    }
+    let _ = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    assert_eq!(
+        session.geom_recompute_count.load(Ordering::Relaxed),
+        2,
+        "Changing geometry must trigger exactly one recomputation"
+    );
+
+    // Another colour scrub after new geometry
+    recipe.shadows = 15.0;
+    let _ = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    assert_eq!(
+        session.geom_recompute_count.load(Ordering::Relaxed),
+        2,
+        "Subsequent colour changes must reuse the newly cached geometry"
+    );
+}
+
+#[test]
+fn preview_frame_without_geometry_reports_photo_orientation_and_with_geometry_reports_one() {
+    use phototools_core::media::edit::{
+        AdjustmentRecipe, Geometry, ImageBuffer, PreviewSession, PreviewStage,
+    };
+
+    let buf = ImageBuffer::Rgb8 {
+        width: 100,
+        height: 60,
+        data: vec![128u8; 100 * 60 * 3],
+    };
+    // Photo with orientation 6
+    let session = PreviewSession::from_image_buffer_with_orientation(&buf, 6).unwrap();
+
+    // 1. Recipe with NO geometry reports orientation 6
+    let no_geom_recipe = AdjustmentRecipe::default();
+    assert!(no_geom_recipe.geometry.is_none());
+    let frame_no_geom = session
+        .render(&no_geom_recipe, None, PreviewStage::Drag)
+        .unwrap();
+    assert_eq!(frame_no_geom.orientation, 6);
+
+    // 2. Recipe with geometry (even identity / crop: null) reports orientation 1
+    let with_geom_recipe = AdjustmentRecipe {
+        geometry: Some(Geometry::default()),
+        ..Default::default()
+    };
+    let frame_with_geom = session
+        .render(&with_geom_recipe, None, PreviewStage::Drag)
+        .unwrap();
+    assert_eq!(frame_with_geom.orientation, 1);
 }

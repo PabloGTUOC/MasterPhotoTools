@@ -932,4 +932,22 @@ export interface ColorGrading {
   balance: number;
 }
 
+/** Normalised crop rectangle in the upright displayed frame [0.0, 1.0] (ED-13). */
+export interface NormalizedCrop {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Geometric transformation configuration (ED-13). */
+export interface Geometry {
+  crop?: NormalizedCrop | null;
+  rotate: number;
+  straighten: number;
+  flip_h: boolean;
+  flip_v: boolean;
+  aspect?: string | null;
+}
+
 

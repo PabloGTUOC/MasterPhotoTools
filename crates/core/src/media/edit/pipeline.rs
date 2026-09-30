@@ -70,6 +70,11 @@ pub struct AdjustmentRecipe {
     /// Optional 3-way colour grading wheels evaluated in display-encoded space.
     #[serde(default)]
     pub grading: Option<super::grading::ColorGrading>,
+
+    // Round 2 geometry (ED-13):
+    /// Optional geometry transforms (crop, rotate, straighten, flip) evaluated in upright frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<super::geometry::Geometry>,
 }
 
 impl Default for AdjustmentRecipe {
@@ -94,12 +99,13 @@ impl Default for AdjustmentRecipe {
             curves: None,
             hsl: None,
             grading: None,
+            geometry: None,
         }
     }
 }
 
 impl AdjustmentRecipe {
-    /// True if all sliders are at rest (0.0), no curves are active, no HSL is applied, no grading is active, and no LUT is attached.
+    /// True if all sliders are at rest (0.0), no curves are active, no HSL is applied, no grading is active, no geometry is active, and no effective LUT is attached (none or 0% intensity).
     pub fn is_identity(&self) -> bool {
         self.exposure == 0.0
             && self.temperature == 0.0
@@ -109,7 +115,7 @@ impl AdjustmentRecipe {
             && self.contrast == 0.0
             && self.saturation == 0.0
             && self.vibrance == 0.0
-            && self.lut.is_none()
+            && (self.lut.is_none() || self.lut_intensity == 0.0)
             && self.whites == 0.0
             && self.blacks == 0.0
             && self.brightness == 0.0
@@ -117,6 +123,7 @@ impl AdjustmentRecipe {
             && self.curves.as_ref().map_or(true, |c| c.is_identity())
             && self.hsl.as_ref().map_or(true, |h| h.is_identity())
             && self.grading.as_ref().map_or(true, |g| g.is_identity())
+            && self.geometry.as_ref().map_or(true, |g| g.is_identity())
     }
 }
 
@@ -714,9 +721,25 @@ pub fn apply_recipe(
     recipe: &AdjustmentRecipe,
     lut: Option<&Lut>,
 ) -> Result<ImageBuffer, Error> {
+    apply_recipe_with_orientation(image, recipe, lut, 1)
+}
+
+/// Applies an adjustment recipe with EXIF orientation handoff.
+///
+/// If `recipe.geometry` is active, the image is transformed and orientation is baked
+/// into the upright frame. Otherwise, processing remains in stored orientation.
+pub fn apply_recipe_with_orientation(
+    image: &ImageBuffer,
+    recipe: &AdjustmentRecipe,
+    lut: Option<&Lut>,
+    orientation: u32,
+) -> Result<ImageBuffer, Error> {
     validate_lut(recipe, lut)?;
 
     let mut linear = LinearBuffer::from_image_buffer(image);
+    if let Some(geom) = &recipe.geometry {
+        linear = geom.apply_to_linear(&linear, orientation)?;
+    }
     linear.apply_adjustments(recipe);
 
     let intensity = if recipe.lut.is_some() {

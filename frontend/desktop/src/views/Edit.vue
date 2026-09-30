@@ -15,9 +15,11 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type {
   AdjustmentRecipe,
   ColorWheel as ColorWheelType,
+  Geometry,
   HslAdjustments,
   LutLibraryList,
   LutRef,
+  NormalizedCrop,
   OpenPreviewResult,
   PreviewStage,
   ToneCurves,
@@ -26,6 +28,7 @@ import { desktop } from '@host/api';
 import AdjustmentSlider from '@ui/components/AdjustmentSlider.vue';
 import CollapsibleSection from '@ui/components/CollapsibleSection.vue';
 import ColorWheel from '@ui/components/ColorWheel.vue';
+import CropOverlay from '@ui/components/CropOverlay.vue';
 import CurveEditor from '@ui/components/CurveEditor.vue';
 import LutPicker from '@ui/components/LutPicker.vue';
 import PathField from '@ui/components/PathField.vue';
@@ -35,6 +38,7 @@ const sourcePath = ref('');
 const exportDir = ref('');
 const sessionId = ref<string | null>(null);
 const orientation = ref<number>(1);
+const deliveredOrientation = ref<number>(1);
 const isReadOnly = ref(false);
 const autosaveDisabled = ref(false);
 const loading = ref(false);
@@ -52,6 +56,8 @@ const containerWidth = ref(0);
 const containerHeight = ref(0);
 const frameWidth = ref(1280);
 const frameHeight = ref(854);
+const baseProxyWidth = ref(1280);
+const baseProxyHeight = ref(854);
 let resizeObserver: ResizeObserver | null = null;
 
 // Roots and listing for PathField
@@ -148,6 +154,7 @@ function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
       blending: 50,
       balance: 0,
     },
+    geometry: null,
   };
 }
 
@@ -158,12 +165,16 @@ let inFlight = false;
 let pending: { recipe: AdjustmentRecipe; stage: PreviewStage } | null = null;
 let saveDebounceTimer: number | undefined;
 
+
+// In ED-13: The view rotates by the delivered orientation of the frame it is painting, and nothing else.
+const effectiveOrientation = computed(() => deliveredOrientation.value);
+
 // Whether orientation swaps width and height
-const swapsAxes = computed(() => [5, 6, 7, 8].includes(orientation.value));
+const swapsAxes = computed(() => [5, 6, 7, 8].includes(effectiveOrientation.value));
 
 // Orientation CSS transform (checked against EXIF standard 1-8)
 const canvasTransform = computed(() => {
-  switch (orientation.value) {
+  switch (effectiveOrientation.value) {
     case 1:
       return 'none';
     case 2:
@@ -190,25 +201,17 @@ const canvasTransform = computed(() => {
 });
 
 // Sizing so rotated canvas fits inside viewport container without overflowing or clipping
-const canvasStyle = computed(() => {
+const displayedDimensions = computed(() => {
   const cw = containerWidth.value;
   const ch = containerHeight.value;
   const fw = frameWidth.value || 1280;
   const fh = frameHeight.value || 854;
 
   if (cw <= 0 || ch <= 0) {
-    return {
-      maxWidth: '100%',
-      maxHeight: '100%',
-      objectFit: 'contain' as const,
-      transform: canvasTransform.value,
-      position: 'relative' as const,
-      zIndex: 'var(--z-canvas)',
-    };
+    return { width: fw, height: fh };
   }
 
   if (swapsAxes.value) {
-    // Rotated image is H wide and W high visually
     const aVis = fh / fw;
     let vW: number;
     let vH: number;
@@ -219,16 +222,7 @@ const canvasStyle = computed(() => {
       vW = cw;
       vH = cw / aVis;
     }
-    // Because canvas layout is rotated by 90/270 deg, its DOM width must be vH and DOM height vW
-    const lW = vH;
-    const lH = vW;
-    return {
-      width: `${Math.round(lW)}px`,
-      height: `${Math.round(lH)}px`,
-      transform: canvasTransform.value,
-      position: 'relative' as const,
-      zIndex: 'var(--z-canvas)',
-    };
+    return { width: Math.round(vH), height: Math.round(vW) };
   } else {
     const a = fw / fh;
     let lW: number;
@@ -240,14 +234,19 @@ const canvasStyle = computed(() => {
       lW = cw;
       lH = cw / a;
     }
-    return {
-      width: `${Math.round(lW)}px`,
-      height: `${Math.round(lH)}px`,
-      transform: canvasTransform.value,
-      position: 'relative' as const,
-      zIndex: 'var(--z-canvas)',
-    };
+    return { width: Math.round(lW), height: Math.round(lH) };
   }
+});
+
+const canvasStyle = computed(() => {
+  const { width, height } = displayedDimensions.value;
+  return {
+    width: `${width}px`,
+    height: `${height}px`,
+    transform: canvasTransform.value,
+    position: 'relative' as const,
+    zIndex: 'var(--z-canvas)',
+  };
 });
 
 async function refreshLuts() {
@@ -270,9 +269,16 @@ async function handleImportLut(path: string) {
   }
 }
 
-function paintPixels(frame: { width: number; height: number; pixels: Uint8ClampedArray }, stage: PreviewStage) {
+function paintPixels(
+  frame: { width: number; height: number; pixels: Uint8ClampedArray; orientation?: number },
+  stage: PreviewStage,
+) {
   const canvas = canvasRef.value;
   if (!canvas) return;
+
+  if (frame.orientation !== undefined) {
+    deliveredOrientation.value = frame.orientation;
+  }
 
   frameWidth.value = frame.width;
   frameHeight.value = frame.height;
@@ -304,8 +310,20 @@ async function executeRender(r: AdjustmentRecipe, stage: PreviewStage) {
   if (!sessionId.value) return;
   inFlight = true;
 
+  // In crop mode, render the uncropped upright image under the crop overlay
+  let renderRecipe = r;
+  if (isCropMode.value) {
+    const g = r.geometry
+      ? { ...r.geometry, crop: null }
+      : { crop: null, rotate: 0, straighten: 0, flip_h: false, flip_v: false, aspect: 'original' };
+    renderRecipe = {
+      ...r,
+      geometry: g,
+    };
+  }
+
   try {
-    const frame = await desktop.renderPreview(sessionId.value, r, stage);
+    const frame = await desktop.renderPreview(sessionId.value, renderRecipe, stage);
     paintPixels(frame, stage);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -443,7 +461,10 @@ async function openImage(path: string) {
     const info: OpenPreviewResult = await desktop.openPreview(path.trim());
     sessionId.value = info.session_id;
     orientation.value = info.orientation;
+    deliveredOrientation.value = info.orientation;
     isReadOnly.value = info.read_only;
+    baseProxyWidth.value = info.settle[0];
+    baseProxyHeight.value = info.settle[1];
 
     // Load existing sidecar recipe if present, distinguishing between no sidecar and load failure
     let existing: AdjustmentRecipe | null = null;
@@ -494,15 +515,19 @@ async function openImage(path: string) {
               balance: existing.grading.balance ?? defaultGrading.balance,
             }
           : defaultGrading,
+        geometry: existing.geometry ? { ...existing.geometry } : null,
       };
+      isCropMode.value = false;
       saveStatus.value = 'Saved';
       autosaveDisabled.value = false;
     } else if (!recipeLoadFailed) {
       recipe.value = createIdentityRecipe();
+      isCropMode.value = false;
       saveStatus.value = isReadOnly.value ? 'Read-only: card media' : '';
       autosaveDisabled.value = false;
     } else {
       recipe.value = createIdentityRecipe();
+      isCropMode.value = false;
     }
 
     // Default export directory to image directory
@@ -630,7 +655,7 @@ function onHslSliderChange(prop: 'hue' | 'saturation' | 'luminance', val: number
 function isGradingWheelModified(key: GradingWheelKey): boolean {
   const w = recipe.value.grading?.[key];
   if (!w) return false;
-  return w.hue !== 0 || w.saturation !== 0 || w.luminance !== 0;
+  return w.saturation !== 0 || w.luminance !== 0;
 }
 
 function selectGradingWheel(key: GradingWheelKey) {
@@ -694,7 +719,214 @@ function resetLook() {
   onRecipeValueChange();
 }
 
-function resetGeometry() {}
+// Geometry state & methods (ED-13)
+const isCropMode = ref(false);
+let savedCropBeforeMode: NormalizedCrop | null = null;
+
+function ensureGeometry(): Geometry {
+  if (!recipe.value.geometry) {
+    recipe.value.geometry = {
+      crop: null,
+      rotate: 0,
+      straighten: 0,
+      flip_h: false,
+      flip_v: false,
+      aspect: 'original',
+    };
+  }
+  return recipe.value.geometry;
+}
+
+const cropModel = computed<NormalizedCrop>({
+  get: () => {
+    return recipe.value.geometry?.crop ?? { x: 0, y: 0, width: 1, height: 1 };
+  },
+  set: (val: NormalizedCrop) => {
+    const g = ensureGeometry();
+    g.crop = val;
+  },
+});
+
+const straightenAngle = computed<number>({
+  get: () => recipe.value.geometry?.straighten ?? 0,
+  set: (val: number) => {
+    const g = ensureGeometry();
+    g.straighten = val;
+  },
+});
+
+const isFlipH = computed<boolean>(() => recipe.value.geometry?.flip_h ?? false);
+const isFlipV = computed<boolean>(() => recipe.value.geometry?.flip_v ?? false);
+
+const selectedAspect = computed<string>({
+  get: () => recipe.value.geometry?.aspect ?? 'original',
+  set: (val: string) => {
+    const g = ensureGeometry();
+    g.aspect = val;
+  },
+});
+
+function getPresetRatio(preset: string, uprightW: number, uprightH: number): number | null {
+  switch (preset) {
+    case 'original':
+      return uprightW / uprightH;
+    case 'free':
+      return null;
+    case '1:1':
+      return 1.0;
+    case '3:2':
+      return 3.0 / 2.0;
+    case '2:3':
+      return 2.0 / 3.0;
+    case '4:3':
+      return 4.0 / 3.0;
+    case '3:4':
+      return 3.0 / 4.0;
+    case '16:9':
+      return 16.0 / 9.0;
+    case '9:16':
+      return 9.0 / 16.0;
+    case '5:4':
+      return 5.0 / 4.0;
+    case '4:5':
+      return 4.0 / 5.0;
+    default:
+      return null;
+  }
+}
+
+function getUprightBaseDimensions(): { width: number; height: number } {
+  const w = baseProxyWidth.value || 1280;
+  const h = baseProxyHeight.value || 854;
+  const exifSwaps = [5, 6, 7, 8].includes(orientation.value);
+  const userSwaps = ((recipe.value.geometry?.rotate ?? 0) % 360 + 360) % 180 !== 0;
+  const totalSwaps = exifSwaps !== userSwaps;
+  if (totalSwaps) {
+    return { width: h, height: w };
+  }
+  return { width: w, height: h };
+}
+
+const selectedAspectNumeric = computed<number | null>(() => {
+  const g = recipe.value.geometry;
+  const aspect = g?.aspect ?? 'original';
+  const { width: uW, height: uH } = getUprightBaseDimensions();
+  return getPresetRatio(aspect, uW, uH);
+});
+
+function calculatePresetCrop(preset: string): NormalizedCrop {
+  const g = ensureGeometry();
+  g.aspect = preset;
+  const { width: uW, height: uH } = getUprightBaseDimensions();
+  const ratio = getPresetRatio(preset, uW, uH);
+  if (!ratio) {
+    return g.crop ?? { x: 0, y: 0, width: 1, height: 1 };
+  }
+  const imgRatio = uW / uH;
+  let normW: number;
+  let normH: number;
+  if (ratio > imgRatio) {
+    normW = 1.0;
+    normH = Math.max(16 / uH, (uW / ratio) / uH);
+  } else {
+    normH = 1.0;
+    normW = Math.max(16 / uW, (uH * ratio) / uW);
+  }
+  const normX = (1.0 - normW) * 0.5;
+  const normY = (1.0 - normH) * 0.5;
+  return {
+    x: Number(normX.toFixed(4)),
+    y: Number(normY.toFixed(4)),
+    width: Number(normW.toFixed(4)),
+    height: Number(normH.toFixed(4)),
+  };
+}
+
+function toggleCropMode() {
+  if (isCropMode.value) {
+    isCropMode.value = false;
+    requestRender('Settle');
+    scheduleSave();
+  } else {
+    const g = ensureGeometry();
+    if (!g.crop) {
+      g.crop = calculatePresetCrop(g.aspect || 'original');
+    }
+    savedCropBeforeMode = g.crop ? { ...g.crop } : null;
+    isCropMode.value = true;
+    requestRender('Drag');
+  }
+}
+
+function applyCrop(crop: NormalizedCrop) {
+  const g = ensureGeometry();
+  g.crop = crop;
+  isCropMode.value = false;
+  requestRender('Settle');
+  scheduleSave();
+}
+
+function cancelCrop() {
+  const g = ensureGeometry();
+  g.crop = savedCropBeforeMode;
+  isCropMode.value = false;
+  requestRender('Settle');
+}
+
+function onAspectChange() {
+  const g = ensureGeometry();
+  if (selectedAspect.value !== 'free') {
+    g.crop = calculatePresetCrop(selectedAspect.value);
+  }
+  requestRender('Settle');
+  scheduleSave();
+}
+
+function onStraightenInput() {
+  requestRender('Drag');
+}
+
+function onStraightenChange() {
+  requestRender('Settle');
+  scheduleSave();
+}
+
+function rotateCW() {
+  const g = ensureGeometry();
+  g.rotate = (g.rotate + 90) % 360;
+  requestRender('Settle');
+  scheduleSave();
+}
+
+function rotateCCW() {
+  const g = ensureGeometry();
+  g.rotate = (g.rotate - 90 + 360) % 360;
+  requestRender('Settle');
+  scheduleSave();
+}
+
+function toggleFlipH() {
+  const g = ensureGeometry();
+  g.flip_h = !g.flip_h;
+  requestRender('Settle');
+  scheduleSave();
+}
+
+function toggleFlipV() {
+  const g = ensureGeometry();
+  g.flip_v = !g.flip_v;
+  requestRender('Settle');
+  scheduleSave();
+}
+
+function resetGeometry() {
+  if (recipe.value.geometry) {
+    recipe.value.geometry = null;
+    isCropMode.value = false;
+    requestRender('Settle');
+    scheduleSave();
+  }
+}
 
 function resetEffects() {}
 
@@ -781,12 +1013,30 @@ onUnmounted(() => {
       <!-- Photograph Canvas Viewport -->
       <div class="canvas-viewport" data-testid="canvas-viewport">
         <div ref="viewportContainerRef" class="canvas-viewport__container">
-          <canvas
-            ref="canvasRef"
-            class="canvas-viewport__canvas"
-            data-testid="edit-canvas"
-            :style="canvasStyle"
-          ></canvas>
+          <div
+            class="canvas-viewport__stage"
+            :style="{
+              width: `${displayedDimensions.width}px`,
+              height: `${displayedDimensions.height}px`,
+              position: 'relative',
+            }"
+          >
+            <canvas
+              ref="canvasRef"
+              class="canvas-viewport__canvas"
+              data-testid="edit-canvas"
+              :style="canvasStyle"
+            ></canvas>
+            <CropOverlay
+              v-if="isCropMode"
+              v-model="cropModel"
+              :container-width="displayedDimensions.width"
+              :container-height="displayedDimensions.height"
+              :aspect-ratio="selectedAspectNumeric"
+              @apply="applyCrop"
+              @cancel="cancelCrop"
+            />
+          </div>
         </div>
 
         <!-- Before / After toggle button -->
@@ -1187,7 +1437,99 @@ onUnmounted(() => {
             :default-open="false"
             @reset="resetGeometry"
           >
-            <div class="section-placeholder">Crop, rotate, and straighten available in ED-13</div>
+            <div class="geometry-panel" data-testid="geometry-panel">
+              <!-- Crop mode toggle button -->
+              <div class="geometry-toolbar">
+                <button
+                  type="button"
+                  class="secondary geometry-btn geometry-crop-btn"
+                  :class="{ active: isCropMode }"
+                  data-testid="crop-mode-toggle-btn"
+                  @click="toggleCropMode"
+                >
+                  {{ isCropMode ? 'Done Cropping' : 'Crop' }}
+                </button>
+              </div>
+
+              <!-- Aspect ratio preset dropdown -->
+              <div class="geometry-row">
+                <label class="geometry-label" for="geometry-aspect-select">Aspect</label>
+                <select
+                  id="geometry-aspect-select"
+                  v-model="selectedAspect"
+                  class="geometry-select"
+                  data-testid="geometry-aspect-select"
+                  @change="onAspectChange"
+                >
+                  <option value="original">Original</option>
+                  <option value="free">Free</option>
+                  <option value="1:1">1:1 (Square)</option>
+                  <option value="3:2">3:2 (35mm)</option>
+                  <option value="2:3">2:3 (Portrait)</option>
+                  <option value="4:3">4:3</option>
+                  <option value="3:4">3:4</option>
+                  <option value="16:9">16:9 (Widescreen)</option>
+                  <option value="9:16">9:16 (Vertical)</option>
+                  <option value="5:4">5:4</option>
+                  <option value="4:5">4:5</option>
+                </select>
+              </div>
+
+              <!-- Straighten slider -->
+              <AdjustmentSlider
+                v-model="straightenAngle"
+                label="Straighten"
+                :min="-45.0"
+                :max="45.0"
+                :step="0.1"
+                unit="°"
+                test-id="geometry-straighten"
+                @update:model-value="onStraightenInput"
+                @change="onStraightenChange"
+              />
+
+              <!-- Transform buttons: Rotate CCW, Rotate CW, Flip H, Flip V -->
+              <div class="geometry-actions">
+                <button
+                  type="button"
+                  class="secondary geometry-btn"
+                  data-testid="rotate-ccw-btn"
+                  title="Rotate 90° CCW"
+                  @click="rotateCCW"
+                >
+                  ↺ -90°
+                </button>
+                <button
+                  type="button"
+                  class="secondary geometry-btn"
+                  data-testid="rotate-cw-btn"
+                  title="Rotate 90° CW"
+                  @click="rotateCW"
+                >
+                  ↻ +90°
+                </button>
+                <button
+                  type="button"
+                  class="secondary geometry-btn"
+                  :class="{ active: isFlipH }"
+                  data-testid="flip-h-btn"
+                  title="Flip Horizontal"
+                  @click="toggleFlipH"
+                >
+                  ⇄ Flip H
+                </button>
+                <button
+                  type="button"
+                  class="secondary geometry-btn"
+                  :class="{ active: isFlipV }"
+                  data-testid="flip-v-btn"
+                  title="Flip Vertical"
+                  @click="toggleFlipV"
+                >
+                  ⇅ Flip V
+                </button>
+              </div>
+            </div>
           </CollapsibleSection>
 
           <!-- 7. Effects -->
@@ -1623,5 +1965,78 @@ onUnmounted(() => {
   padding-top: var(--space-2);
   border-top: 1px solid var(--border);
   width: 100%;
+}
+
+/* --- Geometry Section (ED-13) ------------------------------------------- */
+
+.geometry-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.geometry-toolbar {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.geometry-crop-btn {
+  flex: 1;
+  min-height: 40px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 2px;
+}
+
+.geometry-crop-btn.active {
+  background: var(--accent);
+  color: var(--void);
+}
+
+.geometry-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.geometry-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.geometry-select {
+  flex: 1;
+  min-height: 40px;
+  background: var(--bg-panel);
+  border: var(--border-hair);
+  color: var(--text-heading);
+  padding: 0 var(--space-2);
+  border-radius: 2px;
+  font-size: 13px;
+  outline: none;
+}
+
+.geometry-select:focus {
+  border-color: var(--focus-ring);
+}
+
+.geometry-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-2);
+}
+
+.geometry-btn {
+  min-height: 40px;
+  padding: var(--space-2);
+  font-size: 13px;
+  border-radius: 2px;
+}
+
+.geometry-btn.active {
+  background: var(--accent);
+  color: var(--void);
 }
 </style>

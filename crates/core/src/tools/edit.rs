@@ -7,7 +7,7 @@
 
 use crate::error::Error;
 use crate::media::edit::{
-    apply_recipe, decode_image, validate_lut, AdjustmentRecipe, ImageBuffer, Lut,
+    apply_recipe_with_orientation, decode_image, validate_lut, AdjustmentRecipe, ImageBuffer, Lut,
 };
 use crate::tools::{carry_metadata, Derived, Skip};
 use sha2::{Digest, Sha256};
@@ -218,16 +218,7 @@ where
 
 /// Returns true if the recipe represents exact identity (all adjustments at rest, no effective LUT).
 pub fn is_identity(recipe: &AdjustmentRecipe, lut: Option<&Lut>) -> bool {
-    recipe.exposure == 0.0
-        && recipe.temperature == 0.0
-        && recipe.tint == 0.0
-        && recipe.highlights == 0.0
-        && recipe.shadows == 0.0
-        && recipe.contrast == 0.0
-        && recipe.saturation == 0.0
-        && recipe.vibrance == 0.0
-        && (recipe.lut.is_none() || recipe.lut_intensity == 0.0)
-        && lut.is_none()
+    recipe.is_identity() && lut.is_none()
 }
 
 /// The result of an export operation.
@@ -304,8 +295,11 @@ pub fn render_and_write(
         return Err(Error::Refused("Source file has no stem name".into()));
     }
 
+    let orientation = crate::media::meta::read_meta(source)
+        .map(|m| m.orientation as u32)
+        .unwrap_or(1);
     let decoded = decode_image(source)?;
-    let processed = apply_recipe(&decoded, recipe, lut)?;
+    let processed = apply_recipe_with_orientation(&decoded, recipe, lut, orientation)?;
 
     match processed {
         ImageBuffer::Rgb16 {
@@ -451,7 +445,13 @@ where
 
     // Non-identity or RAW: render-and-write, then carry metadata for this single derivative (G4)
     let derived = render_and_write(source, recipe, lut, out_dir, "_edit")?;
-    let skipped = carry_metadata(std::slice::from_ref(&derived), false);
+
+    // ED-13 Export Rule:
+    // Any geometry present -> render upright, write Orientation = 1 (`carry_metadata(..., upright: true)`);
+    // No geometry -> keep the tag (`upright: false`);
+    // Identity recipe -> byte copy, as handled above.
+    let geometry_active = recipe.geometry.is_some();
+    let skipped = carry_metadata(std::slice::from_ref(&derived), geometry_active);
     let metadata_skipped = skipped.into_iter().next();
 
     Ok(ExportResult {

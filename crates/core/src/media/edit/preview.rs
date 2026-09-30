@@ -41,7 +41,8 @@ use crate::error::Error;
 use fast_image_resize as fr;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
+use std::sync::atomic::AtomicUsize;
+use std::sync::{LazyLock, Mutex};
 
 /// Size of the fast linear-to-sRGB preview lookup table.
 const FAST_SRGB_SIZE: usize = 4096;
@@ -108,6 +109,13 @@ pub struct RgbaFrame {
     pub width: u32,
     pub height: u32,
     pub bytes: Vec<u8>,
+    pub orientation: u32,
+}
+
+struct CachedGeometry {
+    geometry: super::geometry::Geometry,
+    drag_transformed: Option<LinearBuffer>,
+    settle_transformed: Option<LinearBuffer>,
 }
 
 /// An interactive preview session constructed once per image.
@@ -115,29 +123,43 @@ pub struct RgbaFrame {
 /// Holds pre-downscaled, pre-linearised proxies for drag (720p) and settle (1440p)
 /// stages. Linearisation is performed once during session creation rather than per slider tick.
 ///
-/// **Structural invariant**: The session holds only the two cached linear proxy buffers
-/// (`drag_linear` and `settle_linear`) and **never holds the source `ImageBuffer`**.
-/// Because `render(&self, ...)` takes an immutable `&self` and has no access to the source image,
-/// re-linearising per render is structurally impossible.
+/// In ED-13:
+/// Holds cached geometry-transformed linear proxies (`cached_geom`) when geometry adjustments
+/// are active, preventing expensive geometry resampling during continuous colour slider drags.
+/// Thread-safe `geom_recompute_count` tracks recomputations for performance verification.
 pub struct PreviewSession {
     drag_linear: LinearBuffer,
     settle_linear: LinearBuffer,
+    pub orientation: u32,
+    cached_geom: Mutex<Option<CachedGeometry>>,
+    pub geom_recompute_count: AtomicUsize,
 }
 
 impl PreviewSession {
-    /// Decode an image from disk and construct an interactive preview session.
+    /// Decode an image from disk and construct an interactive preview session with EXIF orientation.
     pub fn open(path: &std::path::Path) -> Result<Self, Error> {
+        let orientation = crate::media::meta::read_meta(path)
+            .map(|m| m.orientation as u32)
+            .unwrap_or(1);
         let image = super::pipeline::decode_image(path)?;
-        Self::new(&image)
+        Self::from_image_buffer_with_orientation(&image, orientation)
     }
 
     /// Build a preview session from a decoded image buffer.
     pub fn new(image: &ImageBuffer) -> Result<Self, Error> {
-        Self::from_image_buffer(image)
+        Self::from_image_buffer_with_orientation(image, 1)
     }
 
     /// Build a preview session from a decoded image buffer.
     pub fn from_image_buffer(image: &ImageBuffer) -> Result<Self, Error> {
+        Self::from_image_buffer_with_orientation(image, 1)
+    }
+
+    /// Build a preview session from an image buffer with specified EXIF orientation.
+    pub fn from_image_buffer_with_orientation(
+        image: &ImageBuffer,
+        orientation: u32,
+    ) -> Result<Self, Error> {
         let drag_buf = downscale_image_buffer(image, DRAG_MAX_EDGE)?;
         let settle_buf = downscale_image_buffer(image, SETTLE_MAX_EDGE)?;
 
@@ -147,7 +169,16 @@ impl PreviewSession {
         Ok(Self {
             drag_linear,
             settle_linear,
+            orientation: if orientation == 0 { 1 } else { orientation },
+            cached_geom: Mutex::new(None),
+            geom_recompute_count: AtomicUsize::new(0),
         })
+    }
+
+    /// Fluent builder to override preview orientation.
+    pub fn with_orientation(mut self, orientation: u32) -> Self {
+        self.orientation = if orientation == 0 { 1 } else { orientation };
+        self
     }
 
     /// Reference to the linearised drag proxy buffer.
@@ -173,6 +204,8 @@ impl PreviewSession {
     /// Renders an RGBA8 frame for the requested preview stage with the specified recipe and LUT.
     ///
     /// Validates LUT presence and hash equality via `validate_lut`.
+    /// Composes geometry into cached upright linear proxies if geometry is active,
+    /// delivering an upright frame (orientation = 1) without recomputing geometry during colour drags.
     pub fn render(
         &self,
         recipe: &AdjustmentRecipe,
@@ -181,12 +214,52 @@ impl PreviewSession {
     ) -> Result<RgbaFrame, Error> {
         validate_lut(recipe, lut)?;
 
-        let proxy = match stage {
-            PreviewStage::Drag => &self.drag_linear,
-            PreviewStage::Settle => &self.settle_linear,
-        };
-
-        render_rgba_frame(proxy, recipe, lut)
+        if let Some(geom) = recipe.geometry.as_ref() {
+            let mut cache = self.cached_geom.lock().unwrap();
+            let hit = match &*cache {
+                Some(c) => c.geometry == *geom,
+                None => false,
+            };
+            if !hit {
+                self.geom_recompute_count
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                *cache = Some(CachedGeometry {
+                    geometry: geom.clone(),
+                    drag_transformed: None,
+                    settle_transformed: None,
+                });
+            }
+            let c = cache.as_mut().unwrap();
+            match stage {
+                PreviewStage::Drag => {
+                    if c.drag_transformed.is_none() {
+                        c.drag_transformed =
+                            Some(geom.apply_to_linear(&self.drag_linear, self.orientation)?);
+                    }
+                }
+                PreviewStage::Settle => {
+                    if c.settle_transformed.is_none() {
+                        c.settle_transformed =
+                            Some(geom.apply_to_linear(&self.settle_linear, self.orientation)?);
+                    }
+                }
+            }
+            let proxy = match stage {
+                PreviewStage::Drag => c.drag_transformed.as_ref().unwrap(),
+                PreviewStage::Settle => c.settle_transformed.as_ref().unwrap(),
+            };
+            let mut frame = render_rgba_frame(proxy, recipe, lut)?;
+            frame.orientation = 1;
+            Ok(frame)
+        } else {
+            let proxy = match stage {
+                PreviewStage::Drag => &self.drag_linear,
+                PreviewStage::Settle => &self.settle_linear,
+            };
+            let mut frame = render_rgba_frame(proxy, recipe, lut)?;
+            frame.orientation = self.orientation;
+            Ok(frame)
+        }
     }
 }
 
@@ -490,5 +563,6 @@ pub fn render_rgba_frame(
         width: w,
         height: h,
         bytes: out_bytes,
+        orientation: 1,
     })
 }

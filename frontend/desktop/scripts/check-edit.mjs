@@ -837,6 +837,210 @@ try {
     console.log('  Section reset successfully reset all grading wheels to identity.');
   }
 
+  // 9g. Assert Geometry panel (crop overlay, aspect select, straighten, rotation, flip, orientation baking) (ED-13)
+  console.log('Asserting Geometry panel (crop overlay, aspect select, straighten, rotation, flip, and resets)...');
+  await pathInput.fill('/Volumes/Photos/v2_edits.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(100);
+
+  // Expand Geometry section
+  const geomToggle = page.locator('button[data-testid="section-geometry-toggle"]');
+  await geomToggle.click();
+  await page.waitForTimeout(50);
+
+  // 1. Verify loaded recipe values in v2_edits:
+  // geometry: { crop: { x: 0.1, y: 0.1, width: 0.8, height: 0.6 }, rotate: 90, straighten: 3.5, flip_h: false, flip_v: false, aspect: '4:3' }
+  const loadedGeomVals = await page.evaluate(() => {
+    const aspect = document.querySelector('select[data-testid="geometry-aspect-select"]')?.value;
+    const straighten = document.querySelector('input[data-testid="geometry-straighten-number"]')?.value;
+    const isFlipHActive = document.querySelector('button[data-testid="flip-h-btn"]')?.classList.contains('active');
+    const isFlipVActive = document.querySelector('button[data-testid="flip-v-btn"]')?.classList.contains('active');
+    return { aspect, straighten, isFlipHActive, isFlipVActive };
+  });
+
+  if (loadedGeomVals.aspect !== '4:3' || loadedGeomVals.straighten !== '3.5' || loadedGeomVals.isFlipHActive || loadedGeomVals.isFlipVActive) {
+    failures.push(`Loaded geometry mismatch: expected aspect=4:3, straighten=3.5; got ${JSON.stringify(loadedGeomVals)}`);
+  } else {
+    console.log(`  Geometry panel correctly displays loaded values: aspect=${loadedGeomVals.aspect}, straighten=${loadedGeomVals.straighten}°`);
+  }
+
+  // 2. Crop mode toggle: assert [data-test="crop-overlay"] appears, aspect select changes crop box, and straighten slider moves
+  const cropToggleBtn = page.locator('button[data-testid="crop-mode-toggle-btn"]');
+  await cropToggleBtn.click();
+  await page.waitForTimeout(50);
+
+  const cropOverlayVisible = await page.evaluate(() => {
+    return Boolean(document.querySelector('[data-test="crop-overlay"]'));
+  });
+  if (!cropOverlayVisible) {
+    failures.push('Crop overlay [data-test="crop-overlay"] should be visible when Crop mode is active');
+  } else {
+    console.log('  Crop overlay correctly mounted and visible in crop mode.');
+  }
+
+  // Change aspect preset to 1:1 and verify crop box adjusts
+  await page.selectOption('select[data-testid="geometry-aspect-select"]', '1:1');
+  await page.waitForTimeout(50);
+
+  const cropBoxRatio = await page.evaluate(() => {
+    const box = document.querySelector('.crop-overlay__box');
+    if (!box) return null;
+    const w = parseFloat(box.getAttribute('width') || '0');
+    const h = parseFloat(box.getAttribute('height') || '0');
+    return { w, h, ratio: (w / h).toFixed(2) };
+  });
+
+  if (!cropBoxRatio || cropBoxRatio.ratio !== '1.00') {
+    failures.push(`1:1 aspect preset did not produce square box: ${JSON.stringify(cropBoxRatio)}`);
+  } else {
+    console.log(`  Aspect preset 1:1 correctly produced square crop box (${cropBoxRatio.w}x${cropBoxRatio.h}).`);
+  }
+
+  // Move straighten slider
+  const straightenSlider = page.locator('input[data-testid="geometry-straighten-number"]');
+  await straightenSlider.fill('7.0');
+  await straightenSlider.press('Enter');
+  await page.waitForTimeout(50);
+
+  const straightenValAfterEdit = await page.evaluate(() => {
+    return document.querySelector('input[data-testid="geometry-straighten-number"]')?.value;
+  });
+  if (parseFloat(straightenValAfterEdit || '') !== 7) {
+    failures.push(`Straighten slider update failed: expected 7, got ${straightenValAfterEdit}`);
+  } else {
+    console.log('  Straighten slider successfully updated to 7.0°.');
+  }
+
+  // Exit crop mode
+  await cropToggleBtn.click();
+  await page.waitForTimeout(50);
+
+  // 3. Test stub with orientation 6:
+  // (a) Open image with no geometry, enter crop mode: assert painted canvas is portrait with NO CSS rotation
+  await page.evaluate(() => {
+    window.__STUB__.orientation = 6;
+  });
+  await pathInput.fill('/Volumes/Photos/orient_6.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(100);
+
+  // Ensure geometry section is open
+  const isGeomOpen = await page.evaluate(() => Boolean(document.querySelector('[data-testid="geometry-panel"]')));
+  if (!isGeomOpen) {
+    await page.locator('button[data-testid="section-geometry-toggle"]').click();
+    await page.waitForTimeout(50);
+  }
+
+  // Enter crop mode with no other geometry
+  await page.locator('button[data-testid="crop-mode-toggle-btn"]').click();
+  await page.waitForTimeout(100);
+
+  const inCropModeNoGeom = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas[data-testid="edit-canvas"]');
+    if (!canvas) return null;
+    const cs = window.getComputedStyle(canvas);
+    return {
+      width: canvas.width,
+      height: canvas.height,
+      transform: cs.transform,
+    };
+  });
+
+  if (!inCropModeNoGeom || inCropModeNoGeom.height <= inCropModeNoGeom.width) {
+    failures.push(`Orientation 6 in crop mode with no geometry must have portrait painted canvas (height > width), got ${inCropModeNoGeom?.width}x${inCropModeNoGeom?.height}`);
+  } else if (inCropModeNoGeom.transform !== 'none') {
+    failures.push(`Orientation 6 in crop mode with no geometry must have CSS transform 'none', got ${inCropModeNoGeom.transform}`);
+  } else {
+    console.log(`  Orientation 6 in crop mode with no geometry has portrait canvas (${inCropModeNoGeom.width}x${inCropModeNoGeom.height}) and CSS transform 'none'.`);
+  }
+
+  // Leave crop mode without changing anything
+  await page.locator('button[data-testid="crop-mode-toggle-btn"]').click();
+  await page.waitForTimeout(100);
+
+  const afterLeavingCropNoGeom = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas[data-testid="edit-canvas"]');
+    if (!canvas) return null;
+    const cs = window.getComputedStyle(canvas);
+    const rect = canvas.getBoundingClientRect();
+    return {
+      width: canvas.width,
+      height: canvas.height,
+      transform: cs.transform,
+      boundingWidth: rect.width,
+      boundingHeight: rect.height,
+    };
+  });
+
+  if (!afterLeavingCropNoGeom || afterLeavingCropNoGeom.boundingHeight <= afterLeavingCropNoGeom.boundingWidth) {
+    failures.push(`After leaving crop mode with no edits, canvas must display portrait (boundingHeight > boundingWidth), got ${afterLeavingCropNoGeom?.boundingWidth}x${afterLeavingCropNoGeom?.boundingHeight}`);
+  } else {
+    console.log(`  After leaving crop mode with no edits, canvas remains portrait (${afterLeavingCropNoGeom.boundingWidth.toFixed(1)}x${afterLeavingCropNoGeom.boundingHeight.toFixed(1)}), transform: ${afterLeavingCropNoGeom.transform}.`);
+  }
+
+  // (b) Enter crop mode again, set 1:1 crop, exit crop mode: assert upright square dimensions and transform 'none'
+  await page.locator('button[data-testid="crop-mode-toggle-btn"]').click();
+  await page.waitForTimeout(50);
+  await page.selectOption('select[data-testid="geometry-aspect-select"]', '1:1');
+  await page.waitForTimeout(50);
+  await page.locator('button[data-testid="crop-mode-toggle-btn"]').click();
+  await page.waitForTimeout(100);
+
+  const orient6CropResult = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas[data-testid="edit-canvas"]');
+    if (!canvas) return { error: 'canvas not found' };
+    const cs = window.getComputedStyle(canvas);
+    return {
+      transform: cs.transform,
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+    };
+  });
+
+  if (orient6CropResult.transform !== 'none') {
+    failures.push(`Orientation 6 with active crop should have CSS transform 'none', got ${orient6CropResult.transform}`);
+  } else {
+    console.log(`  Orientation 6 with active crop correctly switches canvas CSS transform to 'none'.`);
+  }
+
+  if (orient6CropResult.canvasWidth !== orient6CropResult.canvasHeight) {
+    failures.push(`Delivered dimensions for 1:1 crop on orientation 6 should be square, got ${orient6CropResult.canvasWidth}x${orient6CropResult.canvasHeight}`);
+  } else {
+    console.log(`  Delivered dimensions for orientation 6 crop are upright cropped square (${orient6CropResult.canvasWidth}x${orient6CropResult.canvasHeight}).`);
+  }
+
+  // Reset geometry section
+  const geomResetBtn = page.locator('button[data-testid="section-geometry-reset"]');
+  await geomResetBtn.click();
+  await page.waitForTimeout(100);
+
+  const afterGeomReset = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas[data-testid="edit-canvas"]');
+    const cs = window.getComputedStyle(canvas);
+    const straighten = document.querySelector('input[data-testid="geometry-straighten-number"]')?.value;
+    return {
+      transform: cs.transform,
+      straighten,
+    };
+  });
+
+  // Since geometry is now reset to identity, orientation 6 CSS rotation should be restored
+  if (afterGeomReset.transform === 'none') {
+    failures.push(`After geometry reset, orientation 6 CSS rotation should be restored, got 'none'`);
+  } else {
+    console.log(`  Geometry reset successfully restored canvas CSS rotation (${afterGeomReset.transform}).`);
+  }
+  if (parseFloat(afterGeomReset.straighten || '') !== 0) {
+    failures.push(`After geometry reset, straighten should be 0, got ${afterGeomReset.straighten}`);
+  } else {
+    console.log('  Geometry section reset successfully cleared all geometry transforms to identity.');
+  }
+
+  // Restore stub orientation to 1
+  await page.evaluate(() => {
+    window.__STUB__.orientation = 1;
+  });
+
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');
   await pathInput.press('Enter');

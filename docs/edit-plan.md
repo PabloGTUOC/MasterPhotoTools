@@ -748,11 +748,18 @@ verification case. Every commit can be launched, tested, and visually evaluated.
   - `check:edit`: 3-way colour grading wheels, tabs, keyboard navigation, and resets verified in headless Chromium.
 
 ### `ED-13` · Geometry, upright orientation baking, crop/straighten UI & `check:edit`
-- **Core**: Implement spatial transforms in `media::edit::geometry`: normalised crop $[x_{min}, y_{min}, x_{max}, y_{max}]$, 90° quadrant rotations, fine straighten $[-45.0^\circ, +45.0^\circ]$ with automatic inscribed crop-to-fit scale factor $s(\theta, W, H)$, and horizontal/vertical flips. Enforce upright orientation invariant: if any geometric transform is active, export renders upright pixels and writes EXIF `Orientation = 1` (`carry_metadata(..., upright: true)`). If untouched, preserve original orientation tag (`upright: false`) and support direct byte-copy stream export for unmodified images.
-- **Desktop UI**: Geometry controls in `Edit.vue`: interactive canvas crop overlay with rule-of-thirds grid, aspect ratio preset dropdown (Original, Free, 1:1, 3:2, 2:3, 4:3, 3:4, 16:9, 9:16, 5:4, 4:5), Rotate 90° buttons (CW/CCW), Straighten slider with degree readout, and Flip H / Flip V buttons.
+- **Core**: Implement spatial transforms in `media::edit::geometry`:
+  - **Upright Frame Definition**: Crop rectangles and 90° rotations are defined in the upright (displayed) frame. The geometry stage composes the EXIF orientation with the user's transform into a single mapping from output pixel to stored pixel, preventing double-resampling.
+  - **Inscribed Straighten Formula**: Fine straighten $[-45.0^\circ, +45.0^\circ]$ crops to the largest rectangle of the target aspect ratio $R = w / h$ inside the rotated bounding box $(W, H)$ without transparent or void corners:
+    $$w_1 = \frac{W \cdot R}{R \cos|\theta| + \sin|\theta|}, \quad w_2 = \frac{H \cdot R}{\cos|\theta| + R \sin|\theta|}, \quad w = \min(w_1, w_2), \quad h = \frac{w}{R}$$
+    sampled bilinearly in linear light with parallel Rayon stepping.
+  - **Pixel Aspect Presets & Minimum Bounds**: Aspect presets (1:1, 3:2, 2:3, 4:3, 3:4, 16:9, 9:16, 5:4, 4:5) are computed in output pixels: normalized crop $w_{norm}, h_{norm}$ is calculated from pixel aspect $w_{px} / h_{px} = R$. Crops smaller than 16 px on either dimension are rejected.
+  - **Export Rule & Orientation Baking**: If any geometry transform is active, preview and export render upright pixels and write EXIF `Orientation = 1` (`carry_metadata(..., upright: true)`). The canvas CSS rotation switches to `none`. If untouched, the original orientation tag is preserved (`upright: false`) with CSS rotation on canvas and direct byte-copy stream export for unmodified images.
+  - **Preview Caching**: Geometry transforms are cached once per geometry change in `PreviewSession`; colour adjustments reuse the cached buffers, preserving ~10.3 ms drag and ~40 ms settle performance.
+- **Desktop UI**: Geometry controls in `Edit.vue` under collapsible section: Rotate CW/CCW, Flip H/V, Straighten slider (`AdjustmentSlider`, degree readout), aspect preset select, and Crop mode toggle. Crop mode mounts `frontend/shared/src/ui/components/CropOverlay.vue`: transport-free component with rule-of-thirds grid, darkened surround (`var(--bg)`), 8 hit targets $\ge 40$px, and keyboard navigation (Enter applies, Esc cancels, Arrow keys nudge with Shift for 5x).
 - **Verification**:
-  - Re-run `benchmark_edit_preview` in release profile.
-  - Add `check:edit` cases testing interactive crop box resizing, 90° rotation, straighten without void borders, and orientation baking across all 8 EXIF orientations.
+  - Re-run `benchmark_edit_preview` in release profile asserting colour drag p95 $\le 25$ ms, settle p95 $\le 60$ ms, and straighten drag p95 $\le 25$ ms.
+  - Add `check:edit` Section 9g verifying loaded v2 geometry, crop overlay toggling, 1:1 aspect square crop, straighten slider update, orientation 6 transform: none baking, and section reset.
 - **Tests**:
   - `untouched_geometry_preserves_original_dimensions_and_orientation_tag`
   - `crop_extracts_exact_normalized_subregion`
@@ -760,8 +767,12 @@ verification case. Every commit can be launched, tested, and visually evaluated.
   - `geometric_transforms_bake_orientation_to_one_across_all_eight_exif_orientations`
   - `ninety_degree_rotation_swaps_dimensions_and_transposes_pixels`
   - `horizontal_and_vertical_flips_mirror_pixels_accurately`
+  - `crop_coordinates_are_in_the_upright_frame_for_every_orientation`
+  - `aspect_preset_produces_the_exact_output_ratio`
+  - `a_colour_only_change_does_not_recompute_geometry`
+  - `a_recipe_with_only_round_two_adjustments_is_rendered_not_byte_copied`
   - `benchmark_edit_preview` (re-asserted in release)
-  - `check:edit`: crop overlays, aspect presets, rotation, and straighten verified in headless Chromium.
+  - `check:edit`: Section 9g verified in headless Chromium.
 
 ### `ED-14` · Scale-independent vignette, deterministic grain, effects UI & `check:edit`
 - **Core**: Implement scale-independent vignette in `media::edit::vignette`: amount, midpoint, roundness, and feather defined in normalised image aspect coordinates. Implement deterministic film grain in `media::edit::grain`: SplitMix64 pseudo-random generation initialized with `source_sha256` and normalised coordinates, with scale and roughness controls. Enforce resolution invariance: 720p preview matches downscaled 36 MP export within $\Delta E \le 1.5$.

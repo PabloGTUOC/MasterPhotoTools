@@ -1919,6 +1919,12 @@ fn bulk_lut_skips_sidecars_and_hidden_files() {
     assert!(!out_dir.join(".DS_Store_lut.jpg").exists());
 }
 
+// ---------------------------------------------------------------------------
+// ED-18: Bulk preset / recipe tool (crates/core/src/tools/bulk_edit.rs)
+// ---------------------------------------------------------------------------
+
+// (moved to bulk_edit_tests.rs — all nine ED-18 tests live in one file)
+
 #[test]
 fn sample_frames_spreads_across_the_folder_rather_than_taking_the_first() {
     use phototools_core::tools::lut::{sample_frames, BulkLutAction};
@@ -2139,5 +2145,67 @@ fn a_recipe_whose_lut_left_the_library_is_refused_by_name() {
     assert!(
         msg.contains("no longer in the library"),
         "error message must state it is no longer in the library; got: {msg}"
+    );
+}
+
+#[test]
+fn a_recipe_with_only_round_two_adjustments_is_rendered_not_byte_copied() {
+    use phototools_core::media::edit::{AdjustmentRecipe, CurvePoint, HslAdjustments, ToneCurves};
+    use phototools_core::tools::edit::export_edited_image;
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("original.jpg", 100, 100);
+    let original_bytes = fs::read(&img).unwrap();
+    let out_dir = f.path().join("exports");
+
+    // 1. Curves-only recipe
+    let curves_recipe = AdjustmentRecipe {
+        curves: Some(ToneCurves {
+            luma: vec![
+                CurvePoint::new(0.0, 0.0),
+                CurvePoint::new(0.5, 0.6),
+                CurvePoint::new(1.0, 1.0),
+            ],
+            red: vec![CurvePoint::new(0.0, 0.0), CurvePoint::new(1.0, 1.0)],
+            green: vec![CurvePoint::new(0.0, 0.0), CurvePoint::new(1.0, 1.0)],
+            blue: vec![CurvePoint::new(0.0, 0.0), CurvePoint::new(1.0, 1.0)],
+        }),
+        ..Default::default()
+    };
+    assert!(!curves_recipe.is_identity());
+    let res_curves = export_edited_image(&img, &curves_recipe, None, &out_dir).unwrap();
+    let curves_bytes = fs::read(&res_curves.path).unwrap();
+    assert_ne!(
+        curves_bytes, original_bytes,
+        "Curves-only recipe must be rendered, not byte-copied"
+    );
+
+    // 2. HSL-only recipe
+    let mut hsl = HslAdjustments::default();
+    hsl.red.saturation = 50.0;
+    let hsl_recipe = AdjustmentRecipe {
+        hsl: Some(hsl),
+        ..Default::default()
+    };
+    assert!(!hsl_recipe.is_identity());
+    let res_hsl = export_edited_image(&img, &hsl_recipe, None, &out_dir).unwrap();
+    let hsl_bytes = fs::read(&res_hsl.path).unwrap();
+    assert_ne!(
+        hsl_bytes, original_bytes,
+        "HSL-only recipe must be rendered, not byte-copied"
+    );
+
+    // 3. LUT with 0% intensity is identity and byte-copied
+    let zero_lut_recipe = AdjustmentRecipe {
+        lut: Some(phototools_core::media::edit::pipeline::LutRef {
+            name: "test.cube".into(),
+            sha256: "dummy".into(),
+        }),
+        lut_intensity: 0.0,
+        ..Default::default()
+    };
+    assert!(
+        zero_lut_recipe.is_identity(),
+        "Recipe with 0% intensity LUT must be considered identity"
     );
 }

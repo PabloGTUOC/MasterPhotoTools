@@ -446,7 +446,7 @@ export class TauriApiClient implements ApiClient {
     sessionId: string,
     recipe: AdjustmentRecipe,
     stage: PreviewStage = 'Drag',
-  ): Promise<{ width: number; height: number; pixels: Uint8ClampedArray }> {
+  ): Promise<{ width: number; height: number; pixels: Uint8ClampedArray; orientation: number }> {
     const res = await invoke<ArrayBuffer | Uint8Array>('render_preview', {
       sessionId,
       recipe,
@@ -454,21 +454,33 @@ export class TauriApiClient implements ApiClient {
     });
     let buffer: ArrayBuffer;
     let byteOffset = 0;
+    let byteLength = 0;
     if (res instanceof Uint8Array) {
       buffer = res.buffer;
       byteOffset = res.byteOffset;
+      byteLength = res.byteLength;
     } else {
       buffer = res;
+      byteLength = res.byteLength;
     }
-    const view = new DataView(buffer, byteOffset);
+    const view = new DataView(buffer, byteOffset, byteLength);
     const width = view.getUint32(0, false);
     const height = view.getUint32(4, false);
+    const pixelBytes = width * height * 4;
+
+    let orientation = 1;
+    let headerOffset = 8;
+    if (byteLength >= 12 + pixelBytes) {
+      orientation = view.getUint32(8, false);
+      headerOffset = 12;
+    }
+
     const pixels = new Uint8ClampedArray(
       buffer,
-      byteOffset + 8,
-      width * height * 4,
+      byteOffset + headerOffset,
+      pixelBytes,
     );
-    return { width, height, pixels };
+    return { width, height, pixels, orientation };
   }
 
   closePreview(sessionId: string): Promise<void> {
@@ -540,7 +552,25 @@ export interface ColorGrading {
   balance: number;
 }
 
-/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11, ED-12). */
+/** Normalised crop rectangle in the upright displayed frame [0.0, 1.0] (ED-13). */
+export interface NormalizedCrop {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Geometric transformation configuration (ED-13). */
+export interface Geometry {
+  crop?: NormalizedCrop | null;
+  rotate: number;
+  straighten: number;
+  flip_h: boolean;
+  flip_v: boolean;
+  aspect?: string | null;
+}
+
+/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11, ED-12, ED-13). */
 export interface AdjustmentRecipe {
   version?: number;
   source_sha256?: string;
@@ -561,6 +591,7 @@ export interface AdjustmentRecipe {
   curves?: ToneCurves | null;
   hsl?: HslAdjustments | null;
   grading?: ColorGrading | null;
+  geometry?: Geometry | null;
 }
 
 /** Stage for preview rendering. */

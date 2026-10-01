@@ -570,7 +570,22 @@ export interface Geometry {
   aspect?: string | null;
 }
 
-/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11, ED-12, ED-13). */
+/** Scale-independent vignette configuration (ED-14). */
+export interface Vignette {
+  amount: number;
+  midpoint: number;
+  roundness: number;
+  feather: number;
+}
+
+/** Scale-independent film grain configuration (ED-14). */
+export interface FilmGrain {
+  amount: number;
+  size: number;
+  roughness: number;
+}
+
+/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11, ED-12, ED-13, ED-14). */
 export interface AdjustmentRecipe {
   version?: number;
   source_sha256?: string;
@@ -592,6 +607,8 @@ export interface AdjustmentRecipe {
   hsl?: HslAdjustments | null;
   grading?: ColorGrading | null;
   geometry?: Geometry | null;
+  vignette?: Vignette | null;
+  grain?: FilmGrain | null;
 }
 
 /** Stage for preview rendering. */
@@ -600,6 +617,7 @@ export type PreviewStage = 'Drag' | 'Settle';
 /** Open preview response. */
 export interface OpenPreviewResult {
   session_id: string;
+  source_sha256?: string;
   drag: [number, number];
   settle: [number, number];
   orientation: number;

@@ -950,4 +950,19 @@ export interface Geometry {
   aspect?: string | null;
 }
 
+/** Scale-independent vignette configuration (ED-14). */
+export interface Vignette {
+  amount: number;
+  midpoint: number;
+  roundness: number;
+  feather: number;
+}
+
+/** Scale-independent film grain configuration (ED-14). */
+export interface FilmGrain {
+  amount: number;
+  size: number;
+  roughness: number;
+}
+
 

@@ -41,6 +41,7 @@ use crate::error::Error;
 use fast_image_resize as fr;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{LazyLock, Mutex};
 
@@ -131,6 +132,7 @@ pub struct PreviewSession {
     drag_linear: LinearBuffer,
     settle_linear: LinearBuffer,
     pub orientation: u32,
+    pub source_sha256: String,
     cached_geom: Mutex<Option<CachedGeometry>>,
     pub geom_recompute_count: AtomicUsize,
 }
@@ -138,21 +140,29 @@ pub struct PreviewSession {
 impl PreviewSession {
     /// Decode an image from disk and construct an interactive preview session with EXIF orientation.
     pub fn open(path: &std::path::Path) -> Result<Self, Error> {
+        let bytes = std::fs::read(path)?;
+        let source_sha256 = crate::ingest::scanner::hex(&sha2::Sha256::digest(&bytes));
         let orientation = crate::media::meta::read_meta(path)
             .map(|m| m.orientation as u32)
             .unwrap_or(1);
         let image = super::pipeline::decode_image(path)?;
-        Self::from_image_buffer_with_orientation(&image, orientation)
+        let mut session = Self::from_image_buffer_with_orientation(&image, orientation)?;
+        session.source_sha256 = source_sha256;
+        Ok(session)
     }
 
     /// Build a preview session from a decoded image buffer.
     pub fn new(image: &ImageBuffer) -> Result<Self, Error> {
-        Self::from_image_buffer_with_orientation(image, 1)
+        let mut session = Self::from_image_buffer_with_orientation(image, 1)?;
+        session.source_sha256 = format!("{:08x}{:08x}", image.width(), image.height());
+        Ok(session)
     }
 
     /// Build a preview session from a decoded image buffer.
     pub fn from_image_buffer(image: &ImageBuffer) -> Result<Self, Error> {
-        Self::from_image_buffer_with_orientation(image, 1)
+        let mut session = Self::from_image_buffer_with_orientation(image, 1)?;
+        session.source_sha256 = format!("{:08x}{:08x}", image.width(), image.height());
+        Ok(session)
     }
 
     /// Build a preview session from an image buffer with specified EXIF orientation.
@@ -170,6 +180,7 @@ impl PreviewSession {
             drag_linear,
             settle_linear,
             orientation: if orientation == 0 { 1 } else { orientation },
+            source_sha256: String::new(),
             cached_geom: Mutex::new(None),
             geom_recompute_count: AtomicUsize::new(0),
         })
@@ -214,7 +225,19 @@ impl PreviewSession {
     ) -> Result<RgbaFrame, Error> {
         validate_lut(recipe, lut)?;
 
-        if let Some(geom) = recipe.geometry.as_ref() {
+        let effective_recipe;
+        let recipe_ref = if recipe.source_sha256.is_empty() && !self.source_sha256.is_empty() {
+            effective_recipe = {
+                let mut r = recipe.clone();
+                r.source_sha256 = self.source_sha256.clone();
+                r
+            };
+            &effective_recipe
+        } else {
+            recipe
+        };
+
+        if let Some(geom) = recipe_ref.geometry.as_ref() {
             let mut cache = self.cached_geom.lock().unwrap();
             let hit = match &*cache {
                 Some(c) => c.geometry == *geom,
@@ -248,7 +271,7 @@ impl PreviewSession {
                 PreviewStage::Drag => c.drag_transformed.as_ref().unwrap(),
                 PreviewStage::Settle => c.settle_transformed.as_ref().unwrap(),
             };
-            let mut frame = render_rgba_frame(proxy, recipe, lut)?;
+            let mut frame = render_rgba_frame(proxy, recipe_ref, lut)?;
             frame.orientation = 1;
             Ok(frame)
         } else {
@@ -256,7 +279,7 @@ impl PreviewSession {
                 PreviewStage::Drag => &self.drag_linear,
                 PreviewStage::Settle => &self.settle_linear,
             };
-            let mut frame = render_rgba_frame(proxy, recipe, lut)?;
+            let mut frame = render_rgba_frame(proxy, recipe_ref, lut)?;
             frame.orientation = self.orientation;
             Ok(frame)
         }
@@ -398,6 +421,33 @@ pub fn render_rgba_frame(
     let grading_lut = &*grading_table.table;
     let srgb_table = &**FAST_LINEAR_TO_SRGB;
 
+    let has_vignette = recipe.vignette.as_ref().is_some_and(|v| !v.is_identity());
+    let compiled_vignette = recipe.vignette.as_ref().map(|v| v.compile(w, h)).unwrap_or(
+        super::vignette::CompiledVignette {
+            xc: 0.0,
+            yc: 0.0,
+            inv_hx: 1.0,
+            inv_hy: 1.0,
+            aspect: 1.0,
+            d_max: 1.414,
+            circ_scale: 1.0,
+            d0: 0.0,
+            inv_span: 1.0,
+            a: 0.0,
+            r_param: 0.0,
+            is_identity: true,
+        },
+    );
+
+    let has_grain = recipe.grain.as_ref().is_some_and(|g| !g.is_identity());
+    let compiled_grain = recipe
+        .grain
+        .as_ref()
+        .map(|g| g.compile(&recipe.source_sha256))
+        .unwrap_or_else(super::grain::CompiledGrain::identity);
+    let w_f = w as f32;
+    let inv_w = 1.0 / w_f.max(1.0);
+
     let mut out_bytes = Vec::with_capacity(out_len);
     unsafe {
         out_bytes.set_len(out_len);
@@ -409,19 +459,34 @@ pub fn render_rgba_frame(
     out_bytes
         .par_chunks_exact_mut(row_out_len)
         .zip(proxy.data.par_chunks_exact(row_in_len))
-        .with_min_len(32)
-        .for_each(|(out_row, in_row)| {
+        .enumerate()
+        .for_each(|(y, (out_row, in_row))| {
+            let y_f = y as f32;
+            let v_vignette = (y_f + 0.5 - compiled_vignette.yc) * compiled_vignette.inv_hy;
+            let v2_vignette = v_vignette * v_vignette;
+            let grain_rp = if has_grain {
+                let py1 = (y_f + 0.5) * inv_w * compiled_grain.k_base;
+                compiled_grain.row_params(py1)
+            } else {
+                super::grain::RowGrainParams::default()
+            };
             const CHUNK_SIZE: usize = 64;
             let mut lin_buf = [[0.0f32; 3]; CHUNK_SIZE];
 
-            for (out_c, in_c) in out_row
+            for (chunk_idx, (out_c, in_c)) in out_row
                 .chunks_mut(CHUNK_SIZE * 4)
                 .zip(in_row.chunks(CHUNK_SIZE * 3))
+                .enumerate()
             {
+                let base_x = chunk_idx * CHUNK_SIZE;
                 let count = in_c.len() / 3;
 
-                // Pass 1: Linear adjustments + Oklab stage (low register pressure, no display/LUT/packing)
-                for (slot, in_px) in lin_buf[..count].iter_mut().zip(in_c.chunks_exact(3)) {
+                // Pass 1: Linear adjustments + Oklab stage + Vignette (low register pressure, no display/LUT/packing)
+                for (i, (slot, in_px)) in lin_buf[..count]
+                    .iter_mut()
+                    .zip(in_c.chunks_exact(3))
+                    .enumerate()
+                {
                     let mut r = in_px[0] * gain_r;
                     let mut g = in_px[1] * gain_g;
                     let mut b = in_px[2] * gain_b;
@@ -505,11 +570,22 @@ pub fn render_rgba_frame(
                         b = hb;
                     }
 
+                    // Scale-independent vignette in linear light
+                    if has_vignette {
+                        let x_f = (base_x + i) as f32;
+                        let v_gain = compiled_vignette.gain_with_v(x_f, v_vignette, v2_vignette);
+                        r *= v_gain;
+                        g *= v_gain;
+                        b *= v_gain;
+                    }
+
                     *slot = [r, g, b];
                 }
 
-                // Pass 2: Display transfer + Tone curves + 3D LUT + byte packing (no linear math or Oklab)
-                for (out_px, &[r, g, b]) in out_c.chunks_exact_mut(4).zip(&lin_buf[..count]) {
+                // Pass 2: Display transfer + Tone curves + 3D LUT + Film Grain + byte packing (no linear math or Oklab)
+                for (i, (out_px, &[r, g, b])) in
+                    out_c.chunks_exact_mut(4).zip(&lin_buf[..count]).enumerate()
+                {
                     // Display transfer (linear light to display-encoded sRGB [0.0, 1.0])
                     let disp_r = fast_linear_to_srgb_table(r, srgb_table);
                     let disp_g = fast_linear_to_srgb_table(g, srgb_table);
@@ -551,9 +627,20 @@ pub fn render_rgba_frame(
                         (graded_r, graded_g, graded_b)
                     };
 
-                    let r_u8 = (final_r.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-                    let g_u8 = (final_g.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-                    let b_u8 = (final_b.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                    // Scale-independent film grain in display domain (luminance only)
+                    let (grain_r, grain_g, grain_b) = if has_grain {
+                        let x_f = (base_x + i) as f32;
+                        let u = (x_f + 0.5) * inv_w;
+                        let delta = compiled_grain
+                            .sample_delta_with_row(u, &grain_rp, final_r, final_g, final_b);
+                        (final_r + delta, final_g + delta, final_b + delta)
+                    } else {
+                        (final_r, final_g, final_b)
+                    };
+
+                    let r_u8 = (grain_r.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                    let g_u8 = (grain_g.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                    let b_u8 = (grain_b.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
                     out_px.copy_from_slice(&[r_u8, g_u8, b_u8, 255]);
                 }
             }

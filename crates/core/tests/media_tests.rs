@@ -1792,6 +1792,17 @@ fn benchmark_edit_preview() {
             sha256: lut33.sha256.clone(),
         }),
         lut_intensity: 0.8,
+        vignette: Some(phototools_core::media::edit::Vignette {
+            amount: -40.0,
+            midpoint: 45.0,
+            roundness: 20.0,
+            feather: 60.0,
+        }),
+        grain: Some(phototools_core::media::edit::FilmGrain {
+            amount: 35.0,
+            size: 30.0,
+            roughness: 60.0,
+        }),
         ..Default::default()
     };
 
@@ -2021,6 +2032,54 @@ fn benchmark_edit_preview() {
     }
     let lut_time = t_lut.elapsed() / 10;
 
+    // 7. Vignette (smooth multiplicative gain in linear light post-geometry)
+    let compiled_vignette = recipe.vignette.as_ref().unwrap().compile(w_s, _h_s);
+    let t_vignette = Instant::now();
+    for _ in 0..10 {
+        settle_proxy
+            .data
+            .par_chunks_exact(row_in_len)
+            .enumerate()
+            .for_each(|(y, row)| {
+                let y_f = y as f32;
+                let v = (y_f + 0.5 - compiled_vignette.yc) * compiled_vignette.inv_hy;
+                let v2 = v * v;
+                for (x, px) in row.chunks_exact(3).enumerate() {
+                    let gain = compiled_vignette.gain_with_v(x as f32, v, v2);
+                    let out = (px[0] * gain, px[1] * gain, px[2] * gain);
+                    std::hint::black_box(out);
+                }
+            });
+    }
+    let vignette_time = t_vignette.elapsed() / 10;
+
+    // 8. Film Grain (luminance only, display domain, parabolic envelope)
+    let compiled_grain = recipe
+        .grain
+        .as_ref()
+        .unwrap()
+        .compile(&recipe.source_sha256);
+    let inv_w_s = 1.0 / (w_s as f32);
+    let t_grain = Instant::now();
+    for _ in 0..10 {
+        settle_proxy
+            .data
+            .par_chunks_exact(row_in_len)
+            .enumerate()
+            .for_each(|(y, row)| {
+                let y_f = y as f32;
+                let py1 = (y_f + 0.5) * inv_w_s * compiled_grain.k_base;
+                let rp = compiled_grain.row_params(py1);
+                for (x, px) in row.chunks_exact(3).enumerate() {
+                    let u = (x as f32 + 0.5) * inv_w_s;
+                    let delta = compiled_grain.sample_delta_with_row(u, &rp, px[0], px[1], px[2]);
+                    let out = (px[0] + delta, px[1] + delta, px[2] + delta);
+                    std::hint::black_box(out);
+                }
+            });
+    }
+    let grain_time = t_grain.elapsed() / 10;
+
     let min_drag = drag_times[0];
     let median_drag = drag_times[drag_times.len() / 2];
     let min_settle = settle_times[0];
@@ -2075,6 +2134,14 @@ fn benchmark_edit_preview() {
         "    6. 3D LUT sampling & blending (33x33x33 tetrahedral interpolation): {:?}",
         lut_time
     );
+    println!(
+        "    7. Vignette (multiplicative gain in linear light on 4.37M pixels): {:?}",
+        vignette_time
+    );
+    println!(
+        "    8. Film grain (display-domain luminance noise on 4.37M pixels): {:?}",
+        grain_time
+    );
 
     #[cfg(not(debug_assertions))]
     {
@@ -2084,8 +2151,8 @@ fn benchmark_edit_preview() {
             session_elapsed
         );
         assert!(
-            p95_drag <= Duration::from_millis(25),
-            "Drag frame p95 budget is <= 25 ms, measured {:?}",
+            p95_drag <= Duration::from_millis(12),
+            "Drag frame p95 budget is <= 12 ms, measured {:?}",
             p95_drag
         );
         assert!(
@@ -2094,8 +2161,8 @@ fn benchmark_edit_preview() {
             p95_straighten_drag
         );
         assert!(
-            p95_settle <= Duration::from_millis(60),
-            "Settle frame p95 budget is <= 60 ms, measured {:?}",
+            p95_settle <= Duration::from_millis(40),
+            "Settle frame p95 budget is <= 40 ms, measured {:?}",
             p95_settle
         );
     }
@@ -2204,4 +2271,466 @@ fn preview_frame_without_geometry_reports_photo_orientation_and_with_geometry_re
         .render(&with_geom_recipe, None, PreviewStage::Drag)
         .unwrap();
     assert_eq!(frame_with_geom.orientation, 1);
+}
+
+#[test]
+fn the_vignette_follows_the_crop() {
+    use phototools_core::media::edit::{
+        apply_recipe, AdjustmentRecipe, Geometry, ImageBuffer, NormalizedCrop, Vignette,
+    };
+
+    let w = 200;
+    let h = 200;
+    let img = ImageBuffer::Rgb8 {
+        width: w,
+        height: h,
+        data: vec![200u8; (w * h * 3) as usize],
+    };
+
+    // Crop the left half: x=0.0..0.5, y=0.0..1.0 -> output is 100x200
+    // Vignette darkens corners strongly
+    let recipe = AdjustmentRecipe {
+        geometry: Some(Geometry {
+            crop: Some(NormalizedCrop {
+                x: 0.0,
+                y: 0.0,
+                width: 0.5,
+                height: 1.0,
+            }),
+            ..Default::default()
+        }),
+        vignette: Some(Vignette {
+            amount: -100.0,
+            midpoint: 50.0,
+            roundness: 0.0,
+            feather: 50.0,
+        }),
+        ..Default::default()
+    };
+
+    let out = apply_recipe(&img, &recipe, None).unwrap();
+    assert_eq!(out.width(), 100);
+    assert_eq!(out.height(), 200);
+
+    let data = out.as_rgb8().unwrap();
+    // Center of the cropped output is at (50, 100).
+    let center_idx = (100 * 100 + 50) * 3;
+    let center_val = data[center_idx];
+
+    // Corner of the cropped output is at (0, 0):
+    let corner_idx = 0;
+    let corner_val = data[corner_idx];
+
+    // Right edge center of the cropped output is at (99, 100):
+    let right_edge_idx = (100 * 100 + 99) * 3;
+    let right_edge_val = data[right_edge_idx];
+
+    // The vignette center must be at the center of the cropped half (center_val ~ 200)
+    assert!(
+        (center_val as i32 - 200).abs() <= 5,
+        "Vignette center should have minimal attenuation: got {}",
+        center_val
+    );
+
+    // The corner of the cropped half must be strongly darkened (< 50)
+    assert!(
+        corner_val < 50,
+        "Vignette corner must be strongly darkened: got {}",
+        corner_val
+    );
+
+    // In the original uncropped frame, (99, 100) was in the middle of the frame.
+    // In the cropped frame, it is on the boundary edge, so it MUST be darkened relative to the center!
+    assert!(
+        right_edge_val < center_val - 20,
+        "Edge of cropped frame must be darker than the center: center={}, edge={}",
+        center_val,
+        right_edge_val
+    );
+}
+
+#[test]
+fn preview_and_export_seed_grain_identically_for_an_unsaved_recipe() {
+    use phototools_core::media::edit::{
+        grain::seed_from_source_sha256, AdjustmentRecipe, FilmGrain, PreviewSession, PreviewStage,
+    };
+    use phototools_core::tools::edit::render_and_write;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let image_path = dir.path().join("unsaved_test.jpg");
+
+    let dyn_img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        120,
+        80,
+        image::Rgb([128, 128, 128]),
+    ));
+    dyn_img.save(&image_path).unwrap();
+
+    // 1. Open preview session: hashes the file into session.source_sha256
+    let session = PreviewSession::open(&image_path).unwrap();
+    assert!(!session.source_sha256.is_empty());
+
+    // 2. Create unsaved recipe: source_sha256 is explicitly empty
+    let unsaved_recipe = AdjustmentRecipe {
+        grain: Some(FilmGrain {
+            amount: 60.0,
+            size: 25.0,
+            roughness: 50.0,
+        }),
+        source_sha256: String::new(),
+        ..Default::default()
+    };
+
+    // 3. Preview render: falls back to session.source_sha256
+    let preview_frame = session
+        .render(&unsaved_recipe, None, PreviewStage::Drag)
+        .unwrap();
+    assert!(preview_frame.width > 0);
+
+    // 4. Export render: falls back to hashing the source file
+    let out_dir = dir.path().join("out");
+    let derived = render_and_write(&image_path, &unsaved_recipe, None, &out_dir, "test").unwrap();
+    assert!(derived.output.exists());
+
+    // Verify both resolved to the identical seed
+    let expected_seed = seed_from_source_sha256(&session.source_sha256);
+    assert_ne!(expected_seed, 0);
+
+    let file_bytes = std::fs::read(&image_path).unwrap();
+    let hash_bytes = <sha2::Sha256 as sha2::Digest>::digest(&file_bytes);
+    let computed_hash: String = hash_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+    assert_eq!(session.source_sha256, computed_hash);
+    assert_eq!(seed_from_source_sha256(&computed_hash), expected_seed);
+}
+
+#[test]
+fn untouched_vignette_and_grain_are_exact_identity() {
+    use phototools_core::media::edit::{
+        apply_recipe, AdjustmentRecipe, FilmGrain, ImageBuffer, Vignette,
+    };
+
+    let w = 32;
+    let h = 32;
+    let mut data8 = Vec::with_capacity((w * h * 3) as usize);
+    let mut data16 = Vec::with_capacity((w * h * 3) as usize);
+    for i in 0..(w * h) {
+        let r8 = ((i * 37) % 256) as u8;
+        let g8 = ((i * 73) % 256) as u8;
+        let b8 = ((i * 109) % 256) as u8;
+        data8.extend_from_slice(&[r8, g8, b8]);
+
+        let r16 = ((i * 10007) % 65536) as u16;
+        let g16 = ((i * 20011) % 65536) as u16;
+        let b16 = ((i * 30013) % 65536) as u16;
+        data16.extend_from_slice(&[r16, g16, b16]);
+    }
+    let buf8 = ImageBuffer::Rgb8 {
+        width: w,
+        height: h,
+        data: data8,
+    };
+    let buf16 = ImageBuffer::Rgb16 {
+        width: w,
+        height: h,
+        data: data16,
+    };
+
+    // Recipe with default vignette & grain
+    let recipe_defaults = AdjustmentRecipe {
+        vignette: Some(Vignette::default()),
+        grain: Some(FilmGrain::default()),
+        ..Default::default()
+    };
+    assert!(recipe_defaults.is_identity());
+
+    let out8_defaults = apply_recipe(&buf8, &recipe_defaults, None).unwrap();
+    assert_eq!(
+        out8_defaults, buf8,
+        "Default vignette & grain on Rgb8 must be bit-exact identity"
+    );
+
+    let out16_defaults = apply_recipe(&buf16, &recipe_defaults, None).unwrap();
+    assert_eq!(
+        out16_defaults, buf16,
+        "Default vignette & grain on Rgb16 must be bit-exact identity"
+    );
+
+    // Recipe with zero amount vignette & grain
+    let recipe_zeros = AdjustmentRecipe {
+        vignette: Some(Vignette {
+            amount: 0.0,
+            midpoint: 40.0,
+            roundness: 20.0,
+            feather: 80.0,
+        }),
+        grain: Some(FilmGrain {
+            amount: 0.0,
+            size: 50.0,
+            roughness: 100.0,
+        }),
+        ..Default::default()
+    };
+    assert!(recipe_zeros.is_identity());
+
+    let out8_zeros = apply_recipe(&buf8, &recipe_zeros, None).unwrap();
+    assert_eq!(
+        out8_zeros, buf8,
+        "Zero-amount vignette & grain on Rgb8 must be bit-exact identity"
+    );
+
+    let out16_zeros = apply_recipe(&buf16, &recipe_zeros, None).unwrap();
+    assert_eq!(
+        out16_zeros, buf16,
+        "Zero-amount vignette & grain on Rgb16 must be bit-exact identity"
+    );
+}
+
+#[test]
+fn vignette_attenuation_is_identical_on_preview_proxy_and_full_export() {
+    use phototools_core::media::edit::{
+        apply_recipe, AdjustmentRecipe, ImageBuffer, PreviewSession, PreviewStage, Vignette,
+    };
+
+    let w = 2400;
+    let h = 1600;
+    let flat_buf = ImageBuffer::Rgb8 {
+        width: w,
+        height: h,
+        data: vec![128u8; (w * h * 3) as usize],
+    };
+
+    let vignette = Vignette {
+        amount: -50.0,
+        midpoint: 50.0,
+        roundness: 0.0,
+        feather: 50.0,
+    };
+    let recipe = AdjustmentRecipe {
+        vignette: Some(vignette),
+        ..Default::default()
+    };
+
+    // Full export
+    let export_out = apply_recipe(&flat_buf, &recipe, None).unwrap();
+    let export_data = export_out.as_rgb8().unwrap();
+
+    // Preview proxy
+    let session = PreviewSession::new(&flat_buf).unwrap();
+    let drag_frame = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+
+    // Sample normalized locations: center (0.5, 0.5), corner (0.05, 0.05), midpoint (0.25, 0.25)
+    let test_points = [(0.5f32, 0.5f32), (0.05, 0.05), (0.25, 0.25), (0.1, 0.5)];
+    for &(u, v) in &test_points {
+        let ex_x = ((u * w as f32).round() as u32).min(w - 1);
+        let ex_y = ((v * h as f32).round() as u32).min(h - 1);
+        let ex_idx = ((ex_y * w + ex_x) * 3) as usize;
+        let ex_r = export_data[ex_idx] as f32;
+
+        let pr_x = ((u * drag_frame.width as f32).round() as u32).min(drag_frame.width - 1);
+        let pr_y = ((v * drag_frame.height as f32).round() as u32).min(drag_frame.height - 1);
+        let pr_idx = ((pr_y * drag_frame.width + pr_x) * 4) as usize;
+        let pr_r = drag_frame.bytes[pr_idx] as f32;
+
+        let diff = (ex_r - pr_r).abs();
+        assert!(
+            diff <= 1.5,
+            "Vignette attenuation mismatch at ({u}, {v}): export={ex_r}, proxy={pr_r}, diff={diff}"
+        );
+    }
+}
+
+#[test]
+fn grain_is_byte_identical_between_two_runs_of_the_same_photo() {
+    use phototools_core::media::edit::{
+        apply_recipe, AdjustmentRecipe, FilmGrain, ImageBuffer, PreviewSession, PreviewStage,
+    };
+
+    let buf = ImageBuffer::Rgb8 {
+        width: 100,
+        height: 100,
+        data: vec![128u8; 100 * 100 * 3],
+    };
+    let recipe = AdjustmentRecipe {
+        source_sha256: "test_sha_deterministic".into(),
+        grain: Some(FilmGrain {
+            amount: 50.0,
+            size: 25.0,
+            roughness: 50.0,
+        }),
+        ..Default::default()
+    };
+
+    let run1 = apply_recipe(&buf, &recipe, None).unwrap();
+    let run2 = apply_recipe(&buf, &recipe, None).unwrap();
+    assert_eq!(
+        run1, run2,
+        "Export grain must be bit-exact identical between runs"
+    );
+
+    let session = PreviewSession::new(&buf).unwrap();
+    let preview1 = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    let preview2 = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    assert_eq!(
+        preview1.bytes, preview2.bytes,
+        "Preview grain must be bit-exact identical between runs"
+    );
+}
+
+#[test]
+fn grain_evaluation_is_fully_deterministic_across_threads() {
+    use phototools_core::media::edit::{apply_recipe, AdjustmentRecipe, FilmGrain, ImageBuffer};
+
+    let w = 200;
+    let h = 200;
+    let buf = ImageBuffer::Rgb8 {
+        width: w,
+        height: h,
+        data: vec![128u8; (w * h * 3) as usize],
+    };
+    let recipe = AdjustmentRecipe {
+        source_sha256: "thread_determinism_test".into(),
+        grain: Some(FilmGrain {
+            amount: 75.0,
+            size: 30.0,
+            roughness: 60.0,
+        }),
+        ..Default::default()
+    };
+
+    let pool1 = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    let out_1_thread = pool1.install(|| apply_recipe(&buf, &recipe, None).unwrap());
+
+    let pool8 = rayon::ThreadPoolBuilder::new()
+        .num_threads(8)
+        .build()
+        .unwrap();
+    let out_8_threads = pool8.install(|| apply_recipe(&buf, &recipe, None).unwrap());
+
+    assert_eq!(
+        out_1_thread, out_8_threads,
+        "Grain evaluation must produce byte-identical output across 1 and 8 threads"
+    );
+}
+
+#[test]
+fn grain_appearance_and_density_are_scale_independent_between_proxy_and_export() {
+    use phototools_core::media::edit::{
+        apply_recipe, downscale_image_buffer, AdjustmentRecipe, FilmGrain, ImageBuffer,
+        PreviewSession, PreviewStage,
+    };
+
+    // Full export resolution: 2400x1600 (3:2)
+    let w_exp = 2400;
+    let h_exp = 1600;
+    let exp_buf = ImageBuffer::Rgb8 {
+        width: w_exp,
+        height: h_exp,
+        data: vec![128u8; (w_exp * h_exp * 3) as usize],
+    };
+
+    let recipe = AdjustmentRecipe {
+        source_sha256: "scale_independence_test_seed".into(),
+        grain: Some(FilmGrain {
+            amount: 50.0,
+            size: 40.0,
+            roughness: 30.0,
+        }),
+        ..Default::default()
+    };
+
+    // 1. Full export
+    let export_out = apply_recipe(&exp_buf, &recipe, None).unwrap();
+
+    // 2. Preview proxy (drag proxy is 1280x853)
+    let session = PreviewSession::new(&exp_buf).unwrap();
+    let proxy_frame = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    let w_pr = proxy_frame.width;
+    let h_pr = proxy_frame.height;
+
+    // Downscale export to proxy dimensions
+    let export_downscaled = downscale_image_buffer(&export_out, w_pr.max(h_pr)).unwrap();
+    assert_eq!(export_downscaled.width(), w_pr);
+    assert_eq!(export_downscaled.height(), h_pr);
+
+    let down_data = export_downscaled.as_rgb8().unwrap();
+    let proxy_bytes = &proxy_frame.bytes;
+
+    // Compare over a 4x4 grid of patches
+    let patches_x = 4;
+    let patches_y = 4;
+    let patch_w = w_pr / patches_x;
+    let patch_h = h_pr / patches_y;
+
+    for py in 0..patches_y {
+        for px in 0..patches_x {
+            let start_x = px * patch_w;
+            let start_y = py * patch_h;
+
+            let mut sum_pr = 0.0f64;
+            let mut sum_down = 0.0f64;
+            let mut count = 0usize;
+
+            for y in start_y..(start_y + patch_h) {
+                for x in start_x..(start_x + patch_w) {
+                    let pr_idx = ((y * w_pr + x) * 4) as usize;
+                    let pr_y = 0.2126 * proxy_bytes[pr_idx] as f64
+                        + 0.7152 * proxy_bytes[pr_idx + 1] as f64
+                        + 0.0722 * proxy_bytes[pr_idx + 2] as f64;
+
+                    let down_idx = ((y * w_pr + x) * 3) as usize;
+                    let down_y = 0.2126 * down_data[down_idx] as f64
+                        + 0.7152 * down_data[down_idx + 1] as f64
+                        + 0.0722 * down_data[down_idx + 2] as f64;
+
+                    sum_pr += pr_y;
+                    sum_down += down_y;
+                    count += 1;
+                }
+            }
+
+            let mean_pr = sum_pr / count as f64;
+            let mean_down = sum_down / count as f64;
+
+            // Assert mean luminance within 1%
+            let mean_diff_pct = (mean_pr - mean_down).abs() / mean_pr;
+            assert!(
+                mean_diff_pct <= 0.01,
+                "Mean luminance diff {mean_diff_pct:.4} exceeds 1% at patch ({px}, {py}): pr={mean_pr}, down={mean_down}"
+            );
+
+            // Compute standard deviations
+            let mut var_pr = 0.0f64;
+            let mut var_down = 0.0f64;
+            for y in start_y..(start_y + patch_h) {
+                for x in start_x..(start_x + patch_w) {
+                    let pr_idx = ((y * w_pr + x) * 4) as usize;
+                    let pr_y = 0.2126 * proxy_bytes[pr_idx] as f64
+                        + 0.7152 * proxy_bytes[pr_idx + 1] as f64
+                        + 0.0722 * proxy_bytes[pr_idx + 2] as f64;
+
+                    let down_idx = ((y * w_pr + x) * 3) as usize;
+                    let down_y = 0.2126 * down_data[down_idx] as f64
+                        + 0.7152 * down_data[down_idx + 1] as f64
+                        + 0.0722 * down_data[down_idx + 2] as f64;
+
+                    var_pr += (pr_y - mean_pr).powi(2);
+                    var_down += (down_y - mean_down).powi(2);
+                }
+            }
+
+            let std_pr = (var_pr / count as f64).sqrt();
+            let std_down = (var_down / count as f64).sqrt();
+
+            // Assert local standard deviation within 15%
+            let std_diff_pct = (std_pr - std_down).abs() / std_pr.max(1e-5);
+            assert!(
+                std_diff_pct <= 0.15,
+                "Std dev diff {std_diff_pct:.4} exceeds 15% at patch ({px}, {py}): pr={std_pr}, down={std_down}"
+            );
+        }
+    }
 }

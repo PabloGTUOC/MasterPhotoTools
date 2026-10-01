@@ -96,6 +96,7 @@ export class StubDesktopApiClient {
   async openPreview(path: string): Promise<OpenPreviewResult> {
     return {
       session_id: 'stub_session_1',
+      source_sha256: 'stub_source_sha256_e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
       drag: [DRAG_WIDTH, DRAG_HEIGHT],
       settle: [SETTLE_WIDTH, SETTLE_HEIGHT],
       orientation: stubState.orientation,
@@ -252,6 +253,17 @@ export class StubDesktopApiClient {
           flip_h: false,
           flip_v: false,
           aspect: '4:3',
+        },
+        vignette: {
+          amount: -45,
+          midpoint: 40,
+          roundness: 20,
+          feather: 65,
+        },
+        grain: {
+          amount: 35,
+          size: 40,
+          roughness: 60,
         },
       };
     }

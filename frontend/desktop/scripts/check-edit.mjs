@@ -1041,6 +1041,105 @@ try {
     window.__STUB__.orientation = 1;
   });
 
+  // 9h. Assert Effects panel (Vignette: Amount, Midpoint, Roundness, Feather; Film Grain: Amount, Size, Roughness; double-click reset; section reset) (ED-14)
+  console.log('Asserting Effects panel (loaded v2 vignette and grain, sliders, double-click reset, section reset)...');
+  await pathInput.fill('/Volumes/Photos/v2_edits.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(100);
+
+  // Expand Effects section
+  const effectsToggle = page.locator('button[data-testid="section-effects-toggle"]');
+  await effectsToggle.click();
+  await page.waitForTimeout(50);
+
+  // Check loaded values from v2_edits
+  const loadedEffects = await page.evaluate(() => {
+    return {
+      vignetteAmount: document.querySelector('input[data-testid="vignette-amount-number"]')?.value,
+      vignetteMidpoint: document.querySelector('input[data-testid="vignette-midpoint-number"]')?.value,
+      vignetteRoundness: document.querySelector('input[data-testid="vignette-roundness-number"]')?.value,
+      vignetteFeather: document.querySelector('input[data-testid="vignette-feather-number"]')?.value,
+      grainAmount: document.querySelector('input[data-testid="grain-amount-number"]')?.value,
+      grainSize: document.querySelector('input[data-testid="grain-size-number"]')?.value,
+      grainRoughness: document.querySelector('input[data-testid="grain-roughness-number"]')?.value,
+    };
+  });
+
+  if (
+    loadedEffects.vignetteAmount !== '-45' ||
+    loadedEffects.vignetteMidpoint !== '40' ||
+    loadedEffects.vignetteRoundness !== '20' ||
+    loadedEffects.vignetteFeather !== '65' ||
+    loadedEffects.grainAmount !== '35' ||
+    loadedEffects.grainSize !== '40' ||
+    loadedEffects.grainRoughness !== '60'
+  ) {
+    failures.push(`Loaded effects values mismatch: expected vignette [-45, 40, 20, 65] and grain [35, 40, 60]; got ${JSON.stringify(loadedEffects)}`);
+  } else {
+    console.log(`  Loaded effects sliders correctly display loaded v2 values: vignette [-45, 40, 20, 65], grain [35, 40, 60].`);
+  }
+
+  // Double-click reset test:
+  // Double-click Vignette Amount label -> resets to 0
+  const vigAmountLabel = page.locator('[data-testid="vignette-amount-label"]');
+  await vigAmountLabel.dblclick();
+  await page.waitForTimeout(50);
+
+  // Double-click Vignette Midpoint label -> resets to 50
+  const vigMidpointLabel = page.locator('[data-testid="vignette-midpoint-label"]');
+  await vigMidpointLabel.dblclick();
+  await page.waitForTimeout(50);
+
+  // Double-click Grain Size label -> resets to 25
+  const grainSizeLabel = page.locator('[data-testid="grain-size-label"]');
+  await grainSizeLabel.dblclick();
+  await page.waitForTimeout(50);
+
+  const afterDblClick = await page.evaluate(() => {
+    return {
+      vignetteAmount: document.querySelector('input[data-testid="vignette-amount-number"]')?.value,
+      vignetteMidpoint: document.querySelector('input[data-testid="vignette-midpoint-number"]')?.value,
+      grainSize: document.querySelector('input[data-testid="grain-size-number"]')?.value,
+    };
+  });
+
+  if (afterDblClick.vignetteAmount !== '0' || afterDblClick.vignetteMidpoint !== '50' || afterDblClick.grainSize !== '25') {
+    failures.push(`Double-click reset failed: expected vignetteAmount=0, midpoint=50, grainSize=25; got ${JSON.stringify(afterDblClick)}`);
+  } else {
+    console.log('  Double-click reset on effects labels successfully restored default values (Amount=0, Midpoint=50, Size=25).');
+  }
+
+  // Section reset for Effects
+  const effectsResetBtn = page.locator('button[data-testid="section-effects-reset"]');
+  await effectsResetBtn.click();
+  await page.waitForTimeout(100);
+
+  const afterEffectsReset = await page.evaluate(() => {
+    return {
+      vignetteAmount: document.querySelector('input[data-testid="vignette-amount-number"]')?.value,
+      vignetteMidpoint: document.querySelector('input[data-testid="vignette-midpoint-number"]')?.value,
+      vignetteRoundness: document.querySelector('input[data-testid="vignette-roundness-number"]')?.value,
+      vignetteFeather: document.querySelector('input[data-testid="vignette-feather-number"]')?.value,
+      grainAmount: document.querySelector('input[data-testid="grain-amount-number"]')?.value,
+      grainSize: document.querySelector('input[data-testid="grain-size-number"]')?.value,
+      grainRoughness: document.querySelector('input[data-testid="grain-roughness-number"]')?.value,
+    };
+  });
+
+  if (
+    afterEffectsReset.vignetteAmount !== '0' ||
+    afterEffectsReset.vignetteMidpoint !== '50' ||
+    afterEffectsReset.vignetteRoundness !== '0' ||
+    afterEffectsReset.vignetteFeather !== '50' ||
+    afterEffectsReset.grainAmount !== '0' ||
+    afterEffectsReset.grainSize !== '25' ||
+    afterEffectsReset.grainRoughness !== '50'
+  ) {
+    failures.push(`Effects section reset failed: expected all sliders at default; got ${JSON.stringify(afterEffectsReset)}`);
+  } else {
+    console.log('  Effects section reset successfully reset all vignette and grain controls to default.');
+  }
+
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');
   await pathInput.press('Enter');

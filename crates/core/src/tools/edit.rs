@@ -299,7 +299,15 @@ pub fn render_and_write(
         .map(|m| m.orientation as u32)
         .unwrap_or(1);
     let decoded = decode_image(source)?;
-    let processed = apply_recipe_with_orientation(&decoded, recipe, lut, orientation)?;
+
+    let mut resolved_recipe = recipe.clone();
+    if resolved_recipe.source_sha256.is_empty() {
+        if let Ok(bytes) = std::fs::read(source) {
+            resolved_recipe.source_sha256 = crate::ingest::scanner::hex(&Sha256::digest(&bytes));
+        }
+    }
+
+    let processed = apply_recipe_with_orientation(&decoded, &resolved_recipe, lut, orientation)?;
 
     match processed {
         ImageBuffer::Rgb16 {

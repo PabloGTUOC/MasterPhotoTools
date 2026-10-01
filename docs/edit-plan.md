@@ -775,19 +775,25 @@ verification case. Every commit can be launched, tested, and visually evaluated.
   - `check:edit`: Section 9g verified in headless Chromium.
 
 ### `ED-14` · Scale-independent vignette, deterministic grain, effects UI & `check:edit`
-- **Core**: Implement scale-independent vignette in `media::edit::vignette`: amount, midpoint, roundness, and feather defined in normalised image aspect coordinates. Implement deterministic film grain in `media::edit::grain`: SplitMix64 pseudo-random generation initialized with `source_sha256` and normalised coordinates, with scale and roughness controls. Enforce resolution invariance: 720p preview matches downscaled 36 MP export within $\Delta E \le 1.5$.
-- **Desktop UI**: "Effects" section in `Edit.vue` with sliders for Vignette (Amount, Midpoint, Roundness, Feather) and Film Grain (Amount, Size, Roughness) with double-click reset.
+- **Core**:
+  - **Vignette (`media::edit::vignette`)**: Evaluated in **linear light** as a smooth multiplicative gain (matching physical lens fall-off; negative darkens corners, positive lightens them). Defined in normalised coordinates on the **output of the geometry stage** (after crop, so the vignette follows what was kept, not discarded edges). Parameters: Amount ([-100, 100]), Midpoint ([0, 100]), Roundness ([-100, 100], oval to circular), and Feather ([0, 100]). Invariance: preview proxy matches full export within $\Delta E \le 1.5$.
+  - **Film Grain (`media::edit::grain`)**: Evaluated **luminance only** in the **display domain** (sRGB [0.0, 1.0]) so noise reads evenly across tones, with amplitude fading parabolically towards pure black and pure white ($4Y(1-Y)$) to prevent clipping. Procedural SplitMix64 hash PRNG defined as a pure function of (seed, normalized x, normalized y), completely deterministic and independent of thread count. Scale-independent: grain size is a fraction of image width.
+  - **Seed Handoff**: The grain seed is resolved identically in preview and export, including for recipes never saved, by computing the source hash when the photograph is opened.
+  - **Identity at Rest**: Serde defaults on `Vignette` and `FilmGrain`, checked in `AdjustmentRecipe::is_identity()`; stages skipped entirely when untouched.
+- **Desktop UI**: "Effects" section in `Edit.vue` with sliders for Vignette (Amount, Midpoint, Roundness, Feather) and Film Grain (Amount, Size, Roughness) with double-click reset and section reset. Design tokens only, no fallbacks.
 - **Verification**:
-  - Re-run `benchmark_edit_preview` in release profile.
-  - Add `check:edit` cases verifying vignette and grain slider changes, live canvas updates, and reset behavior.
+  - Re-run `benchmark_edit_preview` in release profile with **everything active** (crop, vignette, grain): drag p95 $\le 12$ ms, settle p95 $\le 40$ ms, reporting per-stage breakdown with the two new stages.
+  - Add `check:edit` Section 9h verifying vignette and grain sliders, live canvas updates, double-click reset, and section reset.
 - **Tests**:
+  - `the_vignette_follows_the_crop`
+  - `preview_and_export_seed_grain_identically_for_an_unsaved_recipe`
   - `untouched_vignette_and_grain_are_exact_identity`
   - `vignette_attenuation_is_identical_on_preview_proxy_and_full_export`
   - `grain_is_byte_identical_between_two_runs_of_the_same_photo`
-  - `grain_appearance_and_density_are_scale_independent_between_proxy_and_export`
+  - `grain_appearance_and_density_are_scale_independent_between_proxy_and_export` (mean luminance within 1%, local standard deviation within 15% across patches)
   - `grain_evaluation_is_fully_deterministic_across_threads`
-  - `benchmark_edit_preview` (re-asserted in release)
-  - `check:edit`: vignette and grain effects sliders and live preview verified in headless Chromium.
+  - `benchmark_edit_preview` (re-asserted in release with everything active)
+  - `check:edit`: Section 9h effects sliders and live preview verified in headless Chromium.
 
 ### `ED-15` · Histogram, clipping warnings, live preview overlay & `check:edit`
 - **Core & IPC**: Compute 256-bin histograms for Red, Green, Blue, and Luminance on proxy frames in `core`. Detect shadow crush ($C \le 0.001$) and highlight blowout ($C \ge 0.999$), populating `ClippingInfo` flags. Extend `tauri::ipc::Response` binary preview IPC protocol with a 1032-byte header containing histogram bin data and clipping booleans alongside width and height. Enforce display invariant: clipping warnings are rendered as client-side canvas overlays and never modify exported pixels.

@@ -36,6 +36,7 @@ pub struct OpenPreviewResult {
     pub settle: (u32, u32),
     pub orientation: u32,
     pub read_only: bool,
+    pub source_sha256: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +283,7 @@ pub fn open_preview_impl(state: &AppState, path: String) -> CommandResult<OpenPr
         settle: info.settle,
         orientation: info.orientation,
         read_only: info.read_only,
+        source_sha256: info.source_sha256,
     })
 }
 

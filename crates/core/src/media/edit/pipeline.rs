@@ -75,6 +75,14 @@ pub struct AdjustmentRecipe {
     /// Optional geometry transforms (crop, rotate, straighten, flip) evaluated in upright frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geometry: Option<super::geometry::Geometry>,
+
+    // Round 2 effects (ED-14):
+    /// Optional scale-independent vignette evaluated in linear light post-crop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vignette: Option<super::vignette::Vignette>,
+    /// Optional scale-independent film grain evaluated in display domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grain: Option<super::grain::FilmGrain>,
 }
 
 impl Default for AdjustmentRecipe {
@@ -100,12 +108,14 @@ impl Default for AdjustmentRecipe {
             hsl: None,
             grading: None,
             geometry: None,
+            vignette: None,
+            grain: None,
         }
     }
 }
 
 impl AdjustmentRecipe {
-    /// True if all sliders are at rest (0.0), no curves are active, no HSL is applied, no grading is active, no geometry is active, and no effective LUT is attached (none or 0% intensity).
+    /// True if all sliders are at rest (0.0), no curves are active, no HSL is applied, no grading is active, no geometry is active, no vignette or grain is active, and no effective LUT is attached (none or 0% intensity).
     pub fn is_identity(&self) -> bool {
         self.exposure == 0.0
             && self.temperature == 0.0
@@ -124,6 +134,8 @@ impl AdjustmentRecipe {
             && self.hsl.as_ref().map_or(true, |h| h.is_identity())
             && self.grading.as_ref().map_or(true, |g| g.is_identity())
             && self.geometry.as_ref().map_or(true, |g| g.is_identity())
+            && self.vignette.as_ref().map_or(true, |v| v.is_identity())
+            && self.grain.as_ref().map_or(true, |g| g.is_identity())
     }
 }
 
@@ -312,52 +324,100 @@ impl LinearBuffer {
         curves_table: &super::curves::ToneCurvesTable,
         grading_table: &super::grading::CompiledGradingTable,
     ) -> ImageBuffer {
+        self.to_rgb8_with_lut_curves_grading_and_grain(
+            lut,
+            intensity,
+            curves_table,
+            grading_table,
+            &super::grain::CompiledGrain::identity(),
+        )
+    }
+
+    pub fn to_rgb8_with_lut_curves_grading_and_grain(
+        &self,
+        lut: Option<&Lut>,
+        intensity: f32,
+        curves_table: &super::curves::ToneCurvesTable,
+        grading_table: &super::grading::CompiledGradingTable,
+        compiled_grain: &super::grain::CompiledGrain,
+    ) -> ImageBuffer {
         let intensity = intensity.clamp(0.0, 1.0);
         let has_grading = !grading_table.is_identity;
         let grading_lut = &*grading_table.table;
+        let has_grain = !compiled_grain.is_identity;
+        let w = self.width;
+        let w_f = w as f32;
+        let inv_w = 1.0 / w_f.max(1.0);
+        let row_len = (w * 3) as usize;
         let mut out = vec![0u8; self.data.len()];
-        out.par_chunks_exact_mut(3)
-            .zip(self.data.par_chunks_exact(3))
-            .for_each(|(out_px, in_px)| {
-                let disp_r = linear_to_srgb(in_px[0]);
-                let disp_g = linear_to_srgb(in_px[1]);
-                let disp_b = linear_to_srgb(in_px[2]);
 
-                let (curved_r, curved_g, curved_b) = if curves_table.has_any {
-                    curves_table.apply(disp_r, disp_g, disp_b)
-                } else {
-                    (disp_r, disp_g, disp_b)
-                };
+        out.par_chunks_exact_mut(row_len)
+            .zip(self.data.par_chunks_exact(row_len))
+            .enumerate()
+            .for_each(|(y, (out_row, in_row))| {
+                let y_f = y as f32;
+                let py1 = (y_f + 0.5) * inv_w * compiled_grain.k_base;
+                for (x, (out_px, in_px)) in out_row
+                    .chunks_exact_mut(3)
+                    .zip(in_row.chunks_exact(3))
+                    .enumerate()
+                {
+                    let disp_r = linear_to_srgb(in_px[0]);
+                    let disp_g = linear_to_srgb(in_px[1]);
+                    let disp_b = linear_to_srgb(in_px[2]);
 
-                let (graded_r, graded_g, graded_b) = if has_grading {
-                    super::grading::CompiledGradingTable::apply_table(
-                        grading_lut,
-                        curved_r,
-                        curved_g,
-                        curved_b,
-                    )
-                } else {
-                    (curved_r, curved_g, curved_b)
-                };
+                    let (curved_r, curved_g, curved_b) = if curves_table.has_any {
+                        curves_table.apply(disp_r, disp_g, disp_b)
+                    } else {
+                        (disp_r, disp_g, disp_b)
+                    };
 
-                let (final_r, final_g, final_b) = if let Some(lut) = lut {
-                    if intensity > 0.0 {
-                        let lut_out = lut.sample([graded_r, graded_g, graded_b]);
-                        (
-                            ((1.0 - intensity) * graded_r + intensity * lut_out[0]).clamp(0.0, 1.0),
-                            ((1.0 - intensity) * graded_g + intensity * lut_out[1]).clamp(0.0, 1.0),
-                            ((1.0 - intensity) * graded_b + intensity * lut_out[2]).clamp(0.0, 1.0),
+                    let (graded_r, graded_g, graded_b) = if has_grading {
+                        super::grading::CompiledGradingTable::apply_table(
+                            grading_lut,
+                            curved_r,
+                            curved_g,
+                            curved_b,
                         )
                     } else {
-                        (graded_r, graded_g, graded_b)
-                    }
-                } else {
-                    (graded_r, graded_g, graded_b)
-                };
+                        (curved_r, curved_g, curved_b)
+                    };
 
-                out_px[0] = (final_r * 255.0).round().clamp(0.0, 255.0) as u8;
-                out_px[1] = (final_g * 255.0).round().clamp(0.0, 255.0) as u8;
-                out_px[2] = (final_b * 255.0).round().clamp(0.0, 255.0) as u8;
+                    let (final_r, final_g, final_b) = if let Some(lut) = lut {
+                        if intensity > 0.0 {
+                            let lut_out = lut.sample([graded_r, graded_g, graded_b]);
+                            (
+                                ((1.0 - intensity) * graded_r + intensity * lut_out[0])
+                                    .clamp(0.0, 1.0),
+                                ((1.0 - intensity) * graded_g + intensity * lut_out[1])
+                                    .clamp(0.0, 1.0),
+                                ((1.0 - intensity) * graded_b + intensity * lut_out[2])
+                                    .clamp(0.0, 1.0),
+                            )
+                        } else {
+                            (graded_r, graded_g, graded_b)
+                        }
+                    } else {
+                        (graded_r, graded_g, graded_b)
+                    };
+
+                    let (grain_r, grain_g, grain_b) = if has_grain {
+                        let u = (x as f32 + 0.5) * inv_w;
+                        let delta =
+                            compiled_grain.sample_delta_with_v(u, py1, final_r, final_g, final_b);
+                        (
+                            (final_r + delta).clamp(0.0, 1.0),
+                            (final_g + delta).clamp(0.0, 1.0),
+                            (final_b + delta).clamp(0.0, 1.0),
+                        )
+                    } else {
+                        (final_r, final_g, final_b)
+                    };
+
+                    out_px[0] = (grain_r * 255.0).round().clamp(0.0, 255.0) as u8;
+                    out_px[1] = (grain_g * 255.0).round().clamp(0.0, 255.0) as u8;
+                    out_px[2] = (grain_b * 255.0).round().clamp(0.0, 255.0) as u8;
+                }
             });
         ImageBuffer::Rgb8 {
             width: self.width,
@@ -399,52 +459,100 @@ impl LinearBuffer {
         curves_table: &super::curves::ToneCurvesTable,
         grading_table: &super::grading::CompiledGradingTable,
     ) -> ImageBuffer {
+        self.to_rgb16_with_lut_curves_grading_and_grain(
+            lut,
+            intensity,
+            curves_table,
+            grading_table,
+            &super::grain::CompiledGrain::identity(),
+        )
+    }
+
+    pub fn to_rgb16_with_lut_curves_grading_and_grain(
+        &self,
+        lut: Option<&Lut>,
+        intensity: f32,
+        curves_table: &super::curves::ToneCurvesTable,
+        grading_table: &super::grading::CompiledGradingTable,
+        compiled_grain: &super::grain::CompiledGrain,
+    ) -> ImageBuffer {
         let intensity = intensity.clamp(0.0, 1.0);
         let has_grading = !grading_table.is_identity;
         let grading_lut = &*grading_table.table;
+        let has_grain = !compiled_grain.is_identity;
+        let w = self.width;
+        let w_f = w as f32;
+        let inv_w = 1.0 / w_f.max(1.0);
+        let row_len = (w * 3) as usize;
         let mut out = vec![0u16; self.data.len()];
-        out.par_chunks_exact_mut(3)
-            .zip(self.data.par_chunks_exact(3))
-            .for_each(|(out_px, in_px)| {
-                let disp_r = linear_to_srgb(in_px[0]);
-                let disp_g = linear_to_srgb(in_px[1]);
-                let disp_b = linear_to_srgb(in_px[2]);
 
-                let (curved_r, curved_g, curved_b) = if curves_table.has_any {
-                    curves_table.apply(disp_r, disp_g, disp_b)
-                } else {
-                    (disp_r, disp_g, disp_b)
-                };
+        out.par_chunks_exact_mut(row_len)
+            .zip(self.data.par_chunks_exact(row_len))
+            .enumerate()
+            .for_each(|(y, (out_row, in_row))| {
+                let y_f = y as f32;
+                let py1 = (y_f + 0.5) * inv_w * compiled_grain.k_base;
+                for (x, (out_px, in_px)) in out_row
+                    .chunks_exact_mut(3)
+                    .zip(in_row.chunks_exact(3))
+                    .enumerate()
+                {
+                    let disp_r = linear_to_srgb(in_px[0]);
+                    let disp_g = linear_to_srgb(in_px[1]);
+                    let disp_b = linear_to_srgb(in_px[2]);
 
-                let (graded_r, graded_g, graded_b) = if has_grading {
-                    super::grading::CompiledGradingTable::apply_table(
-                        grading_lut,
-                        curved_r,
-                        curved_g,
-                        curved_b,
-                    )
-                } else {
-                    (curved_r, curved_g, curved_b)
-                };
+                    let (curved_r, curved_g, curved_b) = if curves_table.has_any {
+                        curves_table.apply(disp_r, disp_g, disp_b)
+                    } else {
+                        (disp_r, disp_g, disp_b)
+                    };
 
-                let (final_r, final_g, final_b) = if let Some(lut) = lut {
-                    if intensity > 0.0 {
-                        let lut_out = lut.sample([graded_r, graded_g, graded_b]);
-                        (
-                            ((1.0 - intensity) * graded_r + intensity * lut_out[0]).clamp(0.0, 1.0),
-                            ((1.0 - intensity) * graded_g + intensity * lut_out[1]).clamp(0.0, 1.0),
-                            ((1.0 - intensity) * graded_b + intensity * lut_out[2]).clamp(0.0, 1.0),
+                    let (graded_r, graded_g, graded_b) = if has_grading {
+                        super::grading::CompiledGradingTable::apply_table(
+                            grading_lut,
+                            curved_r,
+                            curved_g,
+                            curved_b,
                         )
                     } else {
-                        (graded_r, graded_g, graded_b)
-                    }
-                } else {
-                    (graded_r, graded_g, graded_b)
-                };
+                        (curved_r, curved_g, curved_b)
+                    };
 
-                out_px[0] = (final_r * 65535.0).round().clamp(0.0, 65535.0) as u16;
-                out_px[1] = (final_g * 65535.0).round().clamp(0.0, 65535.0) as u16;
-                out_px[2] = (final_b * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                    let (final_r, final_g, final_b) = if let Some(lut) = lut {
+                        if intensity > 0.0 {
+                            let lut_out = lut.sample([graded_r, graded_g, graded_b]);
+                            (
+                                ((1.0 - intensity) * graded_r + intensity * lut_out[0])
+                                    .clamp(0.0, 1.0),
+                                ((1.0 - intensity) * graded_g + intensity * lut_out[1])
+                                    .clamp(0.0, 1.0),
+                                ((1.0 - intensity) * graded_b + intensity * lut_out[2])
+                                    .clamp(0.0, 1.0),
+                            )
+                        } else {
+                            (graded_r, graded_g, graded_b)
+                        }
+                    } else {
+                        (graded_r, graded_g, graded_b)
+                    };
+
+                    let (grain_r, grain_g, grain_b) = if has_grain {
+                        let u = (x as f32 + 0.5) * inv_w;
+                        let delta =
+                            compiled_grain.sample_delta_with_v(u, py1, final_r, final_g, final_b);
+                        (
+                            (final_r + delta).clamp(0.0, 1.0),
+                            (final_g + delta).clamp(0.0, 1.0),
+                            (final_b + delta).clamp(0.0, 1.0),
+                        )
+                    } else {
+                        (final_r, final_g, final_b)
+                    };
+
+                    out_px[0] = (grain_r * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                    out_px[1] = (grain_g * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                    out_px[2] = (grain_b * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                }
             });
         ImageBuffer::Rgb16 {
             width: self.width,
@@ -741,6 +849,9 @@ pub fn apply_recipe_with_orientation(
         linear = geom.apply_to_linear(&linear, orientation)?;
     }
     linear.apply_adjustments(recipe);
+    if let Some(vignette) = &recipe.vignette {
+        super::vignette::apply_vignette(&mut linear, vignette);
+    }
 
     let intensity = if recipe.lut.is_some() {
         recipe.lut_intensity
@@ -750,19 +861,26 @@ pub fn apply_recipe_with_orientation(
 
     let curves_table = super::curves::ToneCurvesTable::from_recipe(recipe.curves.as_ref());
     let grading_table = super::grading::CompiledGradingTable::from_recipe(recipe.grading.as_ref());
+    let compiled_grain = recipe
+        .grain
+        .as_ref()
+        .map(|g| g.compile(&recipe.source_sha256))
+        .unwrap_or_else(super::grain::CompiledGrain::identity);
 
     match image {
-        ImageBuffer::Rgb8 { .. } => Ok(linear.to_rgb8_with_lut_curves_and_grading(
+        ImageBuffer::Rgb8 { .. } => Ok(linear.to_rgb8_with_lut_curves_grading_and_grain(
             lut,
             intensity,
             &curves_table,
             &grading_table,
+            &compiled_grain,
         )),
-        ImageBuffer::Rgb16 { .. } => Ok(linear.to_rgb16_with_lut_curves_and_grading(
+        ImageBuffer::Rgb16 { .. } => Ok(linear.to_rgb16_with_lut_curves_grading_and_grain(
             lut,
             intensity,
             &curves_table,
             &grading_table,
+            &compiled_grain,
         )),
     }
 }

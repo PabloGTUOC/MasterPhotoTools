@@ -15,6 +15,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type {
   AdjustmentRecipe,
   ColorWheel as ColorWheelType,
+  FilmGrain,
   Geometry,
   HslAdjustments,
   LutLibraryList,
@@ -23,6 +24,7 @@ import type {
   OpenPreviewResult,
   PreviewStage,
   ToneCurves,
+  Vignette,
 } from '@host/api';
 import { desktop } from '@host/api';
 import AdjustmentSlider from '@ui/components/AdjustmentSlider.vue';
@@ -155,6 +157,8 @@ function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
       balance: 0,
     },
     geometry: null,
+    vignette: null,
+    grain: null,
   };
 }
 
@@ -516,17 +520,33 @@ async function openImage(path: string) {
             }
           : defaultGrading,
         geometry: existing.geometry ? { ...existing.geometry } : null,
+        vignette: existing.vignette
+          ? {
+              amount: existing.vignette.amount ?? 0,
+              midpoint: existing.vignette.midpoint ?? 50,
+              roundness: existing.vignette.roundness ?? 0,
+              feather: existing.vignette.feather ?? 50,
+            }
+          : null,
+        grain: existing.grain
+          ? {
+              amount: existing.grain.amount ?? 0,
+              size: existing.grain.size ?? 25,
+              roughness: existing.grain.roughness ?? 50,
+            }
+          : null,
+        source_sha256: existing.source_sha256 || info.source_sha256 || '',
       };
       isCropMode.value = false;
       saveStatus.value = 'Saved';
       autosaveDisabled.value = false;
     } else if (!recipeLoadFailed) {
-      recipe.value = createIdentityRecipe();
+      recipe.value = createIdentityRecipe(info.source_sha256 ?? '');
       isCropMode.value = false;
       saveStatus.value = isReadOnly.value ? 'Read-only: card media' : '';
       autosaveDisabled.value = false;
     } else {
-      recipe.value = createIdentityRecipe();
+      recipe.value = createIdentityRecipe(info.source_sha256 ?? '');
       isCropMode.value = false;
     }
 
@@ -928,7 +948,58 @@ function resetGeometry() {
   }
 }
 
-function resetEffects() {}
+function ensureVignette(): Vignette {
+  if (!recipe.value.vignette) {
+    recipe.value.vignette = {
+      amount: 0,
+      midpoint: 50,
+      roundness: 0,
+      feather: 50,
+    };
+  }
+  return recipe.value.vignette;
+}
+
+function onVignetteSliderInput(prop: keyof Vignette, val: number) {
+  const v = ensureVignette();
+  v[prop] = val;
+  onRecipeValueInput();
+}
+
+function onVignetteSliderChange(prop: keyof Vignette, val: number) {
+  const v = ensureVignette();
+  v[prop] = val;
+  onRecipeValueChange();
+}
+
+function ensureGrain(): FilmGrain {
+  if (!recipe.value.grain) {
+    recipe.value.grain = {
+      amount: 0,
+      size: 25,
+      roughness: 50,
+    };
+  }
+  return recipe.value.grain;
+}
+
+function onGrainSliderInput(prop: keyof FilmGrain, val: number) {
+  const g = ensureGrain();
+  g[prop] = val;
+  onRecipeValueInput();
+}
+
+function onGrainSliderChange(prop: keyof FilmGrain, val: number) {
+  const g = ensureGrain();
+  g[prop] = val;
+  onRecipeValueChange();
+}
+
+function resetEffects() {
+  recipe.value.vignette = null;
+  recipe.value.grain = null;
+  onRecipeValueChange();
+}
 
 watch(sourcePath, (newPath) => {
   if (newPath) {
@@ -1539,7 +1610,101 @@ onUnmounted(() => {
             :default-open="false"
             @reset="resetEffects"
           >
-            <div class="section-placeholder">Vignette and film grain available in ED-15 & ED-16</div>
+            <div class="effects-panel" data-testid="effects-panel">
+              <div class="effects-group">
+                <div class="effects-group-title">Vignette</div>
+                <AdjustmentSlider
+                  label="Amount"
+                  :model-value="recipe.vignette?.amount ?? 0"
+                  :min="-100"
+                  :max="100"
+                  :step="1"
+                  :default-value="0"
+                  :disabled="loading || isReadOnly"
+                  test-id="vignette-amount"
+                  @update:model-value="(v) => onVignetteSliderInput('amount', v)"
+                  @change="(v) => onVignetteSliderChange('amount', v)"
+                />
+                <AdjustmentSlider
+                  label="Midpoint"
+                  :model-value="recipe.vignette?.midpoint ?? 50"
+                  :min="0"
+                  :max="100"
+                  :step="1"
+                  unit="%"
+                  :default-value="50"
+                  :disabled="loading || isReadOnly"
+                  test-id="vignette-midpoint"
+                  @update:model-value="(v) => onVignetteSliderInput('midpoint', v)"
+                  @change="(v) => onVignetteSliderChange('midpoint', v)"
+                />
+                <AdjustmentSlider
+                  label="Roundness"
+                  :model-value="recipe.vignette?.roundness ?? 0"
+                  :min="-100"
+                  :max="100"
+                  :step="1"
+                  :default-value="0"
+                  :disabled="loading || isReadOnly"
+                  test-id="vignette-roundness"
+                  @update:model-value="(v) => onVignetteSliderInput('roundness', v)"
+                  @change="(v) => onVignetteSliderChange('roundness', v)"
+                />
+                <AdjustmentSlider
+                  label="Feather"
+                  :model-value="recipe.vignette?.feather ?? 50"
+                  :min="0"
+                  :max="100"
+                  :step="1"
+                  unit="%"
+                  :default-value="50"
+                  :disabled="loading || isReadOnly"
+                  test-id="vignette-feather"
+                  @update:model-value="(v) => onVignetteSliderInput('feather', v)"
+                  @change="(v) => onVignetteSliderChange('feather', v)"
+                />
+              </div>
+
+              <div class="effects-group">
+                <div class="effects-group-title">Film Grain</div>
+                <AdjustmentSlider
+                  label="Amount"
+                  :model-value="recipe.grain?.amount ?? 0"
+                  :min="0"
+                  :max="100"
+                  :step="1"
+                  :default-value="0"
+                  :disabled="loading || isReadOnly"
+                  test-id="grain-amount"
+                  @update:model-value="(v) => onGrainSliderInput('amount', v)"
+                  @change="(v) => onGrainSliderChange('amount', v)"
+                />
+                <AdjustmentSlider
+                  label="Size"
+                  :model-value="recipe.grain?.size ?? 25"
+                  :min="0"
+                  :max="100"
+                  :step="1"
+                  :default-value="25"
+                  :disabled="loading || isReadOnly"
+                  test-id="grain-size"
+                  @update:model-value="(v) => onGrainSliderInput('size', v)"
+                  @change="(v) => onGrainSliderChange('size', v)"
+                />
+                <AdjustmentSlider
+                  label="Roughness"
+                  :model-value="recipe.grain?.roughness ?? 50"
+                  :min="0"
+                  :max="100"
+                  :step="1"
+                  :default-value="50"
+                  :disabled="loading || isReadOnly"
+                  test-id="grain-roughness"
+                  @update:model-value="(v) => onGrainSliderInput('roughness', v)"
+                  @change="(v) => onGrainSliderChange('roughness', v)"
+                />
+              </div>
+            </div>
           </CollapsibleSection>
         </div>
 
@@ -2038,5 +2203,28 @@ onUnmounted(() => {
 .geometry-btn.active {
   background: var(--accent);
   color: var(--void);
+}
+
+.effects-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+}
+
+.effects-group {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-hair);
+  background: var(--bg-panel);
+}
+
+.effects-group-title {
+  font-family: var(--font-label);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 </style>

@@ -86,6 +86,7 @@ function resetToDefault() {
         role="button"
         tabindex="0"
         title="Double-click to reset to identity (0)"
+        :data-testid="props.testId ? `${props.testId}-label` : undefined"
         @dblclick="resetToDefault"
         @keydown.enter="resetToDefault"
       >

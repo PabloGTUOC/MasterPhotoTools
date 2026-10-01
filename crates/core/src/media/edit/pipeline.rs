@@ -83,6 +83,11 @@ pub struct AdjustmentRecipe {
     /// Optional scale-independent film grain evaluated in display domain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grain: Option<super::grain::FilmGrain>,
+
+    // Round 2 looks (ED-16):
+    /// Optional photographic looks (glow, halation, optional tone mapper) evaluated in scene-linear light.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub looks: Option<super::looks::LookEffects>,
 }
 
 impl Default for AdjustmentRecipe {
@@ -110,12 +115,13 @@ impl Default for AdjustmentRecipe {
             geometry: None,
             vignette: None,
             grain: None,
+            looks: None,
         }
     }
 }
 
 impl AdjustmentRecipe {
-    /// True if all sliders are at rest (0.0), no curves are active, no HSL is applied, no grading is active, no geometry is active, no vignette or grain is active, and no effective LUT is attached (none or 0% intensity).
+    /// True if all sliders are at rest (0.0), no curves are active, no HSL is applied, no grading is active, no geometry is active, no vignette or grain is active, no looks are active, and no effective LUT is attached (none or 0% intensity).
     pub fn is_identity(&self) -> bool {
         self.exposure == 0.0
             && self.temperature == 0.0
@@ -136,6 +142,7 @@ impl AdjustmentRecipe {
             && self.geometry.as_ref().map_or(true, |g| g.is_identity())
             && self.vignette.as_ref().map_or(true, |v| v.is_identity())
             && self.grain.as_ref().map_or(true, |g| g.is_identity())
+            && self.looks.as_ref().map_or(true, |l| l.is_identity())
     }
 }
 
@@ -851,6 +858,9 @@ pub fn apply_recipe_with_orientation(
     linear.apply_adjustments(recipe);
     if let Some(vignette) = &recipe.vignette {
         super::vignette::apply_vignette(&mut linear, vignette);
+    }
+    if let Some(looks) = &recipe.looks {
+        super::looks::apply_looks_linear(&mut linear, looks);
     }
 
     let intensity = if recipe.lut.is_some() {

@@ -269,6 +269,21 @@ fn sample_noise_2d(seed: u64, px: f32, py: f32) -> f32 {
     sample_noise_2d_row(seed, px, y_term0, y_term1, sy)
 }
 
+#[inline(always)]
+fn hash_x(seed: u64, x: i32) -> u64 {
+    let z = seed.wrapping_add((x as u64).wrapping_mul(0x9e3779b97f4a7c15));
+    (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9)
+}
+
+#[inline(always)]
+fn finish_hash_y(z_x: u64, y_term: u64) -> f32 {
+    let mut z = z_x.wrapping_add(y_term);
+    z = (z ^ (z >> 27)).wrapping_mul(0x517cc1b727220a95);
+    z = z ^ (z >> 31);
+    let bits = (z & 0x007fffff) as u32;
+    (bits as f32) * (2.0 / 8388607.0) - 1.0
+}
+
 /// 2D procedural value noise with row-hoisted vertical parameters.
 #[inline(always)]
 fn sample_noise_2d_row(seed: u64, px: f32, y_term0: u64, y_term1: u64, sy: f32) -> f32 {
@@ -278,25 +293,17 @@ fn sample_noise_2d_row(seed: u64, px: f32, y_term0: u64, y_term1: u64, sy: f32) 
     // Cubic Hermite smoothstep
     let sx = fx * fx * (3.0 - 2.0 * fx);
 
-    let h00 = hash2_y(seed, ix, y_term0);
-    let h10 = hash2_y(seed, ix + 1, y_term0);
-    let h01 = hash2_y(seed, ix, y_term1);
-    let h11 = hash2_y(seed, ix + 1, y_term1);
+    let z0 = hash_x(seed, ix);
+    let z1 = hash_x(seed, ix + 1);
+
+    let h00 = finish_hash_y(z0, y_term0);
+    let h10 = finish_hash_y(z1, y_term0);
+    let h01 = finish_hash_y(z0, y_term1);
+    let h11 = finish_hash_y(z1, y_term1);
 
     let v0 = h00 + sx * (h10 - h00);
     let v1 = h01 + sx * (h11 - h01);
     v0 + sy * (v1 - v0)
-}
-
-#[inline(always)]
-fn hash2_y(seed: u64, x: i32, y_term: u64) -> f32 {
-    let mut z = seed.wrapping_add((x as u64).wrapping_mul(0x9e3779b97f4a7c15));
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-    z = z.wrapping_add(y_term);
-    z = (z ^ (z >> 27)).wrapping_mul(0x517cc1b727220a95);
-    z = z ^ (z >> 31);
-    let bits = (z & 0x007fffff) as u32;
-    (bits as f32) * (2.0 / 8388607.0) - 1.0
 }
 
 /// Stateless SplitMix64 hash mapping integer grid coordinates `(x, y)` to `[-1.0, 1.0]`.

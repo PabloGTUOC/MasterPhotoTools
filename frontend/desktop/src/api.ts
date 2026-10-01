@@ -585,7 +585,18 @@ export interface FilmGrain {
   roughness: number;
 }
 
-/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11, ED-12, ED-13, ED-14). */
+/** Photographic looks (Glow/Bloom, Halation) and optional filmic tone mapper (ED-16). */
+export interface LookEffects {
+  glow_amount: number;
+  glow_threshold: number;
+  glow_radius: number;
+  halation_amount: number;
+  halation_threshold: number;
+  halation_radius: number;
+  tone_mapper?: string | null;
+}
+
+/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11, ED-12, ED-13, ED-14, ED-16). */
 export interface AdjustmentRecipe {
   version?: number;
   source_sha256?: string;
@@ -609,6 +620,7 @@ export interface AdjustmentRecipe {
   geometry?: Geometry | null;
   vignette?: Vignette | null;
   grain?: FilmGrain | null;
+  looks?: LookEffects | null;
 }
 
 /** Stage for preview rendering. */

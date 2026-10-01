@@ -1140,6 +1140,123 @@ try {
     console.log('  Effects section reset successfully reset all vignette and grain controls to default.');
   }
 
+  // 9i. Assert Look panel (Glow: Amount, Threshold, Radius; Halation: Amount, Threshold, Radius; Tone Mapper: Plain/Filmic toggle, advisory banner; double-click reset; section reset) (ED-16)
+  console.log('Asserting Look panel (loaded v2 glow, halation, tone mapper, advisory banner, double-click reset, section reset)...');
+  await pathInput.fill('/Volumes/Photos/v2_edits.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(100);
+
+  // Check loaded values from v2_edits
+  const loadedLook = await page.evaluate(() => {
+    const banner = document.querySelector('[data-testid="tone-mapper-banner"]');
+    const filmicBtn = document.querySelector('[data-testid="tone-mapper-filmic"]');
+    return {
+      glowAmount: document.querySelector('input[data-testid="glow-amount-number"]')?.value,
+      glowThreshold: document.querySelector('input[data-testid="glow-threshold-number"]')?.value,
+      glowRadius: document.querySelector('input[data-testid="glow-radius-number"]')?.value,
+      halationAmount: document.querySelector('input[data-testid="halation-amount-number"]')?.value,
+      halationThreshold: document.querySelector('input[data-testid="halation-threshold-number"]')?.value,
+      halationRadius: document.querySelector('input[data-testid="halation-radius-number"]')?.value,
+      filmicActive: filmicBtn?.classList.contains('active'),
+      bannerVisible: !!banner && banner.textContent.includes('Filmic tone curve on: highlights roll off and mid-tones shift'),
+    };
+  });
+
+  if (
+    loadedLook.glowAmount !== '30' ||
+    loadedLook.glowThreshold !== '65' ||
+    loadedLook.glowRadius !== '25' ||
+    loadedLook.halationAmount !== '20' ||
+    loadedLook.halationThreshold !== '75' ||
+    loadedLook.halationRadius !== '15' ||
+    !loadedLook.filmicActive ||
+    !loadedLook.bannerVisible
+  ) {
+    failures.push(`Loaded look values mismatch: expected glow [30, 65, 25], halation [20, 75, 15], filmic=true, banner=visible; got ${JSON.stringify(loadedLook)}`);
+  } else {
+    console.log(`  Loaded look controls correctly display loaded v2 values and plain-language filmic advisory banner.`);
+  }
+
+  // Double-click reset test:
+  // Double-click Glow Amount label -> resets to 0
+  const glowAmountLabel = page.locator('[data-testid="glow-amount-label"]');
+  await glowAmountLabel.dblclick();
+  await page.waitForTimeout(50);
+
+  // Double-click Glow Threshold label -> resets to 70
+  const glowThreshLabel = page.locator('[data-testid="glow-threshold-label"]');
+  await glowThreshLabel.dblclick();
+  await page.waitForTimeout(50);
+
+  // Double-click Halation Radius label -> resets to 20
+  const halRadiusLabel = page.locator('[data-testid="halation-radius-label"]');
+  await halRadiusLabel.dblclick();
+  await page.waitForTimeout(50);
+
+  const afterLookDblClick = await page.evaluate(() => {
+    return {
+      glowAmount: document.querySelector('input[data-testid="glow-amount-number"]')?.value,
+      glowThreshold: document.querySelector('input[data-testid="glow-threshold-number"]')?.value,
+      halationRadius: document.querySelector('input[data-testid="halation-radius-number"]')?.value,
+    };
+  });
+
+  if (afterLookDblClick.glowAmount !== '0' || afterLookDblClick.glowThreshold !== '70' || afterLookDblClick.halationRadius !== '20') {
+    failures.push(`Look double-click reset failed: expected glowAmount=0, glowThreshold=70, halationRadius=20; got ${JSON.stringify(afterLookDblClick)}`);
+  } else {
+    console.log('  Double-click reset on look labels successfully restored default values (Glow Amount=0, Threshold=70, Halation Radius=20).');
+  }
+
+  // Tone mapper toggle test: switch to Plain -> banner hides; switch to Filmic -> banner shows
+  const plainBtn = page.locator('[data-testid="tone-mapper-plain"]');
+  await plainBtn.click();
+  await page.waitForTimeout(50);
+  const plainState = await page.evaluate(() => {
+    return {
+      plainActive: document.querySelector('[data-testid="tone-mapper-plain"]')?.classList.contains('active'),
+      filmicActive: document.querySelector('[data-testid="tone-mapper-filmic"]')?.classList.contains('active'),
+      bannerPresent: !!document.querySelector('[data-testid="tone-mapper-banner"]'),
+    };
+  });
+  if (!plainState.plainActive || plainState.filmicActive || plainState.bannerPresent) {
+    failures.push(`Tone mapper Plain toggle failed: got ${JSON.stringify(plainState)}`);
+  } else {
+    console.log('  Tone mapper Plain toggle correctly deactivated Filmic and removed advisory banner.');
+  }
+
+  // Section reset for Look
+  const lookResetBtn = page.locator('button[data-testid="section-look-reset"]');
+  await lookResetBtn.click();
+  await page.waitForTimeout(100);
+
+  const afterLookReset = await page.evaluate(() => {
+    return {
+      glowAmount: document.querySelector('input[data-testid="glow-amount-number"]')?.value,
+      glowThreshold: document.querySelector('input[data-testid="glow-threshold-number"]')?.value,
+      glowRadius: document.querySelector('input[data-testid="glow-radius-number"]')?.value,
+      halationAmount: document.querySelector('input[data-testid="halation-amount-number"]')?.value,
+      halationThreshold: document.querySelector('input[data-testid="halation-threshold-number"]')?.value,
+      halationRadius: document.querySelector('input[data-testid="halation-radius-number"]')?.value,
+      plainActive: document.querySelector('[data-testid="tone-mapper-plain"]')?.classList.contains('active'),
+      bannerPresent: !!document.querySelector('[data-testid="tone-mapper-banner"]'),
+    };
+  });
+
+  if (
+    afterLookReset.glowAmount !== '0' ||
+    afterLookReset.glowThreshold !== '70' ||
+    afterLookReset.glowRadius !== '30' ||
+    afterLookReset.halationAmount !== '0' ||
+    afterLookReset.halationThreshold !== '80' ||
+    afterLookReset.halationRadius !== '20' ||
+    !afterLookReset.plainActive ||
+    afterLookReset.bannerPresent
+  ) {
+    failures.push(`Look section reset failed: expected all sliders and tone mapper at default; got ${JSON.stringify(afterLookReset)}`);
+  } else {
+    console.log('  Look section reset successfully reset all glow, halation and tone mapper controls to identity.');
+  }
+
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');
   await pathInput.press('Enter');

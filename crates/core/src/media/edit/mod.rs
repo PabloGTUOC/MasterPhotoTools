@@ -6,6 +6,7 @@ pub mod geometry;
 pub mod grading;
 pub mod grain;
 pub mod hsl;
+pub mod looks;
 pub mod lut;
 pub mod pipeline;
 pub mod preview;
@@ -22,6 +23,7 @@ pub use geometry::{
 pub use grading::{ColorGrading, ColorWheel, CompiledGradingTable};
 pub use grain::{CompiledGrain, FilmGrain};
 pub use hsl::{CompiledHslTable, HslAdjustments, HslBand};
+pub use looks::{aces_narkowicz, apply_looks_linear, LookEffects, HALATION_TINT};
 pub use lut::{Lut, MAX_LUT_SIZE, MIN_LUT_SIZE};
 pub use pipeline::{
     apply_recipe, apply_recipe_with_orientation, decode_image, linear_to_srgb, linear_to_u16,

@@ -810,18 +810,21 @@ verification case. Every commit can be launched, tested, and visually evaluated.
   - `check:edit`: histogram SVG curves and clipping canvas overlay verified in headless Chromium.
 
 ### `ED-16` · Photographic looks, optional tone mapper, look UI & `check:edit`
-- **Core**: Implement multi-scale dual-filter Gaussian blur pyramid in `media::edit::looks` for Glow/Bloom and Halation. Quarter-resolution pyramid during drag (≤ 8 ms overhead). Implement optional Narkowicz ACES filmic tone mapping curve: disabled by default; when enabled, compresses high linear values smoothly into display range. Formally exclude synthetic lens flare.
-- **Desktop UI**: "Look" section in `Edit.vue`: sliders for Glow (Amount, Threshold, Radius) and Halation (Amount, Threshold, Radius). Tone Mapper dropdown/toggle ("None (Hard Clip)", "ACES Filmic") with prominent banner notice when active: *"Tone Mapper active (exact identity no longer holds)"*.
+- **Core**: Glow and halation operate in **scene-linear light** before the optional tone mapper and display transform, on the output of the geometry stage (post-crop). Threshold on linear luminance using a smooth quadratic Hermite soft knee. Multi-scale dual-filter downsampling/upsampling blur pyramid evaluated on reduced-resolution buffer (1/8 linear size for interactive performance during drag and settle). Halation uses a fixed warm red-orange tint derived from OkLCh($L=0.70, C=0.20, h=38.0^\circ$) normalized to linear sRGB $[1.0000, 0.1292, 0.0304]$. Implement optional unscaled Narkowicz ACES filmic tone mapper: disabled by default; when enabled, compresses high linear values smoothly into display range, mapping mid-grey $0.18 \to \approx 0.2669$. Formally exclude synthetic lens flare.
+- **Desktop UI**: "Look" section in `Edit.vue`: sliders for Glow (Amount, Threshold, Radius) and Halation (Amount, Threshold, Radius) with double-click reset to default. Tone Mapper two-option toggle ("Plain", "Filmic") with plain-language banner notice when active: *"Filmic tone curve on: highlights roll off and mid-tones shift. Turn it off to return to the plain curve."* (tokens only, inside panel, non-obscuring). Section reset button restoring identity at rest.
 - **Verification**:
-  - Re-run `benchmark_edit_preview` in release profile.
-  - Add `check:edit` cases testing glow, halation, and ACES tone mapping toggling with identity notice.
+  - Re-run `benchmark_edit_preview` in release profile twice (drag p95 ≤ 12 ms, settle p95 ≤ 40 ms with everything active).
+  - Break-and-restore verification for identity at rest.
+  - Add `check:edit` cases testing loaded v2 look values, advisory banner display, double-click reset, tone mapper toggle, and section reset.
 - **Tests**:
+  - `untouched_looks_are_exact_identity`
   - `tone_mapper_off_preserves_exact_identity`
   - `narkowicz_aces_compresses_highlights_monotonically_without_inversion`
-  - `glow_and_halation_decay_smoothly_and_scale_with_image_resolution`
+  - `aces_tone_mapper_places_mid_grey_where_the_doc_says`
   - `glow_pyramid_executes_within_interactive_budget_during_drag`
-  - `benchmark_edit_preview` (re-asserted in release)
-  - `check:edit`: glow, halation, and tone mapper UI and advisory banner verified in headless Chromium.
+  - `glow_and_halation_decay_smoothly_and_scale_with_image_resolution` (36 MP export downscaled matches proxy render within $\Delta E \le 1.5$)
+  - `benchmark_edit_preview` (re-asserted in release with everything active)
+  - `check:edit`: Section 9i glow, halation, and tone mapper UI and plain advisory banner verified in headless Chromium.
 
 ### `ED-17` · Workflow: Presets library, clipboard copy/paste, preset picker & `check:edit`
 - **Core & Desktop IPC**: Implement preset library in `core::tools::presets`: `.photopreset` files stored under app config (`config.presets_dir()`). Implement preset listing, save, rename, and atomic delete commands in Tauri desktop IPC. Implement recipe clipboard serialization (`Cmd+C` / `Cmd+V`) allowing rapid transfer of adjustment parameters between photographs.

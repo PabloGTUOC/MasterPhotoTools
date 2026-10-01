@@ -448,6 +448,31 @@ pub fn render_rgba_frame(
     let w_f = w as f32;
     let inv_w = 1.0 / w_f.max(1.0);
 
+    let looks_ref = recipe.looks.as_ref();
+    let has_bloom = looks_ref.is_some_and(|l| l.has_glow() || l.has_halation());
+    let has_tone_mapper = looks_ref.is_some_and(|l| l.has_tone_mapper());
+
+    let bloom_buf = if has_bloom {
+        super::looks::build_combined_bloom_with_gains(
+            proxy,
+            looks_ref.unwrap(),
+            gain_r,
+            gain_g,
+            gain_b,
+            h_val,
+            w_val,
+        )
+    } else {
+        None
+    };
+
+    let (bloom_w_f, bloom_h_f, inv_h) = if let Some(ref b) = bloom_buf {
+        (b.width as f32, b.height as f32, 1.0 / (h as f32).max(1.0))
+    } else {
+        (1.0, 1.0, 1.0)
+    };
+    let inv_w_bloom = inv_w * bloom_w_f;
+
     let mut out_bytes = Vec::with_capacity(out_len);
     unsafe {
         out_bytes.set_len(out_len);
@@ -464,6 +489,10 @@ pub fn render_rgba_frame(
             let y_f = y as f32;
             let v_vignette = (y_f + 0.5 - compiled_vignette.yc) * compiled_vignette.inv_hy;
             let v2_vignette = v_vignette * v_vignette;
+            let bloom_sampler = bloom_buf.as_ref().map(|b| {
+                let v_bloom = (y_f + 0.5) * inv_h * bloom_h_f - 0.5;
+                b.row_sampler(v_bloom)
+            });
             let grain_rp = if has_grain {
                 let py1 = (y_f + 0.5) * inv_w * compiled_grain.k_base;
                 compiled_grain.row_params(py1)
@@ -577,6 +606,23 @@ pub fn render_rgba_frame(
                         r *= v_gain;
                         g *= v_gain;
                         b *= v_gain;
+                    }
+
+                    // Photographic looks: Glow and Halation added in scene-linear light
+                    if let Some(ref sampler) = bloom_sampler {
+                        let x_f = (base_x + i) as f32;
+                        let u_bloom = (x_f + 0.5) * inv_w_bloom - 0.5;
+                        let b_val = sampler.sample(u_bloom);
+                        r += b_val[0];
+                        g += b_val[1];
+                        b += b_val[2];
+                    }
+
+                    // Filmic tone mapper: Narkowicz ACES compresses dynamic range into [0.0, 1.0]
+                    if has_tone_mapper {
+                        r = super::looks::aces_narkowicz(r);
+                        g = super::looks::aces_narkowicz(g);
+                        b = super::looks::aces_narkowicz(b);
                     }
 
                     *slot = [r, g, b];

@@ -1803,6 +1803,15 @@ fn benchmark_edit_preview() {
             size: 30.0,
             roughness: 60.0,
         }),
+        looks: Some(phototools_core::media::edit::LookEffects {
+            glow_amount: 30.0,
+            glow_threshold: 65.0,
+            glow_radius: 25.0,
+            halation_amount: 25.0,
+            halation_threshold: 75.0,
+            halation_radius: 20.0,
+            tone_mapper: Some("aces".into()),
+        }),
         ..Default::default()
     };
 
@@ -2080,6 +2089,33 @@ fn benchmark_edit_preview() {
     }
     let grain_time = t_grain.elapsed() / 10;
 
+    // 9. Glow & Halation (reduced-resolution dual-filter blur pyramid)
+    let looks_cfg = recipe.looks.as_ref().unwrap();
+    let t_looks = Instant::now();
+    for _ in 0..10 {
+        let bloom =
+            phototools_core::media::edit::looks::build_combined_bloom(settle_proxy, looks_cfg);
+        std::hint::black_box(bloom);
+    }
+    let looks_time = t_looks.elapsed() / 10;
+
+    // 10. ACES filmic tone mapper (Narkowicz curve on 4.37M pixels)
+    let t_tm = Instant::now();
+    for _ in 0..10 {
+        settle_proxy
+            .data
+            .par_chunks_exact(row_in_len)
+            .for_each(|row| {
+                for px in row.chunks_exact(3) {
+                    let r = phototools_core::media::edit::aces_narkowicz(px[0]);
+                    let g = phototools_core::media::edit::aces_narkowicz(px[1]);
+                    let b = phototools_core::media::edit::aces_narkowicz(px[2]);
+                    std::hint::black_box((r, g, b));
+                }
+            });
+    }
+    let tone_mapper_time = t_tm.elapsed() / 10;
+
     let min_drag = drag_times[0];
     let median_drag = drag_times[drag_times.len() / 2];
     let min_settle = settle_times[0];
@@ -2141,6 +2177,14 @@ fn benchmark_edit_preview() {
     println!(
         "    8. Film grain (display-domain luminance noise on 4.37M pixels): {:?}",
         grain_time
+    );
+    println!(
+        "    9. Glow & Halation (reduced-resolution dual-filter blur pyramid): {:?}",
+        looks_time
+    );
+    println!(
+        "    10. ACES filmic tone mapper (Narkowicz curve on 4.37M pixels): {:?}",
+        tone_mapper_time
     );
 
     #[cfg(not(debug_assertions))]
@@ -2733,4 +2777,254 @@ fn grain_appearance_and_density_are_scale_independent_between_proxy_and_export()
             );
         }
     }
+}
+
+#[test]
+fn untouched_looks_are_exact_identity() {
+    use phototools_core::media::edit::{apply_recipe, AdjustmentRecipe, ImageBuffer, LookEffects};
+
+    let w = 32;
+    let h = 32;
+    let mut data8 = Vec::with_capacity((w * h * 3) as usize);
+    let mut data16 = Vec::with_capacity((w * h * 3) as usize);
+    for i in 0..(w * h) {
+        let r8 = ((i * 37) % 256) as u8;
+        let g8 = ((i * 73) % 256) as u8;
+        let b8 = ((i * 109) % 256) as u8;
+        data8.extend_from_slice(&[r8, g8, b8]);
+
+        let r16 = ((i * 10007) % 65536) as u16;
+        let g16 = ((i * 20011) % 65536) as u16;
+        let b16 = ((i * 30013) % 65536) as u16;
+        data16.extend_from_slice(&[r16, g16, b16]);
+    }
+    let buf8 = ImageBuffer::Rgb8 {
+        width: w,
+        height: h,
+        data: data8,
+    };
+    let buf16 = ImageBuffer::Rgb16 {
+        width: w,
+        height: h,
+        data: data16,
+    };
+
+    let recipe = AdjustmentRecipe {
+        looks: Some(LookEffects::default()),
+        ..Default::default()
+    };
+    assert!(recipe.is_identity());
+
+    let out8 = apply_recipe(&buf8, &recipe, None).unwrap();
+    assert_eq!(
+        out8, buf8,
+        "Default looks on Rgb8 must be exact bit identity"
+    );
+
+    let out16 = apply_recipe(&buf16, &recipe, None).unwrap();
+    assert_eq!(
+        out16, buf16,
+        "Default looks on Rgb16 must be exact bit identity"
+    );
+}
+
+#[test]
+fn tone_mapper_off_preserves_exact_identity() {
+    use phototools_core::media::edit::{apply_recipe, AdjustmentRecipe, ImageBuffer, LookEffects};
+
+    let buf = ImageBuffer::Rgb8 {
+        width: 16,
+        height: 16,
+        data: vec![120u8; 16 * 16 * 3],
+    };
+    let recipe = AdjustmentRecipe {
+        looks: Some(LookEffects {
+            glow_amount: 0.0,
+            glow_threshold: 70.0,
+            glow_radius: 30.0,
+            halation_amount: 0.0,
+            halation_threshold: 80.0,
+            halation_radius: 20.0,
+            tone_mapper: None,
+        }),
+        ..Default::default()
+    };
+    assert!(recipe.is_identity());
+    let out = apply_recipe(&buf, &recipe, None).unwrap();
+    assert_eq!(out, buf, "Tone mapper off must preserve bit-exact identity");
+}
+
+#[test]
+fn narkowicz_aces_compresses_highlights_monotonically_without_inversion() {
+    use phototools_core::media::edit::aces_narkowicz;
+
+    let mut prev = 0.0f32;
+    for i in 0..2000 {
+        let x = i as f32 * 0.05;
+        let y = aces_narkowicz(x);
+        assert!(
+            y >= prev,
+            "Monotonicity violation at x={x}: prev={prev}, y={y}"
+        );
+        assert!(y <= 1.0, "ACES output exceeded 1.0 at x={x}: y={y}");
+        prev = y;
+    }
+
+    // Extreme high dynamic range highlights
+    let y_100 = aces_narkowicz(100.0);
+    let y_1000 = aces_narkowicz(1000.0);
+    assert!((0.99..=1.0).contains(&y_100));
+    assert!(y_1000 >= y_100 && y_1000 <= 1.0);
+}
+
+#[test]
+fn aces_tone_mapper_places_mid_grey_where_the_doc_says() {
+    use phototools_core::media::edit::aces_narkowicz;
+
+    let y = aces_narkowicz(0.18);
+    // Unscaled Narkowicz ACES maps 0.18 to ~0.2669 as documented in module docs
+    assert!(
+        (y - 0.2669).abs() < 0.005,
+        "Mid-grey 0.18 should map to ~0.2669, got {y}"
+    );
+}
+
+#[test]
+fn glow_pyramid_executes_within_interactive_budget_during_drag() {
+    use phototools_core::media::edit::{looks::build_combined_bloom, LinearBuffer, LookEffects};
+    use std::time::Instant;
+
+    let w = 1280;
+    let h = 854;
+    let mut data = vec![0.1f32; (w * h * 3) as usize];
+    // Add specular highlight in center
+    for y in 400..454 {
+        for x in 600..680 {
+            let idx = ((y * w + x) * 3) as usize;
+            data[idx] = 2.5;
+            data[idx + 1] = 2.5;
+            data[idx + 2] = 2.5;
+        }
+    }
+    let linear = LinearBuffer {
+        width: w,
+        height: h,
+        data,
+    };
+    let looks = LookEffects {
+        glow_amount: 50.0,
+        glow_threshold: 60.0,
+        glow_radius: 35.0,
+        halation_amount: 40.0,
+        halation_threshold: 70.0,
+        halation_radius: 25.0,
+        tone_mapper: None,
+    };
+
+    let t0 = Instant::now();
+    let bloom = build_combined_bloom(&linear, &looks);
+    let elapsed = t0.elapsed();
+
+    assert!(bloom.is_some());
+    // Interactive budget for 720p pyramid is <= 5 ms
+    assert!(
+        elapsed.as_millis() <= 5,
+        "Glow pyramid took {:?}, exceeding 5 ms interactive drag budget",
+        elapsed
+    );
+}
+
+#[test]
+fn glow_and_halation_decay_smoothly_and_scale_with_image_resolution() {
+    use phototools_core::media::edit::{
+        apply_recipe, downscale_image_buffer, AdjustmentRecipe, ImageBuffer, LookEffects,
+        PreviewSession, PreviewStage,
+    };
+
+    let w = 7360;
+    let h = 4912;
+    let mut data = vec![30u8; (w * h * 3) as usize];
+
+    // Place a bright highlight disc in center
+    let cx = w / 2;
+    let cy = h / 2;
+    let r_disc = 200;
+    for y in (cy - r_disc)..(cy + r_disc) {
+        for x in (cx - r_disc)..(cx + r_disc) {
+            let dx = (x as i32) - (cx as i32);
+            let dy = (y as i32) - (cy as i32);
+            if dx * dx + dy * dy <= (r_disc as i32) * (r_disc as i32) {
+                let idx = ((y * w + x) * 3) as usize;
+                data[idx] = 250;
+                data[idx + 1] = 250;
+                data[idx + 2] = 250;
+            }
+        }
+    }
+    let img36 = ImageBuffer::Rgb8 {
+        width: w,
+        height: h,
+        data,
+    };
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        looks: Some(LookEffects {
+            glow_amount: 35.0,
+            glow_threshold: 60.0,
+            glow_radius: 30.0,
+            halation_amount: 30.0,
+            halation_threshold: 70.0,
+            halation_radius: 20.0,
+            tone_mapper: None,
+        }),
+        ..Default::default()
+    };
+
+    // 1. Full 36 MP export
+    let export_out = apply_recipe(&img36, &recipe, None).unwrap();
+
+    // 2. Drag preview proxy (1280x854)
+    let session = PreviewSession::new(&img36).unwrap();
+    let proxy_frame = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    let pr_w = proxy_frame.width;
+    let pr_h = proxy_frame.height;
+
+    // Downscale full export to proxy size
+    let export_down = downscale_image_buffer(&export_out, pr_w.max(pr_h)).unwrap();
+    assert_eq!(export_down.width(), pr_w);
+    assert_eq!(export_down.height(), pr_h);
+
+    let down_bytes = export_down.as_rgb8().unwrap();
+    let pr_bytes = &proxy_frame.bytes;
+
+    // Compare over sampling points across the image
+    let mut max_diff = 0.0f32;
+    let mut sum_diff = 0.0f64;
+    let mut count = 0usize;
+
+    for y in (0..pr_h).step_by(8) {
+        for x in (0..pr_w).step_by(8) {
+            let pr_idx = ((y * pr_w + x) * 4) as usize;
+            let down_idx = ((y * pr_w + x) * 3) as usize;
+
+            let diff_r = (pr_bytes[pr_idx] as f32 - down_bytes[down_idx] as f32).abs();
+            let diff_g = (pr_bytes[pr_idx + 1] as f32 - down_bytes[down_idx + 1] as f32).abs();
+            let diff_b = (pr_bytes[pr_idx + 2] as f32 - down_bytes[down_idx + 2] as f32).abs();
+
+            let avg_diff = (diff_r + diff_g + diff_b) / 3.0;
+            if avg_diff > max_diff {
+                max_diff = avg_diff;
+            }
+            sum_diff += avg_diff as f64;
+            count += 1;
+        }
+    }
+
+    let mean_diff = (sum_diff / count as f64) as f32;
+    // Mean delta E must be well within <= 1.5 code values
+    assert!(
+        mean_diff <= 1.5,
+        "Mean delta E {mean_diff} exceeds 1.5 (max={max_diff})"
+    );
 }

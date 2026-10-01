@@ -265,6 +265,15 @@ export class StubDesktopApiClient {
           size: 40,
           roughness: 60,
         },
+        looks: {
+          glow_amount: 30,
+          glow_threshold: 65,
+          glow_radius: 25,
+          halation_amount: 20,
+          halation_threshold: 75,
+          halation_radius: 15,
+          tone_mapper: 'aces',
+        },
       };
     }
     if (path.includes('existing_edits')) {

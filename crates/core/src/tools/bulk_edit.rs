@@ -72,6 +72,17 @@ pub struct BulkEditSummary {
     pub metadata_skipped: Vec<Skip>,
 }
 
+/// Pre-flight sample frames selection for ED-18 preview.
+///
+/// Returns up to `n` (typically 3–5) source paths spread evenly through the
+/// folder in plan order (first, last, and intermediate evenly spaced), rather than taking the first `n`.
+pub fn sample_frames(plan: &Plan<BulkEditAction>, n: usize) -> Vec<PathBuf> {
+    crate::tools::sample_evenly(&plan.actions, n)
+        .into_iter()
+        .map(|a| a.source.clone())
+        .collect()
+}
+
 /// Compute the content hash that locks a batch to an exact recipe.
 ///
 /// `source_sha256` names the photograph a recipe was made on, which is irrelevant

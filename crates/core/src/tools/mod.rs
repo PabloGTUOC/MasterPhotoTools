@@ -200,6 +200,31 @@ pub fn carry_metadata_with(derived: &[Derived], upright: bool, program: Option<&
     skipped
 }
 
+/// Return up to `n` items spread evenly through a slice.
+///
+/// Picks first, last, and intermediate evenly spaced items rather than the
+/// first `n`, because a preview of a batch should show its range, not merely
+/// its opening frames.
+pub fn sample_evenly<T: Clone>(items: &[T], n: usize) -> Vec<T> {
+    let len = items.len();
+    if len == 0 || n == 0 {
+        return Vec::new();
+    }
+    if len <= n {
+        return items.to_vec();
+    }
+    if n == 1 {
+        return vec![items[0].clone()];
+    }
+
+    (0..n)
+        .map(|i| {
+            let idx = (i * (len - 1)) / (n - 1);
+            items[idx].clone()
+        })
+        .collect()
+}
+
 /// Expand a mix of files and directories into the acceptable files among them.
 ///
 /// Anything rejected is reported as a [`Skip`] with a reason rather than
@@ -270,7 +295,7 @@ pub fn expand_inputs(
 }
 
 #[cfg(test)]
-mod summary_tests {
+mod tests {
     use super::*;
 
     /// A run that did nothing has to say why.
@@ -319,5 +344,31 @@ mod summary_tests {
             summarise(4, "pages written", 1, &skipped, &["tif"]),
             "4 pages written, 1 failed, 1 skipped"
         );
+    }
+
+    /// sample_evenly returns an empty vec when n is 0 or the input is empty.
+    #[test]
+    fn sample_evenly_empty_cases() {
+        assert!(sample_evenly::<i32>(&[], 3).is_empty());
+        assert!(sample_evenly(&[1, 2, 3], 0).is_empty());
+    }
+
+    /// sample_evenly returns all items when n >= len.
+    #[test]
+    fn sample_evenly_short_input() {
+        assert_eq!(sample_evenly(&[1, 2, 3], 5), vec![1, 2, 3]);
+    }
+
+    /// sample_evenly returns only the first item when n == 1.
+    #[test]
+    fn sample_evenly_one_item() {
+        assert_eq!(sample_evenly(&[10, 20, 30], 1), vec![10]);
+    }
+
+    /// sample_evenly spreads evenly: n = 3 of 10 gives indices 0, 4, 9.
+    #[test]
+    fn sample_evenly_evenly_spaced() {
+        let items: Vec<i32> = (0..10).collect();
+        assert_eq!(sample_evenly(&items, 3), vec![0, 4, 9]);
     }
 }

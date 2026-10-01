@@ -73,22 +73,9 @@ pub(crate) fn is_hidden(path: &Path) -> bool {
 /// folder in plan order (first, last, and intermediate evenly spaced), rather than taking the first `n`.
 pub fn sample_frames(plan: &Plan<BulkLutAction>, n: usize) -> Vec<PathBuf> {
     let actions = &plan.actions;
-    let len = actions.len();
-    if len == 0 || n == 0 {
-        return Vec::new();
-    }
-    if len <= n {
-        return actions.iter().map(|a| a.source.clone()).collect();
-    }
-    if n == 1 {
-        return vec![actions[0].source.clone()];
-    }
-
-    (0..n)
-        .map(|i| {
-            let idx = (i * (len - 1)) / (n - 1);
-            actions[idx].source.clone()
-        })
+    crate::tools::sample_evenly(actions, n)
+        .into_iter()
+        .map(|a| a.source.clone())
         .collect()
 }
 

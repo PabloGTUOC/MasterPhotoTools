@@ -184,6 +184,13 @@ fn main() {
             commands::close_preview,
             commands::list_luts,
             commands::import_lut,
+            commands::list_presets,
+            commands::load_preset,
+            commands::save_preset,
+            commands::rename_preset,
+            commands::delete_preset,
+            commands::plan_bulk_edit,
+            commands::apply_bulk_edit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the PhotoTools desktop application");

@@ -1,6 +1,7 @@
 # Editing — development plan
 
-> **Round 1 built (ED-1–ED-8). Round 2 built (ED-9–ED-18); MV-20 awaits a Mac.**
+> **Round 1 built (ED-1–ED-8). Round 2 built (ED-9–ED-18); MV-20 and MV-21 await a Mac.
+> Round 3 (masks, ED-19–ED-24) planned, not started.**
 > Where the Round 1 build diverged from this plan the text has been corrected in place and
 > the rationale recorded in [`docs/phase-reports/edit.md`](phase-reports/edit.md).
 > Round 2 specifies advanced photographic adjustments, tone curves, 8-band HSL,
@@ -903,6 +904,127 @@ verification case. Every commit can be launched, tested, and visually evaluated.
   - Manual checks on real files: MV-21.8, MV-21.9 and MV-21.11 in `manual-verification.md`.
 
 ---
+
+## Round 3 — Local adjustments (masks)
+
+> **Planned, not started.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
+> who chose gradients, a brush, and automatic subject and sky masks. Rounds 1 and 2 excluded
+> local adjustments to keep to whole-frame work; this round lifts that exclusion and nothing
+> else. RapidRAW remains a feature list only, under the Round 2 clean-room declaration.
+
+### What a person can do
+
+Add a **mask** to a photograph: a linear gradient, a radial gradient, a brush, a subject or a sky.
+Each mask carries its **own adjustments** (exposure, contrast, highlights, shadows, whites, blacks,
+temperature, tint, saturation, vibrance), applied only where the mask covers. A mask can be
+inverted, faded with an opacity, shown as a red overlay while it is being shaped, hidden, renamed
+and deleted. An automatic mask can be refined with the brush (add or erase).
+
+### Decisions that shape every step
+
+1. **A mask belongs to its photograph.** Like the crop (ED-17), masks are never saved into a
+   preset, never pasted, and never applied by Batch Grade. A gradient positioned for one frame
+   is wrong on the next, and an automatic mask is computed from one frame's pixels.
+2. **Masks live in source coordinates and follow the geometry.** Positions and strokes are
+   stored normalised to the upright, uncropped, unstraightened photograph. The mask is
+   rasterised there and passed through the **same** geometry transform as the pixels (ED-13),
+   so cropping, straightening or rotating never slides a mask off what it was drawn on.
+   The transformed mask is cached beside the transformed proxy, keyed by mask and geometry.
+3. **Local adjustments blend parameters, not images.** Each pixel's effective parameters are
+   the global value plus Σ (mask weight × local value), evaluated in the existing single pass.
+   Rendering the photograph once per mask and blending would multiply the settle cost by the
+   number of masks. The locally adjustable set is the one the per-pixel pass can evaluate
+   without a precomputed table; curves, HSL, grading, LUTs and looks stay global.
+4. **Previews and exports agree.** A rasterised mask is a function of its parameters and the
+   output size, so the export rasterises at full resolution what the preview rasterised at
+   proxy size, and the two match within ΔE ≤ 1.5 after downscaling (the ED-16 test pattern).
+5. **Automatic masks are stored, not recomputed.** Inference is not guaranteed to be bit-for-bit
+   repeatable across machines and runtime versions, and an export must match what was reviewed.
+   The mask is computed once, stored in the `.photoedit` sidecar as an 8-bit PNG at 1024 px on
+   the long edge (base64, roughly 20–100 KB), and upsampled with the same bilinear filter at
+   every size. It travels with the photograph wherever the sidecar does, Rename included.
+6. **The recipe becomes version 3.** `masks` defaults to empty, so every v2 sidecar loads
+   unchanged; a v3 sidecar is refused by an older build (`load_recipe` already refuses a newer
+   version) rather than opened with its masks silently dropped. `is_identity` covers masks.
+
+### The speed budget — to be decided before ED-19
+
+The settle frame is at its 40 ms working target today and exceeds it in about one release run in
+three under load. Masks add work to every masked pixel. Before ED-19 the owner decides one of:
+accept the current figure and set a budget per mask (proposed: drag ≤ 12 ms and settle ≤ 40 ms with
+no masks, unchanged; each active mask adds at most 1.5 ms drag and 5 ms settle, up to 4 masks);
+or first win back headroom in the existing pipeline. The budget is asserted in
+`benchmark_edit_preview`, not described.
+
+### The automatic masks — what has to be true first (ED-22)
+
+- **Runtime.** `tract-onnx` (sonos/tract, MIT or Apache-2.0) is pure Rust, CPU-only and needs no
+  native library, so `core` still compiles alone (G2) and the bundle carries no extra binary.
+  It needs **Rust 1.91**; this project's MSRV is **1.80**. Raising the MSRV, or pinning an
+  older `tract` release that builds on 1.80 if one runs the chosen models, is the owner's
+  decision. `ort` (ONNX Runtime bindings) is the alternative: faster, but a native library in
+  the bundle.
+- **Models**, each licence to be confirmed from its own repository before use, never from a
+  summary: subject — **BiRefNet** (MIT; `BiRefNet_lite` for size); sky — the U²-Net sky model
+  from *Sky-Segmentation-and-Post-processing* (MIT).
+- **Delivery.** Models are downloaded on first use into the application's data folder and
+  verified against a SHA-256 pinned in the source; they are never bundled. Without the model or
+  a network, the Subject and Sky buttons say so and every other mask still works (the
+  desktop application must work offline, MV-7.3).
+- **Measured on the Mac before building on it:** model size, inference time on a 36 MP
+  photograph (target ≤ 3 s, shown with progress), and peak memory.
+- A new dependency is recorded with its reason in a phase report (G8).
+
+### Steps
+
+#### `ED-19` · Mask model, rendering engine, linear and radial gradients (core)
+- `media::edit::masks`: `Mask { id, name, kind, invert, opacity, adjustments }`;
+  `kind` = `Linear { start, end }` (feathered between the two lines) | `Radial { centre, radii,
+  angle, feather }`; coverage rasterised in source coordinates, transformed by the geometry,
+  cached; per-pixel parameter blending in the preview and export passes.
+- Tests: `an_untouched_photograph_with_no_masks_is_exact_identity`;
+  `a_mask_with_zero_adjustments_changes_nothing`;
+  `a_linear_gradient_ramps_monotonically_between_its_lines`;
+  `a_radial_mask_is_symmetric_and_feathers_smoothly`;
+  `a_mask_follows_the_crop_and_straighten`; `inverting_a_mask_complements_its_coverage`;
+  `masks_are_never_saved_into_a_preset_or_applied_by_batch`;
+  `a_v2_sidecar_loads_with_no_masks_and_a_v3_one_is_refused_by_v2`;
+  `export_matches_preview_with_masks_within_delta_e_1_5`; `benchmark_edit_preview` with masks.
+
+#### `ED-20` · Masks panel and on-canvas gradient handles
+- A **Masks** section: add Linear or Radial; a list with name, show/hide overlay, invert,
+  opacity, delete; selecting a mask shows its own adjustment sliders.
+- Handles drawn over the canvas (as `CropOverlay` is), transport-free in `shared/src/ui/components`;
+  dragging a handle renders drag frames, releasing settles. The red coverage overlay is a
+  separate canvas, never the photograph's (the ED-15 rule).
+- `check:edit`: add, move, invert, overlay, delete; the mask follows the canvas under rotation;
+  40 px targets; keyboard nudging of handles.
+
+#### `ED-21` · Brush
+- Strokes stored as normalised points with radius, feather and flow, plus an erase flag; the
+  brush can add to or erase from any mask, including an automatic one.
+- Painting rasterises only the new segment into the cached coverage, so a stroke paints at drag
+  rate; `[` and `]` change the size, holding ⌥ erases.
+- Tests: strokes rasterise identically at proxy and export size (ΔE ≤ 1.5); erase restores
+  exactly; a 200-point stroke stays within the drag budget.
+
+#### `ED-22` · Runtime and model spike — decision, not product
+- Settle the runtime, MSRV and models above; measure on the Mac; write the findings and the
+  dependency reasons into the phase report. Nothing ships from this step; the owner approves
+  the dependency before ED-23.
+
+#### `ED-23` · Subject and sky masks
+- `media::segment`: download and verify, run inference off the interface thread with progress
+  and cancel, store the result in the sidecar (decision 5). "Subject" and "Sky" buttons in the
+  Masks panel; refine with the brush.
+- Tests: a stored mask reproduces byte-for-byte at export; a missing or tampered model is
+  refused with its reason; offline behaviour; inference never runs during a slider drag.
+
+#### `ED-24` · Masks across the application
+- Rename carries the larger sidecar; Batch Grade and presets ignore masks (decision 1), and say
+  so where a person would otherwise expect them; sidecar size reported in the phase report.
+- Manual checks **MV-22**: a graduated sky on a landscape, a radial on a portrait, a brushed
+  dodge and burn, an automatic subject refined with the brush, and preview against export.
 
 ## Not in this plan (Rounds 1 & 2)
 

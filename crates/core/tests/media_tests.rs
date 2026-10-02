@@ -163,8 +163,22 @@ fn start_against_script(
     program: &std::path::Path,
     timeout: Duration,
 ) -> Result<ExifWriter, String> {
+    start_against_script_with(program, timeout, timeout)
+}
+
+/// As [`start_against_script`], with start-up bounded apart from each write.
+///
+/// The restart tests catch a hang with a write bound under a second, then restart
+/// into the real exiftool, whose Perl start-up alone can take longer than that on
+/// a loaded machine. Holding the restart to the write bound made them fail for
+/// reasons that had nothing to do with restarting.
+fn start_against_script_with(
+    program: &std::path::Path,
+    startup: Duration,
+    timeout: Duration,
+) -> Result<ExifWriter, String> {
     for _ in 0..50 {
-        match ExifWriter::start_with(program.to_str().unwrap(), timeout) {
+        match ExifWriter::start_with_timeouts(program.to_str().unwrap(), startup, timeout) {
             Ok(w) => return Ok(w),
             Err(e) if e.to_string().contains("Text file busy") => {
                 std::thread::sleep(Duration::from_millis(20));
@@ -360,7 +374,9 @@ fi
     let date = dt("2024:06:01 10:00:00");
     let set = DateSet { date: Some(date) };
 
-    let mut writer = start_against_script(&shim, Duration::from_millis(1000)).unwrap();
+    let mut writer =
+        start_against_script_with(&shim, Duration::from_secs(30), Duration::from_millis(1000))
+            .unwrap();
 
     let hung_res = writer.write_dates(&path_hung, &set);
     assert!(hung_res.is_err(), "hung file must fail and be reported");
@@ -653,7 +669,9 @@ fi
     let date = dt("2024:07:01 11:00:00");
     let set = DateSet { date: Some(date) };
 
-    let mut writer = start_against_script(&shim, Duration::from_millis(500)).unwrap();
+    let mut writer =
+        start_against_script_with(&shim, Duration::from_secs(30), Duration::from_millis(500))
+            .unwrap();
 
     let crashed_res = writer.write_dates(&path_crashed, &set);
     assert!(crashed_res.is_err(), "crashed process write must fail");
@@ -670,6 +688,70 @@ fi
 
     let spawns = std::fs::read_to_string(&log).unwrap().lines().count();
     assert_eq!(spawns, 2, "writer restarted once after crash");
+}
+
+/// A restart that is slow to start, but healthy, is not cut short by the write
+/// bound. Spawn 1 hangs on its first write; spawn 2 takes well over that bound to
+/// answer its handshake, as a cold Perl does on a loaded machine.
+#[test]
+fn a_slow_restart_is_bounded_by_the_start_up_allowance_not_the_write_timeout() {
+    let f = Fixtures::new();
+    let log = f.path().join("spawns.log");
+    let shim = f.path().join("slow-restart-shim");
+    let real = real_exiftool_path();
+
+    write_script(
+        &shim,
+        &format!(
+            r#"#!/bin/sh
+log="{}"
+real="{}"
+if [ -s "$log" ]; then first=0; else first=1; fi
+echo spawn >> "$log"
+if [ "$first" = "1" ]; then
+    saw_ver=0
+    while IFS= read -r line; do
+        if [ "$line" = "-execute" ]; then
+            if [ "$saw_ver" = "1" ]; then
+                echo "{{phototools-stderr-ready}}" >&2
+                echo "12.70"
+                echo "{{ready}}"
+                saw_ver=0
+            else
+                exec sleep 60
+            fi
+        elif [ "$line" = "-ver" ]; then
+            saw_ver=1
+        fi
+    done
+else
+    sleep 1
+    exec "$real" "$@"
+fi
+"#,
+            log.display(),
+            real
+        ),
+    );
+
+    let path_hung = f.jpeg_without_exif("slow_hung.jpg", 16, 16);
+    let path_next = f.jpeg_without_exif("slow_next.jpg", 16, 16);
+    let date = dt("2024:08:01 12:00:00");
+    let set = DateSet { date: Some(date) };
+
+    let mut writer =
+        start_against_script_with(&shim, Duration::from_secs(30), Duration::from_millis(300))
+            .unwrap();
+
+    assert!(writer.write_dates(&path_hung, &set).is_err());
+    writer
+        .write_dates(&path_next, &set)
+        .expect("a restart slower than the write bound must still be allowed to start");
+    assert_eq!(read_meta(&path_next).unwrap().capture, Some(date));
+    writer.close().unwrap();
+
+    let spawns = std::fs::read_to_string(&log).unwrap().lines().count();
+    assert_eq!(spawns, 2);
 }
 
 #[test]

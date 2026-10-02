@@ -647,6 +647,12 @@ pub struct ExifWriter {
     process: Option<ActiveProcess>,
     program: String,
     timeout: Duration,
+    /// The bound on the `-ver` handshake, at the first start and at every
+    /// restart. Kept apart from `timeout` because starting Perl and loading
+    /// exiftool's modules can take seconds on a loaded machine, while a write
+    /// that has not answered in that time has hung: a caller that wants hangs
+    /// caught quickly must not thereby make a healthy restart fail.
+    startup: Duration,
     restarts: u32,
     /// Set once the writer will not start exiftool again, with the reason every
     /// later call reports. Kept as the reason rather than a flag because "the cap
@@ -831,10 +837,21 @@ impl ExifWriter {
     /// Exists so tests can point at a shim that records how many processes were
     /// spawned — the G4 guarantee is otherwise only observable from outside.
     pub fn start_with(program: &str, timeout: Duration) -> Result<Self, Error> {
+        Self::start_with_timeouts(program, timeout, timeout)
+    }
+
+    /// Start against a specific program, bounding start-up and each write
+    /// separately: a short write bound catches hangs quickly without failing a
+    /// start-up that is merely slow.
+    pub fn start_with_timeouts(
+        program: &str,
+        startup: Duration,
+        timeout: Duration,
+    ) -> Result<Self, Error> {
         let mut proc = spawn_process(program)?;
         // Handshake: prove the process is alive and framing works before any
         // caller depends on it.
-        if let Err(e) = send_and_wait(&mut proc, &["-ver".to_string()], timeout) {
+        if let Err(e) = send_and_wait(&mut proc, &["-ver".to_string()], startup) {
             cleanup_active_process(&mut proc);
             return Err(e);
         }
@@ -843,6 +860,7 @@ impl ExifWriter {
             process: Some(proc),
             program: program.to_string(),
             timeout,
+            startup,
             restarts: 0,
             dead: None,
         })
@@ -880,8 +898,9 @@ impl ExifWriter {
 
                 if self.restarts < MAX_RESTARTS {
                     self.restarts += 1;
+                    let startup = self.startup;
                     let restarted = spawn_process(&self.program).and_then(|mut new_proc| {
-                        match send_and_wait(&mut new_proc, &["-ver".to_string()], self.timeout) {
+                        match send_and_wait(&mut new_proc, &["-ver".to_string()], startup) {
                             Ok(_) => Ok(new_proc),
                             Err(handshake) => {
                                 cleanup_active_process(&mut new_proc);

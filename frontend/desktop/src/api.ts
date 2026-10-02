@@ -434,6 +434,38 @@ export class TauriApiClient implements ApiClient {
     });
   }
 
+  /** Dry run of a full recipe over photographs (ED-18); nothing is written. */
+  planBulkEdit(
+    inputs: string[],
+    source: RecipeSource,
+    outDir: string,
+    recursive?: boolean,
+  ): Promise<BulkEditPlanSummary> {
+    return invoke<BulkEditPlanSummary>('plan_bulk_edit', {
+      inputs,
+      source,
+      outDir,
+      recursive: recursive ?? false,
+    });
+  }
+
+  /** Runs a reviewed batch; refused unless the recipe still hashes to what was reviewed. */
+  applyBulkEdit(
+    inputs: string[],
+    source: RecipeSource,
+    outDir: string,
+    reviewedRecipeSha256: string,
+    recursive?: boolean,
+  ): Promise<string> {
+    return invoke<string>('apply_bulk_edit', {
+      inputs,
+      source,
+      outDir,
+      reviewedRecipeSha256,
+      recursive: recursive ?? false,
+    });
+  }
+
   cancelJob(id: string): Promise<boolean> {
     return invoke<boolean>('cancel_job', { id });
   }
@@ -721,6 +753,19 @@ export interface ExportResult {
 }
 
 /** Plan summary for Bulk LUT tool (ED-6). */
+/** Where a batch's recipe comes from (ED-18). */
+export type RecipeSource =
+  | { kind: 'Preset'; name: string }
+  | { kind: 'Recipe'; recipe: AdjustmentRecipe };
+
+export interface BulkEditPlanSummary {
+  actions_count: number;
+  skipped: Array<{ file: string; reason: string }>;
+  /** The lock: a run is refused unless the recipe still hashes to this. */
+  recipe_sha256: string;
+  sample_frames: string[];
+}
+
 export interface BulkLutPlanSummary {
   actions_count: number;
   skipped: Array<{ file: string; reason: string }>;

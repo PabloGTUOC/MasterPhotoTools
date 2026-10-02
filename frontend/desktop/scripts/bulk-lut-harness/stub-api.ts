@@ -26,6 +26,13 @@ export interface StubBulkLutState {
   failSamplePreviewPath: string | null;
   cancelledJobIds: string[];
   activeJobListeners: Array<(event: JobEvent) => void>;
+  /** ED-18: preset batches. */
+  presets: Record<string, Partial<AdjustmentRecipe>>;
+  lastPlanEditSource: unknown;
+  lastPlanEditSha: string | null;
+  lastApplyEdit: { source: unknown; reviewedRecipeSha256: string } | null;
+  renderedRecipes: Array<Partial<AdjustmentRecipe>>;
+  failNextApplyWithRecipeChanged: boolean;
 }
 
 const stubState: StubBulkLutState = {
@@ -40,7 +47,23 @@ const stubState: StubBulkLutState = {
   failSamplePreviewPath: null,
   cancelledJobIds: [],
   activeJobListeners: [],
+  presets: {
+    'Warm Film': { exposure: 0.4, temperature: 12 },
+    'Cool Matte': { exposure: -0.2, temperature: -8 },
+  },
+  lastPlanEditSource: null,
+  lastPlanEditSha: null,
+  lastApplyEdit: null,
+  renderedRecipes: [],
+  failNextApplyWithRecipeChanged: false,
 };
+
+/** A stand-in for core's recipe hash: distinct per preset, stable for the same one. */
+function stubRecipeSha(name: string): string {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return h.toString(16).padStart(8, '0').repeat(8);
+}
 
 declare global {
   interface Window {
@@ -135,6 +158,53 @@ export class StubDesktopApiClient {
     };
   }
 
+  async listPresets(): Promise<{ presets: { name: string }[]; errors: { name: string; error: string }[] }> {
+    return { presets: Object.keys(stubState.presets).sort().map((name) => ({ name })), errors: [] };
+  }
+
+  async loadPreset(name: string): Promise<Partial<AdjustmentRecipe>> {
+    const r = stubState.presets[name];
+    if (!r) throw new Error(`No preset called ${name}.`);
+    return { ...r };
+  }
+
+  async planBulkEdit(
+    inputs: string[],
+    source: { kind: string; name?: string },
+    outDir: string,
+    recursive?: boolean,
+  ): Promise<{ actions_count: number; skipped: { file: string; reason: string }[]; recipe_sha256: string; sample_frames: string[] }> {
+    stubState.lastPlanEditSource = source;
+    stubState.lastPlanEditSha = stubRecipeSha(source.name ?? '');
+    return {
+      actions_count: 4,
+      skipped: [{ file: '/Volumes/Photos/.hidden.jpg', reason: 'Hidden file' }],
+      recipe_sha256: stubState.lastPlanEditSha,
+      sample_frames: [
+        '/Volumes/Photos/frame1.jpg',
+        '/Volumes/Photos/frame2.jpg',
+        '/Volumes/Photos/frame3.jpg',
+      ],
+    };
+  }
+
+  async applyBulkEdit(
+    inputs: string[],
+    source: unknown,
+    outDir: string,
+    reviewedRecipeSha256: string,
+    recursive?: boolean,
+  ): Promise<string> {
+    stubState.lastApplyEdit = { source, reviewedRecipeSha256 };
+    if (stubState.failNextApplyWithRecipeChanged) {
+      stubState.failNextApplyWithRecipeChanged = false;
+      throw new Error(
+        'The recipe changed since the dry run (the preset was edited or replaced); run another dry run',
+      );
+    }
+    return `job_edit_${Date.now()}`;
+  }
+
   async openPreview(path: string): Promise<OpenPreviewResult> {
     if (stubState.failSamplePreviewPath && path.includes(stubState.failSamplePreviewPath)) {
       throw new Error(`Corrupted preview for ${path}`);
@@ -160,6 +230,7 @@ export class StubDesktopApiClient {
     recipe: AdjustmentRecipe,
     stage: PreviewStage = 'Settle',
   ): Promise<{ width: number; height: number; pixels: Uint8ClampedArray; orientation: number }> {
+    stubState.renderedRecipes.push({ ...recipe });
     // Simulate render timing
     await new Promise((r) => setTimeout(r, 15));
     return {

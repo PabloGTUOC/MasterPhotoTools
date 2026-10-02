@@ -33,7 +33,7 @@ for (const link of sharedToolLinks) {
   rawLinks.push({ to: link.to, label: link.label });
   if (link.to === '/split') {
     rawLinks.push({ to: '/edit', label: 'Edit' });
-    rawLinks.push({ to: '/bulk-lut', label: 'Bulk LUT' });
+    rawLinks.push({ to: '/bulk-lut', label: 'Batch Grade' });
   }
 }
 

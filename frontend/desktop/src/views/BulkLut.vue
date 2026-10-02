@@ -1,6 +1,12 @@
 <script setup lang="ts">
 /**
- * Bulk LUT grading view (ED-8).
+ * Batch Grade view: a 3D LUT (ED-8) or a saved preset (ED-18) across folders or files.
+ *
+ * - Source: "3D LUT" applies one LUT at a chosen strength, written as `_lut`; "Preset"
+ *   applies a whole saved look, written as `_edit`. Presets never carry a crop, so a
+ *   batch never reframes anything (ED-17).
+ * - A preset run is locked to the recipe hash the dry run reviewed; if the preset is
+ *   replaced after the review, core refuses the run and the refusal is shown here.
  *
  * Dedicated workflow for applying a 3D LUT across folders or files:
  * - Inputs: Source photographs (folders/files via PathListField), recursive toggle,
@@ -16,6 +22,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import type { BrowserEntry } from '@phototools/shared';
 import type {
+  AdjustmentRecipe,
   BulkLutPlanSummary,
   LutLibraryList,
 } from '@host/api';
@@ -35,19 +42,31 @@ interface SampleFramePreview {
   error?: string;
 }
 
+type Source = 'lut' | 'preset';
+
 interface ReviewedSettings {
+  source: Source;
   inputs: string;
   recursive: boolean;
   lutName: string;
   lutSha256: string;
   intensity: number;
+  presetName: string;
+  /** The preset's recipe hash the dry run reported, passed back verbatim to the run. */
+  recipeSha256: string;
   outDir: string;
 }
+
+/** What the review shows, whichever source planned it. */
+type ReviewedPlan = Pick<BulkLutPlanSummary, 'actions_count' | 'skipped' | 'sample_frames'>;
 
 const { roots, failure: rootsError } = useRoots();
 const listRoots = (p: string): Promise<BrowserEntry[]> => desktop.list(p);
 
 // Form state
+const source = ref<Source>('lut');
+const selectedPreset = ref('');
+const presetNames = ref<string[]>([]);
 const inputsText = ref('');
 const recursive = ref(false);
 const selectedLut = ref<LutItem | null>(null);
@@ -65,7 +84,7 @@ const failure = ref<string | null>(null);
 
 // Reviewed dry-run state
 const reviewed = ref<ReviewedSettings | null>(null);
-const reviewedPlan = ref<BulkLutPlanSummary | null>(null);
+const reviewedPlan = ref<ReviewedPlan | null>(null);
 const samplePreviews = ref<SampleFramePreview[]>([]);
 const sampleCanvasRefs = new Map<number, HTMLCanvasElement>();
 
@@ -81,21 +100,30 @@ const parsedInputs = computed(() =>
 
 const settingsChanged = computed(() => {
   if (!reviewed.value) return false;
-  return (
-    reviewed.value.inputs !== inputsText.value.trim() ||
-    reviewed.value.recursive !== recursive.value ||
-    reviewed.value.lutName !== (selectedLut.value?.name ?? '') ||
-    reviewed.value.intensity !== intensity.value ||
-    reviewed.value.outDir !== outDir.value.trim()
-  );
+  const r = reviewed.value;
+  if (
+    r.source !== source.value ||
+    r.inputs !== inputsText.value.trim() ||
+    r.recursive !== recursive.value ||
+    r.outDir !== outDir.value.trim()
+  ) {
+    return true;
+  }
+  return source.value === 'lut'
+    ? r.lutName !== (selectedLut.value?.name ?? '') || r.intensity !== intensity.value
+    : r.presetName !== selectedPreset.value;
 });
+
+const hasSource = computed(() =>
+  source.value === 'lut' ? selectedLut.value !== null : selectedPreset.value !== '',
+);
 
 const canPlan = computed(() => {
   return (
     !isBusy.value &&
     !isGrading.value &&
     parsedInputs.value.length > 0 &&
-    selectedLut.value !== null &&
+    hasSource.value &&
     outDir.value.trim().length > 0
   );
 });
@@ -107,7 +135,7 @@ const canRun = computed(() => {
     !isBusy.value &&
     !isGrading.value &&
     (reviewedPlan.value?.actions_count ?? 0) > 0 &&
-    selectedLut.value !== null &&
+    hasSource.value &&
     outDir.value.trim().length > 0
   );
 });
@@ -132,8 +160,8 @@ const lockReasons = computed(() => {
   if (!parsedInputs.value.length) {
     reasons.push('No input files or folders selected.');
   }
-  if (!selectedLut.value) {
-    reasons.push('No 3D LUT selected.');
+  if (!hasSource.value) {
+    reasons.push(source.value === 'lut' ? 'No 3D LUT selected.' : 'No preset selected.');
   }
   if (!outDir.value.trim()) {
     reasons.push('No destination folder selected.');
@@ -157,6 +185,21 @@ async function refreshLuts() {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     failure.value = `Failed to list LUTs: ${msg}`;
+  }
+}
+
+async function refreshPresets() {
+  try {
+    const list = await desktop.listPresets();
+    presetNames.value = list.presets.map((p) => p.name);
+    if (list.errors.length) {
+      failure.value = `Some presets could not be read: ${list.errors
+        .map((e) => `${e.name} (${e.error})`)
+        .join('; ')}`;
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    failure.value = `Failed to list presets: ${msg}`;
   }
 }
 
@@ -219,47 +262,86 @@ watch(
 );
 
 async function runDryRun() {
-  if (!canPlan.value || !selectedLut.value) return;
+  if (!canPlan.value) return;
   isBusy.value = true;
   failure.value = null;
   samplePreviews.value = [];
   sampleCanvasRefs.clear();
 
   try {
-    const plan = await desktop.planBulkLut(
-      parsedInputs.value,
-      selectedLut.value.name,
-      intensity.value,
-      outDir.value.trim(),
-      recursive.value,
-    );
+    // The recipe each sample is rendered with: the LUT alone, or the whole preset.
+    let previewRecipe: Partial<AdjustmentRecipe> | null = null;
+    let previewError: string | null = null;
 
-    reviewedPlan.value = plan;
-    reviewed.value = {
-      inputs: inputsText.value.trim(),
-      recursive: recursive.value,
-      lutName: selectedLut.value.name,
-      lutSha256: plan.lut_sha256,
-      intensity: intensity.value,
-      outDir: outDir.value.trim(),
-    };
+    if (source.value === 'lut') {
+      if (!selectedLut.value) return;
+      const plan = await desktop.planBulkLut(
+        parsedInputs.value,
+        selectedLut.value.name,
+        intensity.value,
+        outDir.value.trim(),
+        recursive.value,
+      );
+      reviewedPlan.value = plan;
+      reviewed.value = {
+        source: 'lut',
+        inputs: inputsText.value.trim(),
+        recursive: recursive.value,
+        lutName: selectedLut.value.name,
+        lutSha256: plan.lut_sha256,
+        intensity: intensity.value,
+        presetName: '',
+        recipeSha256: '',
+        outDir: outDir.value.trim(),
+      };
+      previewRecipe = {
+        lut: { name: selectedLut.value.name, sha256: plan.lut_sha256 },
+        lut_intensity: intensity.value,
+      };
+    } else {
+      const name = selectedPreset.value;
+      const plan = await desktop.planBulkEdit(
+        parsedInputs.value,
+        { kind: 'Preset', name },
+        outDir.value.trim(),
+        recursive.value,
+      );
+      reviewedPlan.value = plan;
+      reviewed.value = {
+        source: 'preset',
+        inputs: inputsText.value.trim(),
+        recursive: recursive.value,
+        lutName: '',
+        lutSha256: '',
+        intensity: 1,
+        presetName: name,
+        recipeSha256: plan.recipe_sha256,
+        outDir: outDir.value.trim(),
+      };
+      try {
+        previewRecipe = await desktop.loadPreset(name);
+      } catch (err: unknown) {
+        previewError = err instanceof Error ? err.message : String(err);
+      }
+    }
 
     // Sequential preview session rendering: at most one open session at a time
     isGeneratingPreviews.value = true;
-    for (const framePath of plan.sample_frames) {
+    for (const framePath of reviewedPlan.value?.sample_frames ?? []) {
+      if (!previewRecipe) {
+        samplePreviews.value.push({
+          path: framePath,
+          error: `Couldn't preview ${fileName(framePath)}: ${previewError}`,
+        });
+        continue;
+      }
       let sessionId: string | null = null;
       try {
         const openRes = await desktop.openPreview(framePath);
         sessionId = openRes.session_id;
         const rendered = await desktop.renderPreview(
           sessionId,
-          {
-            lut: {
-              name: selectedLut.value.name,
-              sha256: plan.lut_sha256,
-            },
-            lut_intensity: intensity.value,
-          },
+          previewRecipe as AdjustmentRecipe,
           'Settle',
         );
         samplePreviews.value.push({
@@ -299,14 +381,25 @@ async function runBulkLut() {
   jobId.value = null;
 
   try {
-    const id = await desktop.applyBulkLut(
-      parsedInputs.value,
-      reviewed.value.lutName,
-      reviewed.value.intensity,
-      reviewed.value.outDir,
-      reviewed.value.lutSha256, // Invariant: reviewed SHA-256 passed verbatim
-      reviewed.value.recursive,
-    );
+    const r = reviewed.value;
+    // Invariant: the reviewed hash is passed verbatim, never recomputed here.
+    const id =
+      r.source === 'lut'
+        ? await desktop.applyBulkLut(
+            parsedInputs.value,
+            r.lutName,
+            r.intensity,
+            r.outDir,
+            r.lutSha256,
+            r.recursive,
+          )
+        : await desktop.applyBulkEdit(
+            parsedInputs.value,
+            { kind: 'Preset', name: r.presetName },
+            r.outDir,
+            r.recipeSha256,
+            r.recursive,
+          );
     jobId.value = id;
   } catch (err: unknown) {
     failure.value = err instanceof Error ? err.message : String(err);
@@ -338,14 +431,17 @@ function fileName(p: string): string {
 
 onMounted(() => {
   refreshLuts();
+  refreshPresets();
 });
 </script>
 
 <template>
   <div class="bulk-lut-page">
     <header class="page-head">
-      <h1>Bulk LUT</h1>
-      <p class="muted">Apply a 3D LUT across photographs into a destination folder.</p>
+      <h1>Batch Grade</h1>
+      <p class="muted">
+        Apply a 3D LUT or a saved preset across photographs into a destination folder.
+      </p>
     </header>
 
     <div class="form-container">
@@ -371,7 +467,55 @@ onMounted(() => {
         </label>
       </div>
 
-      <div class="lut-section">
+      <div class="source-section">
+        <span class="source-label" id="batch-source-label">Grade with</span>
+        <div class="source-toggle" role="group" aria-labelledby="batch-source-label">
+          <button
+            type="button"
+            class="source-toggle__btn"
+            :class="{ active: source === 'lut' }"
+            :aria-pressed="source === 'lut'"
+            :disabled="isGrading || isBusy"
+            data-testid="source-lut"
+            @click="source = 'lut'"
+          >
+            3D LUT
+          </button>
+          <button
+            type="button"
+            class="source-toggle__btn"
+            :class="{ active: source === 'preset' }"
+            :aria-pressed="source === 'preset'"
+            :disabled="isGrading || isBusy"
+            data-testid="source-preset"
+            @click="source = 'preset'"
+          >
+            Preset
+          </button>
+        </div>
+      </div>
+
+      <div v-if="source === 'preset'" class="preset-section">
+        <label class="source-label" for="batch-preset">Preset</label>
+        <select
+          id="batch-preset"
+          v-model="selectedPreset"
+          class="preset-select"
+          data-testid="batch-preset-select"
+          :disabled="isGrading || isBusy || presetNames.length === 0"
+        >
+          <option value="" disabled>
+            {{ presetNames.length ? 'Choose a preset…' : 'No presets yet: save one in Edit' }}
+          </option>
+          <option v-for="p in presetNames" :key="p" :value="p">{{ p }}</option>
+        </select>
+        <p class="muted preset-note">
+          The whole look is applied: tone, colour, curves, grading, effects and any LUT the
+          preset uses. Crop and rotation are never part of a preset.
+        </p>
+      </div>
+
+      <div v-else class="lut-section">
         <LutPicker
           :model-value="selectedLut"
           :intensity="intensity"
@@ -450,10 +594,16 @@ onMounted(() => {
         <h2>Review summary</h2>
         <span class="badge">{{ reviewedPlan.actions_count }} to grade</span>
       </header>
+      <p v-if="reviewed?.source === 'preset'" class="rule-line" data-testid="review-preset">
+        Preset: <strong>{{ reviewed.presetName }}</strong>. If it is changed before the run, the run
+        is refused and asks for another dry run.
+      </p>
 
       <div class="rule-box">
         <p class="rule-line">
-          Output naming: <code>&lt;filename&gt;_lut.&lt;ext&gt;</code> in destination folder.
+          Output naming:
+          <code>&lt;filename&gt;{{ reviewed?.source === 'preset' ? '_edit' : '_lut' }}.&lt;ext&gt;</code>
+          in destination folder.
         </p>
         <p class="rule-line muted">
           Existing files are never overwritten. Metadata and EXIF orientation are preserved on all outputs.
@@ -553,11 +703,53 @@ onMounted(() => {
 }
 
 .inputs-section,
+.source-section,
+.preset-section,
 .lut-section,
 .destination-section,
 .actions-section {
   display: grid;
   gap: var(--space-3);
+}
+
+.source-label {
+  font-family: var(--font-label);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.source-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  max-width: 360px;
+  gap: var(--space-1);
+}
+
+.source-toggle__btn {
+  min-height: 40px;
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border: var(--border-hair);
+  border-radius: var(--radius-none);
+}
+
+.source-toggle__btn.active {
+  color: var(--accent);
+  border: var(--border-active);
+}
+
+.preset-select {
+  min-height: 40px;
+  font-size: 16px;
+  max-width: 480px;
+}
+
+.preset-note {
+  margin: 0;
+  font-size: 13px;
 }
 
 .button-row {
@@ -697,7 +889,7 @@ onMounted(() => {
 .sample-canvas-surround {
   width: 100%;
   aspect-ratio: 3 / 2;
-  background: #767676; /* Neutral 18% grey surround */
+  background: var(--canvas-surround);
   display: flex;
   align-items: center;
   justify-content: center;

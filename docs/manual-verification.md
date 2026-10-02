@@ -906,7 +906,7 @@ run locally and need no server, but MV-20.7 needs a card and a mounted share.
 
 - [ ] **MV-20.5 — Bulk LUT folder run.**
       Grading an entire folder must operate reliably, non-destructively, and with full metadata retention.
-      **Run:** run the Bulk LUT tool over a folder of 50 images; cancel halfway through, then re-run to completion.
+      **Run:** in the Batch Grade tab with **3D LUT** chosen (the tab was called Bulk LUT), run over a folder of 50 images; cancel halfway through, then re-run to completion.
       **Pass:** cancellation stops cleanly without corrupted files; completed run writes all 50 files with `_lut` suffix; no originals are overwritten.
       **Result:**
 
@@ -926,4 +926,15 @@ run locally and need no server, but MV-20.7 needs a card and a mounted share.
       Real Tauri IPC cannot be driven headless, so end-to-end responsiveness with real IPC and a full-resolution 36 MP frame must be verified interactively.
       **Run:** open a 36 MP RAW/JPEG in the desktop Editor (release build from `cargo tauri build`, not debug from `cargo tauri dev`); rapidly scrub an adjustment slider (Exposure or Highlights) back and forth across its full range for 5 seconds, then release the mouse.
       **Pass:** the preview updates fluidly during dragging without perceptible stutter or event backlog (sustaining ≥ 20 fps interactive response), and settles cleanly to the sharp 1440p frame within ~120 ms of mouse release.
+      **Result:**
+
+- [ ] **MV-20.9 — Histogram, clipping warnings, presets and copy/paste on real photographs (ED-15, ED-17).**
+      The harness checks these against synthetic frames; whether they help with real photographs is a judgement only a person can make.
+      **Run:** open a photograph with a bright sky. Raise Exposure until the sky blows, and turn on Highlight clipping, then Shadow clipping. Save the settings as a preset, open another photograph from the same shoot, crop it, apply the preset, then Undo. Copy settings with ⌘C, open a third photograph, paste with ⌘V.
+      **Pass:** the histogram moves with the slider and stays in view while the panel scrolls; the red overlay covers exactly the sky that blew, and the percentages under the histogram agree with what is marked; the overlay never appears in an export. The preset and the paste change the look but not the crop; Undo restores the previous settings; ⌘C and ⌘V in the path field still copy and paste text.
+      **Result:**
+
+- [ ] **MV-20.10 — Batch Grade with a preset over a real folder (ED-18).**
+      **Run:** save a preset that uses a LUT, a curve and grain. In Batch Grade choose **Preset**, dry run over a folder of 30 photographs, then run. Then change the preset in Edit (Save as preset, Replace) and press Run again without a new dry run.
+      **Pass:** each output is `<name>_edit.<ext>`, looks like the same photograph exported from Edit with that preset, keeps its capture date, camera and GPS (`exiftool -s`), and is not cropped. The second run is refused with a message asking for another dry run, and writes nothing.
       **Result:**

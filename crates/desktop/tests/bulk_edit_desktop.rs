@@ -176,8 +176,8 @@ fn batch_apply_with_stale_reviewed_hash_is_refused() {
     )
     .unwrap();
 
-    // Apply with the old reviewed hash — spawns a job; we poll for failure.
-    let job_id = phototools_desktop::commands::bulk_edit::apply_bulk_edit_impl(
+    // Apply with the old reviewed hash: refused with an error, so no job id exists to follow.
+    let err = phototools_desktop::commands::bulk_edit::apply_bulk_edit_impl(
         &state,
         vec![img.to_string_lossy().to_string()],
         source,
@@ -185,31 +185,12 @@ fn batch_apply_with_stale_reviewed_hash_is_refused() {
         reviewed_hash,
         false,
     )
-    .unwrap();
-
-    let mut finished_job = None;
-    for _ in 0..200 {
-        if let Some(job) = state.jobs.get(&job_id).unwrap() {
-            if job.status.is_terminal() {
-                finished_job = Some(job);
-                break;
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-
-    let job = finished_job.expect("job must reach terminal status");
-    assert!(
-        matches!(job.status, phototools_core::jobs::JobStatus::Failed),
-        "expected job to fail with stale hash; status: {:?}, error: {:?}",
-        job.status,
-        job.error
-    );
-    let err = job.error.as_deref().unwrap_or("");
+    .unwrap_err();
     assert!(
         err.contains("recipe changed since the dry run"),
         "expected stale-hash refusal, got: {err}"
     );
+    assert_eq!(std::fs::read_dir(&out_dir).unwrap().count(), 0);
 }
 
 #[test]

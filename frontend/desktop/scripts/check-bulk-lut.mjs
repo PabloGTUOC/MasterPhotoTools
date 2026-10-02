@@ -333,6 +333,85 @@ try {
   }
 
   // -------------------------------------------------------------------------
+  // 6b. Batch from a preset (ED-18): same lock discipline, different source
+  // -------------------------------------------------------------------------
+  console.log('Testing a batch graded with a preset (ED-18)...');
+  await page.waitForTimeout(600); // let the cancelled job settle
+  const waitPlanned = () =>
+    page.waitForFunction(() => {
+      const btn = document.querySelector('[data-testid="dry-run-button"]');
+      return btn && !btn.textContent.includes('Planning');
+    }, { timeout: 5000 });
+
+  await page.locator('[data-testid="source-preset"]').click();
+  await page.waitForTimeout(50);
+  const presetGate = await gateExpl.innerText();
+  if (!(await runBtn.isDisabled()) || !presetGate.includes('No preset selected.') || !presetGate.includes('Settings have changed since the dry run')) {
+    failures.push(`Switching to Preset must lock the run and say why; gate: "${presetGate}"`);
+  }
+  if (await page.locator('[data-testid="batch-preset-select"]').count() !== 1) {
+    failures.push('Preset source must show the preset picker');
+  }
+
+  const rendersBefore = await page.evaluate(() => window.__BULK_LUT_STUB__.renderedRecipes.length);
+  await page.selectOption('[data-testid="batch-preset-select"]', 'Warm Film');
+  await dryRunBtn.click();
+  await waitPlanned();
+  await page.waitForTimeout(100);
+
+  const presetReview = await page.evaluate((before) => ({
+    planSource: window.__BULK_LUT_STUB__.lastPlanEditSource,
+    rendered: window.__BULK_LUT_STUB__.renderedRecipes.slice(before),
+    reviewText: document.querySelector('[data-testid="review-preset"]')?.textContent ?? '',
+    naming: document.querySelector('.rule-box code')?.textContent ?? '',
+    frames: document.querySelectorAll('[data-testid="sample-frame"]').length,
+  }), rendersBefore);
+  if (JSON.stringify(presetReview.planSource) !== JSON.stringify({ kind: 'Preset', name: 'Warm Film' })) {
+    failures.push(`Dry run should plan the preset by name; sent ${JSON.stringify(presetReview.planSource)}`);
+  }
+  if (presetReview.frames !== 3 || presetReview.rendered.length !== 3 || presetReview.rendered.some((r) => r.exposure !== 0.4 || r.temperature !== 12)) {
+    failures.push(`Sample frames should be rendered with the whole preset; got ${JSON.stringify(presetReview)}`);
+  }
+  if (!presetReview.reviewText.includes('Warm Film') || !presetReview.naming.includes('_edit')) {
+    failures.push(`Review should name the preset and the _edit suffix; got ${JSON.stringify(presetReview)}`);
+  }
+  if (await runBtn.isDisabled()) failures.push('Run must unlock after a preset dry run');
+
+  // Choosing another preset locks the run again.
+  await page.selectOption('[data-testid="batch-preset-select"]', 'Cool Matte');
+  await page.waitForTimeout(50);
+  if (!(await runBtn.isDisabled())) failures.push('Changing the preset after the dry run must lock the run');
+  await page.selectOption('[data-testid="batch-preset-select"]', 'Warm Film');
+  await page.waitForTimeout(50);
+
+  // A preset replaced after the review: core's refusal is shown verbatim.
+  await page.evaluate(() => {
+    window.__BULK_LUT_STUB__.failNextApplyWithRecipeChanged = true;
+  });
+  await runBtn.click();
+  await page.waitForTimeout(150);
+  const staleText = await page.locator('[data-testid="refusal-message"]').innerText();
+  if (!staleText.includes('The recipe changed since the dry run (the preset was edited or replaced); run another dry run')) {
+    failures.push(`Expected the stale-preset refusal verbatim, got "${staleText}"`);
+  }
+
+  await runBtn.click();
+  await page.waitForTimeout(150);
+  const applied = await page.evaluate(() => window.__BULK_LUT_STUB__.lastApplyEdit);
+  const plannedSha = await page.evaluate(() => window.__BULK_LUT_STUB__.lastPlanEditSha);
+  if (
+    !applied ||
+    JSON.stringify(applied.source) !== JSON.stringify({ kind: 'Preset', name: 'Warm Film' }) ||
+    applied.reviewedRecipeSha256 !== plannedSha
+  ) {
+    failures.push(`Run should send the reviewed preset and its recipe hash; sent ${JSON.stringify(applied)}`);
+  } else {
+    console.log('  Preset batch: plans by name, previews the whole look, locks on change, sends the reviewed hash, shows refusals.');
+  }
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: join(OUT, 'batch-preset.png'), fullPage: true });
+
+  // -------------------------------------------------------------------------
   // 7. Interactive touch targets >= 40px
   // -------------------------------------------------------------------------
   console.log('Auditing touch target heights (>= 40px)...');

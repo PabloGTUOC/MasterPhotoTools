@@ -1,6 +1,6 @@
 # Editing — development plan
 
-> **Round 1 built (ED-1–ED-8). Round 2: ED-9–ED-17 built; the core half of ED-18 built, its screen to come.**
+> **Round 1 built (ED-1–ED-8). Round 2 built (ED-9–ED-18); MV-20 awaits a Mac.**
 > Where the Round 1 build diverged from this plan the text has been corrected in place and
 > the rationale recorded in [`docs/phase-reports/edit.md`](phase-reports/edit.md).
 > Round 2 specifies advanced photographic adjustments, tone curves, 8-band HSL,
@@ -888,6 +888,19 @@ verification case. Every commit can be launched, tested, and visually evaluated.
   - `bulk_preset_never_overwrites_existing_files`
   - `bulk_preset_preserves_capture_date_and_gps_on_all_outputs`
   - `check:bulk-lut`: batch preset dry run, recipe invalidation, cancellation, and progress reporting verified in headless Chromium.
+- **As built** (where it departs from the above, and why):
+  - `BulkLut.vue` keeps its file and route and became the **Batch Grade** tab: a "Grade with" switch
+    between **3D LUT** (unchanged, `_lut`) and **Preset** (a saved preset by name, `_edit`). The
+    batch source is a preset, never a recipe typed in place: a preset is what the person reviewed
+    and named in Edit, and it carries no crop (ED-17), so a batch cannot reframe a folder.
+  - Sample frames are rendered with the **whole** preset, so the review shows the look that will be
+    written rather than its LUT alone.
+  - `apply_bulk_edit` now refuses a stale review **before** starting a job, as `apply_bulk_lut`
+    always has: the refusal appears beside the Run button with what to do, where a failed job only
+    says it failed. The job still checks again, since the preset can change in between. The desktop
+    test `batch_apply_with_stale_reviewed_hash_is_refused` asserts the earlier refusal and that
+    nothing is written.
+  - Manual checks on real files: MV-20.9 (ED-15, ED-17) and MV-20.10 (this step).
 
 ---
 

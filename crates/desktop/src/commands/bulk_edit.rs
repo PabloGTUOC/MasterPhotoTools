@@ -111,6 +111,19 @@ pub fn apply_bulk_edit_impl(
     let recipe = recipe_from_source(&config.presets_dir(), &source)?;
     let lut_dir = config.lut_dir();
 
+    // Refuse a stale review here, as `apply_bulk_lut` does, rather than starting a
+    // job that fails at once: a refusal the person sees beside the Run button says
+    // what to do, and a failed job in the progress list only says that it failed.
+    // The job checks again, since the preset can change between here and there.
+    let current = phototools_core::tools::bulk_edit::recipe_sha256(&recipe);
+    if current != reviewed_recipe_sha256 {
+        return Err(
+            "The recipe changed since the dry run (the preset was edited or replaced); \
+             run another dry run"
+                .into(),
+        );
+    }
+
     let total = resolved_inputs.len() as u64;
     let mut params = BulkEditParams::new(resolved_inputs, recipe, lut_dir, resolved_out);
     params.recursive = recursive;

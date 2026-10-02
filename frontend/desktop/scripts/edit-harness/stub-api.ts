@@ -23,6 +23,8 @@ export interface StubState {
   orientation: number;
   readOnly: boolean;
   lastSavedRecipe: AdjustmentRecipe | null;
+  /** 'clipping' renders black and white bands either side of the grey, for ED-15. */
+  pattern: 'grey' | 'clipping';
 }
 
 const stubState: StubState = {
@@ -32,7 +34,65 @@ const stubState: StubState = {
   orientation: 1,
   readOnly: false,
   lastSavedRecipe: null,
+  pattern: 'grey',
 };
+
+interface StubHistogram {
+  red: Uint32Array;
+  green: Uint32Array;
+  blue: Uint32Array;
+  luminance: Uint32Array;
+  pixels: number;
+  highlightClipped: number;
+  shadowClipped: number;
+}
+
+/** The same counts `core::media::histogram` makes, including its integer Rec. 709 luma. */
+function countHistogram(buf: Uint8ClampedArray, pixels: number): StubHistogram {
+  const h: StubHistogram = {
+    red: new Uint32Array(256),
+    green: new Uint32Array(256),
+    blue: new Uint32Array(256),
+    luminance: new Uint32Array(256),
+    pixels,
+    highlightClipped: 0,
+    shadowClipped: 0,
+  };
+  for (let i = 0; i < pixels * 4; i += 4) {
+    const r = buf[i];
+    const g = buf[i + 1];
+    const b = buf[i + 2];
+    h.red[r] += 1;
+    h.green[g] += 1;
+    h.blue[b] += 1;
+    h.luminance[Math.floor((2126 * r + 7152 * g + 722 * b + 5000) / 10000)] += 1;
+    if (r === 255 || g === 255 || b === 255) h.highlightClipped += 1;
+    if (r === 0 || g === 0 || b === 0) h.shadowClipped += 1;
+  }
+  return h;
+}
+
+/**
+ * Counts for a uniform frame of `fill` with the two marker pixels, worked out
+ * rather than counted: counting 4.4 million pixels in the stub would add tens of
+ * milliseconds to every settle frame the timing checks measure.
+ */
+function uniformHistogram(pixels: number, fill: number, markers: number[][]): StubHistogram {
+  const one = new Uint8ClampedArray(4);
+  const h = countHistogram(one, 0);
+  h.pixels = pixels;
+  const add = (r: number, g: number, b: number, n: number) => {
+    h.red[r] += n;
+    h.green[g] += n;
+    h.blue[b] += n;
+    h.luminance[Math.floor((2126 * r + 7152 * g + 722 * b + 5000) / 10000)] += n;
+    if (r === 255 || g === 255 || b === 255) h.highlightClipped += n;
+    if (r === 0 || g === 0 || b === 0) h.shadowClipped += n;
+  };
+  add(fill, fill, fill, pixels - markers.length);
+  for (const [r, g, b] of markers) add(r, g, b, 1);
+  return h;
+}
 
 // Expose state globally for test assertions
 declare global {
@@ -181,8 +241,40 @@ export class StubDesktopApiClient {
     buf[6] = 128;
     buf[7] = 255;
 
+    let histogram: StubHistogram;
+    if (stubState.pattern === 'clipping') {
+      // Left quarter black, right quarter white, markers kept.
+      const q = Math.floor(width / 4);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (y === 0 && x < 2) continue;
+          const v = x < q ? 0 : x >= width - q ? 255 : 118;
+          const i = (y * width + x) * 4;
+          buf[i] = v;
+          buf[i + 1] = v;
+          buf[i + 2] = v;
+        }
+      }
+      histogram = countHistogram(buf, pixelCount);
+    } else {
+      if (buf === settleBuffer || buf === dragBuffer) {
+        // Undo a clipping pattern a previous frame left in a shared buffer.
+        if (buf[(pixelCount - 1) * 4] !== 118) {
+          for (let i = 8; i < buf.length; i += 4) {
+            buf[i] = 118;
+            buf[i + 1] = 118;
+            buf[i + 2] = 118;
+          }
+        }
+      }
+      histogram = uniformHistogram(pixelCount, buf === settleBuffer || buf === dragBuffer ? 118 : 128, [
+        [255, 0, 0],
+        [exposureVal, 128, 128],
+      ]);
+    }
+
     const deliveredOrientation = hasGeom ? 1 : stubState.orientation;
-    return { width, height, pixels: buf, orientation: deliveredOrientation };
+    return { width, height, pixels: buf, orientation: deliveredOrientation, histogram };
   }
 
   async closePreview(_sessionId: string): Promise<void> {}

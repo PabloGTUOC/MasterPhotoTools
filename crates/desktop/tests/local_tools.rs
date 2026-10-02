@@ -457,9 +457,14 @@ fn render_preview_returns_width_height_and_rgba_of_that_size() {
     assert_eq!(orientation, 1);
     assert_eq!(
         bytes.len(),
-        12 + (60 * 40 * 4),
-        "payload must contain 12-byte header and exactly width*height*4 RGBA bytes"
+        phototools_core::media::edit::PREVIEW_FRAME_HEADER_LEN + (60 * 40 * 4),
+        "payload must contain the header and exactly width*height*4 RGBA bytes"
     );
+    // A black frame: every pixel is counted, and every one is shadow-clipped.
+    let pixels = u32::from_be_bytes(bytes[12..16].try_into().unwrap());
+    let shadow_clipped = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
+    assert_eq!(pixels, 60 * 40);
+    assert_eq!(shadow_clipped, 60 * 40);
 }
 
 #[test]

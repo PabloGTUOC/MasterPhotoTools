@@ -1257,6 +1257,206 @@ try {
     console.log('  Look section reset successfully reset all glow, halation and tone mapper controls to identity.');
   }
 
+  // 9j. Histogram and clipping warnings (ED-15)
+  console.log('Asserting histogram and clipping warnings (ED-15)...');
+  const renderSettled = async () => {
+    // Before/After issues a settle render each way; the second shows the current recipe.
+    const btn = page.locator('button[data-testid="before-after-btn"]');
+    await btn.dispatchEvent('pointerdown');
+    await btn.dispatchEvent('pointerup');
+    await page.waitForTimeout(250);
+  };
+  await renderSettled();
+
+  const plotChannels = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('[data-testid="histogram-plot"] path')].map((p) => ({
+        channel: p.getAttribute('data-channel'),
+        d: p.getAttribute('d') ?? '',
+      })),
+    );
+
+  const rgbPaths = await plotChannels();
+  const rgbNames = rgbPaths.map((p) => p.channel).join(',');
+  if (rgbNames !== 'red,green,blue' || rgbPaths.some((p) => !p.d.includes(' L255,'))) {
+    failures.push(`Histogram RGB mode should draw red, green and blue across 256 bins; got ${rgbNames}`);
+  }
+
+  await page.locator('button[data-testid="histogram-mode-luma"]').click();
+  const lumaPaths = await plotChannels();
+  // The stub's frame is one uniform grey bar two marker pixels (118, or 128 when cropped), so
+  // the luminance peak must be the grey actually on the canvas.
+  const onCanvas = await page.evaluate(() => {
+    const c = document.querySelector('canvas[data-testid="edit-canvas"]');
+    return c.getContext('2d').getImageData(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1).data[0];
+  });
+  const peakBin = (() => {
+    if (lumaPaths.length !== 1) return -1;
+    let best = -1;
+    let bestY = Infinity;
+    for (const m of lumaPaths[0].d.matchAll(/L(\d+),([\d.]+)/g)) {
+      const x = Number(m[1]);
+      const y = Number(m[2]);
+      if (x > 0 && x < 255 && y < bestY) {
+        bestY = y;
+        best = x;
+      }
+    }
+    return best;
+  })();
+  if (lumaPaths.length !== 1 || lumaPaths[0].channel !== 'luminance' || peakBin !== onCanvas) {
+    failures.push(`Histogram Luma mode should draw one luminance curve peaking at the canvas grey ${onCanvas}; got ${lumaPaths.length} path(s), peak ${peakBin}`);
+  } else {
+    console.log(`  Histogram draws the frame on screen: luminance peaks at bin ${peakBin}, the grey on the canvas.`);
+  }
+
+  for (const m of ['red', 'green', 'blue']) {
+    await page.locator(`button[data-testid="histogram-mode-${m}"]`).click();
+    const paths = await plotChannels();
+    const pressed = await page.getAttribute(`button[data-testid="histogram-mode-${m}"]`, 'aria-pressed');
+    if (paths.length !== 1 || paths[0].channel !== m || pressed !== 'true') {
+      failures.push(`Histogram ${m} mode should draw only the ${m} channel and be pressed; got ${JSON.stringify(paths.map((p) => p.channel))}, aria-pressed=${pressed}`);
+    }
+  }
+  await page.locator('button[data-testid="histogram-mode-rgb"]').click();
+
+  // A frame with a black quarter and a white quarter: both warnings have something to show.
+  await page.evaluate(() => {
+    window.__STUB__.pattern = 'clipping';
+  });
+  await renderSettled();
+
+  const clipState = await page.evaluate(() => ({
+    shadowText: document.querySelector('[data-testid="histogram-shadow-clipped"]')?.textContent?.trim(),
+    highlightText: document.querySelector('[data-testid="histogram-highlight-clipped"]')?.textContent?.trim(),
+    shadowLit: document.querySelector('[data-testid="clip-shadow-indicator"]')?.classList.contains('lit'),
+    highlightLit: document.querySelector('[data-testid="clip-highlight-indicator"]')?.classList.contains('lit'),
+    overlayShown: getComputedStyle(document.querySelector('[data-testid="clip-overlay"]')).display !== 'none',
+  }));
+  if (clipState.shadowText !== '25.0%' || clipState.highlightText !== '25.0%') {
+    failures.push(`Clipping readout should be 25.0% each for a frame a quarter black and a quarter white; got ${JSON.stringify(clipState)}`);
+  }
+  if (!clipState.shadowLit || !clipState.highlightLit) {
+    failures.push(`Clipping indicators should light when the frame clips; got ${JSON.stringify(clipState)}`);
+  }
+  if (clipState.overlayShown) {
+    failures.push('Clipping overlay must stay hidden until a warning is turned on');
+  }
+
+  // Samples the photograph and the overlay at the same three points: in the black
+  // quarter, the grey middle and the white quarter.
+  const sampleBands = () =>
+    page.evaluate(() => {
+      const main = document.querySelector('canvas[data-testid="edit-canvas"]');
+      const overlay = document.querySelector('canvas[data-testid="clip-overlay"]');
+      const at = (canvas, x) => {
+        const y = Math.floor(canvas.height / 2);
+        return [...canvas.getContext('2d').getImageData(x, y, 1, 1).data];
+      };
+      const xs = [Math.floor(main.width / 8), Math.floor(main.width / 2), main.width - Math.floor(main.width / 8)];
+      const mr = main.getBoundingClientRect();
+      const or = overlay.getBoundingClientRect();
+      return {
+        main: xs.map((x) => at(main, x)),
+        overlay: overlay.width === main.width ? xs.map((x) => at(overlay, x)) : null,
+        shown: getComputedStyle(overlay).display !== 'none',
+        aligned:
+          Math.abs(mr.left - or.left) < 1 &&
+          Math.abs(mr.top - or.top) < 1 &&
+          Math.abs(mr.width - or.width) < 1 &&
+          Math.abs(mr.height - or.height) < 1,
+        tokens: ['--clip-shadow', '--clip-highlight'].map((t) => {
+          const c = document.createElement('canvas').getContext('2d');
+          c.fillStyle = getComputedStyle(document.documentElement).getPropertyValue(t).trim();
+          const hex = c.fillStyle;
+          return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+        }),
+      };
+    });
+
+  const mainBefore = (await sampleBands()).main;
+  const rendersBeforeToggle = await page.evaluate(() => window.__STUB__.rendersIssued);
+
+  await page.locator('button[data-testid="clip-highlight-btn"]').click();
+  await page.waitForTimeout(50);
+  const hiOnly = await sampleBands();
+  const [shadowRgb, highlightRgb] = hiOnly.tokens;
+  const same = (px, rgb) => px[0] === rgb[0] && px[1] === rgb[1] && px[2] === rgb[2] && px[3] === 255;
+  if (
+    !hiOnly.shown ||
+    !hiOnly.overlay ||
+    hiOnly.overlay[0][3] !== 0 ||
+    hiOnly.overlay[1][3] !== 0 ||
+    !same(hiOnly.overlay[2], highlightRgb)
+  ) {
+    failures.push(`Highlight warning should mark only the white quarter, in --clip-highlight; got ${JSON.stringify(hiOnly.overlay)}`);
+  }
+  if (!hiOnly.aligned) {
+    failures.push('Clipping overlay is not aligned with the photograph');
+  }
+
+  await page.locator('button[data-testid="clip-shadow-btn"]').click();
+  await page.waitForTimeout(50);
+  const both = await sampleBands();
+  if (!both.overlay || !same(both.overlay[0], shadowRgb) || both.overlay[1][3] !== 0 || !same(both.overlay[2], highlightRgb)) {
+    failures.push(`Both warnings should mark the black quarter in --clip-shadow and the white in --clip-highlight; got ${JSON.stringify(both.overlay)}`);
+  }
+
+  // The warning is drawn over the photograph, never into it, and never reaches the recipe.
+  if (JSON.stringify(both.main) !== JSON.stringify(mainBefore) || both.main[0][0] !== 0 || both.main[2][0] !== 255) {
+    failures.push(`Photograph pixels changed under the clipping overlay: before ${JSON.stringify(mainBefore)}, after ${JSON.stringify(both.main)}`);
+  }
+  const rendersAfterToggle = await page.evaluate(() => window.__STUB__.rendersIssued);
+  if (rendersAfterToggle !== rendersBeforeToggle) {
+    failures.push(`Turning a clipping warning on issued ${rendersAfterToggle - rendersBeforeToggle} render(s); it must not touch the recipe`);
+  }
+
+  // A new frame under an active warning is marked as it arrives.
+  await renderSettled();
+  const repainted = await sampleBands();
+  if (!repainted.overlay || !same(repainted.overlay[2], highlightRgb) || !same(repainted.overlay[0], shadowRgb)) {
+    failures.push(`Clipping overlay was not repainted for a new frame: ${JSON.stringify(repainted.overlay)}`);
+  }
+
+  for (const id of ['clip-shadow-btn', 'clip-highlight-btn', 'histogram-mode-rgb', 'histogram-mode-blue']) {
+    const box = await page.locator(`button[data-testid="${id}"]`).boundingBox();
+    if (!box || box.height < 39.5) {
+      failures.push(`${id} touch target is ${box?.height.toFixed(1)}px (must be >= 40px)`);
+    }
+  }
+
+  await page.locator('button[data-testid="clip-shadow-btn"]').click();
+  await page.locator('button[data-testid="clip-highlight-btn"]').click();
+  const hiddenAgain = (await sampleBands()).shown;
+  if (hiddenAgain) {
+    failures.push('Clipping overlay still showing with both warnings off');
+  } else {
+    console.log('  Clipping warnings mark only clipped pixels, sit over the photograph without changing it, and issue no render.');
+  }
+
+  // The histogram stays in view while the panel scrolls to the controls below it.
+  const stuck = await page.evaluate(async () => {
+    const panel = document.querySelector('.adjustment-panel');
+    const hist = document.querySelector('[data-testid="histogram"]');
+    panel.scrollTop = panel.scrollHeight;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const p = panel.getBoundingClientRect();
+    const h = hist.getBoundingClientRect();
+    const result = { scrolled: panel.scrollTop, panelTop: p.top, histTop: h.top, histBottom: h.bottom };
+    panel.scrollTop = 0;
+    return result;
+  });
+  if (stuck.scrolled < 200 || Math.abs(stuck.histTop - stuck.panelTop) > 1.5) {
+    failures.push(`Histogram should stay pinned to the top of the scrolled panel; got ${JSON.stringify(stuck)}`);
+  } else {
+    console.log(`  Histogram stays pinned at the top of the panel scrolled ${Math.round(stuck.scrolled)} px.`);
+  }
+
+  await page.screenshot({ path: join(OUT, 'edit-histogram.png'), fullPage: true });
+  await page.evaluate(() => {
+    window.__STUB__.pattern = 'grey';
+  });
+
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');
   await pathInput.press('Enter');

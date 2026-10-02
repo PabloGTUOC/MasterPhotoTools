@@ -32,7 +32,7 @@ pub use pipeline::{
     SRGB_TO_LINEAR_U8,
 };
 pub use preview::{
-    downscale_image_buffer, render_rgba_frame, PreviewSession, PreviewStage, RgbaFrame,
-    DRAG_MAX_EDGE, SETTLE_MAX_EDGE,
+    downscale_image_buffer, encode_preview_frame, render_rgba_frame, PreviewSession, PreviewStage,
+    RgbaFrame, DRAG_MAX_EDGE, PREVIEW_FRAME_HEADER_LEN, SETTLE_MAX_EDGE,
 };
 pub use vignette::{CompiledVignette, Vignette};

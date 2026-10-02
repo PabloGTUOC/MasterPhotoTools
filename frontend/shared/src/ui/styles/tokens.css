@@ -31,6 +31,16 @@
   /* True 18% neutral photographic grey (L*=50) (ED-7). */
   --canvas-surround: #767676;
 
+  /* Photographic data, not interface (ED-15): a histogram's channels and the
+   * clipping overlay. They name what they show, so they stay the same in light
+   * mode. Red over blown highlights and blue over crushed shadows is the
+   * convention photographers already read. */
+  --channel-red: #ff4d4d;
+  --channel-green: #3ddc84;
+  --channel-blue: #4d8dff;
+  --clip-highlight: var(--channel-red);
+  --clip-shadow: var(--channel-blue);
+
   --text: var(--chrome);
   --text-heading: var(--white);
   --text-muted: var(--fog);

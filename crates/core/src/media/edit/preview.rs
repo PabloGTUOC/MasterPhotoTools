@@ -38,6 +38,7 @@ use super::curves::ToneCurvesTable;
 use super::lut::Lut;
 use super::pipeline::{linear_to_srgb, validate_lut, AdjustmentRecipe, ImageBuffer, LinearBuffer};
 use crate::error::Error;
+use crate::media::histogram::{histogram, Histogram};
 use fast_image_resize as fr;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -111,6 +112,46 @@ pub struct RgbaFrame {
     pub height: u32,
     pub bytes: Vec<u8>,
     pub orientation: u32,
+    /// Counted from `bytes`, the values the person sees, so the histogram and the
+    /// clipping warnings describe the frame on screen and never a different one (ED-15).
+    pub histogram: Histogram,
+}
+
+/// Bytes ahead of the pixels in a frame sent to the Edit view: width, height,
+/// delivered orientation, histogram pixel count, highlight- and shadow-clipped pixel
+/// counts, then 256 red, green, blue and luminance bins. Every field is a big-endian
+/// `u32`.
+///
+/// The plan sketched a 1032-byte header, which holds one channel at 32 bits or four
+/// at 8; the four channels the view switches between need exact counts, and
+/// 4 KiB is nothing beside a settle frame's 17 MiB of pixels.
+pub const PREVIEW_FRAME_HEADER_LEN: usize = (6 + 4 * 256) * 4;
+
+/// Lays a preview frame out for the Edit view (see [`PREVIEW_FRAME_HEADER_LEN`]).
+///
+/// It lives here rather than in the desktop command because the layout is a
+/// contract the view decodes, and a contract belongs where it can be tested
+/// without a window (G1).
+pub fn encode_preview_frame(frame: &RgbaFrame) -> Vec<u8> {
+    let h = &frame.histogram;
+    let mut out = Vec::with_capacity(PREVIEW_FRAME_HEADER_LEN + frame.bytes.len());
+    for v in [
+        frame.width,
+        frame.height,
+        frame.orientation,
+        h.pixels,
+        h.highlight_clipped,
+        h.shadow_clipped,
+    ] {
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    for channel in [&h.red, &h.green, &h.blue, &h.luminance] {
+        for v in channel.iter() {
+            out.extend_from_slice(&v.to_be_bytes());
+        }
+    }
+    out.extend_from_slice(&frame.bytes);
+    out
 }
 
 struct CachedGeometry {
@@ -692,10 +733,12 @@ pub fn render_rgba_frame(
             }
         });
 
+    let histogram = histogram(&out_bytes, w, h)?;
     Ok(RgbaFrame {
         width: w,
         height: h,
         bytes: out_bytes,
         orientation: 1,
+        histogram,
     })
 }

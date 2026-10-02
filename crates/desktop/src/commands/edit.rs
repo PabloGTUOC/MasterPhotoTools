@@ -7,7 +7,7 @@
 use super::{describe, resolve_input, resolve_inputs, resolve_output, CommandResult};
 use crate::AppState;
 use phototools_core::media::edit::pipeline::AdjustmentRecipe;
-use phototools_core::media::edit::preview::PreviewStage;
+use phototools_core::media::edit::preview::{encode_preview_frame, PreviewStage};
 use phototools_core::tools::edit::ExportResult;
 use phototools_core::tools::lut::{BulkLutParams, BulkLutTool};
 use phototools_core::tools::lut_library::{
@@ -317,12 +317,7 @@ pub fn render_preview_impl(
         .render_preview(&session_id, &recipe, lut_opt.as_ref(), stage)
         .map_err(describe)?;
 
-    let mut payload = Vec::with_capacity(12 + frame.bytes.len());
-    payload.extend_from_slice(&frame.width.to_be_bytes());
-    payload.extend_from_slice(&frame.height.to_be_bytes());
-    payload.extend_from_slice(&frame.orientation.to_be_bytes());
-    payload.extend_from_slice(&frame.bytes);
-    Ok(payload)
+    Ok(encode_preview_frame(&frame))
 }
 
 #[tauri::command]

@@ -4,6 +4,7 @@
 //! not linear light, so the bins line up with what is on screen.
 
 use crate::error::Error;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// Per-channel and luminance histogram for an 8-bit RGBA preview frame.
@@ -34,6 +35,58 @@ impl Histogram {
     /// True if at least one pixel has a channel at the display black point.
     pub fn shadows_clipped(&self) -> bool {
         self.shadow_clipped != 0
+    }
+}
+
+/// Pixels each parallel task counts before its counts are merged: large enough that
+/// merging 4 x 256 bins is negligible beside the counting, small enough to spread a
+/// drag frame across every core.
+const PIXELS_PER_TASK: usize = 16 * 1024;
+
+struct Counts {
+    /// Red, green, blue and luminance, in that order.
+    bins: [[u32; 256]; 4],
+    highlight_clipped: u32,
+    shadow_clipped: u32,
+}
+
+impl Counts {
+    fn zero() -> Self {
+        Counts {
+            bins: [[0; 256]; 4],
+            highlight_clipped: 0,
+            shadow_clipped: 0,
+        }
+    }
+
+    #[inline]
+    fn add(&mut self, r: u32, g: u32, b: u32) {
+        self.bins[0][r as usize] += 1;
+        self.bins[1][g as usize] += 1;
+        self.bins[2][b as usize] += 1;
+
+        // Integer Rec. 709 luma keeps the bin deterministic; a float would make the
+        // result depend on rounding, and tests would have to guess.
+        let luma = (2126 * r + 7152 * g + 722 * b + 5000) / 10000;
+        self.bins[3][luma as usize] += 1;
+
+        if r == 255 || g == 255 || b == 255 {
+            self.highlight_clipped += 1;
+        }
+        if r == 0 || g == 0 || b == 0 {
+            self.shadow_clipped += 1;
+        }
+    }
+
+    fn merge(mut self, other: Self) -> Self {
+        for (mine, theirs) in self.bins.iter_mut().zip(other.bins.iter()) {
+            for (a, b) in mine.iter_mut().zip(theirs.iter()) {
+                *a += b;
+            }
+        }
+        self.highlight_clipped += other.highlight_clipped;
+        self.shadow_clipped += other.shadow_clipped;
+        self
     }
 }
 
@@ -69,37 +122,25 @@ pub fn histogram(rgba: &[u8], width: u32, height: u32) -> Result<Histogram, Erro
         )));
     }
 
-    let mut red = vec![0u32; 256];
-    let mut green = vec![0u32; 256];
-    let mut blue = vec![0u32; 256];
-    let mut luminance = vec![0u32; 256];
-    let mut highlight_clipped = 0u32;
-    let mut shadow_clipped = 0u32;
-
     // The plan's clipping thresholds are <= 0.001 and >= 0.999 on a 0-1 scale.
     // In 8-bit codes that is exactly 0 and 255: 1/255 = 0.0039, and 254/255 = 0.996.
     // A "fix" to 254 would be wrong, so the thresholds are intentionally inclusive.
-    for pixel in rgba.chunks_exact(4) {
-        let r = pixel[0] as u32;
-        let g = pixel[1] as u32;
-        let b = pixel[2] as u32;
+    //
+    // Counted in parallel: serially this took 4.2 ms on a settle frame, a tenth of the
+    // settle budget, for a result that is the same in whatever order pixels are seen.
+    let counts = rgba
+        .par_chunks(PIXELS_PER_TASK * 4)
+        .fold(Counts::zero, |mut acc, chunk| {
+            for pixel in chunk.chunks_exact(4) {
+                acc.add(pixel[0] as u32, pixel[1] as u32, pixel[2] as u32);
+            }
+            acc
+        })
+        .reduce(Counts::zero, Counts::merge);
 
-        red[r as usize] += 1;
-        green[g as usize] += 1;
-        blue[b as usize] += 1;
-
-        // Integer Rec. 709 luma keeps the bin deterministic; a float would make the
-        // result depend on rounding, and tests would have to guess.
-        let luma = (2126 * r + 7152 * g + 722 * b + 5000) / 10000;
-        luminance[luma as usize] += 1;
-
-        if r == 255 || g == 255 || b == 255 {
-            highlight_clipped += 1;
-        }
-        if r == 0 || g == 0 || b == 0 {
-            shadow_clipped += 1;
-        }
-    }
+    let [red, green, blue, luminance] = counts.bins.map(|bins| bins.to_vec());
+    let highlight_clipped = counts.highlight_clipped;
+    let shadow_clipped = counts.shadow_clipped;
 
     let pixels = width.saturating_mul(height);
 
@@ -155,6 +196,32 @@ mod tests {
         let midtones = histogram(&[128, 128, 128, 255, 64, 96, 192, 255], 2, 1).unwrap();
         assert!(!midtones.highlights_clipped());
         assert!(!midtones.shadows_clipped());
+    }
+
+    #[test]
+    fn a_frame_split_across_tasks_counts_the_same_as_one_pass() {
+        // Several tasks' worth of pixels, with a ragged last task, so the merge is exercised.
+        let (w, h) = (301u32, 197u32);
+        let rgba: Vec<u8> = (0..w * h)
+            .flat_map(|i| {
+                let i = i.wrapping_mul(2_654_435_761);
+                [(i >> 3) as u8, (i >> 11) as u8, (i >> 19) as u8, 255]
+            })
+            .collect();
+        assert!((w * h) as usize > 3 * PIXELS_PER_TASK);
+
+        let mut serial = Counts::zero();
+        for p in rgba.chunks_exact(4) {
+            serial.add(p[0] as u32, p[1] as u32, p[2] as u32);
+        }
+
+        let hist = histogram(&rgba, w, h).unwrap();
+        assert_eq!(hist.red, serial.bins[0].to_vec());
+        assert_eq!(hist.green, serial.bins[1].to_vec());
+        assert_eq!(hist.blue, serial.bins[2].to_vec());
+        assert_eq!(hist.luminance, serial.bins[3].to_vec());
+        assert_eq!(hist.highlight_clipped, serial.highlight_clipped);
+        assert_eq!(hist.shadow_clipped, serial.shadow_clipped);
     }
 
     #[test]

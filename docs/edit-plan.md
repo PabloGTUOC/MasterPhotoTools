@@ -1,6 +1,6 @@
 # Editing — development plan
 
-> **Round 1 built (ED-1–ED-8); Round 2 planned (ED-9–ED-18).**
+> **Round 1 built (ED-1–ED-8). Round 2: ED-9–ED-16 built; the core halves of ED-17 and ED-18 built, their screens to come.**
 > Where the Round 1 build diverged from this plan the text has been corrected in place and
 > the rationale recorded in [`docs/phase-reports/edit.md`](phase-reports/edit.md).
 > Round 2 specifies advanced photographic adjustments, tone curves, 8-band HSL,
@@ -808,6 +808,24 @@ verification case. Every commit can be launched, tested, and visually evaluated.
   - `clipping_warning_overlay_does_not_affect_exported_pixels`
   - `benchmark_edit_preview` (re-asserted in release)
   - `check:edit`: histogram SVG curves and clipping canvas overlay verified in headless Chromium.
+- **As built** (where it departs from the above, and why):
+  - The header is **4,120 bytes**, not 1,032: six words (width, height, delivered orientation, pixel
+    count, highlight- and shadow-clipped counts), then four channels of 256 exact `u32` bins. 1,032
+    bytes holds one channel at 32 bits or four at 8, and the view switches between four. The layout
+    lives in `core` (`encode_preview_frame`, `PREVIEW_FRAME_HEADER_LEN`); the view refuses a frame
+    whose length does not match rather than guessing between layouts.
+  - The histogram is counted on **every** frame, drag and settle, in parallel. Serially it cost
+    4.2 ms on a settle frame; in parallel, interleaved against the previous commit under the same
+    load, the median cost was within noise (about +0.1 ms drag, +0.2 ms settle).
+  - A pixel is clipped when **any** channel is at 0 or 255, the rule `media::histogram` already
+    counted by; the overlay applies the same rule so it and the percentages always agree. Where a
+    pixel is both, the overlay shows the highlight warning.
+  - The histogram is pinned to the top of the adjustment panel, so it stays in view while Curves or
+    Colour is being adjusted. The two warning buttons sit beside Before/After and show, before they
+    are pressed, whether the frame has anything to warn about.
+  - `clipping_warning_overlay_does_not_affect_exported_pixels` is a `check:edit` case rather than a
+    Rust test: the overlay exists only in the view. It asserts the photograph's canvas pixels are
+    unchanged and that turning a warning on issues no render, so it cannot reach a recipe or export.
 
 ### `ED-16` · Photographic looks, optional tone mapper, look UI & `check:edit`
 - **Core**: Glow and halation operate in **scene-linear light** before the optional tone mapper and display transform, on the output of the geometry stage (post-crop). Threshold on linear luminance using a smooth quadratic Hermite soft knee. Multi-scale dual-filter downsampling/upsampling blur pyramid evaluated on reduced-resolution buffer (1/8 linear size for interactive performance during drag and settle). Halation uses a fixed warm red-orange tint derived from OkLCh($L=0.70, C=0.20, h=38.0^\circ$) normalized to linear sRGB $[1.0000, 0.1292, 0.0304]$. Implement optional unscaled Narkowicz ACES filmic tone mapper: disabled by default; when enabled, compresses high linear values smoothly into display range, mapping mid-grey $0.18 \to \approx 0.2669$. Formally exclude synthetic lens flare.

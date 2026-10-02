@@ -22,6 +22,7 @@ import type {
   LutRef,
   NormalizedCrop,
   OpenPreviewResult,
+  PreviewHistogram,
   PreviewStage,
   ToneCurves,
   Vignette,
@@ -33,6 +34,7 @@ import CollapsibleSection from '@ui/components/CollapsibleSection.vue';
 import ColorWheel from '@ui/components/ColorWheel.vue';
 import CropOverlay from '@ui/components/CropOverlay.vue';
 import CurveEditor from '@ui/components/CurveEditor.vue';
+import Histogram, { type HistogramMode } from '@ui/components/Histogram.vue';
 import LutPicker from '@ui/components/LutPicker.vue';
 import PathField from '@ui/components/PathField.vue';
 import { useRoots } from '@ui/useRoots';
@@ -52,6 +54,15 @@ const exportError = ref<string | null>(null);
 const isBefore = ref(false);
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
+const clipCanvasRef = ref<HTMLCanvasElement | null>(null);
+
+// ED-15: the histogram and clipping warnings describe the frame last painted.
+const histogram = ref<PreviewHistogram | null>(null);
+const histogramMode = ref<HistogramMode>('rgb');
+const showShadowClip = ref(false);
+const showHighlightClip = ref(false);
+const clipOverlayActive = computed(() => showShadowClip.value || showHighlightClip.value);
+let lastFrame: { width: number; height: number; pixels: Uint8ClampedArray } | null = null;
 const viewportContainerRef = ref<HTMLDivElement | null>(null);
 
 // Container dimensions for responsive fit
@@ -275,8 +286,72 @@ async function handleImportLut(path: string) {
   }
 }
 
+/** Reads a colour token as RGB bytes, by letting a canvas normalise whatever CSS form it has. */
+function tokenRgb(name: string): [number, number, number] {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const probe = document.createElement('canvas').getContext('2d');
+  if (!probe || !value) return [0, 0, 0];
+  probe.fillStyle = value;
+  const hex = probe.fillStyle;
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [0, 0, 0];
+}
+
+/**
+ * Paints the clipping warning on its own canvas over the photograph.
+ *
+ * The photograph's canvas is never drawn on, so turning the warning off cannot
+ * leave a mark, and nothing here reaches the recipe or an export. A pixel counts
+ * as clipped when any channel is at 0 or 255, the rule `core` counts by, so the
+ * overlay and the percentages under the histogram always agree. Where a pixel is
+ * both (a saturated colour), the highlight warning wins: blown highlights are the
+ * loss a photographer can least recover.
+ */
+function paintClipOverlay() {
+  const overlay = clipCanvasRef.value;
+  if (!overlay || !lastFrame || !clipOverlayActive.value) return;
+  const { width, height, pixels } = lastFrame;
+  if (overlay.width !== width || overlay.height !== height) {
+    overlay.width = width;
+    overlay.height = height;
+  }
+  const ctx = overlay.getContext('2d');
+  if (!ctx) return;
+
+  const [hr, hg, hb] = tokenRgb('--clip-highlight');
+  const [sr, sg, sb] = tokenRgb('--clip-shadow');
+  const hi = showHighlightClip.value;
+  const lo = showShadowClip.value;
+  const out = new Uint8ClampedArray(pixels.length);
+  for (let i = 0; i < pixels.length; i += 4) {
+    const r = pixels[i];
+    const g = pixels[i + 1];
+    const b = pixels[i + 2];
+    if (hi && (r === 255 || g === 255 || b === 255)) {
+      out[i] = hr;
+      out[i + 1] = hg;
+      out[i + 2] = hb;
+      out[i + 3] = 255;
+    } else if (lo && (r === 0 || g === 0 || b === 0)) {
+      out[i] = sr;
+      out[i + 1] = sg;
+      out[i + 2] = sb;
+      out[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(new ImageData(out, width, height), 0, 0);
+}
+
+watch([showShadowClip, showHighlightClip], paintClipOverlay);
+
 function paintPixels(
-  frame: { width: number; height: number; pixels: Uint8ClampedArray; orientation?: number },
+  frame: {
+    width: number;
+    height: number;
+    pixels: Uint8ClampedArray;
+    orientation?: number;
+    histogram?: PreviewHistogram;
+  },
   stage: PreviewStage,
 ) {
   const canvas = canvasRef.value;
@@ -298,6 +373,11 @@ function paintPixels(
 
   const imgData = new ImageData(frame.pixels, frame.width, frame.height);
   ctx.putImageData(imgData, 0, 0);
+
+  histogram.value = frame.histogram ?? null;
+  // Kept so the warning can be turned on over the frame already showing.
+  lastFrame = { width: frame.width, height: frame.height, pixels: frame.pixels };
+  paintClipOverlay();
 
   // Dispatch custom event for test harness and verification
   canvas.dispatchEvent(
@@ -1145,6 +1225,14 @@ onUnmounted(() => {
               data-testid="edit-canvas"
               :style="canvasStyle"
             ></canvas>
+            <canvas
+              v-show="clipOverlayActive"
+              ref="clipCanvasRef"
+              class="canvas-viewport__clip"
+              data-testid="clip-overlay"
+              aria-hidden="true"
+              :style="{ ...canvasStyle, position: 'absolute', zIndex: 'calc(var(--z-canvas) + 1)' }"
+            ></canvas>
             <CropOverlay
               v-if="isCropMode"
               v-model="cropModel"
@@ -1170,6 +1258,38 @@ onUnmounted(() => {
           >
             {{ isBefore ? 'Before (Original)' : 'Before / After (Hold or \\)' }}
           </button>
+          <button
+            type="button"
+            class="secondary canvas-viewport__clip-btn canvas-viewport__clip-btn--shadow"
+            data-testid="clip-shadow-btn"
+            :class="{ active: showShadowClip }"
+            :aria-pressed="showShadowClip"
+            title="Show crushed shadows in blue"
+            @click="showShadowClip = !showShadowClip"
+          >
+            <span
+              class="canvas-viewport__clip-swatch"
+              :class="{ lit: (histogram?.shadowClipped ?? 0) > 0 }"
+              data-testid="clip-shadow-indicator"
+            ></span>
+            Shadow clipping
+          </button>
+          <button
+            type="button"
+            class="secondary canvas-viewport__clip-btn canvas-viewport__clip-btn--highlight"
+            data-testid="clip-highlight-btn"
+            :class="{ active: showHighlightClip }"
+            :aria-pressed="showHighlightClip"
+            title="Show blown highlights in red"
+            @click="showHighlightClip = !showHighlightClip"
+          >
+            <span
+              class="canvas-viewport__clip-swatch"
+              :class="{ lit: (histogram?.highlightClipped ?? 0) > 0 }"
+              data-testid="clip-highlight-indicator"
+            ></span>
+            Highlight clipping
+          </button>
         </div>
       </div>
 
@@ -1186,6 +1306,12 @@ onUnmounted(() => {
             Reset all
           </button>
         </div>
+
+        <Histogram
+          v-model:mode="histogramMode"
+          class="adjustment-panel__histogram"
+          :histogram="histogram"
+        />
 
         <div class="adjustment-panel__sections">
           <!-- 1. Basic -->
@@ -1998,7 +2124,9 @@ onUnmounted(() => {
 
 .canvas-viewport__overlay {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
+  gap: var(--space-2);
   padding: var(--space-2);
   background: rgba(10, 10, 15, 0.6);
 }
@@ -2012,6 +2140,45 @@ onUnmounted(() => {
 .canvas-viewport__before-btn.active {
   background: var(--accent);
   color: var(--void);
+}
+
+.canvas-viewport__clip {
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.canvas-viewport__clip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  font-size: 12px;
+}
+
+.canvas-viewport__clip-btn.active {
+  border: var(--border-active);
+  color: var(--accent);
+}
+
+/* Hollow when the frame has no clipping of that kind, filled when it has: the
+ * button says whether there is anything to see before it is pressed. */
+.canvas-viewport__clip-swatch {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--text-muted);
+  border-radius: var(--radius-none);
+}
+
+.canvas-viewport__clip-btn--shadow .canvas-viewport__clip-swatch.lit {
+  background: var(--clip-shadow);
+  border-color: var(--clip-shadow);
+}
+
+.canvas-viewport__clip-btn--highlight .canvas-viewport__clip-swatch.lit {
+  background: var(--clip-highlight);
+  border-color: var(--clip-highlight);
 }
 
 /* --- Adjustment Sidebar Panel ------------------------------------------- */
@@ -2031,6 +2198,16 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+/* The histogram stays in view while the sliders below it scroll: it is read
+ * while a slider moves, and one that scrolls away with the Basic section is not
+ * there when Curves or Colour is being adjusted. The negative offset cancels the
+ * panel's padding, so nothing shows through above it. */
+.adjustment-panel__histogram {
+  position: sticky;
+  top: calc(-1 * var(--space-3));
+  z-index: var(--z-content);
 }
 
 .adjustment-panel__title {

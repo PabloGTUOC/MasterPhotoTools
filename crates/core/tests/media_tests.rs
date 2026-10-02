@@ -1715,6 +1715,67 @@ fn a_preview_frame_is_rgba_of_the_proxy_size() {
     assert!(settle.bytes.chunks_exact(4).all(|px| px[3] == 255));
 }
 
+/// The frame the Edit view decodes carries the histogram of exactly the pixels it
+/// carries, at the offsets `PREVIEW_FRAME_HEADER_LEN` documents (ED-15).
+#[test]
+fn binary_preview_ipc_header_encodes_histograms_and_clipping_accurately() {
+    use phototools_core::media::edit::{
+        encode_preview_frame, AdjustmentRecipe, ImageBuffer, PreviewSession, PreviewStage,
+        PREVIEW_FRAME_HEADER_LEN,
+    };
+    use phototools_core::media::histogram;
+
+    // Left third black, middle third mid-grey, right third white: both clips present.
+    let (w, h) = (90u32, 20u32);
+    let data: Vec<u8> = (0..w * h)
+        .flat_map(|i| {
+            let v = match (i % w) / 30 {
+                0 => 0u8,
+                1 => 128,
+                _ => 255,
+            };
+            [v, v, v]
+        })
+        .collect();
+    let session = PreviewSession::new(&ImageBuffer::Rgb8 {
+        width: w,
+        height: h,
+        data,
+    })
+    .unwrap();
+    let frame = session
+        .render(&AdjustmentRecipe::default(), None, PreviewStage::Drag)
+        .unwrap();
+
+    let bytes = encode_preview_frame(&frame);
+    let word = |i: usize| u32::from_be_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap());
+
+    assert_eq!(bytes.len(), PREVIEW_FRAME_HEADER_LEN + (w * h * 4) as usize);
+    assert_eq!((word(0), word(1), word(2)), (w, h, 1));
+
+    // Counted again from the pixels that follow the header, not taken from the frame.
+    let pixels = &bytes[PREVIEW_FRAME_HEADER_LEN..];
+    let expected = histogram(pixels, w, h).unwrap();
+    assert_eq!(word(3), w * h);
+    assert_eq!(word(4), expected.highlight_clipped);
+    assert_eq!(word(5), expected.shadow_clipped);
+    assert_eq!(word(4), w * h / 3, "the white third is highlight-clipped");
+    assert_eq!(word(5), w * h / 3, "the black third is shadow-clipped");
+
+    for (c, channel) in [
+        &expected.red,
+        &expected.green,
+        &expected.blue,
+        &expected.luminance,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let decoded: Vec<u32> = (0..256).map(|b| word(6 + c * 256 + b)).collect();
+        assert_eq!(&decoded, channel, "channel {c}");
+    }
+}
+
 #[test]
 fn benchmark_edit_preview() {
     use phototools_core::media::edit::{

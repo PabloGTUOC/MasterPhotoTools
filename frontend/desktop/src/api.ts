@@ -446,41 +446,13 @@ export class TauriApiClient implements ApiClient {
     sessionId: string,
     recipe: AdjustmentRecipe,
     stage: PreviewStage = 'Drag',
-  ): Promise<{ width: number; height: number; pixels: Uint8ClampedArray; orientation: number }> {
+  ): Promise<PreviewFrame> {
     const res = await invoke<ArrayBuffer | Uint8Array>('render_preview', {
       sessionId,
       recipe,
       stage,
     });
-    let buffer: ArrayBuffer;
-    let byteOffset = 0;
-    let byteLength = 0;
-    if (res instanceof Uint8Array) {
-      buffer = res.buffer;
-      byteOffset = res.byteOffset;
-      byteLength = res.byteLength;
-    } else {
-      buffer = res;
-      byteLength = res.byteLength;
-    }
-    const view = new DataView(buffer, byteOffset, byteLength);
-    const width = view.getUint32(0, false);
-    const height = view.getUint32(4, false);
-    const pixelBytes = width * height * 4;
-
-    let orientation = 1;
-    let headerOffset = 8;
-    if (byteLength >= 12 + pixelBytes) {
-      orientation = view.getUint32(8, false);
-      headerOffset = 12;
-    }
-
-    const pixels = new Uint8ClampedArray(
-      buffer,
-      byteOffset + headerOffset,
-      pixelBytes,
-    );
-    return { width, height, pixels, orientation };
+    return decodePreviewFrame(res);
   }
 
   closePreview(sessionId: string): Promise<void> {
@@ -494,6 +466,85 @@ export class TauriApiClient implements ApiClient {
   importLut(path: string): Promise<LutEntry> {
     return invoke<LutEntry>('import_lut', { path });
   }
+}
+
+/** Counts of the frame on screen, made by `core` from the pixels it sent (ED-15). */
+export interface PreviewHistogram {
+  red: Uint32Array;
+  green: Uint32Array;
+  blue: Uint32Array;
+  luminance: Uint32Array;
+  pixels: number;
+  highlightClipped: number;
+  shadowClipped: number;
+}
+
+/** A rendered preview frame, as `render_preview` delivers it. */
+export interface PreviewFrame {
+  width: number;
+  height: number;
+  pixels: Uint8ClampedArray;
+  /** The EXIF orientation still to be applied for display; 1 once geometry is baked in. */
+  orientation: number;
+  histogram: PreviewHistogram;
+}
+
+/** Six words, then four channels of 256 bins: `PREVIEW_FRAME_HEADER_LEN` in `core`. */
+const PREVIEW_HEADER_BYTES = (6 + 4 * 256) * 4;
+
+/**
+ * Reads the frame `core::media::edit::encode_preview_frame` lays out.
+ *
+ * A length that does not match is refused rather than guessed at: painting a
+ * misread header shows a plausible picture that is wrong, which nobody would
+ * think to question.
+ */
+export function decodePreviewFrame(res: ArrayBuffer | Uint8Array): PreviewFrame {
+  const bytes = res instanceof Uint8Array ? res : new Uint8Array(res);
+  if (bytes.byteLength < PREVIEW_HEADER_BYTES) {
+    throw new Error(
+      `Preview frame is ${bytes.byteLength} bytes, shorter than its ${PREVIEW_HEADER_BYTES}-byte header`,
+    );
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const word = (i: number) => view.getUint32(i * 4, false);
+
+  const width = word(0);
+  const height = word(1);
+  const pixelBytes = width * height * 4;
+  if (bytes.byteLength !== PREVIEW_HEADER_BYTES + pixelBytes) {
+    throw new Error(
+      `Preview frame is ${bytes.byteLength} bytes; a ${width}x${height} frame needs ${
+        PREVIEW_HEADER_BYTES + pixelBytes
+      }`,
+    );
+  }
+
+  const channel = (c: number) => {
+    const bins = new Uint32Array(256);
+    for (let b = 0; b < 256; b++) bins[b] = word(6 + c * 256 + b);
+    return bins;
+  };
+
+  return {
+    width,
+    height,
+    orientation: word(2),
+    pixels: new Uint8ClampedArray(
+      bytes.buffer,
+      bytes.byteOffset + PREVIEW_HEADER_BYTES,
+      pixelBytes,
+    ),
+    histogram: {
+      pixels: word(3),
+      highlightClipped: word(4),
+      shadowClipped: word(5),
+      red: channel(0),
+      green: channel(1),
+      blue: channel(2),
+      luminance: channel(3),
+    },
+  };
 }
 
 /** 3D LUT reference in a recipe. */

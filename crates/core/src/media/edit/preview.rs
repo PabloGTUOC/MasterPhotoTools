@@ -36,6 +36,7 @@
 
 use super::curves::ToneCurvesTable;
 use super::lut::Lut;
+use super::masks::{CompiledMasks, LocalAdjustments};
 use super::pipeline::{linear_to_srgb, validate_lut, AdjustmentRecipe, ImageBuffer, LinearBuffer};
 use crate::error::Error;
 use crate::media::histogram::{histogram, Histogram};
@@ -312,7 +313,18 @@ impl PreviewSession {
                 PreviewStage::Drag => c.drag_transformed.as_ref().unwrap(),
                 PreviewStage::Settle => c.settle_transformed.as_ref().unwrap(),
             };
-            let mut frame = render_rgba_frame(proxy, recipe_ref, lut)?;
+            let (stored_w, stored_h) = match stage {
+                PreviewStage::Drag => (self.drag_linear.width, self.drag_linear.height),
+                PreviewStage::Settle => (self.settle_linear.width, self.settle_linear.height),
+            };
+            let masks = CompiledMasks::compile(
+                &recipe_ref.masks,
+                Some(geom),
+                stored_w,
+                stored_h,
+                self.orientation,
+            )?;
+            let mut frame = render_rgba_frame_masked(proxy, recipe_ref, lut, masks.as_ref())?;
             frame.orientation = 1;
             Ok(frame)
         } else {
@@ -380,11 +392,85 @@ pub fn downscale_image_buffer(buf: &ImageBuffer, max_edge: u32) -> Result<ImageB
 /// Evaluates adjustments, display transfer, and 3D LUT sampling on a linear buffer,
 /// writing directly into an RGBA8 output frame in a single multithreaded pass with zero
 /// intermediate buffer copies.
-#[allow(clippy::uninit_vec)]
 pub fn render_rgba_frame(
     proxy: &LinearBuffer,
     recipe: &AdjustmentRecipe,
     lut: Option<&Lut>,
+) -> Result<RgbaFrame, Error> {
+    // With no geometry the proxy is the stored frame, so it is also what masks are placed on.
+    let masks = CompiledMasks::compile(&recipe.masks, None, proxy.width, proxy.height, 1)?;
+    render_rgba_frame_masked(proxy, recipe, lut, masks.as_ref())
+}
+
+/// The per-pixel constants of pass 1: the global recipe's, or a masked pixel's (ED-19).
+#[derive(Clone, Copy)]
+struct PixelParams {
+    gain_r: f32,
+    gain_g: f32,
+    gain_b: f32,
+    h_val: f32,
+    s_val: f32,
+    w_val: f32,
+    b_val: f32,
+    combined_exp: f32,
+    combined_scale: f32,
+    has_tone_curve: bool,
+    sat_term: f32,
+    sat_vib: f32,
+}
+
+impl PixelParams {
+    /// A masked pixel's constants: the global ones, recomputed only where the local
+    /// adjustments differ, with `exp2` rather than `powf`. The settle frame has a few
+    /// milliseconds per mask (the Round 3 budget), and five `powf` per covered pixel
+    /// would spend it several times over.
+    #[inline(always)]
+    fn with_local(
+        &self,
+        recipe: &AdjustmentRecipe,
+        local: &LocalAdjustments,
+        has_brightness: bool,
+        bright_gamma: f32,
+    ) -> Self {
+        let mut p = *self;
+        if local.exposure != 0.0 || local.temperature != 0.0 || local.tint != 0.0 {
+            let t = (recipe.temperature + local.temperature) / 100.0;
+            let g = (recipe.tint + local.tint) / 100.0;
+            let e = recipe.exposure + local.exposure;
+            p.gain_r = (0.5 * t + e).exp2();
+            p.gain_g = (-0.5 * g + e).exp2();
+            p.gain_b = (-0.5 * t + e).exp2();
+        }
+        p.h_val += local.highlights / 100.0;
+        p.s_val += local.shadows / 100.0;
+        p.w_val += local.whites / 100.0;
+        p.b_val += local.blacks / 100.0;
+        if local.contrast != 0.0 {
+            let gamma_minus_one = 0.5 * (recipe.contrast + local.contrast) / 100.0;
+            // (1 / 0.18)^γ−1, as the global path computes it, through exp2.
+            p.combined_scale = (-gamma_minus_one * 0.18f32.log2()).exp2();
+            p.combined_exp = if has_brightness {
+                (bright_gamma - 1.0) + bright_gamma * gamma_minus_one
+            } else {
+                gamma_minus_one
+            };
+            p.has_tone_curve = true;
+        }
+        if local.saturation != 0.0 || local.vibrance != 0.0 {
+            p.sat_term = 1.0 + (recipe.saturation + local.saturation) / 100.0;
+            p.sat_vib = p.sat_term * (recipe.vibrance + local.vibrance) / 100.0;
+        }
+        p
+    }
+}
+
+/// `render_rgba_frame` with masks compiled against the geometry that produced `proxy`.
+#[allow(clippy::uninit_vec)]
+pub fn render_rgba_frame_masked(
+    proxy: &LinearBuffer,
+    recipe: &AdjustmentRecipe,
+    lut: Option<&Lut>,
+    masks: Option<&CompiledMasks>,
 ) -> Result<RgbaFrame, Error> {
     let w = proxy.width;
     let h = proxy.height;
@@ -444,6 +530,25 @@ pub fn render_rgba_frame(
     let has_sat_vib = sat != 0.0 || vib != 0.0;
     let sat_term = 1.0 + sat;
     let sat_vib = sat_term * vib;
+
+    let global = PixelParams {
+        gain_r,
+        gain_g,
+        gain_b,
+        h_val,
+        s_val,
+        w_val,
+        b_val,
+        combined_exp,
+        combined_scale,
+        has_tone_curve,
+        sat_term,
+        sat_vib,
+    };
+    // A stage at rest globally still runs where a mask is active.
+    let has_tone = has_tone || masks.is_some_and(|m| m.touches_tone);
+    let has_tone_curve = has_tone_curve || masks.is_some_and(|m| m.touches_contrast);
+    let has_sat_vib = has_sat_vib || masks.is_some_and(|m| m.touches_saturation);
 
     let compiled_hsl = super::hsl::CompiledHslTable::from_recipe(recipe.hsl.as_ref(), recipe.hue);
     let has_oklab = !compiled_hsl.is_identity;
@@ -540,6 +645,7 @@ pub fn render_rgba_frame(
             } else {
                 super::grain::RowGrainParams::default()
             };
+            let mask_row = masks.map(|m| (m, m.row(y as u32, w, h)));
             const CHUNK_SIZE: usize = 64;
             let mut lin_buf = [[0.0f32; 3]; CHUNK_SIZE];
 
@@ -557,9 +663,25 @@ pub fn render_rgba_frame(
                     .zip(in_c.chunks_exact(3))
                     .enumerate()
                 {
-                    let mut r = in_px[0] * gain_r;
-                    let mut g = in_px[1] * gain_g;
-                    let mut b = in_px[2] * gain_b;
+                    let local_params;
+                    let p = match mask_row {
+                        Some((m, cursor)) => {
+                            let (mx, my) = cursor.at(base_x + i);
+                            let local = m.local_at(mx, my);
+                            if local.is_zero() {
+                                &global
+                            } else {
+                                local_params =
+                                    global.with_local(recipe, &local, has_brightness, bright_gamma);
+                                &local_params
+                            }
+                        }
+                        None => &global,
+                    };
+
+                    let mut r = in_px[0] * p.gain_r;
+                    let mut g = in_px[1] * p.gain_g;
+                    let mut b = in_px[2] * p.gain_b;
 
                     let mut y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
@@ -583,7 +705,7 @@ pub fn render_rgba_frame(
                                 let t = (y - 0.18) * INV_W;
                                 t * t * (3.0 - 2.0 * t)
                             };
-                            w_h * h_val + w_w * w_val
+                            w_h * p.h_val + w_w * p.w_val
                         } else {
                             let w_s = if y <= 0.05 {
                                 1.0
@@ -597,7 +719,7 @@ pub fn render_rgba_frame(
                                 let t = (0.18 - y) * INV_B;
                                 t * t * (3.0 - 2.0 * t)
                             };
-                            w_s * s_val + w_b * b_val
+                            w_s * p.s_val + w_b * p.b_val
                         };
                         if delta_ev != 0.0 {
                             let factor = delta_ev.exp2();
@@ -609,8 +731,12 @@ pub fn render_rgba_frame(
                     }
 
                     // 4. Brightness & Contrast (combined power curve pivoting on mid-grey)
-                    if has_tone_curve && y > 1e-7 && (!has_brightness || (y - 1.0).abs() > 1e-7) {
-                        let factor = (combined_exp * y.log2()).exp2() * combined_scale;
+                    if has_tone_curve
+                        && p.has_tone_curve
+                        && y > 1e-7
+                        && (!has_brightness || (y - 1.0).abs() > 1e-7)
+                    {
+                        let factor = (p.combined_exp * y.log2()).exp2() * p.combined_scale;
                         r *= factor;
                         g *= factor;
                         b *= factor;
@@ -618,7 +744,11 @@ pub fn render_rgba_frame(
                     }
 
                     // 5. Saturation & Vibrance (preserves neutral grey)
-                    if has_sat_vib {
+                    // Per pixel as well as per frame: where no mask covers, a stage switched on
+                    // for the masks skips the pixel, as the unmasked path would. Applying it
+                    // with k = 1 differs only by float rounding, which 8-bit output hides, so
+                    // no test can see this; it keeps the claim exact rather than nearly so.
+                    if has_sat_vib && (p.sat_term != 1.0 || p.sat_vib != 0.0) {
                         let max = r.max(g).max(b);
                         let min = r.min(g).min(b);
                         let current_sat = if max > 1e-7 {
@@ -626,7 +756,7 @@ pub fn render_rgba_frame(
                         } else {
                             0.0
                         };
-                        let k = (sat_term + sat_vib * (1.0 - current_sat)).max(0.0);
+                        let k = (p.sat_term + p.sat_vib * (1.0 - current_sat)).max(0.0);
                         r = (y + k * (r - y)).max(0.0);
                         g = (y + k * (g - y)).max(0.0);
                         b = (y + k * (b - y)).max(0.0);

@@ -17,7 +17,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const SIDECAR_EXTENSION: &str = "photoedit";
-pub const CURRENT_RECIPE_VERSION: u32 = 2;
+/// Version 3 added masks (ED-19). A sidecar is written at this version even without
+/// masks, so an older build refuses every sidecar a newer one wrote rather than opening
+/// one and silently dropping what it does not know.
+pub const CURRENT_RECIPE_VERSION: u32 = 3;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 

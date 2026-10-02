@@ -907,7 +907,7 @@ verification case. Every commit can be launched, tested, and visually evaluated.
 
 ## Round 3 — Local adjustments (masks)
 
-> **Planned, not started.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
+> **ED-19 built; ED-20 to ED-24 planned.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
 > who chose gradients, a brush, and automatic subject and sky masks. Rounds 1 and 2 excluded
 > local adjustments to keep to whole-frame work; this round lifts that exclusion and nothing
 > else. RapidRAW remains a feature list only, under the Round 2 clean-room declaration.
@@ -947,14 +947,12 @@ and deleted. An automatic mask can be refined with the brush (add or erase).
    unchanged; a v3 sidecar is refused by an older build (`load_recipe` already refuses a newer
    version) rather than opened with its masks silently dropped. `is_identity` covers masks.
 
-### The speed budget — to be decided before ED-19
+### The speed budget — decided (owner, 2026-10-02: option a)
 
-The settle frame is at its 40 ms working target today and exceeds it in about one release run in
-three under load. Masks add work to every masked pixel. Before ED-19 the owner decides one of:
-accept the current figure and set a budget per mask (proposed: drag ≤ 12 ms and settle ≤ 40 ms with
-no masks, unchanged; each active mask adds at most 1.5 ms drag and 5 ms settle, up to 4 masks);
-or first win back headroom in the existing pipeline. The budget is asserted in
-`benchmark_edit_preview`, not described.
+Drag ≤ 12 ms and settle ≤ 40 ms with no masks, unchanged; each active mask adds at most 1.5 ms to a
+drag frame and 5 ms to a settle frame, budgeted for up to 4 masks (so ≤ 18 ms and ≤ 60 ms with
+four). Asserted in `benchmark_edit_preview` on p95, with four large masks that each carry five
+local adjustments, so most pixels pay for more than one mask.
 
 ### The automatic masks — what has to be true first (ED-22)
 
@@ -990,6 +988,34 @@ or first win back headroom in the existing pipeline. The budget is asserted in
   `masks_are_never_saved_into_a_preset_or_applied_by_batch`;
   `a_v2_sidecar_loads_with_no_masks_and_a_v3_one_is_refused_by_v2`;
   `export_matches_preview_with_masks_within_delta_e_1_5`; `benchmark_edit_preview` with masks.
+
+- **As built** (where it departs from the above, and why):
+  - **Gradients are evaluated, not rasterised.** Decision 2 imagined rasterising each mask and
+    transforming the raster with the pixels. A gradient is a formula, so each output pixel is
+    instead mapped back to the stored frame through `GeometryPlan::normalised_affine` — the same
+    map the geometry samples pixels with, extracted from `apply_to_linear` unchanged — and the
+    formula is evaluated there: exact at every size, nothing cached, nothing resampled. The brush
+    (ED-21) and automatic masks (ED-23) are rasters and will be sampled through the same map.
+  - **The recipe is version 3** and every sidecar is written at 3. Two tests changed with it,
+    keeping their claims: the first refused version is now 4, and an old sidecar is rewritten at
+    the current version. A v2 recipe at rest is still asserted to be identity.
+  - Glow and halation are built from the frame with the **global** exposure; a mask's exposure does
+    not change what blooms. Local looks are not in the locally adjustable set.
+  - Measured on the Mac, release: per mask (medians) +0.74–0.99 ms drag, +3.3–3.6 ms settle; with
+    four masks p95 12.7–12.8 ms drag and 51–53 ms settle, against 18 and 60. Without masks the
+    frame takes the path it took before; interleaved against the previous commit the medians were
+    the same.
+  - Tests: `masks` unit tests (gradient ramp, radial symmetry and feather, invert, opacity and
+    disable, overlap, JSON defaults); `a_mask_follows_the_crop_and_straighten` (the effect lands on
+    a marker in the photograph under crop, 90° rotation, straighten with flip, and EXIF orientation 6
+    — it fails if the geometry is ignored); `pixels_no_mask_covers_are_unchanged_by_it` (byte for
+    byte; fails if a mask leaks past its edge); `a_mask_with_zero_adjustments_changes_nothing`;
+    `export_matches_preview_with_masks_within_delta_e_1_5`;
+    `a_v2_sidecar_loads_with_no_masks_and_masks_round_trip_in_v3`; `masks_are_never_applied_by_batch`;
+    the preset test now also asserts masks are dropped.
+  - For ED-20: the front end's recipe type has no `masks` yet, and Edit's paste and preset apply
+    keep the photograph's geometry but would carry a copied photograph's masks across once the
+    view loads them. ED-20 must keep the target's masks, as it keeps its geometry.
 
 #### `ED-20` · Masks panel and on-canvas gradient handles
 - A **Masks** section: add Linear or Radial; a list with name, show/hide overlay, invert,

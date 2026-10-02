@@ -2010,6 +2010,89 @@ fn benchmark_edit_preview() {
     let p95_settle_idx = ((settle_times.len() as f64 * 0.95).ceil() as usize).saturating_sub(1);
     let p95_settle = settle_times[p95_settle_idx];
 
+    // Round 3 budget (ED-19): the same recipe with four masks, each large and carrying
+    // several local adjustments, so most pixels pay for more than one. Each mask may add at
+    // most 1.5 ms to a drag frame and 5 ms to a settle frame.
+    const MASKS: u32 = 4;
+    let masked_recipe = {
+        use phototools_core::media::edit::{LocalAdjustments, Mask, MaskKind};
+        let adj = LocalAdjustments {
+            exposure: 0.6,
+            temperature: -15.0,
+            highlights: -30.0,
+            contrast: 12.0,
+            saturation: 20.0,
+            ..Default::default()
+        };
+        let mask = |id: &str, kind: MaskKind| Mask {
+            id: id.into(),
+            name: id.into(),
+            kind,
+            invert: false,
+            opacity: 1.0,
+            enabled: true,
+            adjustments: adj,
+        };
+        let mut r = recipe.clone();
+        r.masks = vec![
+            mask(
+                "sky",
+                MaskKind::Linear {
+                    start: [0.5, 0.0],
+                    end: [0.5, 0.6],
+                },
+            ),
+            mask(
+                "ground",
+                MaskKind::Linear {
+                    start: [0.5, 1.0],
+                    end: [0.5, 0.4],
+                },
+            ),
+            mask(
+                "face",
+                MaskKind::Radial {
+                    center: [0.45, 0.5],
+                    radius_x: 0.35,
+                    radius_y: 0.3,
+                    angle: 20.0,
+                    feather: 0.6,
+                },
+            ),
+            mask(
+                "frame",
+                MaskKind::Radial {
+                    center: [0.6, 0.45],
+                    radius_x: 0.4,
+                    radius_y: 0.4,
+                    angle: 0.0,
+                    feather: 0.5,
+                },
+            ),
+        ];
+        assert_eq!(r.masks.len() as u32, MASKS);
+        r
+    };
+    let time_stage = |stage: PreviewStage| {
+        let _ = session.render(&masked_recipe, Some(&lut33), stage).unwrap();
+        let mut t: Vec<Duration> = (0..40)
+            .map(|_| {
+                let t0 = Instant::now();
+                let f = session.render(&masked_recipe, Some(&lut33), stage).unwrap();
+                let e = t0.elapsed();
+                assert!(f.width > 0);
+                e
+            })
+            .collect();
+        t.sort();
+        t
+    };
+    let masked_drag = time_stage(PreviewStage::Drag);
+    let masked_settle = time_stage(PreviewStage::Settle);
+    let p95 = |t: &[Duration]| t[((t.len() as f64 * 0.95).ceil() as usize).saturating_sub(1)];
+    let p95_masked_drag = p95(&masked_drag);
+    let p95_masked_settle = p95(&masked_settle);
+
     // Measure per-stage timing on 1440p settle frame proxy (2560x1708, ~4.37 MP)
     let settle_proxy = session.settle_linear();
     let w_s = settle_proxy.width;
@@ -2288,6 +2371,15 @@ fn benchmark_edit_preview() {
         "  Settle frame (1440p 2560x1708, cached geometry) over 40: min={:?}, median={:?}, p95={:?}",
         min_settle, median_settle, p95_settle
     );
+    println!(
+        "  With {MASKS} masks: drag median={:?} p95={:?}; settle median={:?} p95={:?}; per mask (medians): drag +{:?}, settle +{:?}",
+        masked_drag[masked_drag.len() / 2],
+        p95_masked_drag,
+        masked_settle[masked_settle.len() / 2],
+        p95_masked_settle,
+        masked_drag[masked_drag.len() / 2].saturating_sub(median_drag) / MASKS,
+        masked_settle[masked_settle.len() / 2].saturating_sub(median_settle) / MASKS,
+    );
     println!("  Per-stage breakdown (1440p settle frame, 4.37 MP):");
     println!(
         "    1. Linear adjustments (tones, exposure, brightness, contrast, sat/vib): {:?}",
@@ -2351,6 +2443,16 @@ fn benchmark_edit_preview() {
             p95_settle <= Duration::from_millis(40),
             "Settle frame p95 budget is <= 40 ms, measured {:?}",
             p95_settle
+        );
+        let drag_budget = Duration::from_millis(12) + Duration::from_micros(1500) * MASKS;
+        let settle_budget = Duration::from_millis(40) + Duration::from_millis(5) * MASKS;
+        assert!(
+            p95_masked_drag <= drag_budget,
+            "Drag frame p95 with {MASKS} masks: budget {drag_budget:?}, measured {p95_masked_drag:?}"
+        );
+        assert!(
+            p95_masked_settle <= settle_budget,
+            "Settle frame p95 with {MASKS} masks: budget {settle_budget:?}, measured {p95_masked_settle:?}"
         );
     }
 }
@@ -3170,4 +3272,329 @@ fn glow_and_halation_decay_smoothly_and_scale_with_image_resolution() {
         mean_diff <= 1.5,
         "Mean delta E {mean_diff} exceeds 1.5 (max={max_diff})"
     );
+}
+
+// ---------------------------------------------------------------------------
+// ED-19: masks
+// ---------------------------------------------------------------------------
+
+fn radial_mask(center: [f32; 2], radius: f32, exposure: f32) -> phototools_core::media::edit::Mask {
+    use phototools_core::media::edit::{LocalAdjustments, Mask, MaskKind};
+    Mask {
+        id: "r".into(),
+        name: "Radial".into(),
+        kind: MaskKind::Radial {
+            center,
+            radius_x: radius,
+            radius_y: radius,
+            angle: 0.0,
+            feather: 0.3,
+        },
+        invert: false,
+        opacity: 1.0,
+        enabled: true,
+        adjustments: LocalAdjustments {
+            exposure,
+            ..Default::default()
+        },
+    }
+}
+
+/// A grey frame with a smooth gradient, so misplacement would show, and a red marker
+/// square centred at stored-normalised `marker`.
+fn marked_frame(w: u32, h: u32, marker: [f32; 2]) -> phototools_core::media::edit::ImageBuffer {
+    let (mx, my) = ((marker[0] * w as f32) as i64, (marker[1] * h as f32) as i64);
+    let half = (w.max(h) / 60) as i64;
+    let mut data = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            if (x - mx).abs() <= half && (y - my).abs() <= half {
+                data.extend_from_slice(&[230, 20, 20]);
+            } else {
+                let v = (80 + (x * 60 / w as i64) + (y * 30 / h as i64)) as u8;
+                data.extend_from_slice(&[v, v, v]);
+            }
+        }
+    }
+    phototools_core::media::edit::ImageBuffer::Rgb8 {
+        width: w,
+        height: h,
+        data,
+    }
+}
+
+/// Centroid of the pixels where `weight` is positive, in frame pixels.
+fn centroid(w: u32, h: u32, weight: impl Fn(usize) -> f32) -> (f32, f32) {
+    let (mut sx, mut sy, mut sw) = (0.0f64, 0.0f64, 0.0f64);
+    for y in 0..h {
+        for x in 0..w {
+            let k = weight((y * w + x) as usize).max(0.0) as f64;
+            sx += k * (x as f64 + 0.5);
+            sy += k * (y as f64 + 0.5);
+            sw += k;
+        }
+    }
+    assert!(sw > 0.0, "nothing to locate");
+    ((sx / sw) as f32, (sy / sw) as f32)
+}
+
+/// The effect of a mask drawn over a marker lands on the marker, whatever the crop,
+/// rotation, straighten, flip or EXIF orientation: masks are placed on the photograph's
+/// content, not on the frame around it (ED-19, decision 2).
+#[test]
+fn a_mask_follows_the_crop_and_straighten() {
+    use phototools_core::media::edit::{
+        AdjustmentRecipe, Geometry, NormalizedCrop, PreviewSession, PreviewStage,
+    };
+
+    let at = [0.3, 0.35];
+    let img = marked_frame(1500, 1000, at);
+    let geometries: Vec<(&str, Option<Geometry>, u32)> = vec![
+        ("none", None, 1),
+        (
+            "crop",
+            Some(Geometry {
+                crop: Some(NormalizedCrop {
+                    x: 0.1,
+                    y: 0.2,
+                    width: 0.6,
+                    height: 0.7,
+                }),
+                ..Default::default()
+            }),
+            1,
+        ),
+        (
+            "rotate 90",
+            Some(Geometry {
+                rotate: 90,
+                ..Default::default()
+            }),
+            1,
+        ),
+        (
+            "straighten 8 and flip",
+            Some(Geometry {
+                straighten: 8.0,
+                flip_h: true,
+                ..Default::default()
+            }),
+            1,
+        ),
+        ("EXIF orientation 6", Some(Geometry::default()), 6),
+    ];
+
+    for (name, geometry, orientation) in geometries {
+        let session =
+            PreviewSession::from_image_buffer_with_orientation(&img, orientation).unwrap();
+        let base = AdjustmentRecipe {
+            geometry: geometry.clone(),
+            ..Default::default()
+        };
+        let masked = AdjustmentRecipe {
+            masks: vec![radial_mask(at, 0.06, 1.5)],
+            ..base.clone()
+        };
+        let plain = session.render(&base, None, PreviewStage::Drag).unwrap();
+        let lit = session.render(&masked, None, PreviewStage::Drag).unwrap();
+        let (w, h) = (plain.width, plain.height);
+
+        let marker = centroid(w, h, |i| {
+            let p = &plain.bytes[i * 4..i * 4 + 3];
+            if p[0] > 150 && p[1] < 90 {
+                1.0
+            } else {
+                0.0
+            }
+        });
+        let effect = centroid(w, h, |i| {
+            let luma = |b: &[u8]| b[0] as f32 + b[1] as f32 + b[2] as f32;
+            luma(&lit.bytes[i * 4..i * 4 + 3]) - luma(&plain.bytes[i * 4..i * 4 + 3])
+        });
+        let dist = ((marker.0 - effect.0).powi(2) + (marker.1 - effect.1).powi(2)).sqrt();
+        assert!(
+            dist < 3.0,
+            "{name}: the mask's effect is centred at {effect:?}, the marker at {marker:?}"
+        );
+    }
+}
+
+/// Where no mask reaches, the frame is byte for byte what it is without masks; a mask
+/// that switches a stage on (saturation here) must not disturb the pixels it misses.
+#[test]
+fn pixels_no_mask_covers_are_unchanged_by_it() {
+    use phototools_core::media::edit::{AdjustmentRecipe, PreviewSession, PreviewStage};
+
+    let img = marked_frame(1200, 800, [0.8, 0.8]);
+    let session = PreviewSession::new(&img).unwrap();
+    let base = AdjustmentRecipe {
+        exposure: 0.3,
+        contrast: 12.0,
+        ..Default::default()
+    };
+    let mut mask = radial_mask([0.5, 0.5], 0.1, 1.0);
+    mask.adjustments.saturation = 40.0;
+    mask.adjustments.contrast = -20.0;
+    mask.adjustments.shadows = 30.0;
+    let masked = AdjustmentRecipe {
+        masks: vec![mask],
+        ..base.clone()
+    };
+
+    for stage in [PreviewStage::Drag, PreviewStage::Settle] {
+        let a = session.render(&base, None, stage).unwrap();
+        let b = session.render(&masked, None, stage).unwrap();
+        let (w, h) = (a.width as usize, a.height as usize);
+        let mut changed_inside = 0;
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 4;
+                let (u, v) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
+                // Radius 0.1 of the long edge: 0.1 of the width, 0.15 of the height.
+                let r = (((u - 0.5) / 0.1).powi(2) + ((v - 0.5) / 0.15).powi(2)).sqrt();
+                if r > 1.01 {
+                    assert_eq!(
+                        a.bytes[i..i + 4],
+                        b.bytes[i..i + 4],
+                        "outside the mask at ({x}, {y})"
+                    );
+                } else if r < 0.5 && a.bytes[i..i + 3] != b.bytes[i..i + 3] {
+                    changed_inside += 1;
+                }
+            }
+        }
+        assert!(changed_inside > 0, "the mask changed nothing inside");
+    }
+}
+
+/// A mask whose adjustments are all zero renders exactly as no mask at all, preview and
+/// export.
+#[test]
+fn a_mask_with_zero_adjustments_changes_nothing() {
+    use phototools_core::media::edit::{
+        apply_recipe, AdjustmentRecipe, PreviewSession, PreviewStage,
+    };
+
+    let img = marked_frame(600, 400, [0.5, 0.5]);
+    let base = AdjustmentRecipe {
+        exposure: 0.4,
+        ..Default::default()
+    };
+    let masked = AdjustmentRecipe {
+        masks: vec![radial_mask([0.5, 0.5], 0.3, 0.0)],
+        ..base.clone()
+    };
+    assert_eq!(
+        apply_recipe(&img, &base, None).unwrap(),
+        apply_recipe(&img, &masked, None).unwrap()
+    );
+    let session = PreviewSession::new(&img).unwrap();
+    assert_eq!(
+        session
+            .render(&base, None, PreviewStage::Settle)
+            .unwrap()
+            .bytes,
+        session
+            .render(&masked, None, PreviewStage::Settle)
+            .unwrap()
+            .bytes
+    );
+    assert!(masked.masks[0].is_identity());
+}
+
+/// The export, rendered at full resolution and downscaled, matches the preview of the same
+/// masked recipe (the ED-16 measure: mean difference ≤ 1.5 code values).
+#[test]
+fn export_matches_preview_with_masks_within_delta_e_1_5() {
+    use phototools_core::media::edit::{
+        apply_recipe, downscale_image_buffer, AdjustmentRecipe, LocalAdjustments, Mask, MaskKind,
+        PreviewSession, PreviewStage,
+    };
+
+    let img = marked_frame(4000, 2667, [0.6, 0.4]);
+    let sky = Mask {
+        id: "sky".into(),
+        name: "Sky".into(),
+        kind: MaskKind::Linear {
+            start: [0.5, 0.1],
+            end: [0.5, 0.6],
+        },
+        invert: false,
+        opacity: 0.8,
+        enabled: true,
+        adjustments: LocalAdjustments {
+            exposure: -0.8,
+            temperature: -20.0,
+            highlights: -40.0,
+            saturation: 25.0,
+            ..Default::default()
+        },
+    };
+    let mut face = radial_mask([0.6, 0.4], 0.12, 0.7);
+    face.adjustments.contrast = 15.0;
+    face.adjustments.shadows = 30.0;
+    face.adjustments.tint = 8.0;
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.2,
+        contrast: 10.0,
+        masks: vec![sky, face],
+        ..Default::default()
+    };
+
+    let export = apply_recipe(&img, &recipe, None).unwrap();
+    let session = PreviewSession::new(&img).unwrap();
+    let preview = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    let down = downscale_image_buffer(&export, preview.width.max(preview.height)).unwrap();
+    assert_eq!(
+        (down.width(), down.height()),
+        (preview.width, preview.height)
+    );
+    let down = down.as_rgb8().unwrap();
+
+    let (mut sum, mut n) = (0.0f64, 0usize);
+    for i in 0..(preview.width * preview.height) as usize {
+        let d: f32 = (0..3)
+            .map(|c| (preview.bytes[i * 4 + c] as f32 - down[i * 3 + c] as f32).abs())
+            .sum::<f32>()
+            / 3.0;
+        sum += d as f64;
+        n += 1;
+    }
+    let mean = (sum / n as f64) as f32;
+    assert!(
+        mean <= 1.5,
+        "mean difference {mean} between preview and export exceeds 1.5"
+    );
+}
+
+/// A v2 sidecar, written before masks existed, loads with none; a v3 one with masks
+/// round-trips through the sidecar unchanged.
+#[test]
+fn a_v2_sidecar_loads_with_no_masks_and_masks_round_trip_in_v3() {
+    use phototools_core::media::edit::AdjustmentRecipe;
+    use phototools_core::tools::edit::{load_recipe, save_recipe, sidecar_path};
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("masked.jpg", 64, 48);
+    let sidecar = sidecar_path(&img);
+    std::fs::write(
+        &sidecar,
+        serde_json::json!({"version": 2, "source_sha256": "x", "exposure": 0.5,
+            "temperature": 0.0, "tint": 0.0, "highlights": 0.0, "shadows": 0.0, "contrast": 0.0,
+            "saturation": 0.0, "vibrance": 0.0, "lut": null, "lut_intensity": 1.0})
+        .to_string(),
+    )
+    .unwrap();
+    let v2 = load_recipe(&sidecar).unwrap();
+    assert!(v2.masks.is_empty());
+
+    let recipe = AdjustmentRecipe {
+        masks: vec![radial_mask([0.4, 0.6], 0.2, -0.5)],
+        ..v2
+    };
+    save_recipe(&img, &recipe).unwrap();
+    let back = load_recipe(&sidecar).unwrap();
+    assert_eq!(back.version, 3);
+    assert_eq!(back.masks, recipe.masks);
 }

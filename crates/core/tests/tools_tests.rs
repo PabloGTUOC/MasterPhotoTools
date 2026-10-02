@@ -1033,27 +1033,28 @@ fn a_v1_sidecar_loads_into_v2_with_default_identities() {
 }
 
 #[test]
-fn a_recipe_version_three_is_refused_as_unsupported() {
+fn a_recipe_version_four_is_refused_as_unsupported() {
     use phototools_core::tools::edit::load_recipe;
 
+    // Version 3 (masks, ED-19) is current; the first version this build does not know is 4.
     let f = Fixtures::new();
-    let sidecar = f.path().join("version3.jpg.photoedit");
-    let v3_json = serde_json::json!({
-        "version": 3,
+    let sidecar = f.path().join("version4.jpg.photoedit");
+    let v4_json = serde_json::json!({
+        "version": 4,
         "source_sha256": "abcdef123456",
         "exposure": 1.0
     });
-    fs::write(&sidecar, v3_json.to_string()).unwrap();
+    fs::write(&sidecar, v4_json.to_string()).unwrap();
 
-    let err = load_recipe(&sidecar).expect_err("version 3 must be refused");
+    let err = load_recipe(&sidecar).expect_err("version 4 must be refused");
     assert!(
-        err.to_string().contains("unsupported sidecar version 3"),
+        err.to_string().contains("unsupported sidecar version 4"),
         "expected unsupported version error, got: {err}"
     );
 }
 
 #[test]
-fn a_v1_sidecar_saved_again_is_written_as_v2() {
+fn a_v1_sidecar_saved_again_is_written_as_the_current_version() {
     use phototools_core::tools::edit::{load_recipe, save_recipe};
 
     let f = Fixtures::new();
@@ -1085,10 +1086,14 @@ fn a_v1_sidecar_saved_again_is_written_as_v2() {
     let written = save_recipe(&img, &loaded).expect("re-saving v1 must succeed");
     assert_eq!(written, sidecar);
 
-    // Read the file: must now have "version": 2 and preserved original values
+    // Read the file: must now have the current version and preserved original values
     let file_content = fs::read_to_string(&sidecar).unwrap();
     let saved_val: serde_json::Value = serde_json::from_str(&file_content).unwrap();
-    assert_eq!(saved_val["version"], 2);
+    assert_eq!(
+        saved_val["version"],
+        phototools_core::tools::CURRENT_RECIPE_VERSION
+    );
+    assert_eq!(saved_val["version"], 3);
     assert_eq!(saved_val["exposure"], 0.5);
     assert_eq!(saved_val["temperature"], 12.0);
     assert_eq!(saved_val["tint"], -8.0);

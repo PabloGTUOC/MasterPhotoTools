@@ -429,3 +429,71 @@ fn bulk_preset_over_many_files_starts_exactly_one_exiftool() {
         "6 files processed by BulkEditTool must start exactly one exiftool, not {spawns}"
     );
 }
+
+/// A mask is placed on one photograph's content, so a batch never applies one (ED-19): a
+/// recipe with masks plans and locks exactly as the same recipe without them, and a recipe
+/// whose only change is a mask is refused as changing nothing.
+#[test]
+fn masks_are_never_applied_by_batch() {
+    use phototools_core::media::edit::{LocalAdjustments, Mask, MaskKind};
+    use phototools_core::tools::bulk_edit::recipe_sha256;
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("photo.jpg", 40, 40);
+    let out_dir = f.path().join("out");
+
+    let sky = Mask {
+        id: "sky".into(),
+        name: "Sky".into(),
+        kind: MaskKind::Linear {
+            start: [0.5, 0.0],
+            end: [0.5, 0.5],
+        },
+        invert: false,
+        opacity: 1.0,
+        enabled: true,
+        adjustments: LocalAdjustments {
+            exposure: -1.0,
+            ..Default::default()
+        },
+    };
+
+    let plain = AdjustmentRecipe {
+        exposure: 0.5,
+        ..Default::default()
+    };
+    let with_mask = AdjustmentRecipe {
+        masks: vec![sky.clone()],
+        ..plain.clone()
+    };
+    assert_eq!(recipe_sha256(&with_mask), recipe_sha256(&plain));
+
+    let plan = BulkEditTool
+        .plan(&BulkEditParams::new(
+            vec![img.clone()],
+            with_mask,
+            f.path().join("luts"),
+            out_dir.clone(),
+        ))
+        .unwrap()
+        .data;
+    assert!(plan.actions.iter().all(|a| a.recipe.masks.is_empty()));
+    assert_eq!(plan.actions[0].recipe_sha256, recipe_sha256(&plain));
+
+    let only_mask = AdjustmentRecipe {
+        masks: vec![sky],
+        ..Default::default()
+    };
+    let err = BulkEditTool
+        .plan(&BulkEditParams::new(
+            vec![img],
+            only_mask,
+            f.path().join("luts"),
+            out_dir,
+        ))
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("does not change anything"),
+        "got: {err}"
+    );
+}

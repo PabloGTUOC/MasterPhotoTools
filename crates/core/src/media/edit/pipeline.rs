@@ -88,12 +88,17 @@ pub struct AdjustmentRecipe {
     /// Optional photographic looks (glow, halation, optional tone mapper) evaluated in scene-linear light.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub looks: Option<super::looks::LookEffects>,
+
+    // Round 3 local adjustments (ED-19):
+    /// Masks, each with its own adjustments, in stored-frame coordinates (`masks`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub masks: Vec<super::masks::Mask>,
 }
 
 impl Default for AdjustmentRecipe {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 3,
             source_sha256: String::new(),
             exposure: 0.0,
             temperature: 0.0,
@@ -116,12 +121,13 @@ impl Default for AdjustmentRecipe {
             vignette: None,
             grain: None,
             looks: None,
+            masks: Vec::new(),
         }
     }
 }
 
 impl AdjustmentRecipe {
-    /// True if all sliders are at rest (0.0), no curves are active, no HSL is applied, no grading is active, no geometry is active, no vignette or grain is active, no looks are active, and no effective LUT is attached (none or 0% intensity).
+    /// True if all sliders are at rest (0.0), no curves are active, no HSL is applied, no grading is active, no geometry is active, no vignette or grain is active, no looks are active, no mask can change a pixel, and no effective LUT is attached (none or 0% intensity).
     pub fn is_identity(&self) -> bool {
         self.exposure == 0.0
             && self.temperature == 0.0
@@ -143,6 +149,7 @@ impl AdjustmentRecipe {
             && self.vignette.as_ref().map_or(true, |v| v.is_identity())
             && self.grain.as_ref().map_or(true, |g| g.is_identity())
             && self.looks.as_ref().map_or(true, |l| l.is_identity())
+            && self.masks.iter().all(|m| m.is_identity())
     }
 }
 
@@ -571,114 +578,197 @@ impl LinearBuffer {
     /// Evaluates the pipeline stages in linear light in the specified order:
     /// white balance → exposure → highlights/shadows → contrast → saturation/vibrance.
     pub fn apply_adjustments(&mut self, recipe: &AdjustmentRecipe) {
-        // Precompute channel gains and flags once outside the pixel loop
-        let t = recipe.temperature / 100.0;
-        let g = recipe.tint / 100.0;
-        let wb_r = 2.0f32.powf(0.5 * t);
-        let wb_b = 2.0f32.powf(-0.5 * t);
-        let wb_g = 2.0f32.powf(-0.5 * g);
-        let exp_gain = 2.0f32.powf(recipe.exposure);
+        self.apply_adjustments_masked(recipe, None);
+    }
 
-        let gain_r = wb_r * exp_gain;
-        let gain_g = wb_g * exp_gain;
-        let gain_b = wb_b * exp_gain;
-
-        let h = recipe.highlights / 100.0;
-        let s = recipe.shadows / 100.0;
-        let w = recipe.whites / 100.0;
-        let b_val = recipe.blacks / 100.0;
-        let has_tone = h != 0.0 || s != 0.0 || w != 0.0 || b_val != 0.0;
-
-        let bright = recipe.brightness / 100.0;
-        let has_brightness = bright != 0.0;
-        let bright_exp = 2.0f32.powf(-0.5 * bright) - 1.0;
-
-        let c = recipe.contrast / 100.0;
-        let has_contrast = c != 0.0;
-        let gamma_minus_one = 0.5 * c;
-
-        let sat = recipe.saturation / 100.0;
-        let vib = recipe.vibrance / 100.0;
-        let has_sat_vib = sat != 0.0 || vib != 0.0;
+    /// As `apply_adjustments`, with each pixel's adjustments raised by the masks that cover
+    /// it (ED-19). This buffer is the geometry's output, so `masks` must be compiled against
+    /// the same geometry. A pixel no mask covers takes exactly the global arithmetic.
+    pub fn apply_adjustments_masked(
+        &mut self,
+        recipe: &AdjustmentRecipe,
+        masks: Option<&super::masks::CompiledMasks>,
+    ) {
+        let global = LinearParams::new(recipe, &super::masks::LocalAdjustments::default());
+        let touches = |f: fn(&super::masks::CompiledMasks) -> bool| masks.is_some_and(f);
+        let flags = StageFlags {
+            tone: global.has_tone || touches(|m| m.touches_tone),
+            contrast: global.has_contrast || touches(|m| m.touches_contrast),
+            sat_vib: global.has_sat_vib || touches(|m| m.touches_saturation),
+        };
 
         let compiled_hsl =
             super::hsl::CompiledHslTable::from_recipe(recipe.hsl.as_ref(), recipe.hue);
         let has_oklab = !compiled_hsl.is_identity;
+        let (w, h) = (self.width, self.height);
 
-        self.data.par_chunks_exact_mut(3).for_each(|px| {
-            let mut r = px[0];
-            let mut g = px[1];
-            let mut b = px[2];
+        self.data
+            .par_chunks_exact_mut((w as usize) * 3)
+            .enumerate()
+            .for_each(|(y, row)| {
+                let cursor = masks.map(|m| (m, m.row(y as u32, w, h)));
+                for (x, px) in row.chunks_exact_mut(3).enumerate() {
+                    let local_params;
+                    let p = match cursor {
+                        Some((m, c)) => {
+                            let (mx, my) = c.at(x);
+                            let local = m.local_at(mx, my);
+                            if local.is_zero() {
+                                &global
+                            } else {
+                                local_params = LinearParams::new(recipe, &local);
+                                &local_params
+                            }
+                        }
+                        None => &global,
+                    };
+                    let (mut r, mut g, mut b) = p.apply(px[0], px[1], px[2], &flags);
 
-            // 1 & 2. White Balance & Exposure
-            r *= gain_r;
-            g *= gain_g;
-            b *= gain_b;
+                    // Oklab stage: Global Hue rotation and 8-band HSL in ONE pass
+                    if has_oklab {
+                        let (hr, hg, hb) = compiled_hsl.apply_linear_srgb(r, g, b);
+                        r = hr;
+                        g = hg;
+                        b = hb;
+                    }
 
-            // 3. Highlights, Shadows, Whites, Blacks (crossover at 0.18, 0.18 strictly stationary)
-            if has_tone {
-                let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                let (w_h, w_s) = tone_weights(y);
-                let (w_w, w_b) = white_black_weights(y);
-                let delta_ev = w_h * h + w_s * s + w_w * w + w_b * b_val;
-                if delta_ev != 0.0 {
-                    let factor = delta_ev.exp2();
-                    r *= factor;
-                    g *= factor;
-                    b *= factor;
+                    px[0] = r;
+                    px[1] = g;
+                    px[2] = b;
                 }
-            }
+            });
+    }
+}
 
-            // Brightness (mid-tone power curve pivoting on mid-grey, keeping 0.0 and 1.0 pinned)
-            if has_brightness {
-                let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                if y > 1e-7 && (y - 1.0).abs() > 1e-7 {
-                    let factor = y.powf(bright_exp);
-                    r *= factor;
-                    g *= factor;
-                    b *= factor;
-                }
-            }
+/// Which of the optional stages run for this image: on when the global value or any mask
+/// asks for it, so a stage at rest globally still runs where a mask is active.
+#[derive(Clone, Copy)]
+struct StageFlags {
+    tone: bool,
+    contrast: bool,
+    sat_vib: bool,
+}
 
-            // 4. Contrast (power curve pivoting at 0.18)
-            if has_contrast {
-                let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                if y > 1e-7 {
-                    let factor = (y / 0.18).powf(gamma_minus_one);
-                    r *= factor;
-                    g *= factor;
-                    b *= factor;
-                }
-            }
+/// The per-pixel constants of the export pass, from the global recipe plus a mask's local
+/// adjustments (zero for the global set). One evaluation path for both, so a masked pixel
+/// and an unmasked one are adjusted by the same arithmetic.
+struct LinearParams {
+    gain_r: f32,
+    gain_g: f32,
+    gain_b: f32,
+    h: f32,
+    s: f32,
+    w: f32,
+    b_val: f32,
+    has_tone: bool,
+    has_brightness: bool,
+    bright_exp: f32,
+    has_contrast: bool,
+    gamma_minus_one: f32,
+    sat: f32,
+    vib: f32,
+    has_sat_vib: bool,
+}
 
-            // 5. Saturation & Vibrance (preserves neutral grey)
-            if has_sat_vib {
-                let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                let max = r.max(g).max(b);
-                let min = r.min(g).min(b);
-                let current_sat = if max > 1e-7 {
-                    ((max - min) / max).min(1.0)
-                } else {
-                    0.0
-                };
-                let k = ((1.0 + sat) * (1.0 + vib * (1.0 - current_sat))).max(0.0);
-                r = (y + k * (r - y)).max(0.0);
-                g = (y + k * (g - y)).max(0.0);
-                b = (y + k * (b - y)).max(0.0);
-            }
+impl LinearParams {
+    fn new(recipe: &AdjustmentRecipe, local: &super::masks::LocalAdjustments) -> Self {
+        // Precompute channel gains and flags once outside the pixel loop
+        let t = (recipe.temperature + local.temperature) / 100.0;
+        let g = (recipe.tint + local.tint) / 100.0;
+        let wb_r = 2.0f32.powf(0.5 * t);
+        let wb_b = 2.0f32.powf(-0.5 * t);
+        let wb_g = 2.0f32.powf(-0.5 * g);
+        let exp_gain = 2.0f32.powf(recipe.exposure + local.exposure);
 
-            // Oklab stage: Global Hue rotation and 8-band HSL in ONE pass
-            if has_oklab {
-                let (hr, hg, hb) = compiled_hsl.apply_linear_srgb(r, g, b);
-                r = hr;
-                g = hg;
-                b = hb;
-            }
+        let h = (recipe.highlights + local.highlights) / 100.0;
+        let s = (recipe.shadows + local.shadows) / 100.0;
+        let w = (recipe.whites + local.whites) / 100.0;
+        let b_val = (recipe.blacks + local.blacks) / 100.0;
 
-            px[0] = r;
-            px[1] = g;
-            px[2] = b;
-        });
+        let bright = recipe.brightness / 100.0;
+        let c = (recipe.contrast + local.contrast) / 100.0;
+        let sat = (recipe.saturation + local.saturation) / 100.0;
+        let vib = (recipe.vibrance + local.vibrance) / 100.0;
+
+        Self {
+            gain_r: wb_r * exp_gain,
+            gain_g: wb_g * exp_gain,
+            gain_b: wb_b * exp_gain,
+            h,
+            s,
+            w,
+            b_val,
+            has_tone: h != 0.0 || s != 0.0 || w != 0.0 || b_val != 0.0,
+            has_brightness: bright != 0.0,
+            bright_exp: 2.0f32.powf(-0.5 * bright) - 1.0,
+            has_contrast: c != 0.0,
+            gamma_minus_one: 0.5 * c,
+            sat,
+            vib,
+            has_sat_vib: sat != 0.0 || vib != 0.0,
+        }
+    }
+
+    #[inline(always)]
+    fn apply(&self, r: f32, g: f32, b: f32, flags: &StageFlags) -> (f32, f32, f32) {
+        // 1 & 2. White Balance & Exposure
+        let mut r = r * self.gain_r;
+        let mut g = g * self.gain_g;
+        let mut b = b * self.gain_b;
+
+        // 3. Highlights, Shadows, Whites, Blacks (crossover at 0.18, 0.18 strictly stationary)
+        if flags.tone {
+            let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            let (w_h, w_s) = tone_weights(y);
+            let (w_w, w_b) = white_black_weights(y);
+            let delta_ev = w_h * self.h + w_s * self.s + w_w * self.w + w_b * self.b_val;
+            if delta_ev != 0.0 {
+                let factor = delta_ev.exp2();
+                r *= factor;
+                g *= factor;
+                b *= factor;
+            }
+        }
+
+        // Brightness (mid-tone power curve pivoting on mid-grey, keeping 0.0 and 1.0 pinned)
+        if self.has_brightness {
+            let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            if y > 1e-7 && (y - 1.0).abs() > 1e-7 {
+                let factor = y.powf(self.bright_exp);
+                r *= factor;
+                g *= factor;
+                b *= factor;
+            }
+        }
+
+        // 4. Contrast (power curve pivoting at 0.18)
+        if flags.contrast && self.has_contrast {
+            let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            if y > 1e-7 {
+                let factor = (y / 0.18).powf(self.gamma_minus_one);
+                r *= factor;
+                g *= factor;
+                b *= factor;
+            }
+        }
+
+        // 5. Saturation & Vibrance (preserves neutral grey)
+        if flags.sat_vib && self.has_sat_vib {
+            let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            let max = r.max(g).max(b);
+            let min = r.min(g).min(b);
+            let current_sat = if max > 1e-7 {
+                ((max - min) / max).min(1.0)
+            } else {
+                0.0
+            };
+            let k = ((1.0 + self.sat) * (1.0 + self.vib * (1.0 - current_sat))).max(0.0);
+            r = (y + k * (r - y)).max(0.0);
+            g = (y + k * (g - y)).max(0.0);
+            b = (y + k * (b - y)).max(0.0);
+        }
+
+        (r, g, b)
     }
 }
 
@@ -852,10 +942,17 @@ pub fn apply_recipe_with_orientation(
     validate_lut(recipe, lut)?;
 
     let mut linear = LinearBuffer::from_image_buffer(image);
+    let masks = super::masks::CompiledMasks::compile(
+        &recipe.masks,
+        recipe.geometry.as_ref(),
+        linear.width,
+        linear.height,
+        orientation,
+    )?;
     if let Some(geom) = &recipe.geometry {
         linear = geom.apply_to_linear(&linear, orientation)?;
     }
-    linear.apply_adjustments(recipe);
+    linear.apply_adjustments_masked(recipe, masks.as_ref());
     if let Some(vignette) = &recipe.vignette {
         super::vignette::apply_vignette(&mut linear, vignette);
     }
@@ -924,9 +1021,13 @@ mod tests {
 
     #[test]
     fn an_untouched_v2_recipe_is_exact_identity() {
-        let default_recipe = AdjustmentRecipe::default();
-        assert_eq!(default_recipe.version, 2);
+        // The default is now version 3 (ED-19); a v2 recipe at rest is still identity.
+        let default_recipe = AdjustmentRecipe {
+            version: 2,
+            ..Default::default()
+        };
         assert!(default_recipe.is_identity());
+        assert!(AdjustmentRecipe::default().is_identity());
 
         // 8-bit buffer: exercise various levels and shades
         let w = 8;

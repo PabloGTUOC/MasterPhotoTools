@@ -90,13 +90,25 @@ pub fn sample_frames(plan: &Plan<BulkEditAction>, n: usize) -> Vec<PathBuf> {
 /// same. The version is normalised to `CURRENT_RECIPE_VERSION` so a v1 sidecar
 /// loaded into v2 locks identically to a native v2 recipe with the same settings.
 pub fn recipe_sha256(recipe: &AdjustmentRecipe) -> String {
-    let mut normalised = recipe.clone();
+    let mut normalised = batch_recipe(recipe);
     normalised.source_sha256.clear();
     normalised.version = CURRENT_RECIPE_VERSION;
 
     let json =
         serde_json::to_vec(&normalised).expect("AdjustmentRecipe serialises to JSON infallibly");
     scanner::hex(&Sha256::digest(&json))
+}
+
+/// The recipe a batch applies: the given one without its masks.
+///
+/// A mask is placed on one photograph's content and means nothing on another's, so a
+/// batch never carries one, as a preset never does (ED-19). Stripped here, where both the
+/// plan and the lock are computed, so a recipe with masks and the same recipe without
+/// them plan and lock identically.
+pub fn batch_recipe(recipe: &AdjustmentRecipe) -> AdjustmentRecipe {
+    let mut r = recipe.clone();
+    r.masks.clear();
+    r
 }
 
 pub struct BulkEditTool;
@@ -147,7 +159,8 @@ impl BulkEditTool {
 
         // Resolve the LUT at plan time so a missing or malformed LUT fails the dry run,
         // not the run.
-        let lut = if let Some(lut_ref) = &p.recipe.lut {
+        let recipe = batch_recipe(&p.recipe);
+        let lut = if let Some(lut_ref) = &recipe.lut {
             let (_, lut) = resolve_recipe_lut(&p.lut_dir, lut_ref)?;
             Some(lut)
         } else {
@@ -155,7 +168,7 @@ impl BulkEditTool {
         };
 
         // Refuse a recipe that would write byte-identical copies.
-        if is_identity(&p.recipe, lut.as_ref()) {
+        if is_identity(&recipe, lut.as_ref()) {
             return Err(Error::Refused(
                 "Recipe does not change anything; nothing to apply".into(),
             ));
@@ -163,7 +176,7 @@ impl BulkEditTool {
 
         let (files, mut skipped) = expand_inputs(&p.inputs, p.recursive, &ACCEPTED);
 
-        let recipe_sha256 = recipe_sha256(&p.recipe);
+        let recipe_sha256 = recipe_sha256(&recipe);
         let mut actions = Vec::new();
         for source in files {
             if is_hidden(&source) {
@@ -184,7 +197,7 @@ impl BulkEditTool {
             actions.push(BulkEditAction {
                 source,
                 out_dir: p.out_dir.clone(),
-                recipe: p.recipe.clone(),
+                recipe: recipe.clone(),
                 recipe_sha256: recipe_sha256.clone(),
                 lut_dir: p.lut_dir.clone(),
             });

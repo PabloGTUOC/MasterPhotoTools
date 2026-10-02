@@ -123,20 +123,18 @@ impl Geometry {
             && !self.flip_v
     }
 
-    /// Applies geometric transformations to a `LinearBuffer` in linear light.
+    /// The mapping from output pixels to stored pixels for a source of `stored_w` × `stored_h`
+    /// in EXIF `orientation`, and the output size it produces.
     ///
-    /// Single-pass bilinear sampling directly from stored coordinates $(x_s, y_s)$
-    /// to output pixels $(x_{out}, y_{out})$, baking orientation into an upright frame.
-    pub fn apply_to_linear(
+    /// One place computes this so the pixels and anything placed on them (masks, ED-19) are
+    /// moved by the same transform; two copies of the arithmetic would drift.
+    pub fn plan(
         &self,
-        src: &LinearBuffer,
+        stored_w: u32,
+        stored_h: u32,
         orientation: u32,
-    ) -> Result<LinearBuffer, Error> {
-        if self.is_identity() && orientation == 1 {
-            return Ok(src.clone());
-        }
-
-        let (w_s, h_s) = (src.width as f32, src.height as f32);
+    ) -> Result<GeometryPlan, Error> {
+        let (w_s, h_s) = (stored_w as f32, stored_h as f32);
 
         // 1. Upright frame dimensions from EXIF orientation
         let (w_u, h_u) = if (5..=8).contains(&orientation) {
@@ -165,56 +163,43 @@ impl Geometry {
         let out_w = ((crop.width * w_ins).round() as u32).max(MIN_CROP_DIMENSION);
         let out_h = ((crop.height * h_ins).round() as u32).max(MIN_CROP_DIMENSION);
 
+        Ok(GeometryPlan {
+            out_w,
+            out_h,
+            w_s,
+            h_s,
+            w_u,
+            h_u,
+            w_r,
+            h_r,
+            w_ins,
+            h_ins,
+            crop,
+            k,
+            cos_t: theta_deg.to_radians().cos(),
+            sin_t: theta_deg.to_radians().sin(),
+            flip_h: self.flip_h,
+            flip_v: self.flip_v,
+            orientation,
+        })
+    }
+
+    /// Applies geometric transformations to a `LinearBuffer` in linear light.
+    ///
+    /// Single-pass bilinear sampling directly from stored coordinates $(x_s, y_s)$
+    /// to output pixels $(x_{out}, y_{out})$, baking orientation into an upright frame.
+    pub fn apply_to_linear(
+        &self,
+        src: &LinearBuffer,
+        orientation: u32,
+    ) -> Result<LinearBuffer, Error> {
+        if self.is_identity() && orientation == 1 {
+            return Ok(src.clone());
+        }
+
+        let plan = self.plan(src.width, src.height, orientation)?;
+        let (out_w, out_h) = (plan.out_w, plan.out_h);
         let mut out_data = vec![0.0f32; (out_w * out_h * 3) as usize];
-
-        // 5. Affine composition from output pixel (i, j) to stored pixel (x_s, y_s)
-        let cos_t = theta_deg.to_radians().cos();
-        let sin_t = theta_deg.to_radians().sin();
-
-        // Sample centers at i + 0.5, j + 0.5
-        let map_point = |i: f32, j: f32| -> (f32, f32) {
-            // (a) Coordinate in inscribed rectangle
-            let u_ins = (crop.x * w_ins) + (i / out_w as f32) * (crop.width * w_ins);
-            let v_ins = (crop.y * h_ins) + (j / out_h as f32) * (crop.height * h_ins);
-
-            // (b) Relative to center of inscribed rectangle
-            let x_rel = u_ins - w_ins * 0.5;
-            let y_rel = v_ins - h_ins * 0.5;
-
-            // (c) Inverse rotate by theta (rotation by -theta around center of w_r, h_r)
-            let mut x_r = w_r * 0.5 + (x_rel * cos_t + y_rel * sin_t);
-            let mut y_r = h_r * 0.5 + (-x_rel * sin_t + y_rel * cos_t);
-
-            // (d) Inverse flips
-            if self.flip_h {
-                x_r = w_r - x_r;
-            }
-            if self.flip_v {
-                y_r = h_r - y_r;
-            }
-
-            // (e) Inverse 90-degree user rotation
-            let (x_u, y_u) = match k {
-                0 => (x_r, y_r),
-                1 => (y_r, h_u - x_r),
-                2 => (w_u - x_r, h_u - y_r),
-                3 => (w_u - y_r, x_r),
-                _ => (x_r, y_r),
-            };
-
-            // (f) Inverse EXIF orientation to stored coordinates
-            match orientation {
-                1 => (x_u, y_u),
-                2 => (w_s - x_u, y_u),
-                3 => (w_s - x_u, h_s - y_u),
-                4 => (x_u, h_s - y_u),
-                5 => (y_u, x_u),
-                6 => (y_u, h_s - x_u),
-                7 => (w_s - y_u, h_s - x_u),
-                8 => (w_s - y_u, x_u),
-                _ => (x_u, y_u),
-            }
-        };
 
         let src_data = &src.data;
         let src_w_usize = src.width as usize;
@@ -225,8 +210,8 @@ impl Geometry {
             .enumerate()
             .for_each(|(j, row_slice)| {
                 let j_f = j as f32 + 0.5;
-                let (x0, y0) = map_point(0.5, j_f);
-                let (x1, y1) = map_point(1.5, j_f);
+                let (x0, y0) = plan.map(0.5, j_f);
+                let (x1, y1) = plan.map(1.5, j_f);
                 let dx = x1 - x0;
                 let dy = y1 - y0;
 
@@ -263,6 +248,101 @@ impl Geometry {
             ImageBuffer::Rgb8 { .. } => Ok(transformed.to_rgb8()),
             ImageBuffer::Rgb16 { .. } => Ok(transformed.to_rgb16()),
         }
+    }
+}
+
+/// A geometry resolved against one source: its output size and the affine map from
+/// output pixel to stored pixel (ED-13), shared by the pixels and the masks (ED-19).
+#[derive(Debug, Clone, Copy)]
+pub struct GeometryPlan {
+    pub out_w: u32,
+    pub out_h: u32,
+    w_s: f32,
+    h_s: f32,
+    w_u: f32,
+    h_u: f32,
+    w_r: f32,
+    h_r: f32,
+    w_ins: f32,
+    h_ins: f32,
+    crop: NormalizedCrop,
+    k: i32,
+    cos_t: f32,
+    sin_t: f32,
+    flip_h: bool,
+    flip_v: bool,
+    orientation: u32,
+}
+
+impl GeometryPlan {
+    /// Stored-pixel coordinates of output pixel coordinates `(i, j)`; pixel centres are at +0.5.
+    #[inline]
+    pub fn map(&self, i: f32, j: f32) -> (f32, f32) {
+        let (w_s, h_s, w_u, h_u, w_r, h_r) =
+            (self.w_s, self.h_s, self.w_u, self.h_u, self.w_r, self.h_r);
+        let (w_ins, h_ins, crop) = (self.w_ins, self.h_ins, self.crop);
+        let (cos_t, sin_t) = (self.cos_t, self.sin_t);
+
+        // (a) Coordinate in inscribed rectangle
+        let u_ins = (crop.x * w_ins) + (i / self.out_w as f32) * (crop.width * w_ins);
+        let v_ins = (crop.y * h_ins) + (j / self.out_h as f32) * (crop.height * h_ins);
+
+        // (b) Relative to center of inscribed rectangle
+        let x_rel = u_ins - w_ins * 0.5;
+        let y_rel = v_ins - h_ins * 0.5;
+
+        // (c) Inverse rotate by theta (rotation by -theta around center of w_r, h_r)
+        let mut x_r = w_r * 0.5 + (x_rel * cos_t + y_rel * sin_t);
+        let mut y_r = h_r * 0.5 + (-x_rel * sin_t + y_rel * cos_t);
+
+        // (d) Inverse flips
+        if self.flip_h {
+            x_r = w_r - x_r;
+        }
+        if self.flip_v {
+            y_r = h_r - y_r;
+        }
+
+        // (e) Inverse 90-degree user rotation
+        let (x_u, y_u) = match self.k {
+            0 => (x_r, y_r),
+            1 => (y_r, h_u - x_r),
+            2 => (w_u - x_r, h_u - y_r),
+            3 => (w_u - y_r, x_r),
+            _ => (x_r, y_r),
+        };
+
+        // (f) Inverse EXIF orientation to stored coordinates
+        match self.orientation {
+            1 => (x_u, y_u),
+            2 => (w_s - x_u, y_u),
+            3 => (w_s - x_u, h_s - y_u),
+            4 => (x_u, h_s - y_u),
+            5 => (y_u, x_u),
+            6 => (y_u, h_s - x_u),
+            7 => (w_s - y_u, h_s - x_u),
+            8 => (w_s - y_u, x_u),
+            _ => (x_u, y_u),
+        }
+    }
+
+    /// The same map in normalised coordinates, as `[a, b, c, d, e, f]` with
+    /// `u_s = a·u + b·v + c` and `v_s = d·u + e·v + f`, where `(u, v)` spans the output
+    /// and `(u_s, v_s)` the stored frame, both on [0, 1]. Every step of `map` is affine,
+    /// so three points determine it; normalised, it no longer depends on the resolution.
+    pub fn normalised_affine(&self) -> [f32; 6] {
+        let (w, h) = (self.out_w as f32, self.out_h as f32);
+        let (x0, y0) = self.map(0.0, 0.0);
+        let (x1, y1) = self.map(w, 0.0);
+        let (x2, y2) = self.map(0.0, h);
+        [
+            (x1 - x0) / self.w_s,
+            (x2 - x0) / self.w_s,
+            x0 / self.w_s,
+            (y1 - y0) / self.h_s,
+            (y2 - y0) / self.h_s,
+            y0 / self.h_s,
+        ]
     }
 }
 

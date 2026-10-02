@@ -8,6 +8,7 @@ pub mod grain;
 pub mod hsl;
 pub mod looks;
 pub mod lut;
+pub mod masks;
 pub mod pipeline;
 pub mod preview;
 pub mod vignette;
@@ -18,13 +19,14 @@ pub use color::{
 pub use curves::{CurvePoint, CurveTable, MonotoneSpline, ToneCurves, ToneCurvesTable};
 pub use geometry::{
     aspect_ratio_from_preset, largest_inscribed_rect, preset_to_normalized_crop, Geometry,
-    NormalizedCrop, MIN_CROP_DIMENSION,
+    GeometryPlan, NormalizedCrop, MIN_CROP_DIMENSION,
 };
 pub use grading::{ColorGrading, ColorWheel, CompiledGradingTable};
 pub use grain::{CompiledGrain, FilmGrain};
 pub use hsl::{CompiledHslTable, HslAdjustments, HslBand};
 pub use looks::{aces_narkowicz, apply_looks_linear, LookEffects, HALATION_TINT};
 pub use lut::{Lut, MAX_LUT_SIZE, MIN_LUT_SIZE};
+pub use masks::{CompiledMasks, LocalAdjustments, Mask, MaskKind};
 pub use pipeline::{
     apply_recipe, apply_recipe_with_orientation, decode_image, linear_to_srgb, linear_to_u16,
     linear_to_u8, srgb_to_linear, tone_weights, u16_to_linear, u8_to_linear, validate_lut,

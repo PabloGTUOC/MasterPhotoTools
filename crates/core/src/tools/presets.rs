@@ -167,6 +167,8 @@ pub fn save_preset(
     let mut recipe = recipe.clone();
     recipe.source_sha256 = String::new();
     recipe.geometry = None;
+    // Masks for the same reason as the geometry: placed on this photograph's content (ED-19).
+    recipe.masks.clear();
     recipe.version = CURRENT_RECIPE_VERSION;
 
     // Serialize to JSON
@@ -316,11 +318,28 @@ mod tests {
             ..Default::default()
         });
 
+        recipe.masks.push(crate::media::edit::Mask {
+            id: "sky".into(),
+            name: "Sky".into(),
+            kind: crate::media::edit::MaskKind::Linear {
+                start: [0.5, 0.0],
+                end: [0.5, 0.4],
+            },
+            invert: false,
+            opacity: 1.0,
+            enabled: true,
+            adjustments: crate::media::edit::LocalAdjustments {
+                exposure: -1.0,
+                ..Default::default()
+            },
+        });
+
         save_preset(dir, "framed", &recipe, false).unwrap();
         let loaded = load_preset(dir, "framed").unwrap();
 
         assert_eq!(loaded.exposure, 0.7);
         assert_eq!(loaded.geometry, None);
+        assert!(loaded.masks.is_empty(), "a preset must not carry masks");
         assert!(loaded.source_sha256.is_empty());
     }
 

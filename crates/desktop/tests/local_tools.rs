@@ -467,6 +467,69 @@ fn render_preview_returns_width_height_and_rgba_of_that_size() {
     assert_eq!(shadow_clipped, 60 * 40);
 }
 
+/// The overlay's coverage comes from the open session, frame-sized, and names a missing
+/// mask rather than returning nothing (ED-20, G10).
+#[test]
+fn mask_coverage_is_served_for_the_open_preview() {
+    use phototools_core::media::edit::{AdjustmentRecipe, LocalAdjustments, Mask, MaskKind};
+
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = phototools_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let img_path = f.root.join("photo.jpg");
+    image::RgbImage::new(60, 40).save(&img_path).unwrap();
+    let session = phototools_desktop::commands::edit::open_preview_impl(
+        &state,
+        img_path.to_string_lossy().to_string(),
+    )
+    .unwrap()
+    .session_id;
+
+    let recipe = AdjustmentRecipe {
+        masks: vec![Mask {
+            id: "top".into(),
+            name: "Top".into(),
+            kind: MaskKind::Linear {
+                start: [0.5, 0.0],
+                end: [0.5, 0.5],
+            },
+            invert: false,
+            opacity: 1.0,
+            enabled: true,
+            // A new mask with nothing set yet is still shown.
+            adjustments: LocalAdjustments::default(),
+        }],
+        ..Default::default()
+    };
+
+    let bytes = phototools_desktop::commands::edit::render_mask_coverage_impl(
+        &state,
+        session.clone(),
+        recipe.clone(),
+        "top".into(),
+        None,
+    )
+    .unwrap();
+    let w = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
+    let h = u32::from_be_bytes(bytes[4..8].try_into().unwrap());
+    assert_eq!((w, h), (60, 40));
+    assert_eq!(bytes.len(), 8 + 60 * 40);
+    let row = |y: usize| bytes[8 + y * 60 + 30];
+    assert_eq!(row(0), 255, "full coverage at the start line");
+    assert_eq!(row(39), 0, "none beyond the end line");
+
+    let err = phototools_desktop::commands::edit::render_mask_coverage_impl(
+        &state,
+        session,
+        recipe,
+        "nope".into(),
+        None,
+    )
+    .unwrap_err();
+    assert!(err.contains("No mask nope"), "got: {err}");
+}
+
 #[test]
 fn opening_a_second_preview_closes_the_first() {
     let f = fixture();

@@ -487,6 +487,31 @@ export class TauriApiClient implements ApiClient {
     return decodePreviewFrame(res);
   }
 
+  /** Where one mask acts on the frame `renderPreview` returns for the same arguments. */
+  async renderMaskCoverage(
+    sessionId: string,
+    recipe: AdjustmentRecipe,
+    maskId: string,
+    stage: PreviewStage = 'Drag',
+  ): Promise<MaskCoverage> {
+    const res = await invoke<ArrayBuffer | Uint8Array>('render_mask_coverage', {
+      sessionId,
+      recipe,
+      maskId,
+      stage,
+    });
+    const bytes = res instanceof Uint8Array ? res : new Uint8Array(res);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const width = view.getUint32(0, false);
+    const height = view.getUint32(4, false);
+    if (bytes.byteLength !== 8 + width * height) {
+      throw new Error(
+        `Mask coverage is ${bytes.byteLength} bytes; a ${width}x${height} frame needs ${8 + width * height}`,
+      );
+    }
+    return { width, height, coverage: bytes.subarray(8) };
+  }
+
   closePreview(sessionId: string): Promise<void> {
     return invoke<void>('close_preview', { sessionId });
   }
@@ -532,6 +557,13 @@ export interface PreviewHistogram {
   shadowClipped: number;
 }
 
+/** One mask's coverage, 0–255 per pixel, over a preview frame (ED-20). */
+export interface MaskCoverage {
+  width: number;
+  height: number;
+  coverage: Uint8Array;
+}
+
 /** A rendered preview frame, as `render_preview` delivers it. */
 export interface PreviewFrame {
   width: number;
@@ -540,10 +572,17 @@ export interface PreviewFrame {
   /** The EXIF orientation still to be applied for display; 1 once geometry is baked in. */
   orientation: number;
   histogram: PreviewHistogram;
+  /**
+   * This frame's normalised coordinates → the stored frame's, as `[a, b, c, d, e, f]`
+   * with `u_s = a·u + b·v + c`, `v_s = d·u + e·v + f`. Mask handles are placed through
+   * it, so the view never re-derives the geometry (ED-20).
+   */
+  toStored: [number, number, number, number, number, number];
 }
 
-/** Six words, then four channels of 256 bins: `PREVIEW_FRAME_HEADER_LEN` in `core`. */
-const PREVIEW_HEADER_BYTES = (6 + 4 * 256) * 4;
+/** Six words, the six `toStored` coefficients, then four channels of 256 bins:
+ * `PREVIEW_FRAME_HEADER_LEN` in `core`. */
+const PREVIEW_HEADER_BYTES = (6 + 6 + 4 * 256) * 4;
 
 /**
  * Reads the frame `core::media::edit::encode_preview_frame` lays out.
@@ -575,7 +614,7 @@ export function decodePreviewFrame(res: ArrayBuffer | Uint8Array): PreviewFrame 
 
   const channel = (c: number) => {
     const bins = new Uint32Array(256);
-    for (let b = 0; b < 256; b++) bins[b] = word(6 + c * 256 + b);
+    for (let b = 0; b < 256; b++) bins[b] = word(12 + c * 256 + b);
     return bins;
   };
 
@@ -588,6 +627,7 @@ export function decodePreviewFrame(res: ArrayBuffer | Uint8Array): PreviewFrame 
       bytes.byteOffset + PREVIEW_HEADER_BYTES,
       pixelBytes,
     ),
+    toStored: [0, 1, 2, 3, 4, 5].map((i) => view.getFloat32((6 + i) * 4, false)) as PreviewFrame['toStored'],
     histogram: {
       pixels: word(3),
       highlightClipped: word(4),
@@ -731,6 +771,47 @@ export interface AdjustmentRecipe {
   vignette?: Vignette | null;
   grain?: FilmGrain | null;
   looks?: LookEffects | null;
+  /** Masks with their own adjustments, in stored-frame coordinates (ED-19). */
+  masks?: Mask[];
+}
+
+/** The adjustments a mask applies where it covers, in the global sliders' units (ED-19). */
+export interface LocalAdjustments {
+  exposure: number;
+  contrast: number;
+  highlights: number;
+  shadows: number;
+  whites: number;
+  blacks: number;
+  temperature: number;
+  tint: number;
+  saturation: number;
+  vibrance: number;
+}
+
+/**
+ * A mask's shape. Points are normalised to the **stored** frame (the file's own pixel grid,
+ * before orientation and geometry); radii are fractions of its long edge.
+ */
+export type MaskKind =
+  | { type: 'linear'; start: [number, number]; end: [number, number] }
+  | {
+      type: 'radial';
+      center: [number, number];
+      radius_x: number;
+      radius_y: number;
+      angle: number;
+      feather: number;
+    };
+
+export interface Mask {
+  id: string;
+  name: string;
+  kind: MaskKind;
+  invert: boolean;
+  opacity: number;
+  enabled: boolean;
+  adjustments: LocalAdjustments;
 }
 
 /** Stage for preview rendering. */

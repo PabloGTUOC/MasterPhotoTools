@@ -28,6 +28,9 @@ export interface StubState {
   /** The preset library, as core would hold it on disk (ED-17). */
   presets: Map<string, AdjustmentRecipe>;
   presetErrors: { name: string; error: string }[];
+  /** ED-20: the map frames report, when a test wants something other than identity. */
+  toStoredOverride: [number, number, number, number, number, number] | null;
+  maskCoverageRequests: Array<{ maskId: string; stage: PreviewStage }>;
 }
 
 const stubState: StubState = {
@@ -40,6 +43,8 @@ const stubState: StubState = {
   pattern: 'grey',
   presets: new Map(),
   presetErrors: [],
+  toStoredOverride: null,
+  maskCoverageRequests: [],
 };
 
 interface StubHistogram {
@@ -279,7 +284,44 @@ export class StubDesktopApiClient {
     }
 
     const deliveredOrientation = hasGeom ? 1 : stubState.orientation;
-    return { width, height, pixels: buf, orientation: deliveredOrientation, histogram };
+    // Core sends the frame's map to the stored frame; the stub models the plain cases.
+    const crop = recipe.geometry?.crop;
+    const toStored: [number, number, number, number, number, number] =
+      stubState.toStoredOverride ??
+      (crop ? [crop.width, 0, crop.x, 0, crop.height, crop.y] : [1, 0, 0, 0, 1, 0]);
+    return { width, height, pixels: buf, orientation: deliveredOrientation, histogram, toStored };
+  }
+
+  /** A disc or band of full coverage, in frame coordinates through the identity map. */
+  async renderMaskCoverage(
+    _sessionId: string,
+    recipe: AdjustmentRecipe,
+    maskId: string,
+    stage: PreviewStage = 'Drag',
+  ): Promise<{ width: number; height: number; coverage: Uint8Array }> {
+    stubState.maskCoverageRequests.push({ maskId, stage });
+    const m = recipe.masks?.find((x) => x.id === maskId);
+    if (!m) throw new Error(`No mask ${maskId} in this recipe`);
+    const width = stage === 'Settle' ? SETTLE_WIDTH : DRAG_WIDTH;
+    const height = stage === 'Settle' ? SETTLE_HEIGHT : DRAG_HEIGHT;
+    const coverage = new Uint8Array(width * height);
+    const long = Math.max(width, height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const u = (x + 0.5) / width;
+        const v = (y + 0.5) / height;
+        let inside: boolean;
+        if (m.kind.type === 'radial') {
+          const dx = ((u - m.kind.center[0]) * width) / long;
+          const dy = ((v - m.kind.center[1]) * height) / long;
+          inside = Math.hypot(dx / m.kind.radius_x, dy / m.kind.radius_y) <= 1;
+        } else {
+          inside = v <= (m.kind.start[1] + m.kind.end[1]) / 2;
+        }
+        if (inside !== m.invert) coverage[y * width + x] = 255;
+      }
+    }
+    return { width, height, coverage };
   }
 
   async closePreview(_sessionId: string): Promise<void> {}

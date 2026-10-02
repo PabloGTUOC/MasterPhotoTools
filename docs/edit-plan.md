@@ -907,7 +907,7 @@ verification case. Every commit can be launched, tested, and visually evaluated.
 
 ## Round 3 — Local adjustments (masks)
 
-> **ED-19 built; ED-20 to ED-24 planned.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
+> **ED-19 and ED-20 built; ED-21 to ED-24 planned.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
 > who chose gradients, a brush, and automatic subject and sky masks. Rounds 1 and 2 excluded
 > local adjustments to keep to whole-frame work; this round lifts that exclusion and nothing
 > else. RapidRAW remains a feature list only, under the Round 2 clean-room declaration.
@@ -1025,6 +1025,30 @@ local adjustments, so most pixels pay for more than one mask.
   separate canvas, never the photograph's (the ED-15 rule).
 - `check:edit`: add, move, invert, overlay, delete; the mask follows the canvas under rotation;
   40 px targets; keyboard nudging of handles.
+
+- **As built** (where it departs from the above, and why):
+  - **Core tells the view where the frame sits.** Every preview frame now carries `to_stored`, its
+    map to the stored frame (six `f32` words in the header, which grows to 4,144 bytes). The handles
+    (`MaskOverlay`, transport-free) are drawn through it and its inverse, sized and transformed like
+    the canvas, with pointer positions read back through the browser's own transform. The view
+    never re-derives a crop, rotation or orientation, the mistake ED-13 had to undo.
+  - **The red overlay is core's coverage, not the view's.** `render_mask_coverage` returns the
+    selected mask's 8-bit coverage of the frame on screen, computed by the formula the pixels use,
+    so the overlay cannot disagree with the effect; any weight at all shows, since a weight that
+    rounds to nothing can still move a pixel by a code value (found by the test). It paints on a
+    canvas of its own, at half strength.
+  - **Four masks at most**, with the reason shown: the speed budget is set for four.
+  - **Undo** for deleting a mask, removing all masks, and Reset all (which now clears masks too and
+    could otherwise throw away a lot of work).
+  - Paste and preset apply **keep the photograph's own masks** (the gap ED-19 noted), asserted.
+  - New masks are placed by where they appear on screen — a graduated filter coming down from the
+    top, a radial in the middle — whatever the orientation or crop.
+  - Tests: `the_mask_overlay_shows_where_the_mask_acts` (core, under orientation 6, straighten and
+    crop); `mask_coverage_is_served_for_the_open_preview` (desktop); `check:edit` 9l: add, drag a
+    handle with the mouse (drag frames then settle and save), keyboard nudge, 40 px handles,
+    overlay, handles following a changed frame map, pin selection, delete and Undo, paste keeping
+    masks, the four-mask limit, Reset all and Undo. Each fails with its fix removed.
+  - Not yet: a mask cannot be moved in crop mode (handles hide there, as the crop owns the canvas).
 
 #### `ED-21` · Brush
 - Strokes stored as normalised points with radius, feather and flow, plus an erase flag; the

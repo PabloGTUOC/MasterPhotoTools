@@ -165,4 +165,24 @@ impl AppState {
         }
         active.session.render(recipe, lut, stage)
     }
+
+    /// Coverage of one mask from the active preview session, for the mask overlay (ED-20).
+    pub fn mask_coverage(
+        &self,
+        session_id: &str,
+        recipe: &AdjustmentRecipe,
+        mask_id: &str,
+        stage: PreviewStage,
+    ) -> Result<(u32, u32, Vec<u8>), Error> {
+        let slot = self.active_preview.lock().unwrap();
+        let active = slot
+            .as_ref()
+            .ok_or_else(|| Error::Refused("No active preview session is open".into()))?;
+        if active.session_id != session_id {
+            return Err(Error::Refused(
+                "The preview session has been closed or replaced by another preview".into(),
+            ));
+        }
+        active.session.mask_coverage(recipe, mask_id, stage)
+    }
 }

@@ -181,6 +181,7 @@ fn main() {
             commands::apply_bulk_lut,
             commands::open_preview,
             commands::render_preview,
+            commands::render_mask_coverage,
             commands::close_preview,
             commands::list_luts,
             commands::import_lut,

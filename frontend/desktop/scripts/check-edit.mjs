@@ -1674,6 +1674,167 @@ try {
     window.__STUB__.presetErrors = [];
   });
 
+  // 9l. Masks: gradients shaped on the photograph (ED-20)
+  console.log('Asserting masks: add, shape on the canvas, adjust, overlay, follow the frame, undo (ED-20)...');
+  await openPhoto('/Volumes/Photos/mask_a.jpg');
+  if (!(await page.locator('[data-testid="add-linear-mask"]').isVisible())) {
+    await page.locator('button[data-testid="section-masks-toggle"]').click();
+  }
+  const lastMasks = () => page.evaluate(() => window.__STUB__.renders.at(-1).recipe.masks ?? []);
+  const handleCentre = async (name) => {
+    const box = await page.locator(`[data-testid="mask-handle-${name}"] .mask-overlay__hit`).boundingBox();
+    return box && { x: box.x + box.width / 2, y: box.y + box.height / 2, w: box.width, h: box.height };
+  };
+
+  await page.locator('[data-testid="add-linear-mask"]').click();
+  await page.waitForTimeout(150);
+  let ms = await lastMasks();
+  const handleCount = await page.locator('[data-testid^="mask-handle-"]').count();
+  if (ms.length !== 1 || ms[0].kind.type !== 'linear' || Math.abs(ms[0].kind.start[1] - 0.1) > 1e-6 || handleCount !== 3) {
+    failures.push(`Adding a linear mask should place a top-down gradient with three handles; got ${JSON.stringify(ms)}, ${handleCount} handles`);
+  }
+
+  // Drag the end handle down with the mouse: drag frames while moving, a settle and a save on release.
+  const endBefore = await handleCentre('end');
+  const rendersBeforeDrag = await page.evaluate(() => window.__STUB__.renders.length);
+  await page.mouse.move(endBefore.x, endBefore.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 5; i++) {
+    await page.mouse.move(endBefore.x, endBefore.y + i * 20);
+    await page.waitForTimeout(30);
+  }
+  await page.mouse.up();
+  await page.waitForTimeout(450);
+  const dragRenders = await page.evaluate((n) => window.__STUB__.renders.slice(n).map((r) => r.stage), rendersBeforeDrag);
+  ms = await lastMasks();
+  const savedMasks = await page.evaluate(() => window.__STUB__.lastSavedRecipe?.masks ?? []);
+  if (!(ms[0].kind.end[1] > 0.6) || !dragRenders.includes('Drag') || dragRenders.at(-1) !== 'Settle') {
+    failures.push(`Dragging the end handle should move the end line down with drag frames then a settle; end=${ms[0].kind.end}, stages=${dragRenders}`);
+  }
+  if (savedMasks.length !== 1 || Math.abs(savedMasks[0].kind.end[1] - ms[0].kind.end[1]) > 1e-6) {
+    failures.push(`The moved mask was not saved: ${JSON.stringify(savedMasks)}`);
+  }
+
+  await page.locator('input[data-testid="mask-exposure-number"]').fill('1.5');
+  await page.locator('input[data-testid="mask-exposure-number"]').press('Enter');
+  await page.waitForTimeout(100);
+  ms = await lastMasks();
+  if (ms[0].adjustments.exposure !== 1.5) {
+    failures.push(`The mask's exposure slider should set its local exposure; got ${JSON.stringify(ms[0].adjustments)}`);
+  }
+
+  // A radial, nudged with the keyboard.
+  await page.locator('[data-testid="add-radial-mask"]').click();
+  await page.waitForTimeout(150);
+  ms = await lastMasks();
+  const radialId = ms[1]?.id;
+  await page.locator('[data-testid="mask-handle-center"]').focus();
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(150);
+  ms = await lastMasks();
+  if (ms.length !== 2 || ms[1].kind.type !== 'radial' || Math.abs(ms[1].kind.center[0] - 0.51) > 1e-4 || (await page.locator('[data-testid="mask-ellipse"]').count()) !== 1) {
+    failures.push(`A radial mask should appear centred and move 1% with the arrow key; got ${JSON.stringify(ms[1])}`);
+  }
+  const hit = await handleCentre('center');
+  if (!hit || hit.w < 39.5 || hit.h < 39.5) {
+    failures.push(`Mask handles must be 40 px targets; the centre handle is ${hit?.w}x${hit?.h}`);
+  }
+
+  // The overlay shows core's coverage of the selected mask, on its own canvas.
+  await page.locator('[data-testid="mask-show-overlay"]').click();
+  await page.waitForTimeout(150);
+  const overlay = await page.evaluate(() => {
+    const c = document.querySelector('canvas[data-testid="mask-coverage"]');
+    const ctx = c.getContext('2d');
+    return {
+      shown: getComputedStyle(c).display !== 'none',
+      centre: ctx.getImageData(Math.floor(c.width * 0.51), Math.floor(c.height / 2), 1, 1).data[3],
+      corner: ctx.getImageData(2, c.height - 3, 1, 1).data[3],
+      requests: window.__STUB__.maskCoverageRequests.length,
+    };
+  });
+  if (!overlay.shown || overlay.requests === 0 || overlay.centre === 0 || overlay.corner !== 0) {
+    failures.push(`The mask overlay should show the radial's coverage and nothing outside it; got ${JSON.stringify(overlay)}`);
+  }
+
+  // Handles follow the photograph through the frame's map: a frame that shows only the middle
+  // half (as a crop would) moves the radial's centre from 51% to 52% of the canvas width.
+  const canvasBox = await page.locator('canvas[data-testid="edit-canvas"]').boundingBox();
+  await page.evaluate(() => {
+    window.__STUB__.toStoredOverride = [0.5, 0, 0.25, 0, 0.5, 0.25];
+  });
+  await renderSettled();
+  const followed = await handleCentre('center');
+  const fx = (followed.x - canvasBox.x) / canvasBox.width;
+  const fy = (followed.y - canvasBox.y) / canvasBox.height;
+  if (Math.abs(fx - 0.52) > 0.01 || Math.abs(fy - 0.5) > 0.01) {
+    failures.push(`Under a frame showing the middle half, the radial's centre should sit at (0.52, 0.50) of the canvas; it is at (${fx.toFixed(3)}, ${fy.toFixed(3)})`);
+  }
+  await page.evaluate(() => {
+    window.__STUB__.toStoredOverride = null;
+  });
+  await renderSettled();
+
+  // Clicking the other mask's pin selects it.
+  const linearId = ms[0].id;
+  await page.locator(`[data-testid="mask-pin-${linearId}"]`).dispatchEvent('pointerdown');
+  await page.waitForTimeout(50);
+  if ((await page.locator('[data-testid="mask-handle-start"]').count()) !== 1) {
+    failures.push('Clicking a mask pin on the photograph should select that mask');
+  }
+
+  // Delete, then Undo.
+  await page.locator(`[data-testid="mask-delete-${radialId}"]`).click();
+  await page.waitForTimeout(100);
+  const masksAfterDelete = (await lastMasks()).length;
+  await page.locator('[data-testid="edit-notice-undo"]').click();
+  await page.waitForTimeout(100);
+  const afterUndo = (await lastMasks()).length;
+  if (masksAfterDelete !== 1 || afterUndo !== 2) {
+    failures.push(`Deleting a mask should remove it and Undo restore it; counts ${masksAfterDelete} then ${afterUndo}`);
+  }
+
+  // Copy and paste carry the look, never the masks: the target keeps its own.
+  await blurAll();
+  await page.keyboard.press('Meta+c');
+  await openPhoto('/Volumes/Photos/mask_b.jpg');
+  await page.locator('[data-testid="add-radial-mask"]').click();
+  await page.waitForTimeout(100);
+  const targetMaskId = (await lastMasks())[0]?.id;
+  await blurAll();
+  await page.keyboard.press('Meta+v');
+  await page.waitForTimeout(150);
+  ms = await lastMasks();
+  if (ms.length !== 1 || ms[0].id !== targetMaskId) {
+    failures.push(`Pasting settings must keep the photograph's own masks; got ${JSON.stringify(ms.map((m) => m.id))}, expected [${targetMaskId}]`);
+  }
+
+  // Four masks at most, with the reason shown.
+  for (let i = 0; i < 3; i++) await page.locator('[data-testid="add-linear-mask"]').click();
+  await page.waitForTimeout(100);
+  const limited = await page.evaluate(() => ({
+    count: window.__STUB__.renders.at(-1).recipe.masks.length,
+    disabled: document.querySelector('[data-testid="add-radial-mask"]').disabled,
+    note: !!document.querySelector('[data-testid="mask-limit"]'),
+  }));
+  if (limited.count !== 4 || !limited.disabled || !limited.note) {
+    failures.push(`Masks should stop at four with the reason shown; got ${JSON.stringify(limited)}`);
+  }
+
+  // Reset all clears the masks too, and can be undone.
+  await page.locator('button[data-testid="reset-all-btn"]').click();
+  await page.waitForTimeout(100);
+  const afterReset = (await lastMasks()).length;
+  await page.locator('[data-testid="edit-notice-undo"]').click();
+  await page.waitForTimeout(100);
+  if (afterReset !== 0 || (await lastMasks()).length !== 4) {
+    failures.push(`Reset all should clear masks and Undo bring all four back; got ${afterReset} then ${(await lastMasks()).length}`);
+  } else {
+    console.log('  Masks: added where they appear, shaped by mouse and keyboard, adjusted, shown, kept on the content, limited to four, undoable.');
+  }
+  await page.screenshot({ path: join(OUT, 'edit-masks.png'), fullPage: true });
+  await page.locator('[data-testid="mask-show-overlay"]').click().catch(() => {});
+
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');
   await pathInput.press('Enter');

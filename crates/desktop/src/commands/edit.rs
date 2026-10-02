@@ -320,6 +320,43 @@ pub fn render_preview_impl(
     Ok(encode_preview_frame(&frame))
 }
 
+/// Where one mask acts on the current frame: width and height as big-endian `u32`, then
+/// one coverage byte per pixel (ED-20). Binary, like `render_preview`, because a settle
+/// frame's coverage is four million values.
+#[tauri::command]
+pub fn render_mask_coverage(
+    session_id: String,
+    recipe: AdjustmentRecipe,
+    mask_id: String,
+    stage: Option<PreviewStage>,
+    state: State<'_, AppState>,
+) -> Result<Response, String> {
+    let bytes = render_mask_coverage_impl(&state, session_id, recipe, mask_id, stage)?;
+    Ok(Response::new(bytes))
+}
+
+pub fn render_mask_coverage_impl(
+    state: &AppState,
+    session_id: String,
+    recipe: AdjustmentRecipe,
+    mask_id: String,
+    stage: Option<PreviewStage>,
+) -> Result<Vec<u8>, String> {
+    let (w, h, coverage) = state
+        .mask_coverage(
+            &session_id,
+            &recipe,
+            &mask_id,
+            stage.unwrap_or(PreviewStage::Drag),
+        )
+        .map_err(describe)?;
+    let mut payload = Vec::with_capacity(8 + coverage.len());
+    payload.extend_from_slice(&w.to_be_bytes());
+    payload.extend_from_slice(&h.to_be_bytes());
+    payload.extend_from_slice(&coverage);
+    Ok(payload)
+}
+
 #[tauri::command]
 pub fn close_preview(session_id: String, state: State<'_, AppState>) -> CommandResult<()> {
     close_preview_impl(&state, session_id)

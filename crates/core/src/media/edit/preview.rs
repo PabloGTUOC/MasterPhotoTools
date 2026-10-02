@@ -107,7 +107,7 @@ pub enum PreviewStage {
 }
 
 /// An uncompressed RGBA8 pixel frame ready for HTML5 Canvas ImageData or display.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RgbaFrame {
     pub width: u32,
     pub height: u32,
@@ -116,17 +116,20 @@ pub struct RgbaFrame {
     /// Counted from `bytes`, the values the person sees, so the histogram and the
     /// clipping warnings describe the frame on screen and never a different one (ED-15).
     pub histogram: Histogram,
+    /// This frame's normalised coordinates → the stored frame's (`masks::output_to_stored`),
+    /// so the view places mask handles where the masks act (ED-20).
+    pub to_stored: [f32; 6],
 }
 
 /// Bytes ahead of the pixels in a frame sent to the Edit view: width, height,
 /// delivered orientation, histogram pixel count, highlight- and shadow-clipped pixel
-/// counts, then 256 red, green, blue and luminance bins. Every field is a big-endian
-/// `u32`.
+/// counts, the six coefficients of `to_stored` (as `f32` bits, ED-20), then 256 red,
+/// green, blue and luminance bins. Every field is a big-endian 32-bit word.
 ///
 /// The plan sketched a 1032-byte header, which holds one channel at 32 bits or four
 /// at 8; the four channels the view switches between need exact counts, and
 /// 4 KiB is nothing beside a settle frame's 17 MiB of pixels.
-pub const PREVIEW_FRAME_HEADER_LEN: usize = (6 + 4 * 256) * 4;
+pub const PREVIEW_FRAME_HEADER_LEN: usize = (6 + 6 + 4 * 256) * 4;
 
 /// Lays a preview frame out for the Edit view (see [`PREVIEW_FRAME_HEADER_LEN`]).
 ///
@@ -145,6 +148,9 @@ pub fn encode_preview_frame(frame: &RgbaFrame) -> Vec<u8> {
         h.shadow_clipped,
     ] {
         out.extend_from_slice(&v.to_be_bytes());
+    }
+    for c in frame.to_stored {
+        out.extend_from_slice(&c.to_bits().to_be_bytes());
     }
     for channel in [&h.red, &h.green, &h.blue, &h.luminance] {
         for v in channel.iter() {
@@ -326,6 +332,8 @@ impl PreviewSession {
             )?;
             let mut frame = render_rgba_frame_masked(proxy, recipe_ref, lut, masks.as_ref())?;
             frame.orientation = 1;
+            frame.to_stored =
+                super::masks::output_to_stored(Some(geom), stored_w, stored_h, self.orientation)?;
             Ok(frame)
         } else {
             let proxy = match stage {
@@ -336,6 +344,35 @@ impl PreviewSession {
             frame.orientation = self.orientation;
             Ok(frame)
         }
+    }
+
+    /// Where the mask `mask_id` of `recipe` acts on the frame `render` would return for the
+    /// same recipe and stage, as width, height and 8-bit coverage (ED-20).
+    pub fn mask_coverage(
+        &self,
+        recipe: &AdjustmentRecipe,
+        mask_id: &str,
+        stage: PreviewStage,
+    ) -> Result<(u32, u32, Vec<u8>), Error> {
+        let mask = recipe
+            .masks
+            .iter()
+            .find(|m| m.id == mask_id)
+            .ok_or_else(|| Error::Refused(format!("No mask {mask_id} in this recipe")))?;
+        let proxy = match stage {
+            PreviewStage::Drag => &self.drag_linear,
+            PreviewStage::Settle => &self.settle_linear,
+        };
+        let (stored_w, stored_h) = (proxy.width, proxy.height);
+        let (out_w, out_h, affine) = match recipe.geometry.as_ref() {
+            Some(g) => {
+                let plan = g.plan(stored_w, stored_h, self.orientation)?;
+                (plan.out_w, plan.out_h, plan.normalised_affine())
+            }
+            None => (stored_w, stored_h, [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+        };
+        let coverage = super::masks::coverage_frame(mask, affine, stored_w, stored_h, out_w, out_h);
+        Ok((out_w, out_h, coverage))
     }
 }
 
@@ -870,5 +907,6 @@ pub fn render_rgba_frame_masked(
         bytes: out_bytes,
         orientation: 1,
         histogram,
+        to_stored: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
     })
 }

@@ -1760,6 +1760,13 @@ fn binary_preview_ipc_header_encodes_histograms_and_clipping_accurately() {
     assert_eq!(word(4), expected.highlight_clipped);
     assert_eq!(word(5), expected.shadow_clipped);
     assert_eq!(word(4), w * h / 3, "the white third is highlight-clipped");
+    let to_stored: Vec<f32> = (6..12).map(|i| f32::from_bits(word(i))).collect();
+    assert_eq!(to_stored, frame.to_stored.to_vec());
+    assert_eq!(
+        frame.to_stored,
+        [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        "no geometry: the stored frame"
+    );
     assert_eq!(word(5), w * h / 3, "the black third is shadow-clipped");
 
     for (c, channel) in [
@@ -1771,7 +1778,7 @@ fn binary_preview_ipc_header_encodes_histograms_and_clipping_accurately() {
     .into_iter()
     .enumerate()
     {
-        let decoded: Vec<u32> = (0..256).map(|b| word(6 + c * 256 + b)).collect();
+        let decoded: Vec<u32> = (0..256).map(|b| word(12 + c * 256 + b)).collect();
         assert_eq!(&decoded, channel, "channel {c}");
     }
 }
@@ -3597,4 +3604,72 @@ fn a_v2_sidecar_loads_with_no_masks_and_masks_round_trip_in_v3() {
     let back = load_recipe(&sidecar).unwrap();
     assert_eq!(back.version, 3);
     assert_eq!(back.masks, recipe.masks);
+}
+
+/// The coverage the overlay shows is where the mask acts: brightest where the effect is
+/// strongest, absent where the frame is untouched, through the same geometry (ED-20).
+#[test]
+fn the_mask_overlay_shows_where_the_mask_acts() {
+    use phototools_core::media::edit::{
+        AdjustmentRecipe, Geometry, NormalizedCrop, PreviewSession, PreviewStage,
+    };
+
+    let img = marked_frame(1500, 1000, [0.3, 0.35]);
+    let session = PreviewSession::from_image_buffer_with_orientation(&img, 6).unwrap();
+    let mut mask = radial_mask([0.3, 0.35], 0.08, 1.2);
+    mask.invert = true;
+    let base = AdjustmentRecipe {
+        geometry: Some(Geometry {
+            straighten: 5.0,
+            crop: Some(NormalizedCrop {
+                x: 0.05,
+                y: 0.1,
+                width: 0.8,
+                height: 0.85,
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let masked = AdjustmentRecipe {
+        masks: vec![mask],
+        ..base.clone()
+    };
+
+    let plain = session.render(&base, None, PreviewStage::Drag).unwrap();
+    let lit = session.render(&masked, None, PreviewStage::Drag).unwrap();
+    let (w, h, coverage) = session
+        .mask_coverage(&masked, "r", PreviewStage::Drag)
+        .unwrap();
+    assert_eq!((w, h), (lit.width, lit.height));
+    // The frame tells the view the same map the coverage was computed through.
+    assert_ne!(lit.to_stored, [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+
+    let (mut strong, mut strong_changed) = (0, 0);
+    for (i, &cov) in coverage.iter().enumerate() {
+        let changed = lit.bytes[i * 4..i * 4 + 3] != plain.bytes[i * 4..i * 4 + 3];
+        if cov == 0 {
+            assert!(
+                !changed,
+                "pixel {i} changed where the overlay shows nothing"
+            );
+        } else if cov > 128 {
+            strong += 1;
+            if changed {
+                strong_changed += 1;
+            }
+        }
+    }
+    // An inverted radial: most of the frame is strongly covered, and +1.2 EV changes it.
+    assert!(
+        strong > (w * h / 2) as usize,
+        "only {strong} strongly covered pixels"
+    );
+    assert!(
+        strong_changed * 100 >= strong * 99,
+        "{strong_changed} of {strong} strongly covered pixels changed"
+    );
+    assert!(session
+        .mask_coverage(&masked, "missing", PreviewStage::Drag)
+        .is_err());
 }

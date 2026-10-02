@@ -19,7 +19,10 @@ import type {
   Geometry,
   HslAdjustments,
   LutLibraryList,
+  LocalAdjustments,
   LutRef,
+  Mask,
+  MaskKind,
   NormalizedCrop,
   PresetList,
   OpenPreviewResult,
@@ -36,6 +39,7 @@ import ColorWheel from '@ui/components/ColorWheel.vue';
 import CropOverlay from '@ui/components/CropOverlay.vue';
 import CurveEditor from '@ui/components/CurveEditor.vue';
 import Histogram, { type HistogramMode } from '@ui/components/Histogram.vue';
+import MaskOverlay from '@ui/components/MaskOverlay.vue';
 import PresetBar from '@ui/components/PresetBar.vue';
 import { copiedSettings } from '../recipeClipboard';
 import LutPicker from '@ui/components/LutPicker.vue';
@@ -66,6 +70,18 @@ const showShadowClip = ref(false);
 const showHighlightClip = ref(false);
 const clipOverlayActive = computed(() => showShadowClip.value || showHighlightClip.value);
 let lastFrame: { width: number; height: number; pixels: Uint8ClampedArray } | null = null;
+
+// ED-20: masks. The frame's map to the stored frame comes with every frame from core.
+type Affine = [number, number, number, number, number, number];
+const frameToStored = ref<Affine>([1, 0, 0, 0, 1, 0]);
+const selectedMaskId = ref<string | null>(null);
+const showMaskOverlay = ref(false);
+const maskCanvasRef = ref<HTMLCanvasElement | null>(null);
+/** The four-mask speed budget (edit plan, Round 3): each mask costs every frame. */
+const MASK_LIMIT = 4;
+let maskSeq = 0;
+let coverageSeq = 0;
+let lastRendered: { recipe: AdjustmentRecipe; stage: PreviewStage } | null = null;
 
 // ED-17: presets, copied settings, and the one step back from replacing a look.
 const presetList = ref<PresetList>({ presets: [], errors: [] });
@@ -182,6 +198,7 @@ function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
     vignette: null,
     grain: null,
     looks: null,
+    masks: [],
   };
 }
 
@@ -361,6 +378,7 @@ function paintPixels(
     pixels: Uint8ClampedArray;
     orientation?: number;
     histogram?: PreviewHistogram;
+    toStored?: Affine;
   },
   stage: PreviewStage,
 ) {
@@ -385,6 +403,8 @@ function paintPixels(
   ctx.putImageData(imgData, 0, 0);
 
   histogram.value = frame.histogram ?? null;
+  if (frame.toStored) frameToStored.value = frame.toStored;
+  void refreshMaskCoverage();
   // Kept so the warning can be turned on over the frame already showing.
   lastFrame = { width: frame.width, height: frame.height, pixels: frame.pixels };
   paintClipOverlay();
@@ -420,6 +440,7 @@ async function executeRender(r: AdjustmentRecipe, stage: PreviewStage) {
 
   try {
     const frame = await desktop.renderPreview(sessionId.value, renderRecipe, stage);
+    lastRendered = { recipe: renderRecipe, stage };
     paintPixels(frame, stage);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -622,7 +643,38 @@ function normaliseRecipe(existing: AdjustmentRecipe, sourceSha: string): Adjustm
           tone_mapper: existing.looks.tone_mapper ?? null,
         }
       : null,
+    masks: (existing.masks ?? []).map(normaliseMask),
     source_sha256: existing.source_sha256 || sourceSha,
+  };
+}
+
+const ZERO_LOCAL: LocalAdjustments = {
+  exposure: 0,
+  contrast: 0,
+  highlights: 0,
+  shadows: 0,
+  whites: 0,
+  blacks: 0,
+  temperature: 0,
+  tint: 0,
+  saturation: 0,
+  vibrance: 0,
+};
+
+/** A mask from disk with every field the panel binds, as core's serde defaults fill them. */
+function normaliseMask(m: Mask): Mask {
+  const kind: MaskKind =
+    m.kind.type === 'radial'
+      ? { ...m.kind, angle: m.kind.angle ?? 0, feather: m.kind.feather ?? 0.5 }
+      : { ...m.kind };
+  return {
+    id: m.id,
+    name: m.name ?? '',
+    kind,
+    invert: m.invert ?? false,
+    opacity: m.opacity ?? 1,
+    enabled: m.enabled ?? true,
+    adjustments: { ...ZERO_LOCAL, ...(m.adjustments ?? {}) },
   };
 }
 
@@ -667,6 +719,9 @@ function replaceLook(incoming: AdjustmentRecipe, text: string) {
   const before = cloneRecipe(recipe.value);
   const next = normaliseRecipe(cloneRecipe(incoming), before.source_sha256 ?? '');
   next.geometry = before.geometry;
+  // Masks are this photograph's too, placed on its content (ED-19): never replaced by
+  // another photograph's settings or a preset's.
+  next.masks = before.masks;
   next.source_sha256 = before.source_sha256;
   recipe.value = next;
   onRecipeValueChange();
@@ -732,6 +787,7 @@ async function openImage(path: string) {
   // Undo belongs to the photograph it was offered on.
   dismissNotice();
   selectedPreset.value = null;
+  selectedMaskId.value = null;
   loading.value = true;
   error.value = null;
   saveStatus.value = '';
@@ -816,9 +872,192 @@ async function handleExport() {
 }
 
 function resetAll() {
-  recipe.value = createIdentityRecipe();
+  const before = cloneRecipe(recipe.value);
+  recipe.value = createIdentityRecipe(before.source_sha256 ?? '');
+  selectedMaskId.value = null;
+  onRecipeValueChange();
+  // Reset all now also clears masks, which can be a lot of work: offer the way back.
+  showNotice('Reset every adjustment and mask.', before);
+}
+
+// --- Masks (ED-20) ------------------------------------------------------------------
+
+/** The locally adjustable set, in the global sliders' ranges (core's `LocalAdjustments`). */
+const MASK_SLIDERS: {
+  key: keyof LocalAdjustments;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  unit?: string;
+}[] = [
+  { key: 'exposure', label: 'Exposure', min: -5, max: 5, step: 0.1, unit: 'EV' },
+  { key: 'contrast', label: 'Contrast', min: -100, max: 100, step: 1 },
+  { key: 'highlights', label: 'Highlights', min: -100, max: 100, step: 1 },
+  { key: 'shadows', label: 'Shadows', min: -100, max: 100, step: 1 },
+  { key: 'whites', label: 'Whites', min: -100, max: 100, step: 1 },
+  { key: 'blacks', label: 'Blacks', min: -100, max: 100, step: 1 },
+  { key: 'temperature', label: 'Temperature', min: -100, max: 100, step: 1 },
+  { key: 'tint', label: 'Tint', min: -100, max: 100, step: 1 },
+  { key: 'saturation', label: 'Saturation', min: -100, max: 100, step: 1 },
+  { key: 'vibrance', label: 'Vibrance', min: -100, max: 100, step: 1 },
+];
+
+const masks = computed<Mask[]>(() => recipe.value.masks ?? []);
+const selectedMask = computed(() => masks.value.find((m) => m.id === selectedMaskId.value) ?? null);
+
+/** Stored width and height over the long edge: the units mask shapes are measured in. */
+const storedAspect = computed(() => {
+  const w = baseProxyWidth.value || 1;
+  const h = baseProxyHeight.value || 1;
+  const long = Math.max(w, h);
+  return { ax: w / long, ay: h / long };
+});
+
+/** A point given as a fraction of the frame on screen, in stored coordinates. */
+function frameToStoredPoint(u: number, v: number): [number, number] {
+  const [a, b, c, d, e, f] = frameToStored.value;
+  return [a * u + b * v + c, d * u + e * v + f];
+}
+
+function addMask(type: 'linear' | 'radial') {
+  if (!sessionId.value || masks.value.length >= MASK_LIMIT) return;
+  const count = masks.value.filter((m) => m.kind.type === type).length + 1;
+  // Placed by where they appear on screen, whatever the orientation or crop: a graduated
+  // filter coming down from the top, a radial in the middle.
+  const kind: MaskKind =
+    type === 'linear'
+      ? { type, start: frameToStoredPoint(0.5, 0.1), end: frameToStoredPoint(0.5, 0.55) }
+      : {
+          type,
+          center: frameToStoredPoint(0.5, 0.5),
+          radius_x: 0.2,
+          radius_y: 0.2,
+          angle: 0,
+          feather: 0.5,
+        };
+  maskSeq += 1;
+  const mask: Mask = {
+    id: `m${Date.now().toString(36)}${maskSeq}`,
+    name: `${type === 'linear' ? 'Linear' : 'Radial'} ${count}`,
+    kind,
+    invert: false,
+    opacity: 1,
+    enabled: true,
+    adjustments: { ...ZERO_LOCAL },
+  };
+  recipe.value.masks = [...masks.value, mask];
+  selectedMaskId.value = mask.id;
   onRecipeValueChange();
 }
+
+function updateMaskKind(id: string, kind: MaskKind) {
+  const m = masks.value.find((x) => x.id === id);
+  if (!m) return;
+  m.kind = kind as MaskKind;
+  requestRender('Drag');
+}
+
+function onMaskCommit() {
+  onRecipeValueChange();
+}
+
+function deleteMask(id: string) {
+  const m = masks.value.find((x) => x.id === id);
+  if (!m) return;
+  const before = cloneRecipe(recipe.value);
+  recipe.value.masks = masks.value.filter((x) => x.id !== id);
+  if (selectedMaskId.value === id) selectedMaskId.value = null;
+  onRecipeValueChange();
+  showNotice(`Deleted mask ${m.name}.`, before);
+}
+
+function resetMasks() {
+  if (!masks.value.length) return;
+  const before = cloneRecipe(recipe.value);
+  recipe.value.masks = [];
+  selectedMaskId.value = null;
+  onRecipeValueChange();
+  showNotice('Removed every mask.', before);
+}
+
+function setMaskLocal(key: keyof LocalAdjustments, value: number, settle: boolean) {
+  const m = selectedMask.value;
+  if (!m) return;
+  m.adjustments[key] = value;
+  if (settle) onRecipeValueChange();
+  else requestRender('Drag');
+}
+
+function setMaskField(field: 'opacity' | 'feather', percent: number, settle: boolean) {
+  const m = selectedMask.value;
+  if (!m) return;
+  if (field === 'opacity') m.opacity = percent / 100;
+  else if (m.kind.type === 'radial') m.kind.feather = percent / 100;
+  if (settle) onRecipeValueChange();
+  else requestRender('Drag');
+}
+
+function toggleMask(id: string, field: 'enabled' | 'invert') {
+  const m = masks.value.find((x) => x.id === id);
+  if (!m) return;
+  m[field] = !m[field];
+  onRecipeValueChange();
+}
+
+function renameMask(id: string, name: string) {
+  const m = masks.value.find((x) => x.id === id);
+  if (!m || !name.trim()) return;
+  m.name = name.trim();
+  scheduleSave();
+}
+
+/**
+ * Paints where the selected mask acts, from core's own coverage of the frame on screen,
+ * on a canvas of its own over the photograph (the ED-15 rule: the photograph's canvas is
+ * never drawn on). A newer request supersedes an older one still in flight.
+ */
+async function refreshMaskCoverage() {
+  const canvas = maskCanvasRef.value;
+  const id = selectedMaskId.value;
+  if (!canvas || !showMaskOverlay.value || !id || !sessionId.value || !lastRendered) return;
+  if (!lastRendered.recipe.masks?.some((m) => m.id === id)) return;
+  const seq = ++coverageSeq;
+  try {
+    const cov = await desktop.renderMaskCoverage(
+      sessionId.value,
+      lastRendered.recipe,
+      id,
+      lastRendered.stage,
+    );
+    if (seq !== coverageSeq) return;
+    if (canvas.width !== cov.width || canvas.height !== cov.height) {
+      canvas.width = cov.width;
+      canvas.height = cov.height;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const [r, g, b] = tokenRgb('--mask-overlay');
+    const out = new Uint8ClampedArray(cov.width * cov.height * 4);
+    for (let i = 0; i < cov.coverage.length; i++) {
+      const a = cov.coverage[i];
+      if (a === 0) continue;
+      out[i * 4] = r;
+      out[i * 4 + 1] = g;
+      out[i * 4 + 2] = b;
+      // Half strength at full coverage, so the photograph stays readable under it.
+      out[i * 4 + 3] = a >> 1;
+    }
+    ctx.putImageData(new ImageData(out, cov.width, cov.height), 0, 0);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    error.value = `Couldn't show the mask: ${msg}`;
+  }
+}
+
+watch([showMaskOverlay, selectedMaskId], () => {
+  void refreshMaskCoverage();
+});
 
 function resetBasic() {
   recipe.value.exposure = 0.0;
@@ -1373,6 +1612,27 @@ onUnmounted(() => {
               aria-hidden="true"
               :style="{ ...canvasStyle, position: 'absolute', zIndex: 'calc(var(--z-canvas) + 1)' }"
             ></canvas>
+            <canvas
+              v-show="showMaskOverlay && selectedMask && !isCropMode && !isBefore"
+              ref="maskCanvasRef"
+              class="canvas-viewport__clip"
+              data-testid="mask-coverage"
+              aria-hidden="true"
+              :style="{ ...canvasStyle, position: 'absolute', zIndex: 'calc(var(--z-canvas) + 1)' }"
+            ></canvas>
+            <MaskOverlay
+              v-if="sessionId && masks.length && !isCropMode && !isBefore"
+              :masks="masks"
+              :selected-id="selectedMaskId"
+              :to-stored="frameToStored"
+              :aspect="storedAspect"
+              :frame-width="frameWidth"
+              :frame-height="frameHeight"
+              :style="{ ...canvasStyle, position: 'absolute', zIndex: 'calc(var(--z-canvas) + 2)' }"
+              @select="(id) => (selectedMaskId = id)"
+              @update="updateMaskKind"
+              @commit="onMaskCommit"
+            />
             <CropOverlay
               v-if="isCropMode"
               v-model="cropModel"
@@ -1608,6 +1868,159 @@ onUnmounted(() => {
               @update:model-value="onRecipeValueInput"
               @change="onRecipeValueChange"
             />
+          </CollapsibleSection>
+
+          <!-- 1b. Masks (ED-20) -->
+          <CollapsibleSection
+            title="Masks"
+            test-id="section-masks"
+            :default-open="false"
+            @reset="resetMasks"
+          >
+            <div class="effects-panel" data-testid="masks-panel">
+              <div class="mask-add">
+                <button
+                  type="button"
+                  class="secondary"
+                  data-testid="add-linear-mask"
+                  :disabled="!sessionId || isReadOnly || masks.length >= MASK_LIMIT"
+                  @click="addMask('linear')"
+                >
+                  + Linear
+                </button>
+                <button
+                  type="button"
+                  class="secondary"
+                  data-testid="add-radial-mask"
+                  :disabled="!sessionId || isReadOnly || masks.length >= MASK_LIMIT"
+                  @click="addMask('radial')"
+                >
+                  + Radial
+                </button>
+              </div>
+              <p v-if="masks.length >= MASK_LIMIT" class="mask-note" data-testid="mask-limit">
+                Up to {{ MASK_LIMIT }} masks per photograph: each one costs every preview frame.
+              </p>
+              <p v-else-if="!masks.length" class="mask-note">
+                A mask applies its own adjustments to part of the photograph. Masks stay with
+                this photograph: presets, paste and Batch Grade never carry them.
+              </p>
+
+              <ul v-if="masks.length" class="mask-list" data-testid="mask-list">
+                <li
+                  v-for="m in masks"
+                  :key="m.id"
+                  class="mask-row"
+                  :class="{ 'is-selected': m.id === selectedMaskId }"
+                  :data-testid="`mask-row-${m.id}`"
+                >
+                  <button
+                    type="button"
+                    class="ghost mask-row__name"
+                    :aria-pressed="m.id === selectedMaskId"
+                    :data-testid="`mask-select-${m.id}`"
+                    @click="selectedMaskId = m.id === selectedMaskId ? null : m.id"
+                  >
+                    {{ m.name }}
+                  </button>
+                  <button
+                    type="button"
+                    class="ghost mask-row__toggle"
+                    :class="{ active: m.enabled }"
+                    :aria-pressed="m.enabled"
+                    :title="m.enabled ? 'Turn this mask off' : 'Turn this mask on'"
+                    :data-testid="`mask-enable-${m.id}`"
+                    @click="toggleMask(m.id, 'enabled')"
+                  >
+                    {{ m.enabled ? 'On' : 'Off' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="ghost mask-row__toggle"
+                    :class="{ active: m.invert }"
+                    :aria-pressed="m.invert"
+                    title="Apply outside the shape instead"
+                    :data-testid="`mask-invert-${m.id}`"
+                    @click="toggleMask(m.id, 'invert')"
+                  >
+                    Invert
+                  </button>
+                  <button
+                    type="button"
+                    class="ghost mask-row__delete"
+                    :aria-label="`Delete mask ${m.name}`"
+                    :data-testid="`mask-delete-${m.id}`"
+                    @click="deleteMask(m.id)"
+                  >
+                    ×
+                  </button>
+                </li>
+              </ul>
+
+              <div v-if="selectedMask" class="effects-group" data-testid="mask-controls">
+                <label class="mask-name">
+                  <span class="effects-group-title">Name</span>
+                  <input
+                    type="text"
+                    class="mask-name__input"
+                    maxlength="40"
+                    :value="selectedMask.name"
+                    data-testid="mask-name-input"
+                    @change="(e) => renameMask(selectedMask!.id, (e.target as HTMLInputElement).value)"
+                  />
+                </label>
+                <button
+                  type="button"
+                  class="ghost mask-show"
+                  :class="{ active: showMaskOverlay }"
+                  :aria-pressed="showMaskOverlay"
+                  data-testid="mask-show-overlay"
+                  @click="showMaskOverlay = !showMaskOverlay"
+                >
+                  {{ showMaskOverlay ? 'Hide mask overlay' : 'Show mask overlay' }}
+                </button>
+                <AdjustmentSlider
+                  label="Opacity"
+                  :model-value="Math.round(selectedMask.opacity * 100)"
+                  :min="0"
+                  :max="100"
+                  :step="1"
+                  unit="%"
+                  :default-value="100"
+                  test-id="mask-opacity"
+                  @update:model-value="(v) => setMaskField('opacity', v, false)"
+                  @change="(v) => setMaskField('opacity', v, true)"
+                />
+                <AdjustmentSlider
+                  v-if="selectedMask.kind.type === 'radial'"
+                  label="Feather"
+                  :model-value="Math.round(selectedMask.kind.feather * 100)"
+                  :min="0"
+                  :max="100"
+                  :step="1"
+                  unit="%"
+                  :default-value="50"
+                  test-id="mask-feather"
+                  @update:model-value="(v) => setMaskField('feather', v, false)"
+                  @change="(v) => setMaskField('feather', v, true)"
+                />
+                <AdjustmentSlider
+                  v-for="s in MASK_SLIDERS"
+                  :key="s.key"
+                  :label="s.label"
+                  :model-value="selectedMask.adjustments[s.key]"
+                  :min="s.min"
+                  :max="s.max"
+                  :step="s.step"
+                  :unit="s.unit"
+                  :default-value="0"
+                  :disabled="isReadOnly"
+                  :test-id="`mask-${s.key}`"
+                  @update:model-value="(v) => setMaskLocal(s.key, v, false)"
+                  @change="(v) => setMaskLocal(s.key, v, true)"
+                />
+              </div>
+            </div>
           </CollapsibleSection>
 
           <!-- 2. Tone Curve -->
@@ -2824,6 +3237,81 @@ onUnmounted(() => {
   padding: var(--space-3);
   border: var(--border-hair);
   background: var(--bg-panel);
+}
+
+.mask-add {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.mask-add button {
+  min-height: 40px;
+  font-size: 13px;
+}
+
+.mask-note {
+  margin: 0;
+  font-family: var(--font-label);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mask-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.mask-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto 40px;
+  gap: var(--space-1);
+  border: var(--border-hair);
+  background: var(--bg-panel);
+}
+
+.mask-row.is-selected {
+  border: var(--border-active);
+}
+
+.mask-row button {
+  min-height: 40px;
+  padding: 0 var(--space-2);
+  font-size: 12px;
+}
+
+.mask-row__name {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mask-row__toggle.active {
+  color: var(--accent);
+}
+
+.mask-name {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.mask-name__input {
+  min-height: 40px;
+  font-size: 16px;
+}
+
+.mask-show {
+  min-height: 40px;
+  font-size: 12px;
+}
+
+.mask-show.active {
+  color: var(--accent);
+  border: var(--border-active);
 }
 
 .effects-group-title {

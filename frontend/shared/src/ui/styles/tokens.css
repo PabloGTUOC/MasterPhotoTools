@@ -40,6 +40,8 @@
   --channel-blue: #4d8dff;
   --clip-highlight: var(--channel-red);
   --clip-shadow: var(--channel-blue);
+  /* Where a mask acts while it is being shaped (ED-20), drawn at half strength. */
+  --mask-overlay: var(--channel-red);
 
   --text: var(--chrome);
   --text-heading: var(--white);

@@ -241,16 +241,8 @@ impl CompiledMasks {
             return Ok(None);
         }
 
-        // Without geometry the output is the stored frame, pixel for pixel (ED-13 only bakes
-        // the orientation in when a geometry is present).
-        let affine = match geometry {
-            Some(g) => g.plan(stored_w, stored_h, orientation)?.normalised_affine(),
-            None => [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
-        };
-
-        let long = stored_w.max(stored_h).max(1) as f32;
-        let ax = stored_w as f32 / long;
-        let ay = stored_h as f32 / long;
+        let affine = output_to_stored(geometry, stored_w, stored_h, orientation)?;
+        let (ax, ay) = aspect(stored_w, stored_h);
 
         let compiled = active
             .iter()
@@ -305,6 +297,81 @@ impl CompiledMasks {
         }
         sum
     }
+}
+
+/// The map from a rendering's output to the stored frame, both normalised on [0, 1]:
+/// `u_s = a·u + b·v + c`, `v_s = d·u + e·v + f` for `[a, b, c, d, e, f]`.
+///
+/// Without geometry the output is the stored frame, pixel for pixel (ED-13 only bakes the
+/// orientation in when a geometry is present). The Edit view receives this with every
+/// frame, so the handles it draws sit where the masks act without the view knowing any of
+/// the geometry's rules.
+pub fn output_to_stored(
+    geometry: Option<&Geometry>,
+    stored_w: u32,
+    stored_h: u32,
+    orientation: u32,
+) -> Result<[f32; 6], Error> {
+    Ok(match geometry {
+        Some(g) => g.plan(stored_w, stored_h, orientation)?.normalised_affine(),
+        None => [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+    })
+}
+
+/// Stored width and height over the stored long edge: the units shapes are measured in.
+fn aspect(stored_w: u32, stored_h: u32) -> (f32, f32) {
+    let long = stored_w.max(stored_h).max(1) as f32;
+    (stored_w as f32 / long, stored_h as f32 / long)
+}
+
+/// Where one mask acts, as 8-bit coverage over an `out_w` × `out_h` rendering, for the
+/// overlay that shows a mask while it is shaped (ED-20).
+///
+/// Includes invert and opacity but not whether the mask has adjustments yet: a new mask
+/// is shown before it does anything. Computed here, by the same formula the pixels use,
+/// so the overlay cannot disagree with the effect.
+pub fn coverage_frame(
+    mask: &Mask,
+    affine: [f32; 6],
+    stored_w: u32,
+    stored_h: u32,
+    out_w: u32,
+    out_h: u32,
+) -> Vec<u8> {
+    use rayon::prelude::*;
+    let (ax, ay) = aspect(stored_w, stored_h);
+    let one = CompiledMasks {
+        affine,
+        ax,
+        ay,
+        masks: vec![CompiledMask {
+            shape: compile_shape(&mask.kind, ax, ay),
+            invert: mask.invert,
+            opacity: mask.opacity.clamp(0.0, 1.0),
+            adjustments: mask.adjustments,
+        }],
+        touches_tone: false,
+        touches_contrast: false,
+        touches_saturation: false,
+    };
+    let mut out = vec![0u8; (out_w as usize) * (out_h as usize)];
+    out.par_chunks_exact_mut(out_w.max(1) as usize)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let cursor = one.row(y as u32, out_w, out_h);
+            for (x, px) in row.iter_mut().enumerate() {
+                let (mx, my) = cursor.at(x);
+                let w = one.masks[0].weight(mx, my);
+                // Any weight at all shows: a weight that rounds to 0 can still move a pixel
+                // by a code value, and the overlay must not hide where the mask acts.
+                *px = if w > 0.0 {
+                    ((w * 255.0 + 0.5) as u8).max(1)
+                } else {
+                    0
+                };
+            }
+        });
+    out
 }
 
 /// A position along one output row, in aspect-scaled stored coordinates.

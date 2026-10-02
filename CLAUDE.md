@@ -28,7 +28,7 @@ structured half of that work — 72 of them, all actionable.
 | [`docs/timeline-plan.md`](docs/timeline-plan.md) | The Timeline tab: the track library on a map, and points placed by hand. Stage A built; MV-17 awaits a browser. Google's location history is Stages B–C, not built |
 | [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
-| [`docs/edit-plan.md`](docs/edit-plan.md) | The Edit tab and the Batch Grade tool: non-destructive exposure adjustments and 3D LUT grading. Rounds 1 and 2 built (ED-1–ED-18); MV-20 and MV-21 await a Mac. Round 3, masks: ED-19 (engine, gradients) built, ED-20–ED-24 planned |
+| [`docs/edit-plan.md`](docs/edit-plan.md) | The Edit tab and the Batch Grade tool: non-destructive exposure adjustments and 3D LUT grading. Rounds 1 and 2 built (ED-1–ED-18); MV-20 and MV-21 await a Mac. Round 3, masks: ED-19–ED-20 (engine, gradients, Masks panel) built, ED-21–ED-24 planned |
 | [`docs/deployment.md`](docs/deployment.md) | Deploying the server and the desktop app, and every environment variable |
 | [`docs/phase-reports/`](docs/phase-reports/) | One report per phase: what was delivered, what deviated, and why |
 
@@ -69,8 +69,8 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 986 passing
-cargo test -p phototools-core   # 878 passing — G2
+cargo test --workspace          # 988 passing
+cargo test -p phototools-core   # 879 passing — G2
 ```
 
 Front ends:

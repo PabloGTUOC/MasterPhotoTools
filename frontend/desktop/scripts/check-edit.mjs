@@ -354,6 +354,38 @@ try {
     console.log('  Double click reset exposure to 0.0.');
   }
 
+  // 8b. Double-click on the slider bar itself resets, with a real mouse, away from the
+  // centre so the first click of the pair visibly moves the value before the reset.
+  console.log('Asserting double-click on the slider bar resets to its default...');
+  const dblclickBar = async (testId) => {
+    const bar = page.locator(`input[data-testid="${testId}-slider"]`);
+    const box = await bar.boundingBox();
+    await bar.dblclick({ position: { x: box.width * 0.85, y: box.height / 2 } });
+    await page.waitForTimeout(120);
+    return page.evaluate(
+      (id) => parseFloat(document.querySelector(`input[data-testid="${id}-number"]`).value),
+      testId,
+    );
+  };
+  await page.locator('input[data-testid="exposure-number"]').fill('2.5');
+  await page.locator('input[data-testid="exposure-number"]').press('Enter');
+  await page.waitForTimeout(80);
+  const exposureAfterBar = await dblclickBar('exposure');
+  const lastBarRender = await page.evaluate(() => {
+    const r = window.__STUB__.renders.at(-1);
+    return { stage: r.stage, exposure: r.recipe.exposure };
+  });
+  if (exposureAfterBar !== 0 || lastBarRender.stage !== 'Settle' || lastBarRender.exposure !== 0) {
+    failures.push(`Double-clicking the exposure bar should reset it to 0 and settle; got value ${exposureAfterBar}, last render ${JSON.stringify(lastBarRender)}`);
+  }
+  // A slider whose neutral value is not 0 returns to its own default.
+  const thresholdAfterBar = await dblclickBar('glow-threshold');
+  if (thresholdAfterBar !== 70) {
+    failures.push(`Double-clicking the glow threshold bar should reset it to its default 70; got ${thresholdAfterBar}`);
+  } else if (exposureAfterBar === 0) {
+    console.log('  Double-clicking a slider bar resets it to its default (exposure 0, glow threshold 70) and settles.');
+  }
+
   // 9. Assert saved recipe reloading and unreadable sidecar safety (Item 5)
   console.log('Asserting saved recipe reloading and unreadable sidecar safety (Item 5)...');
   await pathInput.fill('/Volumes/Photos/existing_edits.jpg');

@@ -5,7 +5,11 @@
  * Transport-free: props in, events out, never `@host/api`.
  *
  * Controls:
- * - Double-click label resets value to defaultValue (exact 0.0 identity by default).
+ * - Double-click the label or the slider itself resets value to defaultValue (exact 0.0
+ *   identity by default). The slider is where the hand already is after a drag; making
+ *   the person travel to a small label to undo it was the slower of the two gestures.
+ *   The first click of the pair may move the value to where it landed; the reset that
+ *   follows makes that harmless.
  * - Range slider emits `update:modelValue` while scrubbing (drag proxy) and `change` on release (settle proxy).
  * - Number field provides exact keyboard entry with 16px font to prevent mobile zoom and >= 40px touch target.
  */
@@ -85,7 +89,7 @@ function resetToDefault() {
         class="adjustment-slider__label"
         role="button"
         tabindex="0"
-        title="Double-click to reset to identity (0)"
+        :title="`Double-click to reset to ${props.defaultValue}`"
         :data-testid="props.testId ? `${props.testId}-label` : undefined"
         @dblclick="resetToDefault"
         @keydown.enter="resetToDefault"
@@ -105,6 +109,8 @@ function resetToDefault() {
         :step="props.step"
         :disabled="props.disabled"
         :data-testid="props.testId ? `${props.testId}-slider` : undefined"
+        :title="`Double-click to reset to ${props.defaultValue}`"
+        @dblclick="resetToDefault"
         @input="onSliderInput"
         @change="onSliderChange"
       />

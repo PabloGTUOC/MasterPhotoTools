@@ -1457,6 +1457,191 @@ try {
     window.__STUB__.pattern = 'grey';
   });
 
+  // 9k. Presets, copy and paste of settings, and Undo (ED-17)
+  console.log('Asserting presets, copy/paste of settings and Undo (ED-17)...');
+  const openPhoto = async (p) => {
+    await pathInput.fill(p);
+    await pathInput.press('Enter');
+    await page.waitForTimeout(150);
+  };
+  const setNumber = async (testId, value) => {
+    const input = page.locator(`input[data-testid="${testId}"]`);
+    if (!(await input.isVisible())) {
+      await page.locator('button[data-testid="section-geometry-toggle"]').click();
+    }
+    await input.fill(String(value));
+    await input.press('Enter');
+    await page.waitForTimeout(80);
+  };
+  const values = () =>
+    page.evaluate(() => ({
+      exposure: parseFloat(document.querySelector('input[data-testid="exposure-number"]').value),
+      straighten: parseFloat(document.querySelector('input[data-testid="geometry-straighten-number"]')?.value ?? 'NaN'),
+      notice: document.querySelector('[data-testid="edit-notice"]')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+      options: [...document.querySelectorAll('select[data-testid="preset-select"] option')]
+        .filter((o) => o.value)
+        .map((o) => o.value),
+      selected: document.querySelector('select[data-testid="preset-select"]').value,
+    }));
+  const blurAll = () =>
+    page.evaluate(() => {
+      document.activeElement?.blur?.();
+      window.getSelection()?.removeAllRanges();
+    });
+  const submitDialog = async (name) => {
+    if (name !== undefined) await page.locator('input[data-testid="preset-name-input"]').fill(name);
+    await page.locator('button[data-testid="preset-submit-btn"]').click();
+    await page.waitForTimeout(80);
+  };
+
+  await openPhoto('/Volumes/Photos/preset_a.jpg');
+  await setNumber('exposure-number', 1.5);
+  await setNumber('geometry-straighten-number', 5);
+
+  // Save as preset: the dialog opens with the name field focused.
+  await page.locator('button[data-testid="preset-save-btn"]').click();
+  const nameFocused = await page.evaluate(
+    () => document.activeElement?.getAttribute('data-testid') === 'preset-name-input',
+  );
+  if (!nameFocused) failures.push('Save-as-preset dialog did not focus its name field');
+  await page.screenshot({ path: join(OUT, 'edit-presets.png'), fullPage: true });
+  await submitDialog('Warm');
+
+  const stored = await page.evaluate(() => window.__STUB__.presets.get('Warm'));
+  let v = await values();
+  if (!v.options.includes('Warm') || v.selected !== 'Warm') {
+    failures.push(`Saved preset not listed and selected: ${JSON.stringify(v)}`);
+  }
+  if (!stored || stored.exposure !== 1.5 || stored.geometry !== null || stored.source_sha256 !== '') {
+    failures.push(`Preset should keep exposure 1.5 and drop the framing and hash; stored ${JSON.stringify(stored && { exposure: stored.exposure, geometry: stored.geometry, sha: stored.source_sha256 })}`);
+  }
+
+  // Saving again under the same name asks before replacing.
+  await setNumber('exposure-number', 1.2);
+  await page.locator('button[data-testid="preset-save-btn"]').click();
+  await submitDialog('Warm');
+  const replaceAsk = await page.evaluate(() => ({
+    warning: !!document.querySelector('[data-testid="preset-replace-warning"]'),
+    button: document.querySelector('button[data-testid="preset-submit-btn"]')?.textContent?.trim(),
+  }));
+  if (!replaceAsk.warning || replaceAsk.button !== 'Replace') {
+    failures.push(`Saving over an existing preset should ask to replace it; got ${JSON.stringify(replaceAsk)}`);
+  }
+  await submitDialog();
+  const replaced = await page.evaluate(() => window.__STUB__.presets.get('Warm')?.exposure);
+  if (replaced !== 1.2) failures.push(`Replacing the preset should store exposure 1.2; got ${replaced}`);
+
+  // Escape closes a dialog without acting.
+  await page.locator('button[data-testid="preset-save-btn"]').click();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(50);
+  if (await page.locator('[data-testid="preset-dialog"]').count()) {
+    failures.push('Escape did not close the preset dialog');
+  }
+
+  // Applying a preset to another photograph keeps that photograph's framing, and can be undone.
+  await openPhoto('/Volumes/Photos/preset_b.jpg');
+  v = await values();
+  if (v.notice !== '' || v.selected !== '') {
+    failures.push(`Opening another photograph should clear the notice and preset selection; got ${JSON.stringify(v)}`);
+  }
+  await setNumber('geometry-straighten-number', 2);
+  await page.selectOption('select[data-testid="preset-select"]', 'Warm');
+  await page.waitForTimeout(150);
+  v = await values();
+  const lastRender = await page.evaluate(() => {
+    const r = window.__STUB__.renders.at(-1).recipe;
+    return { exposure: r.exposure, straighten: r.geometry?.straighten };
+  });
+  if (v.exposure !== 1.2 || v.straighten !== 2 || lastRender.exposure !== 1.2 || lastRender.straighten !== 2) {
+    failures.push(`Applying a preset should set exposure 1.2 and keep straighten 2; got controls ${JSON.stringify(v)}, render ${JSON.stringify(lastRender)}`);
+  }
+  if (!v.notice.includes('Applied preset Warm')) failures.push(`No notice after applying a preset: "${v.notice}"`);
+
+  await page.locator('button[data-testid="edit-notice-undo"]').click();
+  await page.waitForTimeout(100);
+  v = await values();
+  if (v.exposure !== 0 || v.straighten !== 2) {
+    failures.push(`Undo should restore exposure 0 and keep straighten 2; got ${JSON.stringify(v)}`);
+  } else {
+    console.log('  A preset applies the look, keeps the photograph\'s framing, and Undo restores the previous settings.');
+  }
+
+  // Copy settings with ⌘C, paste with ⌘V onto another photograph.
+  await setNumber('exposure-number', -1);
+  await blurAll();
+  await page.keyboard.press('Meta+c');
+  await page.waitForTimeout(50);
+  v = await values();
+  if (!v.notice.includes('Copied settings from preset_b.jpg')) {
+    failures.push(`⌘C should copy the settings; notice was "${v.notice}"`);
+  }
+
+  await openPhoto('/Volumes/Photos/preset_a.jpg');
+  await setNumber('geometry-straighten-number', 5);
+  // ⌘V in a text field is the field's own paste, not the settings'.
+  await page.locator('input[data-testid="exposure-number"]').focus();
+  await page.keyboard.press('Meta+v');
+  await page.waitForTimeout(80);
+  v = await values();
+  if (v.exposure === -1) failures.push('⌘V pasted settings while a number field was focused');
+
+  await blurAll();
+  await page.keyboard.press('Meta+v');
+  await page.waitForTimeout(150);
+  v = await values();
+  const saved = await page.evaluate(async () => {
+    await new Promise((r) => setTimeout(r, 400));
+    const s = window.__STUB__.lastSavedRecipe;
+    return s && { exposure: s.exposure, straighten: s.geometry?.straighten };
+  });
+  if (v.exposure !== -1 || v.straighten !== 5 || !v.notice.includes('Pasted settings from preset_b.jpg')) {
+    failures.push(`⌘V should paste exposure -1 and keep straighten 5; got ${JSON.stringify(v)}`);
+  } else if (!saved || saved.exposure !== -1 || saved.straighten !== 5) {
+    failures.push(`Pasted settings were not saved to this photograph's sidecar: ${JSON.stringify(saved)}`);
+  } else {
+    console.log('  ⌘C/⌘V copy settings between photographs, keep the framing, save, and leave text fields alone.');
+  }
+
+  // Rename and delete act on the selected preset; an unreadable file is reported, not hidden.
+  await page.selectOption('select[data-testid="preset-select"]', 'Warm');
+  await page.waitForTimeout(100);
+  await page.locator('button[data-testid="preset-rename-btn"]').click();
+  await submitDialog('Warm 2');
+  v = await values();
+  if (v.options.join() !== 'Warm 2' || v.selected !== 'Warm 2') {
+    failures.push(`Rename should leave only "Warm 2", selected; got ${JSON.stringify(v)}`);
+  }
+
+  await page.evaluate(() => {
+    window.__STUB__.presetErrors = [{ name: 'Broken', error: 'invalid JSON' }];
+  });
+  await page.locator('button[data-testid="preset-delete-btn"]').click();
+  const deleteText = await page.locator('[data-testid="preset-dialog"]').textContent();
+  if (!deleteText.includes('Warm 2')) failures.push(`Delete dialog should name the preset; got "${deleteText}"`);
+  for (const id of ['preset-cancel-btn', 'preset-submit-btn']) {
+    const box = await page.locator(`button[data-testid="${id}"]`).boundingBox();
+    if (!box || box.height < 39.5) failures.push(`${id} touch target is ${box?.height}px (must be >= 40px)`);
+  }
+  await submitDialog();
+  v = await values();
+  const afterDelete = await page.evaluate(() => ({
+    renameDisabled: document.querySelector('button[data-testid="preset-rename-btn"]').disabled,
+    deleteDisabled: document.querySelector('button[data-testid="preset-delete-btn"]').disabled,
+    unreadable: document.querySelector('[data-testid="preset-unreadable"]')?.textContent ?? '',
+    stored: window.__STUB__.presets.size,
+  }));
+  if (v.options.length !== 0 || afterDelete.stored !== 0 || !afterDelete.renameDisabled || !afterDelete.deleteDisabled) {
+    failures.push(`Delete should empty the library and disable rename and delete; got ${JSON.stringify({ ...v, ...afterDelete })}`);
+  } else if (!afterDelete.unreadable.includes('Broken')) {
+    failures.push(`An unreadable preset should be reported; got "${afterDelete.unreadable}"`);
+  } else {
+    console.log('  Presets save, ask before replacing, rename and delete; an unreadable preset is reported.');
+  }
+  await page.evaluate(() => {
+    window.__STUB__.presetErrors = [];
+  });
+
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');
   await pathInput.press('Enter');

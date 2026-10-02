@@ -21,6 +21,7 @@ import type {
   LutLibraryList,
   LutRef,
   NormalizedCrop,
+  PresetList,
   OpenPreviewResult,
   PreviewHistogram,
   PreviewStage,
@@ -35,6 +36,8 @@ import ColorWheel from '@ui/components/ColorWheel.vue';
 import CropOverlay from '@ui/components/CropOverlay.vue';
 import CurveEditor from '@ui/components/CurveEditor.vue';
 import Histogram, { type HistogramMode } from '@ui/components/Histogram.vue';
+import PresetBar from '@ui/components/PresetBar.vue';
+import { copiedSettings } from '../recipeClipboard';
 import LutPicker from '@ui/components/LutPicker.vue';
 import PathField from '@ui/components/PathField.vue';
 import { useRoots } from '@ui/useRoots';
@@ -63,6 +66,13 @@ const showShadowClip = ref(false);
 const showHighlightClip = ref(false);
 const clipOverlayActive = computed(() => showShadowClip.value || showHighlightClip.value);
 let lastFrame: { width: number; height: number; pixels: Uint8ClampedArray } | null = null;
+
+// ED-17: presets, copied settings, and the one step back from replacing a look.
+const presetList = ref<PresetList>({ presets: [], errors: [] });
+const presetNames = computed(() => presetList.value.presets.map((p) => p.name));
+const selectedPreset = ref<string | null>(null);
+const notice = ref<{ text: string; undo: AdjustmentRecipe | null } | null>(null);
+let noticeTimer: number | undefined;
 const viewportContainerRef = ref<HTMLDivElement | null>(null);
 
 // Container dimensions for responsive fit
@@ -513,7 +523,22 @@ function isTextInputFocused(): boolean {
   return false;
 }
 
+/** True when the person is working with text, where ⌘C and ⌘V must keep their usual meaning. */
+function textIsInPlay(): boolean {
+  if (isTextInputFocused()) return true;
+  const selection = window.getSelection();
+  return !!selection && !selection.isCollapsed && selection.toString().length > 0;
+}
+
 function handleKeyDown(e: KeyboardEvent) {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && !e.shiftKey && !e.altKey && (e.key === 'c' || e.key === 'v')) {
+    if (textIsInPlay() || !sessionId.value || document.querySelector('[role="dialog"]')) return;
+    e.preventDefault();
+    if (e.key === 'c') copySettings();
+    else pasteSettings();
+    return;
+  }
   if (e.key === '\\') {
     if (isTextInputFocused()) return;
     e.preventDefault();
@@ -529,8 +554,184 @@ function handleKeyUp(e: KeyboardEvent) {
   }
 }
 
+/**
+ * A recipe from disk, a preset or the clipboard, with every field the view binds
+ * present: one written before a field existed leaves it out, and a slider bound
+ * to a missing field shows nothing rather than its identity value.
+ */
+function normaliseRecipe(existing: AdjustmentRecipe, sourceSha: string): AdjustmentRecipe {
+  const defaultHsl = createIdentityRecipe().hsl!;
+  const defaultGrading = createIdentityRecipe().grading!;
+  return {
+    ...createIdentityRecipe(),
+    ...existing,
+    curves: existing.curves
+      ? {
+          luma: existing.curves.luma ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+          red: existing.curves.red ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+          green: existing.curves.green ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+          blue: existing.curves.blue ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+        }
+      : createIdentityRecipe().curves,
+    hsl: existing.hsl
+      ? {
+          red: { ...defaultHsl.red, ...existing.hsl.red },
+          orange: { ...defaultHsl.orange, ...existing.hsl.orange },
+          yellow: { ...defaultHsl.yellow, ...existing.hsl.yellow },
+          green: { ...defaultHsl.green, ...existing.hsl.green },
+          aqua: { ...defaultHsl.aqua, ...existing.hsl.aqua },
+          blue: { ...defaultHsl.blue, ...existing.hsl.blue },
+          purple: { ...defaultHsl.purple, ...existing.hsl.purple },
+          magenta: { ...defaultHsl.magenta, ...existing.hsl.magenta },
+        }
+      : defaultHsl,
+    grading: existing.grading
+      ? {
+          shadows: { ...defaultGrading.shadows, ...existing.grading.shadows },
+          midtones: { ...defaultGrading.midtones, ...existing.grading.midtones },
+          highlights: { ...defaultGrading.highlights, ...existing.grading.highlights },
+          global: { ...defaultGrading.global, ...existing.grading.global },
+          blending: existing.grading.blending ?? defaultGrading.blending,
+          balance: existing.grading.balance ?? defaultGrading.balance,
+        }
+      : defaultGrading,
+    geometry: existing.geometry ? { ...existing.geometry } : null,
+    vignette: existing.vignette
+      ? {
+          amount: existing.vignette.amount ?? 0,
+          midpoint: existing.vignette.midpoint ?? 50,
+          roundness: existing.vignette.roundness ?? 0,
+          feather: existing.vignette.feather ?? 50,
+        }
+      : null,
+    grain: existing.grain
+      ? {
+          amount: existing.grain.amount ?? 0,
+          size: existing.grain.size ?? 25,
+          roughness: existing.grain.roughness ?? 50,
+        }
+      : null,
+    looks: existing.looks
+      ? {
+          glow_amount: existing.looks.glow_amount ?? 0,
+          glow_threshold: existing.looks.glow_threshold ?? 70,
+          glow_radius: existing.looks.glow_radius ?? 30,
+          halation_amount: existing.looks.halation_amount ?? 0,
+          halation_threshold: existing.looks.halation_threshold ?? 80,
+          halation_radius: existing.looks.halation_radius ?? 20,
+          tone_mapper: existing.looks.tone_mapper ?? null,
+        }
+      : null,
+    source_sha256: existing.source_sha256 || sourceSha,
+  };
+}
+
+function cloneRecipe(r: AdjustmentRecipe): AdjustmentRecipe {
+  return JSON.parse(JSON.stringify(r)) as AdjustmentRecipe;
+}
+
+function fileName(path: string): string {
+  return path.trim().split('/').pop() || path;
+}
+
+function showNotice(text: string, undo: AdjustmentRecipe | null = null) {
+  window.clearTimeout(noticeTimer);
+  notice.value = { text, undo };
+  // Long enough to read and reach Undo; a notice that stays would cover the viewport bar.
+  noticeTimer = window.setTimeout(() => {
+    notice.value = null;
+  }, 8000);
+}
+
+function dismissNotice() {
+  window.clearTimeout(noticeTimer);
+  notice.value = null;
+}
+
+async function refreshPresets() {
+  try {
+    presetList.value = await desktop.listPresets();
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    error.value = `Failed to list presets: ${msg}`;
+  }
+}
+
+/**
+ * Replaces this photograph's look with another, keeping what is its own: its
+ * framing (crop, rotation, straighten, flip) and the hash of its source. The
+ * previous recipe is kept for Undo, because a preset applies on one click and a
+ * paste on one keystroke, and neither would be safe to offer without a way back.
+ */
+function replaceLook(incoming: AdjustmentRecipe, text: string) {
+  const before = cloneRecipe(recipe.value);
+  const next = normaliseRecipe(cloneRecipe(incoming), before.source_sha256 ?? '');
+  next.geometry = before.geometry;
+  next.source_sha256 = before.source_sha256;
+  recipe.value = next;
+  onRecipeValueChange();
+  showNotice(text, before);
+}
+
+function undoReplace() {
+  const previous = notice.value?.undo;
+  if (!previous) return;
+  recipe.value = previous;
+  onRecipeValueChange();
+  showNotice('Undone.');
+}
+
+async function applyPreset(name: string) {
+  if (!sessionId.value) return;
+  try {
+    const preset = await desktop.loadPreset(name);
+    selectedPreset.value = name;
+    replaceLook(preset, `Applied preset ${name}. Crop and rotation kept.`);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    error.value = `Couldn't apply preset ${name}: ${msg}`;
+  }
+}
+
+async function savePreset(name: string, overwrite: boolean) {
+  await desktop.savePreset(name, recipe.value, overwrite);
+  await refreshPresets();
+  selectedPreset.value = name;
+  showNotice(overwrite ? `Replaced preset ${name}.` : `Saved preset ${name}.`);
+}
+
+async function renamePreset(from: string, to: string) {
+  await desktop.renamePreset(from, to);
+  await refreshPresets();
+  if (selectedPreset.value === from) selectedPreset.value = to;
+  showNotice(`Renamed preset ${from} to ${to}.`);
+}
+
+async function deletePreset(name: string) {
+  await desktop.deletePreset(name);
+  await refreshPresets();
+  if (selectedPreset.value === name) selectedPreset.value = null;
+  showNotice(`Deleted preset ${name}.`);
+}
+
+function copySettings() {
+  if (!sessionId.value) return;
+  copiedSettings.value = { recipe: cloneRecipe(recipe.value), from: fileName(sourcePath.value) };
+  showNotice(`Copied settings from ${copiedSettings.value.from}.`);
+}
+
+function pasteSettings() {
+  const copied = copiedSettings.value;
+  if (!copied || !sessionId.value) return;
+  selectedPreset.value = null;
+  replaceLook(copied.recipe, `Pasted settings from ${copied.from}. Crop and rotation kept.`);
+}
+
 async function openImage(path: string) {
   if (!path.trim()) return;
+  // Undo belongs to the photograph it was offered on.
+  dismissNotice();
+  selectedPreset.value = null;
   loading.value = true;
   error.value = null;
   saveStatus.value = '';
@@ -566,70 +767,7 @@ async function openImage(path: string) {
     }
 
     if (existing) {
-      const defaultHsl = createIdentityRecipe().hsl!;
-      const defaultGrading = createIdentityRecipe().grading!;
-      recipe.value = {
-        ...createIdentityRecipe(),
-        ...existing,
-        curves: existing.curves
-          ? {
-              luma: existing.curves.luma ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
-              red: existing.curves.red ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
-              green: existing.curves.green ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
-              blue: existing.curves.blue ?? [{ x: 0, y: 0 }, { x: 1, y: 1 }],
-            }
-          : createIdentityRecipe().curves,
-        hsl: existing.hsl
-          ? {
-              red: { ...defaultHsl.red, ...existing.hsl.red },
-              orange: { ...defaultHsl.orange, ...existing.hsl.orange },
-              yellow: { ...defaultHsl.yellow, ...existing.hsl.yellow },
-              green: { ...defaultHsl.green, ...existing.hsl.green },
-              aqua: { ...defaultHsl.aqua, ...existing.hsl.aqua },
-              blue: { ...defaultHsl.blue, ...existing.hsl.blue },
-              purple: { ...defaultHsl.purple, ...existing.hsl.purple },
-              magenta: { ...defaultHsl.magenta, ...existing.hsl.magenta },
-            }
-          : defaultHsl,
-        grading: existing.grading
-          ? {
-              shadows: { ...defaultGrading.shadows, ...existing.grading.shadows },
-              midtones: { ...defaultGrading.midtones, ...existing.grading.midtones },
-              highlights: { ...defaultGrading.highlights, ...existing.grading.highlights },
-              global: { ...defaultGrading.global, ...existing.grading.global },
-              blending: existing.grading.blending ?? defaultGrading.blending,
-              balance: existing.grading.balance ?? defaultGrading.balance,
-            }
-          : defaultGrading,
-        geometry: existing.geometry ? { ...existing.geometry } : null,
-        vignette: existing.vignette
-          ? {
-              amount: existing.vignette.amount ?? 0,
-              midpoint: existing.vignette.midpoint ?? 50,
-              roundness: existing.vignette.roundness ?? 0,
-              feather: existing.vignette.feather ?? 50,
-            }
-          : null,
-        grain: existing.grain
-          ? {
-              amount: existing.grain.amount ?? 0,
-              size: existing.grain.size ?? 25,
-              roughness: existing.grain.roughness ?? 50,
-            }
-          : null,
-        looks: existing.looks
-          ? {
-              glow_amount: existing.looks.glow_amount ?? 0,
-              glow_threshold: existing.looks.glow_threshold ?? 70,
-              glow_radius: existing.looks.glow_radius ?? 30,
-              halation_amount: existing.looks.halation_amount ?? 0,
-              halation_threshold: existing.looks.halation_threshold ?? 80,
-              halation_radius: existing.looks.halation_radius ?? 20,
-              tone_mapper: existing.looks.tone_mapper ?? null,
-            }
-          : null,
-        source_sha256: existing.source_sha256 || info.source_sha256 || '',
-      };
+      recipe.value = normaliseRecipe(existing, info.source_sha256 ?? '');
       isCropMode.value = false;
       saveStatus.value = 'Saved';
       autosaveDisabled.value = false;
@@ -1136,6 +1274,7 @@ watch(sourcePath, (newPath) => {
 
 onMounted(() => {
   refreshLuts();
+  refreshPresets();
   window.addEventListener('keydown', handleKeyDown);
   window.addEventListener('keyup', handleKeyUp);
 
@@ -1153,6 +1292,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  window.clearTimeout(noticeTimer);
   window.removeEventListener('keydown', handleKeyDown);
   window.removeEventListener('keyup', handleKeyUp);
 
@@ -1306,6 +1446,20 @@ onUnmounted(() => {
             Reset all
           </button>
         </div>
+
+        <PresetBar
+          :presets="presetNames"
+          :unreadable="presetList.errors"
+          :selected="selectedPreset"
+          :can-paste="copiedSettings !== null"
+          :disabled="!sessionId"
+          :save="savePreset"
+          :rename="renamePreset"
+          :remove="deletePreset"
+          @apply="applyPreset"
+          @copy="copySettings"
+          @paste="pasteSettings"
+        />
 
         <Histogram
           v-model:mode="histogramMode"
@@ -2044,6 +2198,27 @@ onUnmounted(() => {
         </div>
       </aside>
     </div>
+    <div v-if="notice" class="edit-notice" role="status" data-testid="edit-notice">
+      <span class="edit-notice__text">{{ notice.text }}</span>
+      <button
+        v-if="notice.undo"
+        type="button"
+        class="ghost edit-notice__btn"
+        data-testid="edit-notice-undo"
+        @click="undoReplace"
+      >
+        Undo
+      </button>
+      <button
+        type="button"
+        class="ghost edit-notice__btn"
+        aria-label="Dismiss"
+        data-testid="edit-notice-dismiss"
+        @click="dismissNotice"
+      >
+        ×
+      </button>
+    </div>
   </div>
 </template>
 
@@ -2054,6 +2229,36 @@ onUnmounted(() => {
   gap: var(--space-3);
   height: 100%;
   min-height: 0;
+}
+
+/* Bottom right, clear of the viewport's controls, above everything but a modal. */
+.edit-notice {
+  position: fixed;
+  right: var(--space-5);
+  bottom: calc(var(--status-h) + var(--space-4));
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(520px, calc(100vw - 2 * var(--space-5)));
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-none);
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.edit-notice__text {
+  flex: 1;
+}
+
+.edit-notice__btn {
+  min-height: 40px;
+  min-width: 40px;
+  padding: 0 var(--space-3);
+  font-size: 13px;
 }
 
 .edit-screen__toolbar {

@@ -25,6 +25,9 @@ export interface StubState {
   lastSavedRecipe: AdjustmentRecipe | null;
   /** 'clipping' renders black and white bands either side of the grey, for ED-15. */
   pattern: 'grey' | 'clipping';
+  /** The preset library, as core would hold it on disk (ED-17). */
+  presets: Map<string, AdjustmentRecipe>;
+  presetErrors: { name: string; error: string }[];
 }
 
 const stubState: StubState = {
@@ -35,6 +38,8 @@ const stubState: StubState = {
   readOnly: false,
   lastSavedRecipe: null,
   pattern: 'grey',
+  presets: new Map(),
+  presetErrors: [],
 };
 
 interface StubHistogram {
@@ -413,6 +418,40 @@ export class StubDesktopApiClient {
       path: `${outDir}/IMG_0001_edit.jpg`,
       metadata_skipped: null,
     };
+  }
+
+  async listPresets(): Promise<{ presets: { name: string }[]; errors: { name: string; error: string }[] }> {
+    return {
+      presets: [...stubState.presets.keys()].sort().map((name) => ({ name })),
+      errors: [...stubState.presetErrors],
+    };
+  }
+
+  async loadPreset(name: string): Promise<AdjustmentRecipe> {
+    const r = stubState.presets.get(name);
+    if (!r) throw new Error(`No preset called ${name}.`);
+    return JSON.parse(JSON.stringify(r));
+  }
+
+  async savePreset(name: string, recipe: AdjustmentRecipe, overwrite = false): Promise<void> {
+    if (!name.trim()) throw new Error('A preset name cannot be empty.');
+    if (name.includes('/')) throw new Error("A preset name cannot contain '/', '\\', ':', or control characters.");
+    if (stubState.presets.has(name) && !overwrite) throw new Error(`A preset called ${name} already exists.`);
+    // As core does: a preset keeps the look, not the photograph's hash or framing.
+    const saved = { ...JSON.parse(JSON.stringify(recipe)), source_sha256: '', geometry: null };
+    stubState.presets.set(name, saved);
+  }
+
+  async renamePreset(from: string, to: string): Promise<void> {
+    const r = stubState.presets.get(from);
+    if (!r) throw new Error(`No preset called ${from}.`);
+    if (stubState.presets.has(to)) throw new Error(`A preset called ${to} already exists.`);
+    stubState.presets.delete(from);
+    stubState.presets.set(to, r);
+  }
+
+  async deletePreset(name: string): Promise<void> {
+    if (!stubState.presets.delete(name)) throw new Error(`No preset called ${name}.`);
   }
 
   async listLuts(): Promise<LutLibraryList> {

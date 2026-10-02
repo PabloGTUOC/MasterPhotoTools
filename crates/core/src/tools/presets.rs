@@ -160,9 +160,13 @@ pub fn save_preset(
     // Create the directory if it doesn't exist
     fs::create_dir_all(dir)?;
 
-    // Clear source_sha256 and set version
+    // A preset is a look, applied to other photographs. The source hash names the
+    // photograph it was made on, and the geometry is that photograph's framing: a
+    // crop or a straighten carried into a preset would reframe every photograph it
+    // touched, in batch as well as one at a time (ED-18 applies a recipe's geometry).
     let mut recipe = recipe.clone();
     recipe.source_sha256 = String::new();
+    recipe.geometry = None;
     recipe.version = CURRENT_RECIPE_VERSION;
 
     // Serialize to JSON
@@ -295,6 +299,30 @@ pub fn delete_preset(dir: &Path, name: &str) -> Result<(), Error> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn a_preset_carries_the_look_not_the_framing() {
+        let temp_dir = tempdir().unwrap();
+        let dir = temp_dir.path();
+
+        let mut recipe = AdjustmentRecipe {
+            exposure: 0.7,
+            source_sha256: "abc".into(),
+            ..Default::default()
+        };
+        recipe.geometry = Some(crate::media::edit::geometry::Geometry {
+            straighten: 3.5,
+            rotate: 90,
+            ..Default::default()
+        });
+
+        save_preset(dir, "framed", &recipe, false).unwrap();
+        let loaded = load_preset(dir, "framed").unwrap();
+
+        assert_eq!(loaded.exposure, 0.7);
+        assert_eq!(loaded.geometry, None);
+        assert!(loaded.source_sha256.is_empty());
+    }
 
     #[test]
     fn preset_round_trips_to_disk_and_appears_in_preset_library() {

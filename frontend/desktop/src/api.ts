@@ -466,6 +466,27 @@ export class TauriApiClient implements ApiClient {
   importLut(path: string): Promise<LutEntry> {
     return invoke<LutEntry>('import_lut', { path });
   }
+
+  /** Presets live in the application's own folder, so names, not paths, cross over (ED-17). */
+  listPresets(): Promise<PresetList> {
+    return invoke<PresetList>('list_presets');
+  }
+
+  loadPreset(name: string): Promise<AdjustmentRecipe> {
+    return invoke<AdjustmentRecipe>('load_preset', { name });
+  }
+
+  savePreset(name: string, recipe: AdjustmentRecipe, overwrite = false): Promise<void> {
+    return invoke<void>('save_preset', { name, recipe, overwrite });
+  }
+
+  renamePreset(from: string, to: string): Promise<void> {
+    return invoke<void>('rename_preset', { from, to });
+  }
+
+  deletePreset(name: string): Promise<void> {
+    return invoke<void>('delete_preset', { name });
+  }
 }
 
 /** Counts of the frame on screen, made by `core` from the pixels it sent (ED-15). */
@@ -545,6 +566,12 @@ export function decodePreviewFrame(res: ArrayBuffer | Uint8Array): PreviewFrame 
       luminance: channel(3),
     },
   };
+}
+
+/** The preset library, and any preset file that could not be read (ED-17). */
+export interface PresetList {
+  presets: { name: string }[];
+  errors: { name: string; error: string }[];
 }
 
 /** 3D LUT reference in a recipe. */

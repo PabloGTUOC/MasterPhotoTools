@@ -1,6 +1,6 @@
 # Editing — development plan
 
-> **Round 1 built (ED-1–ED-8). Round 2: ED-9–ED-16 built; the core halves of ED-17 and ED-18 built, their screens to come.**
+> **Round 1 built (ED-1–ED-8). Round 2: ED-9–ED-17 built; the core half of ED-18 built, its screen to come.**
 > Where the Round 1 build diverged from this plan the text has been corrected in place and
 > the rationale recorded in [`docs/phase-reports/edit.md`](phase-reports/edit.md).
 > Round 2 specifies advanced photographic adjustments, tone curves, 8-band HSL,
@@ -857,6 +857,24 @@ verification case. Every commit can be launched, tested, and visually evaluated.
   - `pasting_recipe_overwrites_target_photo_parameters_in_memory_only_until_saved`
   - `benchmark_edit_preview` (re-asserted in release)
   - `check:edit`: preset save, apply, and copy/paste workflows verified in headless Chromium.
+- **As built** (where it departs from the above, and why):
+  - **A preset is a look, not a framing.** `save_preset` drops the geometry along with the source
+    hash, and applying a preset or pasting settings keeps the photograph's own crop, rotation,
+    straighten and flip. A crop carried into a preset would reframe every photograph it touched, in
+    batch too, since ED-18 applies a recipe's geometry. Test: `a_preset_carries_the_look_not_the_framing`.
+  - **Undo.** Choosing a preset applies it on one click and ⌘V pastes on one keystroke; both replace
+    the photograph's settings and are saved 300 ms later. Each therefore offers Undo in the
+    confirmation for eight seconds, one step back, cleared when another photograph is opened. Not in
+    the plan, and the reason this is safe to offer at all.
+  - **The clipboard is the application's, not the system's.** Reading the system clipboard from a
+    webview raises a permission prompt on macOS at every paste, and a recipe is no use to another
+    application. It is held at module level, so it survives switching tabs. ⌘C and ⌘V keep their
+    usual meaning in a text field or over selected text, and do nothing while a dialog is open.
+  - Saving under a name already taken asks before replacing; deleting asks first, in the panel
+    rather than a browser dialog. A preset file that cannot be read is listed by name and reason
+    rather than silently missing (G10).
+  - Copy and Paste are also buttons beside the presets: a shortcut nobody has been told about is not
+    a feature.
 
 ### `ED-18` · Workflow: Bulk presets, batch grading view & `check:bulk-lut`
 - **Core & Desktop IPC**: Generalise `BulkLutTool` into `BulkEditTool` (`tools::bulk_edit`). Support applying a full `AdjustmentRecipe` or named preset to a folder of images. Dry run calculates actions count, skipped files, sample previews, and locks the batch to `recipe_sha256`. Implement background job execution with cancellation support (`cancelJob`), atomic non-overwriting output (`_edit.<ext>`), and single-pass metadata retention.

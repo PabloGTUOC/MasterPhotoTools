@@ -802,7 +802,17 @@ export type MaskKind =
       radius_y: number;
       angle: number;
       feather: number;
-    };
+    }
+  | { type: 'brush' };
+
+/** A brush stroke in stored-frame coordinates; `radius` is a fraction of the long edge (ED-21). */
+export interface BrushStroke {
+  points: [number, number][];
+  radius: number;
+  feather: number;
+  flow: number;
+  erase: boolean;
+}
 
 export interface Mask {
   id: string;
@@ -812,6 +822,8 @@ export interface Mask {
   opacity: number;
   enabled: boolean;
   adjustments: LocalAdjustments;
+  /** Painted after the shape and its invert, in order (ED-21). */
+  strokes?: BrushStroke[];
 }
 
 /** Stage for preview rendering. */

@@ -306,6 +306,23 @@ export class StubDesktopApiClient {
     const height = stage === 'Settle' ? SETTLE_HEIGHT : DRAG_HEIGHT;
     const coverage = new Uint8Array(width * height);
     const long = Math.max(width, height);
+    if (m.kind.type === 'brush') {
+      // Discs around the stroke points, filled directly: a per-pixel test against every
+      // point is far too slow for a stub asked for coverage on every frame.
+      for (const st of m.strokes ?? []) {
+        if (st.erase) continue;
+        const r = st.radius * long;
+        for (const [pu, pv] of st.points) {
+          const [cx, cy] = [pu * width, pv * height];
+          for (let y = Math.max(0, Math.floor(cy - r)); y < Math.min(height, Math.ceil(cy + r)); y++) {
+            for (let x = Math.max(0, Math.floor(cx - r)); x < Math.min(width, Math.ceil(cx + r)); x++) {
+              if (Math.hypot(x + 0.5 - cx, y + 0.5 - cy) <= r) coverage[y * width + x] = 255;
+            }
+          }
+        }
+      }
+      return { width, height, coverage };
+    }
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const u = (x + 0.5) / width;

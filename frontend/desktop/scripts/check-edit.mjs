@@ -86,8 +86,23 @@ const page = await browser.newPage({
   viewport: { width: 1440, height: 900 },
   deviceScaleFactor: 2,
 });
+page.setDefaultTimeout(20000);
 
 const failures = [];
+
+// A check that hangs on a broken build reports nothing, which is worse than a failure: name
+// the section it was in and fail. Sections announce themselves with "Asserting ...".
+let currentSection = 'start-up';
+const announce = console.log;
+console.log = (...args) => {
+  if (typeof args[0] === 'string' && args[0].startsWith('Asserting')) currentSection = args[0];
+  announce(...args);
+};
+const watchdog = setTimeout(() => {
+  console.error(`\ncheck:edit FAILED: no progress within 8 minutes, in: ${currentSection}`);
+  process.exit(1);
+}, 8 * 60 * 1000);
+watchdog.unref();
 
 try {
   await page.goto(base, { waitUntil: 'networkidle' });
@@ -1833,7 +1848,140 @@ try {
     console.log('  Masks: added where they appear, shaped by mouse and keyboard, adjusted, shown, kept on the content, limited to four, undoable.');
   }
   await page.screenshot({ path: join(OUT, 'edit-masks.png'), fullPage: true });
-  await page.locator('[data-testid="mask-show-overlay"]').click().catch(() => {});
+  // Turn the overlay off again: select a mask so its controls show, then toggle.
+  const anyMask = (await lastMasks())[0].id;
+  await page.locator(`[data-testid="mask-select-${anyMask}"]`).click();
+  if ((await page.getAttribute('[data-testid="mask-show-overlay"]', 'aria-pressed')) === 'true') {
+    await page.locator('[data-testid="mask-show-overlay"]').click();
+  }
+
+  // 9m. Brush: painting masks (ED-21)
+  console.log('Asserting the brush: paint, size keys, erase, refine a radial, undo a stroke (ED-21)...');
+  await openPhoto('/Volumes/Photos/brush_a.jpg');
+  if (!(await page.locator('[data-testid="add-brush-mask"]').isVisible())) {
+    await page.locator('button[data-testid="section-masks-toggle"]').click();
+  }
+  await page.locator('[data-testid="add-brush-mask"]').click();
+  await page.waitForTimeout(150);
+  const paintPressed = await page.getAttribute('[data-testid="brush-paint"]', 'aria-pressed');
+
+  const canvasRect = await page.locator('canvas[data-testid="edit-canvas"]').boundingBox();
+  const at = (u, v) => ({ x: canvasRect.x + u * canvasRect.width, y: canvasRect.y + v * canvasRect.height });
+  const paintStroke = async (from, to, steps = 12, alt = false) => {
+    if (alt) await page.keyboard.down('Alt');
+    const a = at(from[0], from[1]);
+    await page.mouse.move(a.x, a.y);
+    await page.waitForTimeout(30);
+    await page.mouse.down();
+    for (let i = 1; i <= steps; i++) {
+      const p = at(from[0] + ((to[0] - from[0]) * i) / steps, from[1] + ((to[1] - from[1]) * i) / steps);
+      await page.mouse.move(p.x, p.y);
+      await page.waitForTimeout(15);
+    }
+    await page.mouse.up();
+    if (alt) await page.keyboard.up('Alt');
+    await page.waitForTimeout(450);
+  };
+
+  // The ring shows under the pointer before anything is painted.
+  const hover = at(0.3, 0.5);
+  await page.mouse.move(hover.x, hover.y);
+  await page.waitForTimeout(50);
+  const ringShown = (await page.locator('[data-testid="brush-cursor"]').count()) === 1;
+
+  const before21 = await page.evaluate(() => window.__STUB__.renders.length);
+  await paintStroke([0.2, 0.5], [0.8, 0.5]);
+  let bm = await lastMasks();
+  const stages21 = await page.evaluate((n) => window.__STUB__.renders.slice(n).map((r) => r.stage), before21);
+  const saved21 = await page.evaluate(() => window.__STUB__.lastSavedRecipe?.masks?.[0]?.strokes?.length ?? 0);
+  const s0 = bm[0]?.strokes?.[0];
+  if (
+    paintPressed !== 'true' ||
+    !ringShown ||
+    bm[0]?.kind.type !== 'brush' ||
+    !s0 ||
+    s0.points.length < 4 ||
+    s0.points.length > 13 ||
+    Math.abs(s0.radius - 0.04) > 1e-6 ||
+    s0.erase ||
+    !stages21.includes('Drag') ||
+    stages21.at(-1) !== 'Settle' ||
+    saved21 !== 1
+  ) {
+    failures.push(`Painting should start at once, show the ring, record a thinned stroke at the brush size, render drag then settle, and save; got paint=${paintPressed}, ring=${ringShown}, stroke=${JSON.stringify(s0 && { n: s0.points.length, r: s0.radius, erase: s0.erase })}, stages=${stages21.slice(-3)}, saved=${saved21}`);
+  }
+  // The stroke follows the pointer: its points run left to right along the middle.
+  if (s0 && (Math.abs(s0.points[0][0] - 0.2) > 0.02 || Math.abs(s0.points.at(-1)[0] - 0.8) > 0.06 || s0.points.some((p) => Math.abs(p[1] - 0.5) > 0.02))) {
+    failures.push(`The stroke's points should follow the pointer from (0.2, 0.5) to (0.8, 0.5); got ${JSON.stringify(s0.points)}`);
+  }
+
+  // ] grows the brush, [ shrinks it; ⌥ while painting erases.
+  await blurAll();
+  await page.keyboard.press(']');
+  await page.keyboard.press(']');
+  await page.keyboard.press('[');
+  const sizeNow = parseFloat(await page.inputValue('input[data-testid="brush-size-number"]'));
+  await paintStroke([0.3, 0.5], [0.5, 0.5], 6, true);
+  bm = await lastMasks();
+  const erased = bm[0].strokes[1];
+  if (sizeNow !== 5 || !erased?.erase || Math.abs(erased.radius - 0.05) > 1e-6) {
+    failures.push(`[ and ] should change the size to 5% and ⌥ should erase; size=${sizeNow}, stroke=${JSON.stringify(erased && { erase: erased.erase, r: erased.radius })}`);
+  }
+
+  // Undo stroke takes back the last one only.
+  await page.locator('[data-testid="brush-undo-stroke"]').click();
+  await page.waitForTimeout(100);
+  if ((await lastMasks())[0].strokes.length !== 1) {
+    failures.push('Undo stroke should remove only the last stroke');
+  }
+
+  // A slow drag of many tiny moves keeps a point only every quarter radius: 0.15 of the width
+  // at a 5% brush is about 12 points, not 60.
+  await paintStroke([0.25, 0.7], [0.4, 0.7], 60);
+  const slow = (await lastMasks())[0].strokes[1];
+  if (!slow || slow.points.length > 16 || slow.points.length < 8) {
+    failures.push(`A slow 60-move stroke should be thinned to about 12 points; got ${slow?.points.length}`);
+  }
+  await page.locator('[data-testid="brush-undo-stroke"]').click();
+  await page.waitForTimeout(100);
+
+  // Escape stops painting: a drag then paints nothing.
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(50);
+  await paintStroke([0.2, 0.3], [0.4, 0.3], 4);
+  if ((await lastMasks())[0].strokes.length !== 1 || (await page.getAttribute('[data-testid="brush-paint"]', 'aria-pressed')) !== 'false') {
+    failures.push('After Escape, dragging on the photograph must not paint');
+  }
+
+  // A radial can be refined with the brush: its handles give way while painting.
+  await page.locator('[data-testid="add-radial-mask"]').click();
+  await page.waitForTimeout(100);
+  await page.locator('[data-testid="brush-paint"]').click();
+  const handlesWhilePainting = await page.locator('[data-testid^="mask-handle-"]').count();
+  await paintStroke([0.45, 0.45], [0.55, 0.55], 5);
+  bm = await lastMasks();
+  if (bm[1]?.kind.type !== 'radial' || (bm[1].strokes?.length ?? 0) !== 1 || handlesWhilePainting !== 0) {
+    failures.push(`Painting on a radial should add a stroke to it with its handles hidden; got ${JSON.stringify(bm[1] && { type: bm[1].kind.type, strokes: bm[1].strokes?.length })}, handles=${handlesWhilePainting}`);
+  }
+
+  for (const id of ['add-brush-mask', 'brush-paint', 'brush-erase', 'brush-undo-stroke', 'brush-clear']) {
+    const box = await page.locator(`[data-testid="${id}"]`).boundingBox();
+    if (!box || box.height < 39.5) failures.push(`${id} touch target is ${box?.height}px (must be >= 40px)`);
+  }
+  await page.screenshot({ path: join(OUT, 'edit-brush.png'), fullPage: true });
+
+  // Clear painting can be undone.
+  await page.locator('[data-testid="brush-clear"]').click();
+  await page.waitForTimeout(100);
+  const cleared = (await lastMasks())[1].strokes?.length ?? 0;
+  await page.locator('[data-testid="edit-notice-undo"]').click();
+  await page.waitForTimeout(100);
+  if (cleared !== 0 || ((await lastMasks())[1].strokes?.length ?? 0) !== 1) {
+    failures.push(`Clear painting should remove the strokes and Undo bring them back; got ${cleared} then ${(await lastMasks())[1].strokes?.length}`);
+  } else {
+    console.log('  Brush: paints thinned strokes at its size, [ ] resize, ⌥ erases, Esc stops, refines a radial, undoable.');
+  }
+  await page.keyboard.press('Escape');
 
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');

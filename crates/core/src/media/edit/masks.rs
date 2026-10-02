@@ -24,9 +24,11 @@
 //! A mask belongs to its photograph. Presets (`tools::presets`) and batches
 //! (`tools::bulk_edit`) never carry masks, for the same reason they never carry a crop.
 
+use super::brush::{BrushRaster, Stroke};
 use super::geometry::Geometry;
 use crate::error::Error;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// The adjustments a mask applies where it covers, in the units of the global sliders.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
@@ -85,6 +87,8 @@ pub enum MaskKind {
         #[serde(default = "default_feather")]
         feather: f32,
     },
+    /// No shape of its own: covered only where painted (ED-21).
+    Brush,
 }
 
 fn default_feather() -> f32 {
@@ -117,6 +121,10 @@ pub struct Mask {
     pub enabled: bool,
     #[serde(default)]
     pub adjustments: LocalAdjustments,
+    /// Brush strokes refining the shape, in order, after `invert` (`brush`, ED-21): an
+    /// added stroke always adds effect where it is painted, whatever the shape or invert.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strokes: Vec<Stroke>,
 }
 
 impl Mask {
@@ -152,12 +160,17 @@ enum Shape {
     Empty,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct CompiledMask {
     shape: Shape,
     invert: bool,
     opacity: f32,
     adjustments: LocalAdjustments,
+    brush: Option<Arc<BrushRaster>>,
+    /// Stored width and height over the long edge, to recover stored-normalised
+    /// coordinates for the brush rasters from the aspect-scaled ones shapes use.
+    ax: f32,
+    ay: f32,
 }
 
 impl CompiledMask {
@@ -203,6 +216,10 @@ impl CompiledMask {
     fn weight(&self, x: f32, y: f32) -> f32 {
         let c = self.coverage(x, y);
         let c = if self.invert { 1.0 - c } else { c };
+        let c = match &self.brush {
+            Some(b) => b.apply(c, x / self.ax, y / self.ay),
+            None => c,
+        };
         c * self.opacity
     }
 }
@@ -236,6 +253,21 @@ impl CompiledMasks {
         stored_h: u32,
         orientation: u32,
     ) -> Result<Option<Self>, Error> {
+        Self::compile_with_brushes(masks, geometry, stored_w, stored_h, orientation, &mut |m| {
+            super::brush::rasterise(&m.strokes, stored_w, stored_h)
+        })
+    }
+
+    /// As `compile`, with the brush rasters of masks that have strokes supplied by `brush`
+    /// — a preview session's cache, so painting redraws only what changed.
+    pub fn compile_with_brushes(
+        masks: &[Mask],
+        geometry: Option<&Geometry>,
+        stored_w: u32,
+        stored_h: u32,
+        orientation: u32,
+        brush: &mut dyn FnMut(&Mask) -> Arc<BrushRaster>,
+    ) -> Result<Option<Self>, Error> {
         let active: Vec<&Mask> = masks.iter().filter(|m| !m.is_identity()).collect();
         if active.is_empty() {
             return Ok(None);
@@ -246,12 +278,7 @@ impl CompiledMasks {
 
         let compiled = active
             .iter()
-            .map(|m| CompiledMask {
-                shape: compile_shape(&m.kind, ax, ay),
-                invert: m.invert,
-                opacity: m.opacity.clamp(0.0, 1.0),
-                adjustments: m.adjustments,
-            })
+            .map(|m| compile_mask(m, ax, ay, brush))
             .collect::<Vec<_>>();
 
         let any = |f: fn(&LocalAdjustments) -> bool| compiled.iter().any(|m| f(&m.adjustments));
@@ -332,6 +359,7 @@ fn aspect(stored_w: u32, stored_h: u32) -> (f32, f32) {
 /// so the overlay cannot disagree with the effect.
 pub fn coverage_frame(
     mask: &Mask,
+    brush: &mut dyn FnMut(&Mask) -> Arc<BrushRaster>,
     affine: [f32; 6],
     stored_w: u32,
     stored_h: u32,
@@ -344,12 +372,7 @@ pub fn coverage_frame(
         affine,
         ax,
         ay,
-        masks: vec![CompiledMask {
-            shape: compile_shape(&mask.kind, ax, ay),
-            invert: mask.invert,
-            opacity: mask.opacity.clamp(0.0, 1.0),
-            adjustments: mask.adjustments,
-        }],
+        masks: vec![compile_mask(mask, ax, ay, brush)],
         touches_tone: false,
         touches_contrast: false,
         touches_saturation: false,
@@ -392,8 +415,30 @@ impl RowCursor {
     }
 }
 
+fn compile_mask(
+    m: &Mask,
+    ax: f32,
+    ay: f32,
+    brush: &mut dyn FnMut(&Mask) -> Arc<BrushRaster>,
+) -> CompiledMask {
+    CompiledMask {
+        shape: compile_shape(&m.kind, ax, ay),
+        invert: m.invert,
+        opacity: m.opacity.clamp(0.0, 1.0),
+        adjustments: m.adjustments,
+        brush: if m.strokes.is_empty() {
+            None
+        } else {
+            Some(brush(m))
+        },
+        ax,
+        ay,
+    }
+}
+
 fn compile_shape(kind: &MaskKind, ax: f32, ay: f32) -> Shape {
     match *kind {
+        MaskKind::Brush => Shape::Empty,
         MaskKind::Linear { start, end } => {
             let (sx, sy) = (start[0] * ax, start[1] * ay);
             let (vx, vy) = ((end[0] - start[0]) * ax, (end[1] - start[1]) * ay);
@@ -449,6 +494,7 @@ mod tests {
                 exposure,
                 ..Default::default()
             },
+            strokes: Vec::new(),
         }
     }
 

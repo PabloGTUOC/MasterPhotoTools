@@ -456,6 +456,7 @@ fn masks_are_never_applied_by_batch() {
             exposure: -1.0,
             ..Default::default()
         },
+        strokes: Vec::new(),
     };
 
     let plain = AdjustmentRecipe {

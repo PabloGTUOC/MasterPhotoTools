@@ -332,6 +332,7 @@ mod tests {
                 exposure: -1.0,
                 ..Default::default()
             },
+            strokes: Vec::new(),
         });
 
         save_preset(dir, "framed", &recipe, false).unwrap();

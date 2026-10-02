@@ -14,6 +14,9 @@
  * - Shapes are measured in the stored frame's pixel proportions (`aspect`), as core
  *   measures them, so a circle drawn here is a circle in the photograph.
  * - Every handle is a 40 px target whatever the zoom, and moves with the arrow keys.
+ * - With `paint` set, a press-and-drag anywhere paints a stroke (ED-21). A point is kept
+ *   only once the pointer has moved a quarter of the brush radius, so a slow drag does not
+ *   fill the sidecar with points that change nothing; a ring shows the brush's size.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
@@ -26,12 +29,14 @@ export type MaskShape =
       radius_y: number;
       angle: number;
       feather: number;
-    };
+    }
+  | { type: 'brush' };
 
 export interface OverlayMask {
   id: string;
   name: string;
   kind: MaskShape;
+  strokes?: { points: [number, number][] }[];
 }
 
 type Affine = [number, number, number, number, number, number];
@@ -45,6 +50,8 @@ const props = defineProps<{
   aspect: { ax: number; ay: number };
   frameWidth: number;
   frameHeight: number;
+  /** Brush radius as a fraction of the stored long edge, when painting; null otherwise. */
+  paint?: number | null;
 }>();
 
 const emit = defineEmits<{
@@ -53,6 +60,10 @@ const emit = defineEmits<{
   update: [id: string, kind: MaskShape];
   /** When it is released: a settle frame and a save. */
   commit: [id: string];
+  /** Painting: the first point of a stroke, each further point, and the release. */
+  'stroke-start': [point: [number, number]];
+  'stroke-point': [point: [number, number]];
+  'stroke-end': [];
 }>();
 
 const svgRef = ref<SVGSVGElement | null>(null);
@@ -141,9 +152,13 @@ const radialRings = computed(() => {
   return [ellipsePoints(k, 1), ellipsePoints(k, 1 - k.feather)];
 });
 
-/** Where an unselected mask's pin sits, to select it by clicking. */
-function anchorOf(m: OverlayMask): Pt {
+/** Where an unselected mask's pin sits, to select it by clicking; none for an unpainted brush. */
+function anchorOf(m: OverlayMask): Pt | null {
   if (m.kind.type === 'radial') return toView(m.kind.center);
+  if (m.kind.type === 'brush') {
+    const pts = m.strokes?.[0]?.points;
+    return pts?.length ? toView(pts[Math.floor(pts.length / 2)]) : null;
+  }
   const [s, e] = [m.kind.start, m.kind.end];
   return toView([(s[0] + e[0]) / 2, (s[1] + e[1]) / 2]);
 }
@@ -180,6 +195,7 @@ function moved(kind: MaskShape, handle: Handle, from: Pt, to: Pt): MaskShape {
     if (handle === 'end') return { ...kind, end: shift(kind.end) };
     return { ...kind, start: shift(kind.start), end: shift(kind.end) };
   }
+  if (kind.type === 'brush') return kind; // painted, not dragged
   if (handle === 'center') return { ...kind, center: shift(kind.center) };
   const [cx, cy] = toAspect(kind.center);
   const [px, py] = toAspect(to);
@@ -194,14 +210,49 @@ function moved(kind: MaskShape, handle: Handle, from: Pt, to: Pt): MaskShape {
   return { ...kind, radius_y: Math.max(Math.abs(vx * Math.cos(t) + vy * Math.sin(t)), 0.005) };
 }
 
-function onPointerMove(e: PointerEvent) {
-  if (!drag) return;
+// --- painting -----------------------------------------------------------------------
+
+const cursor = ref<Pt | null>(null);
+let painting = false;
+let lastPainted: Pt | null = null;
+
+function onSurfaceDown(e: PointerEvent) {
+  if (!props.paint || e.button !== 0) return;
   const p = svgPoint(e);
   if (!p) return;
+  e.preventDefault();
+  svgRef.value?.setPointerCapture(e.pointerId);
+  painting = true;
+  lastPainted = toStoredPt(p);
+  emit('stroke-start', lastPainted);
+}
+
+function onPointerMove(e: PointerEvent) {
+  const p = svgPoint(e);
+  if (!p) return;
+  if (props.paint) cursor.value = toStoredPt(p);
+  if (painting && props.paint && lastPainted) {
+    const next = toStoredPt(p);
+    const [ax, ay] = toAspect(next);
+    const [lx, ly] = toAspect(lastPainted);
+    if (Math.hypot(ax - lx, ay - ly) >= props.paint * 0.25) {
+      lastPainted = next;
+      emit('stroke-point', next);
+    }
+    return;
+  }
+  if (!drag) return;
   emit('update', drag.id, moved(drag.kind, drag.handle, drag.from, toStoredPt(p)));
 }
 
 function onPointerUp(e: PointerEvent) {
+  if (painting) {
+    painting = false;
+    lastPainted = null;
+    svgRef.value?.releasePointerCapture?.(e.pointerId);
+    emit('stroke-end');
+    return;
+  }
   if (!drag) return;
   svgRef.value?.releasePointerCapture?.(e.pointerId);
   const id = drag.id;
@@ -238,6 +289,7 @@ function handleAnchor(kind: MaskShape, handle: Handle): Pt {
     if (handle === 'end') return kind.end;
     return [(kind.start[0] + kind.end[0]) / 2, (kind.start[1] + kind.end[1]) / 2];
   }
+  if (kind.type === 'brush') return [0.5, 0.5];
   if (handle === 'rx') return radialAxisPoint(kind, 'x');
   if (handle === 'ry') return radialAxisPoint(kind, 'y');
   return kind.center;
@@ -264,20 +316,30 @@ watch(() => [props.frameWidth, props.frameHeight], () => requestAnimationFrame(m
 const hitR = computed(() => 20 * unitsPerPx.value);
 const dotR = computed(() => 7 * unitsPerPx.value);
 
+/** The brush's footprint under the pointer, drawn as the photograph will see it. */
+const brushRing = computed(() => {
+  if (!props.paint || !cursor.value) return '';
+  return ellipsePoints(
+    { type: 'radial', center: cursor.value, radius_x: props.paint, radius_y: props.paint, angle: 0, feather: 0 },
+    1,
+  );
+});
+
 const handles = computed(() => {
   const m = selected.value;
-  if (!m) return [];
+  if (!m || props.paint || m.kind.type === 'brush') return [];
+  const kind = m.kind;
   const list: { handle: Handle; at: Pt; label: string }[] =
-    m.kind.type === 'linear'
+    kind.type === 'linear'
       ? [
-          { handle: 'start', at: toView(m.kind.start), label: 'Gradient start' },
-          { handle: 'end', at: toView(m.kind.end), label: 'Gradient end' },
-          { handle: 'move', at: toView(handleAnchor(m.kind, 'move')), label: 'Move gradient' },
+          { handle: 'start', at: toView(kind.start), label: 'Gradient start' },
+          { handle: 'end', at: toView(kind.end), label: 'Gradient end' },
+          { handle: 'move', at: toView(handleAnchor(kind, 'move')), label: 'Move gradient' },
         ]
       : [
-          { handle: 'center', at: toView(m.kind.center), label: 'Move radial mask' },
-          { handle: 'rx', at: toView(radialAxisPoint(m.kind, 'x')), label: 'Width and angle' },
-          { handle: 'ry', at: toView(radialAxisPoint(m.kind, 'y')), label: 'Height' },
+          { handle: 'center', at: toView(kind.center), label: 'Move radial mask' },
+          { handle: 'rx', at: toView(radialAxisPoint(kind, 'x')), label: 'Width and angle' },
+          { handle: 'ry', at: toView(radialAxisPoint(kind, 'y')), label: 'Height' },
         ];
   return list;
 });
@@ -290,17 +352,20 @@ const handles = computed(() => {
     data-testid="mask-overlay"
     :viewBox="`0 0 ${frameWidth} ${frameHeight}`"
     preserveAspectRatio="none"
+    :class="{ 'is-painting': !!paint }"
+    @pointerdown="onSurfaceDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerUp"
+    @pointerleave="cursor = null"
   >
     <!-- Pins for the masks not being shaped: click to shape one. -->
     <g v-for="m in masks" :key="`pin-${m.id}`">
       <circle
-        v-if="m.id !== selectedId"
+        v-if="m.id !== selectedId && anchorOf(m) && !paint"
         class="mask-overlay__pin"
-        :cx="anchorOf(m)[0]"
-        :cy="anchorOf(m)[1]"
+        :cx="anchorOf(m)![0]"
+        :cy="anchorOf(m)![1]"
         :r="hitR"
         role="button"
         tabindex="0"
@@ -311,7 +376,16 @@ const handles = computed(() => {
       />
     </g>
 
-    <template v-if="selected">
+    <polygon
+      v-for="layer in brushRing ? ['under', 'over'] : []"
+      :key="`brush-${layer}`"
+      class="mask-overlay__line"
+      :class="`mask-overlay__line--${layer}`"
+      :points="brushRing"
+      :data-testid="layer === 'over' ? 'brush-cursor' : undefined"
+    />
+
+    <template v-if="selected && !paint">
       <!-- Each line is drawn twice, dark under light, so it shows on any photograph
            without a shadow (the design rules allow none). -->
       <template v-if="selected.kind.type === 'linear'">
@@ -367,6 +441,10 @@ const handles = computed(() => {
   left: 0;
   overflow: hidden;
   touch-action: none;
+}
+
+.mask-overlay.is-painting {
+  cursor: crosshair;
 }
 
 .mask-overlay__line {

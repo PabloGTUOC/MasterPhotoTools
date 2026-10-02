@@ -1,5 +1,6 @@
 //! The colour and adjustment engine (ED-1, ED-2, ED-4).
 
+pub mod brush;
 pub mod color;
 pub mod curves;
 pub mod geometry;
@@ -13,6 +14,7 @@ pub mod pipeline;
 pub mod preview;
 pub mod vignette;
 
+pub use brush::{BrushCache, BrushRaster, Stroke};
 pub use color::{
     linear_srgb_to_oklab, oklab_to_linear_srgb, rotate_hue_oklch, rotate_hue_oklch_sincos,
 };

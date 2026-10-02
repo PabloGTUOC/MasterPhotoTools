@@ -34,9 +34,10 @@
 //!   (measured on Apple Silicon), restoring full retina sharpness on mouse release within the
 //!   60 ms core render budget.
 
+use super::brush::{BrushCache, BrushRaster};
 use super::curves::ToneCurvesTable;
 use super::lut::Lut;
-use super::masks::{CompiledMasks, LocalAdjustments};
+use super::masks::{CompiledMasks, LocalAdjustments, Mask};
 use super::pipeline::{linear_to_srgb, validate_lut, AdjustmentRecipe, ImageBuffer, LinearBuffer};
 use crate::error::Error;
 use crate::media::histogram::{histogram, Histogram};
@@ -44,7 +45,9 @@ use fast_image_resize as fr;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 use std::sync::{LazyLock, Mutex};
 
 /// Size of the fast linear-to-sRGB preview lookup table.
@@ -98,7 +101,7 @@ pub const DRAG_MAX_EDGE: u32 = 1280;
 pub const SETTLE_MAX_EDGE: u32 = 2560;
 
 /// Stage of interactive preview rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PreviewStage {
     /// 720p long-edge proxy during active slider dragging.
     Drag,
@@ -183,6 +186,8 @@ pub struct PreviewSession {
     pub source_sha256: String,
     cached_geom: Mutex<Option<CachedGeometry>>,
     pub geom_recompute_count: AtomicUsize,
+    /// Brush rasters per mask and stage, so painting redraws only the new segments (ED-21).
+    brushes: Mutex<HashMap<(String, PreviewStage), BrushCache>>,
 }
 
 impl PreviewSession {
@@ -231,6 +236,7 @@ impl PreviewSession {
             source_sha256: String::new(),
             cached_geom: Mutex::new(None),
             geom_recompute_count: AtomicUsize::new(0),
+            brushes: Mutex::new(HashMap::new()),
         })
     }
 
@@ -323,13 +329,7 @@ impl PreviewSession {
                 PreviewStage::Drag => (self.drag_linear.width, self.drag_linear.height),
                 PreviewStage::Settle => (self.settle_linear.width, self.settle_linear.height),
             };
-            let masks = CompiledMasks::compile(
-                &recipe_ref.masks,
-                Some(geom),
-                stored_w,
-                stored_h,
-                self.orientation,
-            )?;
+            let masks = self.compile_masks(recipe_ref, Some(geom), stage)?;
             let mut frame = render_rgba_frame_masked(proxy, recipe_ref, lut, masks.as_ref())?;
             frame.orientation = 1;
             frame.to_stored =
@@ -340,10 +340,61 @@ impl PreviewSession {
                 PreviewStage::Drag => &self.drag_linear,
                 PreviewStage::Settle => &self.settle_linear,
             };
-            let mut frame = render_rgba_frame(proxy, recipe_ref, lut)?;
+            let masks = self.compile_masks(recipe_ref, None, stage)?;
+            let mut frame = render_rgba_frame_masked(proxy, recipe_ref, lut, masks.as_ref())?;
             frame.orientation = self.orientation;
             Ok(frame)
         }
+    }
+
+    fn stored_dims(&self, stage: PreviewStage) -> (u32, u32) {
+        match stage {
+            PreviewStage::Drag => (self.drag_linear.width, self.drag_linear.height),
+            PreviewStage::Settle => (self.settle_linear.width, self.settle_linear.height),
+        }
+    }
+
+    /// The masks of `recipe` for a frame at `stage`, with brush rasters from the cache.
+    fn compile_masks(
+        &self,
+        recipe: &AdjustmentRecipe,
+        geometry: Option<&super::geometry::Geometry>,
+        stage: PreviewStage,
+    ) -> Result<Option<CompiledMasks>, Error> {
+        let (w, h) = self.stored_dims(stage);
+        // Forget the rasters of masks that are gone.
+        self.brushes
+            .lock()
+            .unwrap()
+            .retain(|(id, _), _| recipe.masks.iter().any(|m| &m.id == id));
+        CompiledMasks::compile_with_brushes(
+            &recipe.masks,
+            geometry,
+            w,
+            h,
+            self.orientation,
+            &mut |m| self.brush_raster(m, stage, w, h),
+        )
+    }
+
+    /// The brush rasters of mask `m` at `stage`, drawing only what changed since last asked.
+    fn brush_raster(&self, m: &Mask, stage: PreviewStage, w: u32, h: u32) -> Arc<BrushRaster> {
+        let mut caches = self.brushes.lock().unwrap();
+        caches
+            .entry((m.id.clone(), stage))
+            .or_insert_with(|| BrushCache::new(w, h))
+            .update(&m.strokes)
+    }
+
+    /// Segments the brush caches have drawn, so a test can see that painting a stroke
+    /// draws each new segment once (ED-21).
+    pub fn brush_segments_drawn(&self) -> usize {
+        self.brushes
+            .lock()
+            .unwrap()
+            .values()
+            .map(|c| c.segments_drawn)
+            .sum()
     }
 
     /// Where the mask `mask_id` of `recipe` acts on the frame `render` would return for the
@@ -371,7 +422,15 @@ impl PreviewSession {
             }
             None => (stored_w, stored_h, [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
         };
-        let coverage = super::masks::coverage_frame(mask, affine, stored_w, stored_h, out_w, out_h);
+        let coverage = super::masks::coverage_frame(
+            mask,
+            &mut |m| self.brush_raster(m, stage, stored_w, stored_h),
+            affine,
+            stored_w,
+            stored_h,
+            out_w,
+            out_h,
+        );
         Ok((out_w, out_h, coverage))
     }
 }

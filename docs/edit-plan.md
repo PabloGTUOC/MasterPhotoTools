@@ -907,7 +907,7 @@ verification case. Every commit can be launched, tested, and visually evaluated.
 
 ## Round 3 — Local adjustments (masks)
 
-> **ED-19 and ED-20 built; ED-21 to ED-24 planned.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
+> **ED-19 to ED-21 built; ED-22 to ED-24 planned.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
 > who chose gradients, a brush, and automatic subject and sky masks. Rounds 1 and 2 excluded
 > local adjustments to keep to whole-frame work; this round lifts that exclusion and nothing
 > else. RapidRAW remains a feature list only, under the Round 2 clean-room declaration.
@@ -1057,6 +1057,27 @@ local adjustments, so most pixels pay for more than one mask.
   rate; `[` and `]` change the size, holding ⌥ erases.
 - Tests: strokes rasterise identically at proxy and export size (ΔE ≤ 1.5); erase restores
   exactly; a 200-point stroke stays within the drag budget.
+
+- **As built** (where it departs from the above, and why):
+  - **Strokes refine any mask**, applied after the shape and its invert, so an added stroke always
+    adds effect where it is painted. A **Brush** mask is one with no shape. Strokes are stored on
+    the mask (`strokes`), never in presets or batches (decision 1).
+  - **Order is kept with two rasters.** Adding is `c ↦ c(1−s)+s` and erasing `c ↦ c(1−s)`, both
+    affine in the coverage, so every stroke a mask has composes to `c ↦ α·c + β`: painting over an
+    erased area brings it back, and an erased stroke leaves no trace (asserted byte for byte).
+  - **Painting draws only new segments.** A session caches each mask's rasters per stage; while the
+    last stroke grows, only its new segments are drawn (asserted: one segment per frame). Measured,
+    release: painting a 200-point stroke, drag p95 10.5–10.7 ms against 13.5; settle with the painted
+    mask p95 40.5–42.4 ms against 45.
+  - **Exports draw strokes at most 4096 px on the long edge** (`MAX_RASTER_EDGE`) and sample them
+    bilinearly: at 36 MP a raster is 150 MB, and a feathered stroke drawn at 4096 is the same to the
+    eye. The preview-versus-export test runs on a frame wider than the cap.
+  - The view thins a stroke to a point every quarter radius, so a slow drag does not fill the sidecar;
+    `[` and `]` size the brush, ⌥ erases while held, Esc stops painting; Undo stroke and Clear
+    painting (undoable). Shape handles give way while painting, so a radial can be refined.
+  - Fixed on the way: `check:edit` could **hang** rather than fail when a change broke it (a slow
+    stub under a forgotten overlay); it now has a watchdog that names the section and fails, and a
+    default 20 s limit on each action.
 
 #### `ED-22` · Runtime and model spike — decision, not product
 - Settle the runtime, MSRV and models above; measure on the Mac; write the findings and the

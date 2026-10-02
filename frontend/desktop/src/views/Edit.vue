@@ -80,6 +80,19 @@ const maskCanvasRef = ref<HTMLCanvasElement | null>(null);
 /** The four-mask speed budget (edit plan, Round 3): each mask costs every frame. */
 const MASK_LIMIT = 4;
 let maskSeq = 0;
+
+// ED-21: the brush. Its settings belong to the tool, not to a mask, so they carry over
+// from one mask to the next as a brush does in any paint program.
+const painting = ref(false);
+/** Radius as a percentage of the long edge. */
+const brushSize = ref(4);
+const brushFeather = ref(50);
+const brushFlow = ref(100);
+const brushErase = ref(false);
+/** ⌥ held: erase while held, as in every darkroom application. */
+const altHeld = ref(false);
+const BRUSH_MIN = 0.5;
+const BRUSH_MAX = 25;
 let coverageSeq = 0;
 let lastRendered: { recipe: AdjustmentRecipe; stage: PreviewStage } | null = null;
 
@@ -552,6 +565,18 @@ function textIsInPlay(): boolean {
 }
 
 function handleKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Alt') altHeld.value = true;
+  if (painting.value && !textIsInPlay() && !e.metaKey && !e.ctrlKey) {
+    if (e.key === '[' || e.key === ']') {
+      e.preventDefault();
+      nudgeBrush(e.key === ']' ? 1 : -1);
+      return;
+    }
+    if (e.key === 'Escape') {
+      painting.value = false;
+      return;
+    }
+  }
   const mod = e.metaKey || e.ctrlKey;
   if (mod && !e.shiftKey && !e.altKey && (e.key === 'c' || e.key === 'v')) {
     if (textIsInPlay() || !sessionId.value || document.querySelector('[role="dialog"]')) return;
@@ -568,6 +593,7 @@ function handleKeyDown(e: KeyboardEvent) {
 }
 
 function handleKeyUp(e: KeyboardEvent) {
+  if (e.key === 'Alt') altHeld.value = false;
   if (e.key === '\\') {
     if (isTextInputFocused()) return;
     e.preventDefault();
@@ -667,6 +693,7 @@ function normaliseMask(m: Mask): Mask {
     m.kind.type === 'radial'
       ? { ...m.kind, angle: m.kind.angle ?? 0, feather: m.kind.feather ?? 0.5 }
       : { ...m.kind };
+  // core writes nothing for an empty stroke list (`skip_serializing_if`).
   return {
     id: m.id,
     name: m.name ?? '',
@@ -675,6 +702,13 @@ function normaliseMask(m: Mask): Mask {
     opacity: m.opacity ?? 1,
     enabled: m.enabled ?? true,
     adjustments: { ...ZERO_LOCAL, ...(m.adjustments ?? {}) },
+    strokes: (m.strokes ?? []).map((st) => ({
+      points: st.points.map((pt) => [pt[0], pt[1]] as [number, number]),
+      radius: st.radius,
+      feather: st.feather ?? 0.5,
+      flow: st.flow ?? 1,
+      erase: st.erase ?? false,
+    })),
   };
 }
 
@@ -920,26 +954,28 @@ function frameToStoredPoint(u: number, v: number): [number, number] {
   return [a * u + b * v + c, d * u + e * v + f];
 }
 
-function addMask(type: 'linear' | 'radial') {
+function addMask(type: 'linear' | 'radial' | 'brush') {
   if (!sessionId.value || masks.value.length >= MASK_LIMIT) return;
   const count = masks.value.filter((m) => m.kind.type === type).length + 1;
   // Placed by where they appear on screen, whatever the orientation or crop: a graduated
   // filter coming down from the top, a radial in the middle.
   const kind: MaskKind =
-    type === 'linear'
-      ? { type, start: frameToStoredPoint(0.5, 0.1), end: frameToStoredPoint(0.5, 0.55) }
-      : {
-          type,
-          center: frameToStoredPoint(0.5, 0.5),
-          radius_x: 0.2,
-          radius_y: 0.2,
-          angle: 0,
-          feather: 0.5,
-        };
+    type === 'brush'
+      ? { type }
+      : type === 'linear'
+        ? { type, start: frameToStoredPoint(0.5, 0.1), end: frameToStoredPoint(0.5, 0.55) }
+        : {
+            type,
+            center: frameToStoredPoint(0.5, 0.5),
+            radius_x: 0.2,
+            radius_y: 0.2,
+            angle: 0,
+            feather: 0.5,
+          };
   maskSeq += 1;
   const mask: Mask = {
     id: `m${Date.now().toString(36)}${maskSeq}`,
-    name: `${type === 'linear' ? 'Linear' : 'Radial'} ${count}`,
+    name: `${{ linear: 'Linear', radial: 'Radial', brush: 'Brush' }[type]} ${count}`,
     kind,
     invert: false,
     opacity: 1,
@@ -948,8 +984,67 @@ function addMask(type: 'linear' | 'radial') {
   };
   recipe.value.masks = [...masks.value, mask];
   selectedMaskId.value = mask.id;
+  // A brush mask is nothing until painted: start painting at once.
+  painting.value = type === 'brush';
   onRecipeValueChange();
 }
+
+/** The brush radius the overlay paints with, or null when not painting. */
+const paintRadius = computed(() =>
+  painting.value && selectedMask.value ? brushSize.value / 100 : null,
+);
+
+function onStrokeStart(point: [number, number]) {
+  const m = selectedMask.value;
+  if (!m) return;
+  m.strokes = [
+    ...(m.strokes ?? []),
+    {
+      points: [point],
+      radius: brushSize.value / 100,
+      feather: brushFeather.value / 100,
+      flow: brushFlow.value / 100,
+      erase: brushErase.value !== altHeld.value,
+    },
+  ];
+  requestRender('Drag');
+}
+
+function onStrokePoint(point: [number, number]) {
+  const strokes = selectedMask.value?.strokes;
+  const stroke = strokes?.[strokes.length - 1];
+  if (!stroke) return;
+  stroke.points.push(point);
+  requestRender('Drag');
+}
+
+function onStrokeEnd() {
+  onRecipeValueChange();
+}
+
+function undoStroke() {
+  const m = selectedMask.value;
+  if (!m?.strokes?.length) return;
+  m.strokes = m.strokes.slice(0, -1);
+  onRecipeValueChange();
+}
+
+function clearStrokes() {
+  const m = selectedMask.value;
+  if (!m?.strokes?.length) return;
+  const before = cloneRecipe(recipe.value);
+  m.strokes = [];
+  onRecipeValueChange();
+  showNotice(`Cleared the painting on ${m.name}.`, before);
+}
+
+function nudgeBrush(delta: number) {
+  brushSize.value = Math.min(BRUSH_MAX, Math.max(BRUSH_MIN, +(brushSize.value + delta).toFixed(1)));
+}
+
+watch(selectedMaskId, (id) => {
+  if (!id) painting.value = false;
+});
 
 function updateMaskKind(id: string, kind: MaskKind) {
   const m = masks.value.find((x) => x.id === id);
@@ -1628,10 +1723,14 @@ onUnmounted(() => {
               :aspect="storedAspect"
               :frame-width="frameWidth"
               :frame-height="frameHeight"
+              :paint="paintRadius"
               :style="{ ...canvasStyle, position: 'absolute', zIndex: 'calc(var(--z-canvas) + 2)' }"
               @select="(id) => (selectedMaskId = id)"
               @update="updateMaskKind"
               @commit="onMaskCommit"
+              @stroke-start="onStrokeStart"
+              @stroke-point="onStrokePoint"
+              @stroke-end="onStrokeEnd"
             />
             <CropOverlay
               v-if="isCropMode"
@@ -1897,6 +1996,15 @@ onUnmounted(() => {
                 >
                   + Radial
                 </button>
+                <button
+                  type="button"
+                  class="secondary"
+                  data-testid="add-brush-mask"
+                  :disabled="!sessionId || isReadOnly || masks.length >= MASK_LIMIT"
+                  @click="addMask('brush')"
+                >
+                  + Brush
+                </button>
               </div>
               <p v-if="masks.length >= MASK_LIMIT" class="mask-note" data-testid="mask-limit">
                 Up to {{ MASK_LIMIT }} masks per photograph: each one costs every preview frame.
@@ -1979,6 +2087,85 @@ onUnmounted(() => {
                 >
                   {{ showMaskOverlay ? 'Hide mask overlay' : 'Show mask overlay' }}
                 </button>
+
+                <div class="brush-tool" data-testid="brush-tool">
+                  <div class="brush-tool__row">
+                    <button
+                      type="button"
+                      class="ghost mask-show"
+                      :class="{ active: painting }"
+                      :aria-pressed="painting"
+                      :disabled="isReadOnly || isCropMode"
+                      data-testid="brush-paint"
+                      :title="selectedMask.kind.type === 'brush' ? 'Paint the mask' : 'Paint onto this mask to refine it'"
+                      @click="painting = !painting"
+                    >
+                      {{ painting ? 'Painting' : 'Paint' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="ghost mask-show"
+                      :class="{ active: brushErase }"
+                      :aria-pressed="brushErase"
+                      data-testid="brush-erase"
+                      title="Erase instead of adding (or hold ⌥ while painting)"
+                      @click="brushErase = !brushErase"
+                    >
+                      Erase
+                    </button>
+                  </div>
+                  <template v-if="painting">
+                    <AdjustmentSlider
+                      v-model="brushSize"
+                      label="Brush size"
+                      :min="BRUSH_MIN"
+                      :max="BRUSH_MAX"
+                      :step="0.5"
+                      unit="%"
+                      :default-value="4"
+                      test-id="brush-size"
+                    />
+                    <AdjustmentSlider
+                      v-model="brushFeather"
+                      label="Brush feather"
+                      :min="0"
+                      :max="100"
+                      :step="1"
+                      unit="%"
+                      :default-value="50"
+                      test-id="brush-feather"
+                    />
+                    <AdjustmentSlider
+                      v-model="brushFlow"
+                      label="Brush flow"
+                      :min="1"
+                      :max="100"
+                      :step="1"
+                      unit="%"
+                      :default-value="100"
+                      test-id="brush-flow"
+                    />
+                    <p class="mask-note">[ and ] change the size; hold ⌥ to erase; Esc stops.</p>
+                  </template>
+                  <div v-if="selectedMask.strokes?.length" class="brush-tool__row">
+                    <button
+                      type="button"
+                      class="ghost mask-show"
+                      data-testid="brush-undo-stroke"
+                      @click="undoStroke"
+                    >
+                      Undo stroke
+                    </button>
+                    <button
+                      type="button"
+                      class="ghost mask-show"
+                      data-testid="brush-clear"
+                      @click="clearStrokes"
+                    >
+                      Clear painting
+                    </button>
+                  </div>
+                </div>
                 <AdjustmentSlider
                   label="Opacity"
                   :model-value="Math.round(selectedMask.opacity * 100)"
@@ -3241,13 +3428,16 @@ onUnmounted(() => {
 
 .mask-add {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: var(--space-2);
 }
 
 .mask-add button {
   min-height: 40px;
-  font-size: 13px;
+  padding: 0 var(--space-1);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 .mask-note {
@@ -3292,6 +3482,17 @@ onUnmounted(() => {
 
 .mask-row__toggle.active {
   color: var(--accent);
+}
+
+.brush-tool {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.brush-tool__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
 }
 
 .mask-name {

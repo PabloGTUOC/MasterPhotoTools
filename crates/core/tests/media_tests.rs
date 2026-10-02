@@ -2039,6 +2039,7 @@ fn benchmark_edit_preview() {
             opacity: 1.0,
             enabled: true,
             adjustments: adj,
+            strokes: Vec::new(),
         };
         let mut r = recipe.clone();
         r.masks = vec![
@@ -2099,6 +2100,63 @@ fn benchmark_edit_preview() {
     let p95 = |t: &[Duration]| t[((t.len() as f64 * 0.95).ceil() as usize).saturating_sub(1)];
     let p95_masked_drag = p95(&masked_drag);
     let p95_masked_settle = p95(&masked_settle);
+
+    // ED-21: painting. One brush mask; a 200-point stroke grows by one point per drag frame,
+    // as a pointer move does, then the photograph settles. One mask's budget applies.
+    let mut painted = recipe.clone();
+    painted.masks = vec![{
+        use phototools_core::media::edit::{LocalAdjustments, Mask, MaskKind, Stroke};
+        Mask {
+            id: "brush".into(),
+            name: "Brush".into(),
+            kind: MaskKind::Brush,
+            invert: false,
+            opacity: 1.0,
+            enabled: true,
+            adjustments: LocalAdjustments {
+                exposure: 0.7,
+                shadows: 25.0,
+                ..Default::default()
+            },
+            strokes: vec![Stroke {
+                points: vec![[0.1, 0.5]],
+                radius: 0.04,
+                feather: 0.5,
+                flow: 1.0,
+                erase: false,
+            }],
+        }
+    }];
+    let mut paint_times = Vec::with_capacity(200);
+    for k in 0..200 {
+        let t = k as f32 / 199.0;
+        painted.masks[0].strokes[0]
+            .points
+            .push([0.1 + 0.8 * t, 0.5 + 0.25 * (t * 12.0).sin()]);
+        let t0 = Instant::now();
+        let f = session
+            .render(&painted, Some(&lut33), PreviewStage::Drag)
+            .unwrap();
+        paint_times.push(t0.elapsed());
+        assert!(f.width > 0);
+    }
+    paint_times.sort();
+    let p95_paint = p95(&paint_times);
+    let _ = session
+        .render(&painted, Some(&lut33), PreviewStage::Settle)
+        .unwrap();
+    let mut brushed_settle: Vec<Duration> = (0..20)
+        .map(|_| {
+            let t0 = Instant::now();
+            let f = session
+                .render(&painted, Some(&lut33), PreviewStage::Settle)
+                .unwrap();
+            assert!(f.width > 0);
+            t0.elapsed()
+        })
+        .collect();
+    brushed_settle.sort();
+    let p95_brushed_settle = p95(&brushed_settle);
 
     // Measure per-stage timing on 1440p settle frame proxy (2560x1708, ~4.37 MP)
     let settle_proxy = session.settle_linear();
@@ -2387,6 +2445,12 @@ fn benchmark_edit_preview() {
         masked_drag[masked_drag.len() / 2].saturating_sub(median_drag) / MASKS,
         masked_settle[masked_settle.len() / 2].saturating_sub(median_settle) / MASKS,
     );
+    println!(
+        "  Painting a 200-point stroke: drag frame median={:?} p95={:?}; settle after it p95={:?}",
+        paint_times[paint_times.len() / 2],
+        p95_paint,
+        p95_brushed_settle
+    );
     println!("  Per-stage breakdown (1440p settle frame, 4.37 MP):");
     println!(
         "    1. Linear adjustments (tones, exposure, brightness, contrast, sat/vib): {:?}",
@@ -2460,6 +2524,15 @@ fn benchmark_edit_preview() {
         assert!(
             p95_masked_settle <= settle_budget,
             "Settle frame p95 with {MASKS} masks: budget {settle_budget:?}, measured {p95_masked_settle:?}"
+        );
+        // One brush mask: one mask's share of the budget, while painting and after.
+        assert!(
+            p95_paint <= Duration::from_micros(13_500),
+            "Drag frame p95 while painting a 200-point stroke: budget 13.5 ms, measured {p95_paint:?}"
+        );
+        assert!(
+            p95_brushed_settle <= Duration::from_millis(45),
+            "Settle frame p95 with a painted mask: budget 45 ms, measured {p95_brushed_settle:?}"
         );
     }
 }
@@ -3304,6 +3377,7 @@ fn radial_mask(center: [f32; 2], radius: f32, exposure: f32) -> phototools_core:
             exposure,
             ..Default::default()
         },
+        strokes: Vec::new(),
     }
 }
 
@@ -3536,6 +3610,7 @@ fn export_matches_preview_with_masks_within_delta_e_1_5() {
             saturation: 25.0,
             ..Default::default()
         },
+        strokes: Vec::new(),
     };
     let mut face = radial_mask([0.6, 0.4], 0.12, 0.7);
     face.adjustments.contrast = 15.0;
@@ -3672,4 +3747,189 @@ fn the_mask_overlay_shows_where_the_mask_acts() {
     assert!(session
         .mask_coverage(&masked, "missing", PreviewStage::Drag)
         .is_err());
+}
+
+// ---------------------------------------------------------------------------
+// ED-21: brush
+// ---------------------------------------------------------------------------
+
+fn brush_mask(
+    strokes: Vec<phototools_core::media::edit::Stroke>,
+    exposure: f32,
+) -> phototools_core::media::edit::Mask {
+    use phototools_core::media::edit::{LocalAdjustments, Mask, MaskKind};
+    Mask {
+        id: "b".into(),
+        name: "Brush".into(),
+        kind: MaskKind::Brush,
+        invert: false,
+        opacity: 1.0,
+        enabled: true,
+        adjustments: LocalAdjustments {
+            exposure,
+            ..Default::default()
+        },
+        strokes,
+    }
+}
+
+fn brush_stroke(
+    points: Vec<[f32; 2]>,
+    radius: f32,
+    erase: bool,
+) -> phototools_core::media::edit::Stroke {
+    phototools_core::media::edit::Stroke {
+        points,
+        radius,
+        feather: 0.5,
+        flow: 1.0,
+        erase,
+    }
+}
+
+/// A painted mask looks the same in the export, drawn at full size (capped at 4096 on the
+/// long edge) and downscaled, as in the preview: the ED-16 measure, mean ≤ 1.5 code values.
+#[test]
+fn brush_strokes_rasterise_identically_at_proxy_and_export_size() {
+    use phototools_core::media::edit::{
+        apply_recipe, downscale_image_buffer, AdjustmentRecipe, PreviewSession, PreviewStage,
+    };
+
+    // Wider than the export raster cap, so the capped path is the one measured.
+    let img = marked_frame(5000, 3333, [0.5, 0.5]);
+    let wave: Vec<[f32; 2]> = (0..80)
+        .map(|i| {
+            let t = i as f32 / 79.0;
+            [0.1 + 0.8 * t, 0.5 + 0.2 * (t * 9.0).sin()]
+        })
+        .collect();
+    let recipe = AdjustmentRecipe {
+        masks: vec![brush_mask(
+            vec![
+                brush_stroke(wave.clone(), 0.04, false),
+                brush_stroke(vec![[0.3, 0.3], [0.7, 0.7]], 0.02, true),
+            ],
+            1.2,
+        )],
+        ..Default::default()
+    };
+
+    let export = apply_recipe(&img, &recipe, None).unwrap();
+    let session = PreviewSession::new(&img).unwrap();
+    let preview = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    let down = downscale_image_buffer(&export, preview.width.max(preview.height)).unwrap();
+    let down = down.as_rgb8().unwrap();
+    let mut sum = 0.0f64;
+    let n = (preview.width * preview.height) as usize;
+    for i in 0..n {
+        let d: f32 = (0..3)
+            .map(|c| (preview.bytes[i * 4 + c] as f32 - down[i * 3 + c] as f32).abs())
+            .sum::<f32>()
+            / 3.0;
+        sum += d as f64;
+    }
+    let mean = (sum / n as f64) as f32;
+    assert!(
+        mean <= 1.5,
+        "mean difference {mean} between preview and export exceeds 1.5"
+    );
+}
+
+/// A dab painted over a marker lands on the marker under crop, rotation and orientation,
+/// as the shapes do: strokes are in the stored frame too.
+#[test]
+fn a_brushed_mask_follows_the_crop_and_rotation() {
+    use phototools_core::media::edit::{
+        AdjustmentRecipe, Geometry, NormalizedCrop, PreviewSession, PreviewStage,
+    };
+
+    let at = [0.62, 0.3];
+    let img = marked_frame(1500, 1000, at);
+    for (name, geometry, orientation) in [
+        ("none", None, 1),
+        (
+            "crop and rotate",
+            Some(Geometry {
+                rotate: 270,
+                crop: Some(NormalizedCrop {
+                    x: 0.0,
+                    y: 0.1,
+                    width: 0.9,
+                    height: 0.8,
+                }),
+                ..Default::default()
+            }),
+            1,
+        ),
+        ("EXIF orientation 8", Some(Geometry::default()), 8),
+    ] {
+        let session =
+            PreviewSession::from_image_buffer_with_orientation(&img, orientation).unwrap();
+        let base = AdjustmentRecipe {
+            geometry: geometry.clone(),
+            ..Default::default()
+        };
+        let painted = AdjustmentRecipe {
+            masks: vec![brush_mask(vec![brush_stroke(vec![at], 0.05, false)], 1.5)],
+            ..base.clone()
+        };
+        let plain = session.render(&base, None, PreviewStage::Drag).unwrap();
+        let lit = session.render(&painted, None, PreviewStage::Drag).unwrap();
+        let (w, h) = (plain.width, plain.height);
+        let marker = centroid(w, h, |i| {
+            let p = &plain.bytes[i * 4..i * 4 + 3];
+            if p[0] > 150 && p[1] < 90 {
+                1.0
+            } else {
+                0.0
+            }
+        });
+        let effect = centroid(w, h, |i| {
+            let luma = |b: &[u8]| b[0] as f32 + b[1] as f32 + b[2] as f32;
+            luma(&lit.bytes[i * 4..i * 4 + 3]) - luma(&plain.bytes[i * 4..i * 4 + 3])
+        });
+        let dist = ((marker.0 - effect.0).powi(2) + (marker.1 - effect.1).powi(2)).sqrt();
+        assert!(
+            dist < 3.0,
+            "{name}: effect at {effect:?}, marker at {marker:?}"
+        );
+    }
+}
+
+/// Painting a stroke frame by frame draws each new segment once, not the stroke again, and
+/// erasing it all away renders exactly as no mask (ED-21).
+#[test]
+fn painting_draws_each_new_segment_once_and_erasing_restores_exactly() {
+    use phototools_core::media::edit::{AdjustmentRecipe, PreviewSession, PreviewStage};
+
+    let img = marked_frame(1200, 800, [0.5, 0.5]);
+    let session = PreviewSession::new(&img).unwrap();
+    let path: Vec<[f32; 2]> = (0..50).map(|i| [0.2 + 0.012 * i as f32, 0.4]).collect();
+
+    let mut recipe = AdjustmentRecipe {
+        masks: vec![brush_mask(
+            vec![brush_stroke(path[..1].to_vec(), 0.03, false)],
+            1.0,
+        )],
+        ..Default::default()
+    };
+    session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    let start = session.brush_segments_drawn();
+    for k in 2..=path.len() {
+        recipe.masks[0].strokes[0].points = path[..k].to_vec();
+        session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    }
+    assert_eq!(session.brush_segments_drawn() - start, path.len() - 1);
+
+    let without = session
+        .render(&AdjustmentRecipe::default(), None, PreviewStage::Settle)
+        .unwrap();
+    let mut erase = brush_stroke(path.clone(), 0.06, true);
+    erase.feather = 0.0;
+    recipe.masks[0].strokes.push(erase);
+    let erased = session.render(&recipe, None, PreviewStage::Settle).unwrap();
+    assert_eq!(
+        erased.bytes, without.bytes,
+        "an erased stroke must leave no trace"
+    );
 }

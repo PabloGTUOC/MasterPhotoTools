@@ -928,13 +928,72 @@ run locally and need no server, but MV-20.7 needs a card and a mounted share.
       **Pass:** the preview updates fluidly during dragging without perceptible stutter or event backlog (sustaining ≥ 20 fps interactive response), and settles cleanly to the sharp 1440p frame within ~120 ms of mouse release.
       **Result:**
 
-- [ ] **MV-20.9 — Histogram, clipping warnings, presets and copy/paste on real photographs (ED-15, ED-17).**
-      The harness checks these against synthetic frames; whether they help with real photographs is a judgement only a person can make.
-      **Run:** open a photograph with a bright sky. Raise Exposure until the sky blows, and turn on Highlight clipping, then Shadow clipping. Save the settings as a preset, open another photograph from the same shoot, crop it, apply the preset, then Undo. Copy settings with ⌘C, open a third photograph, paste with ⌘V.
-      **Pass:** the histogram moves with the slider and stays in view while the panel scrolls; the red overlay covers exactly the sky that blew, and the percentages under the histogram agree with what is marked; the overlay never appears in an export. The preset and the paste change the look but not the crop; Undo restores the previous settings; ⌘C and ⌘V in the path field still copy and paste text.
+## MV-21 — Edit round 2
+
+Judgement checks for the round 2 additions (ED-9 to ED-18). Like MV-20 they need the Mac and real
+photographs, and no server.
+
+- [ ] **MV-21.1 — Monotone tone curves and S-curve contrast.**
+      Tone curve adjustments must create smooth photographic contrast curves without banding, overshoot, or channel cross-talk.
+      **Run:** in the Editor, create an S-curve on the Luma channel; adjust individual Red and Blue curves to warm the highlights and cool the shadows; compare against a reference grading tool.
+      **Pass:** curve transitions are completely smooth; no overshoot or gradient reversals occur near extreme highlights or deep blacks; chromaticity ratios are preserved.
       **Result:**
 
-- [ ] **MV-20.10 — Batch Grade with a preset over a real folder (ED-18).**
-      **Run:** save a preset that uses a LUT, a curve and grain. In Batch Grade choose **Preset**, dry run over a folder of 30 photographs, then run. Then change the preset in Edit (Save as preset, Replace) and press Run again without a new dry run.
-      **Pass:** each output is `<name>_edit.<ext>`, looks like the same photograph exported from Edit with that preset, keeps its capture date, camera and GPS (`exiftool -s`), and is not cropped. The second run is refused with a message asking for another dry run, and writes nothing.
+- [ ] **MV-21.2 — 8-band HSL selective hue isolation.**
+      HSL adjustments must isolate designated color bands smoothly without contouring or fringing artifacts along color boundaries.
+      **Run:** select a portrait with green foliage and blue sky; shift Green hue towards yellow, drop Blue saturation by 50%, and increase Red/Orange luminance by +20%.
+      **Pass:** foliage turns autumn yellow, sky desaturates cleanly, and skin tones gain exposure without haloing, banding, or color stepping.
+      **Result:**
+
+- [ ] **MV-21.3 — 3-way colour grading mood and tonal balance.**
+      Shadows, Midtones, and Highlights wheels must apply photographic split-toning while preserving natural skin tones.
+      **Run:** drag Shadows wheel to teal/cyan, Highlights wheel to warm amber/gold, and adjust the Tonal Balance slider.
+      **Pass:** shadows are cleanly tinted without muddying mid-tones; highlight rolloff stays natural; adjusting Balance shifts the transition boundary predictably.
+      **Result:**
+
+- [ ] **MV-21.4 — Geometry: Straighten crop-to-fit and orientation baking.**
+      Straightening an off-level horizon must automatically crop unrendered corners without black wedges, baking orientation to 1 on export.
+      **Run:** open an image captured in portrait orientation (EXIF Orientation 6); apply +7.5° straighten and a 4:5 crop preset; export. Inspect the exported file with `exiftool`.
+      **Pass:** the horizon is level; the frame fills the 4:5 aspect ratio without unrendered borders; `exiftool` reports `Orientation: Horizontal (normal) (1)` and pixels display upright in all viewers.
+      **Result:**
+
+- [ ] **MV-21.5 — Scale-independent vignette and grain on preview vs export.**
+      Vignette falloff and film grain structure must appear identical on the 1280px interactive preview and the full-resolution export.
+      **Run:** apply a strong vignette and medium grain to a 36 MP photograph; view the interactive preview at 100% zoom; export the image; downscale the export to 1280px and compare side-by-side.
+      **Pass:** vignette falloff profile and grain density/appearance are visually identical between proxy preview and full export.
+      **Result:**
+
+- [ ] **MV-21.6 — Deterministic grain byte-for-byte reproducibility.**
+      Procedural grain generation must be strictly deterministic and seeded from the source photograph.
+      **Run:** export a photograph with grain twice in succession to separate files; run `cmp` or `shasum` on the pixel buffers.
+      **Pass:** the two output files are bit-for-bit identical.
+      **Result:**
+
+- [ ] **MV-21.7 — Optional Narkowicz ACES tone mapper highlight compression.**
+      Enabling the filmic tone mapper must compress blown specular highlights into display white smoothly without harsh clipping.
+      **Run:** open an over-exposed photograph with blown sky; toggle the Tone Mapper option on and off.
+      **Pass:** with the tone mapper on, harsh white blowout transitions into a soft, photographic rolloff, and the panel says in plain words that the filmic tone curve is on and mid-tones shift.
+      **Result:**
+
+- [ ] **MV-21.8 — Preset saving, library management, and clipboard copy/paste.**
+      Saving custom adjustments as a preset and copying settings between frames must work seamlessly.
+      **Run:** tune a photograph with curves, HSL, and grading; save as a preset named "Summer Portra". Open a second photograph from the same shoot, crop it, apply the preset, then press Undo in the confirmation. Press `Cmd+C` on the first photograph, open a third, press `Cmd+V`. Rename the preset, then delete it.
+      **Pass:** the preset and the paste change the look but not the crop; Undo restores the previous settings; `Cmd+C` and `Cmd+V` in the path field still copy and paste text; the preset appears in the picker, renames, and is gone from disk once deleted.
+      **Result:**
+
+- [ ] **MV-21.9 — Bulk preset folder run with content hash lock discipline.**
+      Applying a full preset across a batch of photographs must enforce dry-run verification and content hash locking.
+      **Run:** save a preset that uses a LUT, a curve and grain. In Batch Grade choose **Preset**, dry run over a folder of 30 photographs, and check the sample previews. Change the preset in Edit (Save as preset, Replace) and press Run without a new dry run. Then dry run again and run.
+      **Pass:** changing the preset or any setting in Batch Grade locks Run and says why; the run after the preset was replaced is refused with a message asking for another dry run, and writes nothing; the final run writes `<name>_edit.<ext>` for each photograph, uncropped, looking like the same photograph exported from Edit with that preset, with capture date, camera and GPS preserved (`exiftool -s`).
+      **Result:**
+
+- [ ] **MV-21.10 — Interactive slider responsiveness with all Round 2 controls active.**
+      The application must maintain fluid interactive scrubbing with all Round 2 additions enabled on a 36 MP frame.
+      **Run:** open a 36 MP photograph; enable curves, 8-band HSL, 3-way grading, vignette, grain, and glow; rapidly scrub the Exposure slider for 5 seconds; release.
+      **Pass:** scrubbing remains responsive and fluid (sustaining $\ge 20$ fps interactive updates without backlog), settling to retina sharpness within ~120 ms of release.
+      **Result:**
+
+- [ ] **MV-21.11 — Histogram and clipping warnings on a real photograph (ED-15).**
+      **Run:** open a photograph with a bright sky. Raise Exposure until the sky blows; turn on Highlight clipping, then Shadow clipping; scroll the adjustment panel; export.
+      **Pass:** the histogram moves with the slider and stays in view while the panel scrolls; the red overlay covers exactly the sky that blew and the percentages under the histogram agree with what is marked; the overlay never appears in the export.
       **Result:**

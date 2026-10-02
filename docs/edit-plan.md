@@ -900,7 +900,7 @@ verification case. Every commit can be launched, tested, and visually evaluated.
     says it failed. The job still checks again, since the preset can change in between. The desktop
     test `batch_apply_with_stale_reviewed_hash_is_refused` asserts the earlier refusal and that
     nothing is written.
-  - Manual checks on real files: MV-20.9 (ED-15, ED-17) and MV-20.10 (this step).
+  - Manual checks on real files: MV-21.8, MV-21.9 and MV-21.11 in `manual-verification.md`.
 
 ---
 
@@ -974,66 +974,5 @@ Judgement checks in the style of [`docs/manual-verification.md`](manual-verifica
 
 ## Verification and acceptance plan (MV-21: Round 2)
 
-Judgement checks for Round 2 additions in the style of [`docs/manual-verification.md`](manual-verification.md).
-
-- [ ] **MV-21.1 — Monotone tone curves and S-curve contrast.**
-      Tone curve adjustments must create smooth photographic contrast curves without banding, overshoot, or channel cross-talk.
-      **Run:** in the Editor, create an S-curve on the Luma channel; adjust individual Red and Blue curves to warm the highlights and cool the shadows; compare against a reference grading tool.
-      **Pass:** curve transitions are completely smooth; no overshoot or gradient reversals occur near extreme highlights or deep blacks; chromaticity ratios are preserved.
-      **Result:**
-
-- [ ] **MV-21.2 — 8-band HSL selective hue isolation.**
-      HSL adjustments must isolate designated color bands smoothly without contouring or fringing artifacts along color boundaries.
-      **Run:** select a portrait with green foliage and blue sky; shift Green hue towards yellow, drop Blue saturation by 50%, and increase Red/Orange luminance by +20%.
-      **Pass:** foliage turns autumn yellow, sky desaturates cleanly, and skin tones gain exposure without haloing, banding, or color stepping.
-      **Result:**
-
-- [ ] **MV-21.3 — 3-way colour grading mood and tonal balance.**
-      Shadows, Midtones, and Highlights wheels must apply photographic split-toning while preserving natural skin tones.
-      **Run:** drag Shadows wheel to teal/cyan, Highlights wheel to warm amber/gold, and adjust the Tonal Balance slider.
-      **Pass:** shadows are cleanly tinted without muddying mid-tones; highlight rolloff stays natural; adjusting Balance shifts the transition boundary predictably.
-      **Result:**
-
-- [ ] **MV-21.4 — Geometry: Straighten crop-to-fit and orientation baking.**
-      Straightening an off-level horizon must automatically crop unrendered corners without black wedges, baking orientation to 1 on export.
-      **Run:** open an image captured in portrait orientation (EXIF Orientation 6); apply +7.5° straighten and a 4:5 crop preset; export. Inspect the exported file with `exiftool`.
-      **Pass:** the horizon is level; the frame fills the 4:5 aspect ratio without unrendered borders; `exiftool` reports `Orientation: Horizontal (normal) (1)` and pixels display upright in all viewers.
-      **Result:**
-
-- [ ] **MV-21.5 — Scale-independent vignette and grain on preview vs export.**
-      Vignette falloff and film grain structure must appear identical on the 1280px interactive preview and the full-resolution export.
-      **Run:** apply a strong vignette and medium grain to a 36 MP photograph; view the interactive preview at 100% zoom; export the image; downscale the export to 1280px and compare side-by-side.
-      **Pass:** vignette falloff profile and grain density/appearance are visually identical between proxy preview and full export.
-      **Result:**
-
-- [ ] **MV-21.6 — Deterministic grain byte-for-byte reproducibility.**
-      Procedural grain generation must be strictly deterministic and seeded from the source photograph.
-      **Run:** export a photograph with grain twice in succession to separate files; run `cmp` or `shasum` on the pixel buffers.
-      **Pass:** the two output files are bit-for-bit identical.
-      **Result:**
-
-- [ ] **MV-21.7 — Optional Narkowicz ACES tone mapper highlight compression.**
-      Enabling the filmic tone mapper must compress blown specular highlights into display white smoothly without harsh clipping.
-      **Run:** open an over-exposed photograph with blown sky; toggle the Tone Mapper option on and off.
-      **Pass:** with the tone mapper on, harsh white blowout transitions into a soft, photographic rolloff; the UI displays the alert stating that exact identity is broken.
-      **Result:**
-
-- [ ] **MV-21.8 — Preset saving, library management, and clipboard copy/paste.**
-      Saving custom adjustments as a preset and copying settings between frames must work seamlessly.
-      **Run:** tune a photograph with curves, HSL, and grading; save as a preset named "Summer Portra"; press `Cmd+C`; open a different photograph; press `Cmd+V`; verify adjustments match; delete the preset.
-      **Pass:** settings transfer instantly on paste; the saved preset appears in the preset picker; deleting the preset removes it cleanly from disk.
-      **Result:**
-
-- [ ] **MV-21.9 — Bulk preset folder run with content hash lock discipline.**
-      Applying a full preset across a batch of photographs must enforce dry-run verification and content hash locking.
-      **Run:** open the Batch Grade view; select a folder and a preset; run dry run; verify sample previews; alter a slider in the preset; observe that Run is locked; re-run dry run and execute.
-      **Pass:** Run button remains disabled until reviewed dry run matches exact current settings; batch finishes writing `_edit` outputs with all metadata preserved.
-      **Result:**
-
-- [ ] **MV-21.10 — Interactive slider responsiveness with all Round 2 controls active.**
-      The application must maintain fluid interactive scrubbing with all Round 2 additions enabled on a 36 MP frame.
-      **Run:** open a 36 MP photograph; enable curves, 8-band HSL, 3-way grading, vignette, grain, and glow; rapidly scrub the Exposure slider for 5 seconds; release.
-      **Pass:** scrubbing remains responsive and fluid (sustaining $\ge 20$ fps interactive updates without backlog), settling to retina sharpness within ~120 ms of release.
-      **Result:**
-
-
+The judgement checks for Round 2 are **MV-21** in [`manual-verification.md`](manual-verification.md),
+with the other checks a person works through.

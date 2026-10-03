@@ -997,3 +997,39 @@ photographs, and no server.
       **Run:** open a photograph with a bright sky. Raise Exposure until the sky blows; turn on Highlight clipping, then Shadow clipping; scroll the adjustment panel; export.
       **Pass:** the histogram moves with the slider and stays in view while the panel scrolls; the red overlay covers exactly the sky that blew and the percentages under the histogram agree with what is marked; the overlay never appears in the export.
       **Result:**
+
+## MV-22 — Masks (edit round 3)
+
+Judgement and timing checks for masks (ED-19 to ED-23), on the Mac the application is used on: the
+Mac Studio, M1 Max, 32 GB. No server.
+
+- [ ] **MV-22.1 — A graduated sky.**
+      **Run:** on a landscape, add a Linear mask, drag it down from the top to the horizon; give it −0.7 EV and −20 temperature; turn on Show mask overlay; crop and straighten the photograph; export.
+      **Pass:** the darkening fades smoothly with no visible edge; the overlay shows exactly where it acts; after the crop and straighten the gradient still sits on the same sky; the export matches the preview.
+      **Result:**
+
+- [ ] **MV-22.2 — A radial on a portrait.**
+      **Run:** add a Radial mask over a face, Invert it, lower exposure and saturation outside; drag the width handle to turn the ellipse; nudge the centre with the arrow keys.
+      **Pass:** the face is untouched and the surround darkens with a soft edge; the handles are easy to grab (40 px) and move the shape where expected.
+      **Result:**
+
+- [ ] **MV-22.3 — A brushed dodge and burn.**
+      **Run:** add a Brush mask; paint a light stroke across a shadowed area with +0.5 EV; erase part of it with ⌥; change the size with [ and ]; paint a long stroke quickly.
+      **Pass:** painting keeps up with the pointer (no lag on a long stroke); erasing removes painting cleanly; painting over an erased area brings it back; the export matches the preview.
+      **Result:**
+
+- [ ] **MV-22.4 — Masks stay with their photograph.**
+      **Run:** with masks on a photograph, save a preset, copy settings, and run Batch Grade with that preset on another folder; paste the settings onto another photograph that has its own mask.
+      **Pass:** no preset, paste or batch output carries the first photograph's masks; the second photograph keeps its own mask.
+      **Result:**
+
+- [ ] **MV-22.5 — Subject and sky on your photographs (ED-23).**
+      **Run:** press + Subject on a portrait and on a photograph of a pet or object; press + Sky on three landscapes, one with low cloud at the horizon and one with buildings. The first press of each asks to download its model: accept. Refine one mask with the brush.
+      **Pass:** each model is downloaded once, with its size stated, and not again; the masks follow the subject's outline and the sky's edge closely enough that a brush touch-up is the most needed; the mask is saved with the photograph and the export matches the preview. Note any photograph where the mask is wrong enough to be useless.
+      **Result:**
+
+- [ ] **MV-22.6 — Automatic mask timing and memory on the M1 Max.**
+      **Run:** `cargo run --release -p phototools-core --features segment --example auto_mask -- <models dir> <out dir> <three of your photographs>`, with Activity Monitor open on the Memory tab.
+      **Pass:** record the subject and sky times printed (measured on an M4 Pro: about 3.7 s and 0.7 s) and the peak memory (about 10 GB for the subject). Acceptable if the subject takes under 8 s and the Mac does not swap.
+      **Result:**
+

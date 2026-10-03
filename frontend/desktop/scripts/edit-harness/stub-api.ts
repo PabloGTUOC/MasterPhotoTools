@@ -31,6 +31,13 @@ export interface StubState {
   /** ED-20: the map frames report, when a test wants something other than identity. */
   toStoredOverride: [number, number, number, number, number, number] | null;
   maskCoverageRequests: Array<{ maskId: string; stage: PreviewStage }>;
+  /** ED-23: which models are on disk, downloads asked for, masks made. */
+  modelsPresent: Record<string, boolean>;
+  downloads: string[];
+  cancelledJobs: string[];
+  autoMaskCalls: string[];
+  autoMaskDelay: number;
+  autoMaskFails: string | null;
 }
 
 const stubState: StubState = {
@@ -45,6 +52,12 @@ const stubState: StubState = {
   presetErrors: [],
   toStoredOverride: null,
   maskCoverageRequests: [],
+  modelsPresent: { subject: false, sky: true },
+  downloads: [],
+  cancelledJobs: [],
+  autoMaskCalls: [],
+  autoMaskDelay: 150,
+  autoMaskFails: null,
 };
 
 interface StubHistogram {
@@ -306,6 +319,10 @@ export class StubDesktopApiClient {
     const height = stage === 'Settle' ? SETTLE_HEIGHT : DRAG_HEIGHT;
     const coverage = new Uint8Array(width * height);
     const long = Math.max(width, height);
+    if (m.kind.type === 'auto') {
+      for (let y = 0; y < height; y++) coverage.fill(255, y * width, y * width + Math.floor(width / 2));
+      return { width, height, coverage };
+    }
     if (m.kind.type === 'brush') {
       // Discs around the stroke points, filled directly: a per-pixel test against every
       // point is far too slow for a stub asked for coverage on every frame.
@@ -339,6 +356,54 @@ export class StubDesktopApiClient {
       }
     }
     return { width, height, coverage };
+  }
+
+  async autoMaskModels(): Promise<Array<{ target: string; name: string; present: boolean; bytes: number }>> {
+    return [
+      { target: 'subject', name: 'BiRefNet lite (MIT), 224 MB', present: stubState.modelsPresent.subject, bytes: 224005088 },
+      { target: 'sky', name: 'U²-Net sky segmentation (MIT), 176 MB', present: stubState.modelsPresent.sky, bytes: 175997079 },
+    ];
+  }
+
+  async downloadMaskModel(target: string): Promise<string> {
+    stubState.downloads.push(target);
+    return `job_model_${target}_${stubState.downloads.length}`;
+  }
+
+  async cancelJob(id: string): Promise<boolean> {
+    stubState.cancelledJobs.push(id);
+    return true;
+  }
+
+  /** A download job: running, then completed (the model is then present) unless cancelled. */
+  async watchJob(
+    id: string,
+    onEvent: (event: { id: string; kind: string; state: string; progress: number; total: number; message: string; terminal: boolean }) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const target = id.split('_')[2];
+    onEvent({ id, kind: 'download_mask_model', state: 'running', progress: 1, total: 2, message: 'Downloading the model', terminal: false });
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 300);
+      signal?.addEventListener('abort', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    if (stubState.cancelledJobs.includes(id)) {
+      onEvent({ id, kind: 'download_mask_model', state: 'cancelled', progress: 1, total: 2, message: 'the download was cancelled', terminal: true });
+      return;
+    }
+    stubState.modelsPresent[target] = true;
+    onEvent({ id, kind: 'download_mask_model', state: 'completed', progress: 2, total: 2, message: 'Downloaded', terminal: true });
+  }
+
+  async makeAutoMask(_sessionId: string, target: string): Promise<{ width: number; height: number; png: string; model_sha256: string }> {
+    stubState.autoMaskCalls.push(target);
+    await new Promise((r) => setTimeout(r, stubState.autoMaskDelay));
+    if (!stubState.modelsPresent[target]) throw new Error(`the ${target} model is not downloaded`);
+    if (stubState.autoMaskFails) throw new Error(stubState.autoMaskFails);
+    return { width: 4, height: 3, png: `stub-${target}`, model_sha256: `sha-${target}` };
   }
 
   async closePreview(_sessionId: string): Promise<void> {}

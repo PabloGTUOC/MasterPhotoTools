@@ -3933,3 +3933,112 @@ fn painting_draws_each_new_segment_once_and_erasing_restores_exactly() {
         "an erased stroke must leave no trace"
     );
 }
+
+// ---------------------------------------------------------------------------
+// ED-23: automatic masks, as stored
+// ---------------------------------------------------------------------------
+
+/// A stored automatic mask acts where its pixels say, in the stored frame, through the
+/// geometry like every mask; a damaged one is refused rather than masking the wrong place.
+#[test]
+fn a_stored_automatic_mask_acts_where_it_covers_and_a_damaged_one_is_refused() {
+    use phototools_core::media::edit::{
+        AdjustmentRecipe, AutoTarget, Geometry, LocalAdjustments, Mask, MaskKind, PreviewSession,
+        PreviewStage, StoredRaster,
+    };
+
+    // Covers a square around the marker at (0.3, 0.35) of the stored frame.
+    let (mw, mh) = (300u32, 200u32);
+    let data: Vec<u8> = (0..mw * mh)
+        .map(|i| {
+            // Cell centres, so the square is centred on the marker exactly.
+            let (x, y) = (
+                ((i % mw) as f32 + 0.5) / mw as f32,
+                ((i / mw) as f32 + 0.5) / mh as f32,
+            );
+            if (x - 0.3).abs() < 0.08 && (y - 0.35).abs() < 0.12 {
+                255
+            } else {
+                0
+            }
+        })
+        .collect();
+    let stored = StoredRaster::encode(mw, mh, &data, "test").unwrap();
+    let mask = |raster: StoredRaster| Mask {
+        id: "auto".into(),
+        name: "Subject".into(),
+        kind: MaskKind::Auto {
+            target: AutoTarget::Subject,
+            mask: raster,
+        },
+        invert: false,
+        opacity: 1.0,
+        enabled: true,
+        adjustments: LocalAdjustments {
+            exposure: 1.5,
+            ..Default::default()
+        },
+        strokes: Vec::new(),
+    };
+
+    let img = marked_frame(1500, 1000, [0.3, 0.35]);
+    for (name, geometry, orientation) in [
+        ("none", None, 1),
+        (
+            "rotate and orientation 6",
+            Some(Geometry {
+                rotate: 90,
+                ..Default::default()
+            }),
+            6,
+        ),
+    ] {
+        let session =
+            PreviewSession::from_image_buffer_with_orientation(&img, orientation).unwrap();
+        let base = AdjustmentRecipe {
+            geometry: geometry.clone(),
+            ..Default::default()
+        };
+        let masked = AdjustmentRecipe {
+            masks: vec![mask(stored.clone())],
+            ..base.clone()
+        };
+        let plain = session.render(&base, None, PreviewStage::Drag).unwrap();
+        let lit = session.render(&masked, None, PreviewStage::Drag).unwrap();
+        let (w, h) = (plain.width, plain.height);
+        let marker = centroid(w, h, |i| {
+            let p = &plain.bytes[i * 4..i * 4 + 3];
+            if p[0] > 150 && p[1] < 90 {
+                1.0
+            } else {
+                0.0
+            }
+        });
+        // Which pixels changed clearly, not by how much: the frame brightens left to right,
+        // so weighting by the gain, or counting the faint fringe where only the brighter side
+        // moves a code value, would pull the centre to the right.
+        let effect = centroid(w, h, |i| {
+            let luma = |b: &[u8]| b[0] as f32 + b[1] as f32 + b[2] as f32;
+            let d = luma(&lit.bytes[i * 4..i * 4 + 3]) - luma(&plain.bytes[i * 4..i * 4 + 3]);
+            if d > 30.0 {
+                1.0
+            } else {
+                0.0
+            }
+        });
+        let dist = ((marker.0 - effect.0).powi(2) + (marker.1 - effect.1).powi(2)).sqrt();
+        assert!(
+            dist < 4.0,
+            "{name}: effect at {effect:?}, marker at {marker:?}"
+        );
+    }
+
+    let mut damaged = stored.clone();
+    damaged.png.truncate(damaged.png.len() / 2);
+    let session = PreviewSession::new(&img).unwrap();
+    let recipe = AdjustmentRecipe {
+        masks: vec![mask(damaged)],
+        ..Default::default()
+    };
+    assert!(session.render(&recipe, None, PreviewStage::Drag).is_err());
+}

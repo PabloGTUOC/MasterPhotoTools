@@ -30,6 +30,19 @@ rawler = "0.7.2"
 # because the NAS may be ARM, where AES has no hardware backing and a
 # constant-time software AES is the slower, more delicate option.
 chacha20poly1305 = "0.10"
+# ED-23: automatic subject and sky masks run through ONNX Runtime, the owner's choice
+# after ED-22 measured it (edit plan, Round 3). Not in §2.6 — recorded in the edit phase
+# report (G8). Optional, behind `segment`, so `core` builds and tests without it (G2) and
+# the NAS server never links it. Pinned: 2.0 is a release candidate.
+ort = { version = "=2.0.0-rc.13", optional = true }
+
+[features]
+segment = ["dep:ort"]
 
 [dev-dependencies]
 tempfile = "3.10"
+
+# The measuring tool for automatic masks (ED-23, MV-22); it runs the models, so it needs them.
+[[example]]
+name = "auto_mask"
+required-features = ["segment"]

@@ -166,6 +166,27 @@ impl AppState {
         active.session.render(recipe, lut, stage)
     }
 
+    /// The open photograph's stored pixels and orientation, for an automatic mask (ED-23).
+    /// The lock is held only to copy them, not while the model runs.
+    pub fn segmentation_input(
+        &self,
+        session_id: &str,
+    ) -> Result<(phototools_core::media::segment::RgbImage, u32), Error> {
+        let slot = self.active_preview.lock().unwrap();
+        let active = slot
+            .as_ref()
+            .ok_or_else(|| Error::Refused("No active preview session is open".into()))?;
+        if active.session_id != session_id {
+            return Err(Error::Refused(
+                "The preview session has been closed or replaced by another preview".into(),
+            ));
+        }
+        Ok((
+            active.session.segmentation_input(),
+            active.session.orientation,
+        ))
+    }
+
     /// Coverage of one mask from the active preview session, for the mask overlay (ED-20).
     pub fn mask_coverage(
         &self,

@@ -1983,6 +1983,130 @@ try {
   }
   await page.keyboard.press('Escape');
 
+  // 9n. Automatic masks: download once with consent, find, stop, refine (ED-23)
+  console.log('Asserting automatic masks: ask before downloading, find a sky and a subject, stop (ED-23)...');
+  await openPhoto('/Volumes/Photos/auto_a.jpg');
+  if (!(await page.locator('[data-testid="add-sky-mask"]').isVisible())) {
+    await page.locator('button[data-testid="section-masks-toggle"]').click();
+  }
+
+  // Sky's model is present: one press makes the mask, selects it and shows what was found.
+  await page.locator('[data-testid="add-sky-mask"]').click();
+  const busyShown = await page.locator('[data-testid="auto-busy"]').isVisible();
+  await page.waitForTimeout(400);
+  let am = await lastMasks();
+  const skyState = await page.evaluate(() => ({
+    overlayOn: document.querySelector('[data-testid="mask-show-overlay"]')?.getAttribute('aria-pressed'),
+    busyGone: !document.querySelector('[data-testid="auto-busy"]'),
+    saved: window.__STUB__.lastSavedRecipe?.masks?.[0]?.kind?.type,
+  }));
+  if (
+    !busyShown ||
+    am.length !== 1 ||
+    am[0].kind.type !== 'auto' ||
+    am[0].kind.target !== 'sky' ||
+    am[0].kind.mask.png !== 'stub-sky' ||
+    am[0].name !== 'Sky 1' ||
+    skyState.overlayOn !== 'true' ||
+    !skyState.busyGone
+  ) {
+    failures.push(`Sky should show progress, then add "Sky 1" with the model's mask, selected, overlay on; got ${JSON.stringify({ busyShown, am, skyState })}`);
+  }
+  await page.waitForTimeout(400);
+  if ((await page.evaluate(() => window.__STUB__.lastSavedRecipe?.masks?.[0]?.kind?.target)) !== 'sky') {
+    failures.push('The automatic mask was not saved with the photograph');
+  }
+  // Nothing to drag on an automatic mask; the brush refines it.
+  if ((await page.locator('[data-testid^="mask-handle-"]').count()) !== 0) {
+    failures.push('An automatic mask must show no handles');
+  }
+
+  // Subject's model is missing: ask first; "Not now" downloads nothing.
+  await page.locator('[data-testid="add-subject-mask"]').click();
+  await page.waitForTimeout(100);
+  const askText = (await page.locator('[data-testid="auto-download"]').textContent()) ?? '';
+  if (!(await page.locator('[data-testid="auto-download-start"]').isVisible())) {
+    failures.push('A missing model must be offered for download, not downloaded at once');
+  } else {
+    await page.locator('[data-testid="auto-download-cancel"]').click();
+  }
+  const afterNotNow = await page.evaluate(() => ({ downloads: window.__STUB__.downloads.length, calls: window.__STUB__.autoMaskCalls }));
+  if (!askText.includes('224 MB') || afterNotNow.downloads !== 0 || afterNotNow.calls.includes('subject')) {
+    failures.push(`A missing model should be explained with its size and not downloaded without consent; got "${askText}", ${JSON.stringify(afterNotNow)}`);
+  }
+
+  // A cancelled download leaves no model and makes no mask.
+  await page.locator('[data-testid="add-subject-mask"]').click();
+  await page.locator('[data-testid="auto-download-start"]').click();
+  await page.locator('[data-testid="auto-download"] button.ghost.danger', { hasText: 'Cancel' }).click();
+  await page.waitForTimeout(500);
+  const afterCancel = await page.evaluate(() => ({
+    present: window.__STUB__.modelsPresent.subject,
+    calls: window.__STUB__.autoMaskCalls.filter((t) => t === 'subject').length,
+    cancelled: window.__STUB__.cancelledJobs.length,
+  }));
+  if (afterCancel.present || afterCancel.calls !== 0 || afterCancel.cancelled !== 1) {
+    failures.push(`Cancelling the download should stop it and make no mask; got ${JSON.stringify(afterCancel)}`);
+  }
+  await page.locator('[data-testid="auto-download-cancel"]').click().catch(() => {});
+
+  // Download with consent: when it completes, the subject is found without another press.
+  await page.locator('[data-testid="add-subject-mask"]').click();
+  await page.locator('[data-testid="auto-download-start"]').click();
+  await page.waitForTimeout(900);
+  am = await lastMasks();
+  if (am.length !== 2 || am[1].kind.target !== 'subject' || (await page.locator('[data-testid="auto-download"]').count()) !== 0) {
+    failures.push(`After the download completes the subject mask should be made; got ${JSON.stringify(am.map((m) => m.name))}`);
+  }
+
+  // Stop: the result is discarded.
+  await page.evaluate(() => {
+    window.__STUB__.autoMaskDelay = 600;
+  });
+  await page.locator('[data-testid="add-sky-mask"]').click();
+  await page.waitForTimeout(100);
+  await page.locator('[data-testid="auto-stop"]').click();
+  await page.waitForTimeout(800);
+  if ((await lastMasks()).length !== 2) {
+    failures.push('A stopped automatic mask must not be added when its result arrives');
+  }
+
+  // A failure is shown, not swallowed (G10).
+  await page.evaluate(() => {
+    window.__STUB__.autoMaskDelay = 50;
+    window.__STUB__.autoMaskFails = 'the sky model failed: out of memory';
+  });
+  await page.locator('[data-testid="add-sky-mask"]').click();
+  await page.waitForTimeout(250);
+  const autoErr = (await page.locator('[data-testid="edit-error"]').textContent()) ?? '';
+  if (!autoErr.includes('out of memory') || (await lastMasks()).length !== 2) {
+    failures.push(`A failed automatic mask should be reported and add nothing; got "${autoErr}"`);
+  }
+  await page.evaluate(() => {
+    window.__STUB__.autoMaskFails = null;
+  });
+
+  // The brush refines an automatic mask.
+  const subjectId = (await lastMasks())[1].id;
+  // The name toggles selection: press it only if the subject is not already selected.
+  if ((await page.getAttribute(`[data-testid="mask-select-${subjectId}"]`, 'aria-pressed')) !== 'true') {
+    await page.locator(`[data-testid="mask-select-${subjectId}"]`).click();
+  }
+  await page.locator('[data-testid="brush-paint"]').click();
+  await paintStroke([0.6, 0.4], [0.7, 0.4], 4);
+  am = await lastMasks();
+  if ((am[1].strokes?.length ?? 0) !== 1 || am[1].kind.type !== 'auto') {
+    failures.push(`Painting on an automatic mask should refine it; got ${JSON.stringify(am[1] && { type: am[1].kind.type, strokes: am[1].strokes?.length })}`);
+  } else {
+    console.log('  Automatic masks: asked before downloading, found, shown, stoppable, failures reported, refinable with the brush.');
+  }
+  await page.keyboard.press('Escape');
+  for (const id of ['add-subject-mask', 'add-sky-mask']) {
+    const box = await page.locator(`[data-testid="${id}"]`).boundingBox();
+    if (!box || box.height < 39.5) failures.push(`${id} touch target is ${box?.height}px (must be >= 40px)`);
+  }
+  await page.screenshot({ path: join(OUT, 'edit-auto-masks.png'), fullPage: true });
+
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');
   await pathInput.press('Enter');

@@ -531,6 +531,49 @@ fn mask_coverage_is_served_for_the_open_preview() {
     assert!(err.contains("No mask nope"), "got: {err}");
 }
 
+/// Without the models on disk the panel is told so, and asking for a mask says what is
+/// missing rather than failing obscurely (ED-23, G10).
+#[test]
+fn an_automatic_mask_without_its_model_is_refused_by_name() {
+    use phototools_core::media::edit::AutoTarget;
+
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = phototools_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let models = phototools_desktop::commands::auto_masks::auto_mask_models_impl(&state);
+    assert_eq!(models.len(), 2);
+    assert!(models.iter().all(|m| !m.present));
+    assert!(models
+        .iter()
+        .any(|m| m.target == AutoTarget::Subject && m.bytes == 224_005_088));
+
+    let img_path = f.root.join("photo.jpg");
+    image::RgbImage::new(64, 48).save(&img_path).unwrap();
+    let session = phototools_desktop::commands::edit::open_preview_impl(
+        &state,
+        img_path.to_string_lossy().to_string(),
+    )
+    .unwrap()
+    .session_id;
+
+    let err = phototools_desktop::commands::auto_masks::make_auto_mask_impl(
+        &state,
+        &session,
+        AutoTarget::Sky,
+    )
+    .unwrap_err();
+    assert!(err.contains("not downloaded"), "got: {err}");
+
+    let err = phototools_desktop::commands::auto_masks::make_auto_mask_impl(
+        &state,
+        "not-a-session",
+        AutoTarget::Sky,
+    )
+    .unwrap_err();
+    assert!(err.contains("closed or replaced"), "got: {err}");
+}
+
 #[test]
 fn opening_a_second_preview_closes_the_first() {
     let f = fixture();

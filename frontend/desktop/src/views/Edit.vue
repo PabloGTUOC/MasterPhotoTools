@@ -14,6 +14,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type {
   AdjustmentRecipe,
+  AutoTarget,
   ColorWheel as ColorWheelType,
   FilmGrain,
   Geometry,
@@ -39,6 +40,7 @@ import ColorWheel from '@ui/components/ColorWheel.vue';
 import CropOverlay from '@ui/components/CropOverlay.vue';
 import CurveEditor from '@ui/components/CurveEditor.vue';
 import Histogram, { type HistogramMode } from '@ui/components/Histogram.vue';
+import JobProgress from '@ui/components/JobProgress.vue';
 import MaskOverlay from '@ui/components/MaskOverlay.vue';
 import PresetBar from '@ui/components/PresetBar.vue';
 import { copiedSettings } from '../recipeClipboard';
@@ -92,6 +94,13 @@ const brushErase = ref(false);
 /** ⌥ held: erase while held, as in every darkroom application. */
 const altHeld = ref(false);
 const BRUSH_MIN = 0.5;
+
+// ED-23: automatic masks. A model is downloaded once, with the person's say-so; a mask is
+// a few seconds' work, which can be stopped (its result is then discarded).
+const autoBusy = ref<AutoTarget | null>(null);
+const autoDownload = ref<{ target: AutoTarget; name: string; jobId: string | null } | null>(null);
+let autoSeq = 0;
+const AUTO_LABEL: Record<AutoTarget, string> = { subject: 'Subject', sky: 'Sky' };
 const BRUSH_MAX = 25;
 let coverageSeq = 0;
 let lastRendered: { recipe: AdjustmentRecipe; stage: PreviewStage } | null = null;
@@ -822,6 +831,8 @@ async function openImage(path: string) {
   dismissNotice();
   selectedPreset.value = null;
   selectedMaskId.value = null;
+  stopAutoMask();
+  autoDownload.value = null;
   loading.value = true;
   error.value = null;
   saveStatus.value = '';
@@ -1046,7 +1057,89 @@ watch(selectedMaskId, (id) => {
   if (!id) painting.value = false;
 });
 
-function updateMaskKind(id: string, kind: MaskKind) {
+async function addAutoMask(target: AutoTarget) {
+  if (!sessionId.value || masks.value.length >= MASK_LIMIT || autoBusy.value) return;
+  error.value = null;
+  try {
+    const model = (await desktop.autoMaskModels()).find((m) => m.target === target);
+    if (!model) throw new Error(`No model is known for ${AUTO_LABEL[target]}`);
+    if (!model.present) {
+      // Ask first: it is a few hundred megabytes, kept for every later photograph.
+      autoDownload.value = { target, name: model.name, jobId: null };
+      return;
+    }
+    await runAutoMask(target);
+  } catch (err: unknown) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+async function startModelDownload() {
+  const d = autoDownload.value;
+  if (!d) return;
+  try {
+    d.jobId = await desktop.downloadMaskModel(d.target);
+  } catch (err: unknown) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+async function cancelModelDownload() {
+  const id = autoDownload.value?.jobId;
+  if (id) await desktop.cancelJob(id).catch(() => false);
+}
+
+/** The job ended: carry on if the model is now on disk; otherwise the job says why. */
+async function onModelDownloaded() {
+  const d = autoDownload.value;
+  if (!d) return;
+  const model = (await desktop.autoMaskModels()).find((m) => m.target === d.target);
+  if (model?.present) {
+    autoDownload.value = null;
+    await runAutoMask(d.target);
+  }
+}
+
+async function runAutoMask(target: AutoTarget) {
+  if (!sessionId.value) return;
+  const seq = ++autoSeq;
+  const session = sessionId.value;
+  autoBusy.value = target;
+  try {
+    const raster = await desktop.makeAutoMask(session, target);
+    // Stopped, or another photograph opened meanwhile: the result is not this one's.
+    if (seq !== autoSeq || session !== sessionId.value) return;
+    const count = masks.value.filter((m) => m.kind.type === 'auto' && m.kind.target === target).length + 1;
+    maskSeq += 1;
+    const mask: Mask = {
+      id: `m${Date.now().toString(36)}${maskSeq}`,
+      name: `${AUTO_LABEL[target]} ${count}`,
+      kind: { type: 'auto', target, mask: raster },
+      invert: false,
+      opacity: 1,
+      enabled: true,
+      adjustments: { ...ZERO_LOCAL },
+      strokes: [],
+    };
+    recipe.value.masks = [...masks.value, mask];
+    selectedMaskId.value = mask.id;
+    // Show what was found: the person judges it before adjusting through it.
+    showMaskOverlay.value = true;
+    onRecipeValueChange();
+  } catch (err: unknown) {
+    if (seq === autoSeq) error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    if (seq === autoSeq) autoBusy.value = null;
+  }
+}
+
+function stopAutoMask() {
+  autoSeq += 1;
+  autoBusy.value = null;
+}
+
+/** The overlay moves gradient handles only; its shape type is the narrower view of `MaskKind`. */
+function updateMaskKind(id: string, kind: { type: string }) {
   const m = masks.value.find((x) => x.id === id);
   if (!m) return;
   m.kind = kind as MaskKind;
@@ -2004,6 +2097,68 @@ onUnmounted(() => {
                   @click="addMask('brush')"
                 >
                   + Brush
+                </button>
+                <button
+                  type="button"
+                  class="secondary"
+                  data-testid="add-subject-mask"
+                  title="Find the main subject (a model, downloaded once)"
+                  :disabled="!sessionId || isReadOnly || masks.length >= MASK_LIMIT || !!autoBusy"
+                  @click="addAutoMask('subject')"
+                >
+                  + Subject
+                </button>
+                <button
+                  type="button"
+                  class="secondary"
+                  data-testid="add-sky-mask"
+                  title="Find the sky (a model, downloaded once)"
+                  :disabled="!sessionId || isReadOnly || masks.length >= MASK_LIMIT || !!autoBusy"
+                  @click="addAutoMask('sky')"
+                >
+                  + Sky
+                </button>
+              </div>
+
+              <div v-if="autoDownload" class="effects-group" data-testid="auto-download">
+                <p class="mask-note">
+                  Finding the {{ AUTO_LABEL[autoDownload.target].toLowerCase() }} needs a model,
+                  downloaded once and kept for every photograph: {{ autoDownload.name }}.
+                </p>
+                <div v-if="!autoDownload.jobId" class="brush-tool__row">
+                  <button
+                    type="button"
+                    class="primary"
+                    data-testid="auto-download-start"
+                    @click="startModelDownload"
+                  >
+                    Download
+                  </button>
+                  <button
+                    type="button"
+                    class="ghost"
+                    data-testid="auto-download-cancel"
+                    @click="autoDownload = null"
+                  >
+                    Not now
+                  </button>
+                </div>
+                <JobProgress
+                  v-else
+                  :job-id="autoDownload.jobId"
+                  :can-cancel="true"
+                  @cancel="cancelModelDownload"
+                  @done="onModelDownloaded"
+                />
+              </div>
+
+              <div v-if="autoBusy" class="auto-busy" role="status" data-testid="auto-busy">
+                <span>
+                  Finding the {{ AUTO_LABEL[autoBusy].toLowerCase() }}<span class="edit-screen__cursor">_</span>
+                  a few seconds
+                </span>
+                <button type="button" class="ghost" data-testid="auto-stop" @click="stopAutoMask">
+                  Stop
                 </button>
               </div>
               <p v-if="masks.length >= MASK_LIMIT" class="mask-note" data-testid="mask-limit">
@@ -3440,6 +3595,21 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.auto-busy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--accent);
+}
+
+.auto-busy button {
+  min-height: 40px;
+  font-size: 12px;
+}
+
 .mask-note {
   margin: 0;
   font-family: var(--font-label);
@@ -3493,6 +3663,12 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-2);
+}
+
+.brush-tool__row button {
+  padding: 0 var(--space-1);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 .mask-name {

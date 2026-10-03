@@ -25,6 +25,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::State;
 
+pub mod auto_masks;
+pub use auto_masks::*;
 pub mod bulk_edit;
 pub use bulk_edit::*;
 pub mod edit;

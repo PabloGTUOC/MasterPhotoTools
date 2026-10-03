@@ -907,7 +907,7 @@ verification case. Every commit can be launched, tested, and visually evaluated.
 
 ## Round 3 — Local adjustments (masks)
 
-> **ED-19 to ED-21 built; ED-22 measured (findings below); ED-23 and ED-24 planned.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
+> **ED-19 to ED-23 built (ED-22 measured); ED-24 planned. MV-22 awaits the Mac Studio.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
 > who chose gradients, a brush, and automatic subject and sky masks. Rounds 1 and 2 excluded
 > local adjustments to keep to whole-frame work; this round lifts that exclusion and nothing
 > else. RapidRAW remains a feature list only, under the Round 2 clean-room declaration.
@@ -1132,6 +1132,38 @@ local adjustments, so most pixels pay for more than one mask.
   Masks panel; refine with the brush.
 - Tests: a stored mask reproduces byte-for-byte at export; a missing or tampered model is
   refused with its reason; offline behaviour; inference never runs during a slider drag.
+
+- **As built** (where it departs from the above, and why):
+  - `media::segment` holds it all: the two model specifications with their pinned hashes, the
+    download (through a `.part` file, renamed only once length and SHA-256 match, so an interrupted
+    or cancelled download leaves nothing that looks like a model), verification before every use,
+    orientation (the stored pixels turned upright for the model, the mask turned back, checked
+    against the geometry engine for all eight EXIF orientations), input preparation and output
+    finishing. Only `run_model` needs ONNX Runtime, behind the `segment` feature.
+  - An automatic mask is `MaskKind::Auto { target, mask }`, the mask an 8-bit PNG in base64 at most
+    1024 px on the long edge, 19–122 KB in a sidecar on the test photographs. It is sampled through
+    the same output-to-stored map as every mask; a damaged one is refused rather than masking the
+    wrong place. Mask compilation now takes a `MaskRasters` source, so a preview session decodes a
+    stored mask once (keyed by a hash of it) as it draws a brush stroke once.
+  - The model sees the **settle proxy** (2560 px), not the source decoded again: the models take
+    1024 px at most. Inference runs in process on a blocking thread (the owner's decision for the
+    32 GB Mac Studio); ONNX Runtime's arena is off and the session dropped with each mask.
+  - **Consent before downloading**: the first press of Subject or Sky states the model and its size
+    and downloads only on Download; the download is a job with progress and Cancel, and the mask is
+    made when it completes. **Stop** discards a mask still being made (the model finishes in the
+    background; its result is ignored). A failure is shown, not swallowed (G10).
+  - A new automatic mask is selected with its overlay on, so the person sees what was found before
+    adjusting through it; the brush refines it.
+  - Tests: `media::segment` (download kept, wrong hash discarded, cancelled leaves nothing, tampered
+    model refused, orientation agrees with the geometry, input normalisation, output finished into the
+    stored frame), `media::edit::raster` (base64 against the standard, PNG round trip, a raster that
+    lies about its size refused, bilinear sampling),
+    `a_stored_automatic_mask_acts_where_it_covers_and_a_damaged_one_is_refused`,
+    `an_automatic_mask_without_its_model_is_refused_by_name` (desktop), and `check:edit` 9n (consent,
+    Not now, cancelled download, download then mask, Stop, failure shown, brush refinement).
+  - **Not tested here:** a model run inside the application; it is exercised through the
+    `auto_mask` example, which calls the same `core` function. MV-22.5 and MV-22.6; the phase report
+    `phase-reports/edit-round-3.md` records the dependency and what is unverified.
 
 #### `ED-24` · Masks across the application
 - Rename carries the larger sidecar; Batch Grade and presets ignore masks (decision 1), and say

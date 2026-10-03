@@ -487,6 +487,21 @@ export class TauriApiClient implements ApiClient {
     return decodePreviewFrame(res);
   }
 
+  /** The automatic-mask models and whether each is downloaded (ED-23). */
+  autoMaskModels(): Promise<MaskModel[]> {
+    return invoke<MaskModel[]>('auto_mask_models');
+  }
+
+  /** Downloads one model as a job; it is kept only if it verifies. */
+  downloadMaskModel(target: AutoTarget): Promise<string> {
+    return invoke<string>('download_mask_model', { target });
+  }
+
+  /** Makes the automatic mask of the open photograph: a few seconds for a subject. */
+  makeAutoMask(sessionId: string, target: AutoTarget): Promise<StoredRaster> {
+    return invoke<StoredRaster>('make_auto_mask', { sessionId, target });
+  }
+
   /** Where one mask acts on the frame `renderPreview` returns for the same arguments. */
   async renderMaskCoverage(
     sessionId: string,
@@ -803,7 +818,27 @@ export type MaskKind =
       angle: number;
       feather: number;
     }
-  | { type: 'brush' };
+  | { type: 'brush' }
+  | { type: 'auto'; target: AutoTarget; mask: StoredRaster };
+
+/** What an automatic mask finds (ED-23). */
+export type AutoTarget = 'subject' | 'sky';
+
+/** An automatic mask's pixels as the sidecar keeps them: 8-bit PNG, base64, stored frame. */
+export interface StoredRaster {
+  width: number;
+  height: number;
+  png: string;
+  model_sha256: string;
+}
+
+/** One automatic-mask model, and whether it is on disk yet. */
+export interface MaskModel {
+  target: AutoTarget;
+  name: string;
+  present: boolean;
+  bytes: number;
+}
 
 /** A brush stroke in stored-frame coordinates; `radius` is a fraction of the long edge (ED-21). */
 export interface BrushStroke {

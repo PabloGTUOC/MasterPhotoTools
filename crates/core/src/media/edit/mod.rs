@@ -12,6 +12,7 @@ pub mod lut;
 pub mod masks;
 pub mod pipeline;
 pub mod preview;
+pub mod raster;
 pub mod vignette;
 
 pub use brush::{BrushCache, BrushRaster, Stroke};
@@ -28,7 +29,7 @@ pub use grain::{CompiledGrain, FilmGrain};
 pub use hsl::{CompiledHslTable, HslAdjustments, HslBand};
 pub use looks::{aces_narkowicz, apply_looks_linear, LookEffects, HALATION_TINT};
 pub use lut::{Lut, MAX_LUT_SIZE, MIN_LUT_SIZE};
-pub use masks::{CompiledMasks, LocalAdjustments, Mask, MaskKind};
+pub use masks::{AutoTarget, CompiledMasks, LocalAdjustments, Mask, MaskKind};
 pub use pipeline::{
     apply_recipe, apply_recipe_with_orientation, decode_image, linear_to_srgb, linear_to_u16,
     linear_to_u8, srgb_to_linear, tone_weights, u16_to_linear, u8_to_linear, validate_lut,
@@ -39,4 +40,5 @@ pub use preview::{
     downscale_image_buffer, encode_preview_frame, render_rgba_frame, PreviewSession, PreviewStage,
     RgbaFrame, DRAG_MAX_EDGE, PREVIEW_FRAME_HEADER_LEN, SETTLE_MAX_EDGE,
 };
+pub use raster::{CoverageRaster, StoredRaster};
 pub use vignette::{CompiledVignette, Vignette};

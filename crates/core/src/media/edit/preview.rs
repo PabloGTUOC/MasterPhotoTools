@@ -37,8 +37,9 @@
 use super::brush::{BrushCache, BrushRaster};
 use super::curves::ToneCurvesTable;
 use super::lut::Lut;
-use super::masks::{CompiledMasks, LocalAdjustments, Mask};
+use super::masks::{CompiledMasks, LocalAdjustments, Mask, MaskRasters};
 use super::pipeline::{linear_to_srgb, validate_lut, AdjustmentRecipe, ImageBuffer, LinearBuffer};
+use super::raster::{CoverageRaster, StoredRaster};
 use crate::error::Error;
 use crate::media::histogram::{histogram, Histogram};
 use fast_image_resize as fr;
@@ -188,6 +189,38 @@ pub struct PreviewSession {
     pub geom_recompute_count: AtomicUsize,
     /// Brush rasters per mask and stage, so painting redraws only the new segments (ED-21).
     brushes: Mutex<HashMap<(String, PreviewStage), BrushCache>>,
+    /// Decoded automatic masks per mask, with a hash of the PNG they came from (ED-23).
+    stored: Mutex<HashMap<String, (u64, Arc<CoverageRaster>)>>,
+}
+
+/// A session's caches, offered to mask compilation for one stage.
+struct SessionRasters<'a> {
+    session: &'a PreviewSession,
+    stage: PreviewStage,
+    w: u32,
+    h: u32,
+}
+
+impl MaskRasters for SessionRasters<'_> {
+    fn brush(&mut self, m: &Mask) -> Arc<BrushRaster> {
+        self.session.brush_raster(m, self.stage, self.w, self.h)
+    }
+
+    fn stored(&mut self, m: &Mask, raster: &StoredRaster) -> Result<Arc<CoverageRaster>, Error> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        raster.hash(&mut hasher);
+        let key = hasher.finish();
+        let mut cache = self.session.stored.lock().unwrap();
+        if let Some((k, r)) = cache.get(&m.id) {
+            if *k == key {
+                return Ok(r.clone());
+            }
+        }
+        let decoded = Arc::new(raster.decode()?);
+        cache.insert(m.id.clone(), (key, decoded.clone()));
+        Ok(decoded)
+    }
 }
 
 impl PreviewSession {
@@ -237,6 +270,7 @@ impl PreviewSession {
             cached_geom: Mutex::new(None),
             geom_recompute_count: AtomicUsize::new(0),
             brushes: Mutex::new(HashMap::new()),
+            stored: Mutex::new(HashMap::new()),
         })
     }
 
@@ -347,6 +381,20 @@ impl PreviewSession {
         }
     }
 
+    /// The photograph's stored pixels, 8-bit sRGB, from the settle proxy, for an automatic
+    /// mask (ED-23). The models see 1024 px at most, so the proxy (2560 on the long edge)
+    /// loses them nothing, and the source is not decoded a second time.
+    pub fn segmentation_input(&self) -> image::RgbImage {
+        let p = &self.settle_linear;
+        let bytes: Vec<u8> = p
+            .data
+            .iter()
+            .map(|&v| super::pipeline::linear_to_u8(v))
+            .collect();
+        image::RgbImage::from_raw(p.width, p.height, bytes)
+            .expect("a linear proxy holds three values per pixel")
+    }
+
     fn stored_dims(&self, stage: PreviewStage) -> (u32, u32) {
         match stage {
             PreviewStage::Drag => (self.drag_linear.width, self.drag_linear.height),
@@ -367,13 +415,22 @@ impl PreviewSession {
             .lock()
             .unwrap()
             .retain(|(id, _), _| recipe.masks.iter().any(|m| &m.id == id));
-        CompiledMasks::compile_with_brushes(
+        self.stored
+            .lock()
+            .unwrap()
+            .retain(|id, _| recipe.masks.iter().any(|m| &m.id == id));
+        CompiledMasks::compile_with(
             &recipe.masks,
             geometry,
             w,
             h,
             self.orientation,
-            &mut |m| self.brush_raster(m, stage, w, h),
+            &mut SessionRasters {
+                session: self,
+                stage,
+                w,
+                h,
+            },
         )
     }
 
@@ -424,13 +481,18 @@ impl PreviewSession {
         };
         let coverage = super::masks::coverage_frame(
             mask,
-            &mut |m| self.brush_raster(m, stage, stored_w, stored_h),
+            &mut SessionRasters {
+                session: self,
+                stage,
+                w: stored_w,
+                h: stored_h,
+            },
             affine,
             stored_w,
             stored_h,
             out_w,
             out_h,
-        );
+        )?;
         Ok((out_w, out_h, coverage))
     }
 }

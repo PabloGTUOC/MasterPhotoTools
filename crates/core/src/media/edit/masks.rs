@@ -26,6 +26,7 @@
 
 use super::brush::{BrushRaster, Stroke};
 use super::geometry::Geometry;
+use super::raster::{CoverageRaster, StoredRaster};
 use crate::error::Error;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -89,6 +90,42 @@ pub enum MaskKind {
     },
     /// No shape of its own: covered only where painted (ED-21).
     Brush,
+    /// Made by a model from the photograph's own pixels and stored with it (`raster`, ED-23).
+    Auto {
+        target: AutoTarget,
+        mask: StoredRaster,
+    },
+}
+
+/// What an automatic mask finds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoTarget {
+    Subject,
+    Sky,
+}
+
+/// Where compiling a mask gets its pixels: the brush rasters of a mask's strokes and the
+/// decoded raster of an automatic mask. A preview session caches both so a frame does not
+/// redraw a stroke or decode a PNG it has already seen; an export computes them once.
+pub trait MaskRasters {
+    fn brush(&mut self, m: &Mask) -> Arc<BrushRaster>;
+    fn stored(&mut self, m: &Mask, raster: &StoredRaster) -> Result<Arc<CoverageRaster>, Error>;
+}
+
+/// Computes everything afresh: what an export, which renders once, needs.
+pub struct Uncached {
+    pub stored_w: u32,
+    pub stored_h: u32,
+}
+
+impl MaskRasters for Uncached {
+    fn brush(&mut self, m: &Mask) -> Arc<BrushRaster> {
+        super::brush::rasterise(&m.strokes, self.stored_w, self.stored_h)
+    }
+    fn stored(&mut self, _m: &Mask, raster: &StoredRaster) -> Result<Arc<CoverageRaster>, Error> {
+        Ok(Arc::new(raster.decode()?))
+    }
 }
 
 fn default_feather() -> f32 {
@@ -142,7 +179,7 @@ fn smoothstep(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Shape {
     /// Origin and direction scaled so `t = (p − start)·dir` runs 0 → 1 between the lines.
     Linear { sx: f32, sy: f32, dx: f32, dy: f32 },
@@ -156,8 +193,10 @@ enum Shape {
         inner: f32,
         inv_feather: f32,
     },
-    /// A degenerate shape (a gradient with no length): covers nothing.
+    /// A degenerate shape (a gradient with no length), or a brush mask's: covers nothing.
     Empty,
+    /// An automatic mask's stored pixels, sampled in stored-normalised coordinates.
+    Raster(Arc<CoverageRaster>),
 }
 
 #[derive(Debug, Clone)]
@@ -209,6 +248,7 @@ impl CompiledMask {
                 }
             }
             Shape::Empty => 0.0,
+            Shape::Raster(ref r) => r.sample(x / self.ax, y / self.ay),
         }
     }
 
@@ -253,20 +293,25 @@ impl CompiledMasks {
         stored_h: u32,
         orientation: u32,
     ) -> Result<Option<Self>, Error> {
-        Self::compile_with_brushes(masks, geometry, stored_w, stored_h, orientation, &mut |m| {
-            super::brush::rasterise(&m.strokes, stored_w, stored_h)
-        })
+        Self::compile_with(
+            masks,
+            geometry,
+            stored_w,
+            stored_h,
+            orientation,
+            &mut Uncached { stored_w, stored_h },
+        )
     }
 
-    /// As `compile`, with the brush rasters of masks that have strokes supplied by `brush`
-    /// — a preview session's cache, so painting redraws only what changed.
-    pub fn compile_with_brushes(
+    /// As `compile`, with brush and stored rasters from `rasters` — a preview session's
+    /// cache, so painting redraws only what changed and a stored mask is decoded once.
+    pub fn compile_with(
         masks: &[Mask],
         geometry: Option<&Geometry>,
         stored_w: u32,
         stored_h: u32,
         orientation: u32,
-        brush: &mut dyn FnMut(&Mask) -> Arc<BrushRaster>,
+        rasters: &mut dyn MaskRasters,
     ) -> Result<Option<Self>, Error> {
         let active: Vec<&Mask> = masks.iter().filter(|m| !m.is_identity()).collect();
         if active.is_empty() {
@@ -278,8 +323,8 @@ impl CompiledMasks {
 
         let compiled = active
             .iter()
-            .map(|m| compile_mask(m, ax, ay, brush))
-            .collect::<Vec<_>>();
+            .map(|m| compile_mask(m, ax, ay, rasters))
+            .collect::<Result<Vec<_>, Error>>()?;
 
         let any = |f: fn(&LocalAdjustments) -> bool| compiled.iter().any(|m| f(&m.adjustments));
         Ok(Some(Self {
@@ -359,20 +404,20 @@ fn aspect(stored_w: u32, stored_h: u32) -> (f32, f32) {
 /// so the overlay cannot disagree with the effect.
 pub fn coverage_frame(
     mask: &Mask,
-    brush: &mut dyn FnMut(&Mask) -> Arc<BrushRaster>,
+    rasters: &mut dyn MaskRasters,
     affine: [f32; 6],
     stored_w: u32,
     stored_h: u32,
     out_w: u32,
     out_h: u32,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, Error> {
     use rayon::prelude::*;
     let (ax, ay) = aspect(stored_w, stored_h);
     let one = CompiledMasks {
         affine,
         ax,
         ay,
-        masks: vec![compile_mask(mask, ax, ay, brush)],
+        masks: vec![compile_mask(mask, ax, ay, rasters)?],
         touches_tone: false,
         touches_contrast: false,
         touches_saturation: false,
@@ -394,7 +439,7 @@ pub fn coverage_frame(
                 };
             }
         });
-    out
+    Ok(out)
 }
 
 /// A position along one output row, in aspect-scaled stored coordinates.
@@ -419,26 +464,31 @@ fn compile_mask(
     m: &Mask,
     ax: f32,
     ay: f32,
-    brush: &mut dyn FnMut(&Mask) -> Arc<BrushRaster>,
-) -> CompiledMask {
-    CompiledMask {
-        shape: compile_shape(&m.kind, ax, ay),
+    rasters: &mut dyn MaskRasters,
+) -> Result<CompiledMask, Error> {
+    let shape = match &m.kind {
+        MaskKind::Auto { mask, .. } => Shape::Raster(rasters.stored(m, mask)?),
+        kind => compile_shape(kind, ax, ay),
+    };
+    Ok(CompiledMask {
+        shape,
         invert: m.invert,
         opacity: m.opacity.clamp(0.0, 1.0),
         adjustments: m.adjustments,
         brush: if m.strokes.is_empty() {
             None
         } else {
-            Some(brush(m))
+            Some(rasters.brush(m))
         },
         ax,
         ay,
-    }
+    })
 }
 
 fn compile_shape(kind: &MaskKind, ax: f32, ay: f32) -> Shape {
     match *kind {
-        MaskKind::Brush => Shape::Empty,
+        // Resolved in `compile_mask`, which can reach the decoded pixels.
+        MaskKind::Brush | MaskKind::Auto { .. } => Shape::Empty,
         MaskKind::Linear { start, end } => {
             let (sx, sy) = (start[0] * ax, start[1] * ay);
             let (vx, vy) = ((end[0] - start[0]) * ax, (end[1] - start[1]) * ay);

@@ -136,6 +136,21 @@ impl Config {
             })
     }
 
+    /// Directory where the automatic-mask models are kept once downloaded (ED-23).
+    ///
+    /// Beside the database, like the LUTs and presets; never bundled with the
+    /// application, since the two models are 400 MB together.
+    pub fn models_dir(&self) -> PathBuf {
+        self.database
+            .parent()
+            .map(|p| p.join("models"))
+            .unwrap_or_else(|| {
+                dirs::data_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("masterphototools/models")
+            })
+    }
+
     /// Directory where presets are stored (ED-17).
     ///
     /// Stored alongside the application database in the app data directory

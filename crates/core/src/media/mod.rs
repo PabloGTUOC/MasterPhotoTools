@@ -7,6 +7,7 @@ pub mod image_ops;
 pub mod jpeg;
 pub mod meta;
 pub mod raw;
+pub mod segment;
 pub mod slices;
 pub mod text;
 

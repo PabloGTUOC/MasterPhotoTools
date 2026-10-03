@@ -907,7 +907,7 @@ verification case. Every commit can be launched, tested, and visually evaluated.
 
 ## Round 3 — Local adjustments (masks)
 
-> **ED-19 to ED-21 built; ED-22 to ED-24 planned.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
+> **ED-19 to ED-21 built; ED-22 measured (findings below); ED-23 and ED-24 planned.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
 > who chose gradients, a brush, and automatic subject and sky masks. Rounds 1 and 2 excluded
 > local adjustments to keep to whole-frame work; this round lifts that exclusion and nothing
 > else. RapidRAW remains a feature list only, under the Round 2 clean-room declaration.
@@ -1083,6 +1083,41 @@ local adjustments, so most pixels pay for more than one mask.
 - Settle the runtime, MSRV and models above; measure on the Mac; write the findings and the
   dependency reasons into the phase report. Nothing ships from this step; the owner approves
   the dependency before ED-23.
+
+- **Findings** (2026-10-03, this Mac: Apple Silicon, 24 GB, macOS; release build of a scratch
+  program outside the repository; four Wikimedia Commons photographs, 2912–3840 px):
+  - **Owner's decisions:** ONNX Runtime through `ort` (option c, over `tract`); BiRefNet lite at
+    **full precision**; the U²-Net sky model. `ort` is `2.0.0-rc.13` (MIT or Apache-2.0), a release
+    candidate, and needs **Rust 1.88**: the MSRV rises from 1.80 to 1.88 at ED-23.
+  - **Linking:** with `ort`'s default features ONNX Runtime is linked **statically**; the binary
+    depends only on system frameworks (Foundation, CoreML). No library is added to the bundle.
+  - **Models** (SHA-256 to pin): BiRefNet lite `onnx/model.onnx`, 224,005,088 bytes,
+    `5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333`; input `input_image`
+    [1, 3, 1024, 1024] (ImageNet mean and standard deviation), output logits [1, 1, 1024, 1024].
+    Sky `skyseg.onnx`, 175,997,079 bytes,
+    `ab9c34c64c3d821220a2886a4a06da4642ffa14d5b30e8d5339056a089aa1d39`; input [1, 3, 320, 320],
+    seven outputs (U²-Net side outputs; the first is the fused mask), normalised by min and max.
+    Licences: MIT in each project's own `LICENSE` (ZhengPeng7/BiRefNet; xiongzhu666/Sky-Segmentation-
+    and-Post-processing).
+  - **Speed on the CPU:** subject 2.1–3.1 s a photograph (median about 2.5 s), loading 0.8–1.0 s;
+    sky 0.14 s, loading 0.06 s. Within the 3 s target.
+  - **CoreML does not help and is not used.** With default settings (all units, Neural Engine
+    included) both models **hung** at 0% CPU for 20 minutes. The ML Program format cannot compile
+    BiRefNet (`Required param 'pad' is missing` in a deformable-convolution block). The older format
+    on the GPU ran BiRefNet at 84–102 s a photograph and 9 GB. The sky model on the GPU ran at
+    73–83 ms against 140 ms on the CPU, not worth the hang risk. ED-23 uses the CPU provider only.
+  - **Memory: the subject model peaks at about 10 GB** for one 1024 × 1024 inference (loading alone
+    is 0.6 GB); turning off ONNX Runtime's arena and memory pattern does not change it materially
+    (10.6 GB against 13.2 GB). The sky model peaks under 2 GB. On this 24 GB Mac that is a few
+    seconds' transient load; on a 16 GB Mac it would swap. Proposed for ED-23: run inference in a
+    short-lived worker process (the desktop binary re-invoked with a flag, the logic in `core`) so
+    the memory is returned the moment it finishes and a failure cannot take the editor with it.
+  - **Quality on the test photographs:** the subject mask on a dog in long grass is excellent (ears,
+    fur edge, legs, grass excluded); given a landscape it takes the mountain and lake, which is what
+    "the main subject" means there. The sky mask is excellent on a city skyline (around spires and
+    distant hills) and on a lake panorama covers the blue sky but only partly the band of low cloud
+    at the horizon, the weakness the model's author documents: the brush is the remedy. Judged on
+    the owner's own photographs before ED-23 is built.
 
 #### `ED-23` · Subject and sky masks
 - `media::segment`: download and verify, run inference off the interface thread with progress

@@ -150,7 +150,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 fn decode_hex(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() % 2 != 0 || hex.is_empty() {
+    if !hex.len().is_multiple_of(2) || hex.is_empty() {
         return None;
     }
     (0..hex.len())

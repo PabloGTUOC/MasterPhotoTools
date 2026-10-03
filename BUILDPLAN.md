@@ -71,7 +71,7 @@ read from environment variables; the repository holds only `.env.example`.
 
 | Requirement | Version | Notes |
 |---|---|---|
-| Rust | stable, ≥ 1.80 | `rustfmt` and `clippy` components required |
+| Rust | stable, ≥ 1.88 (1.80 until ED-23 of the edit plan) | `rustfmt` and `clippy` components required |
 | Node.js | ≥ 20 | For the front ends |
 | `exiftool` | ≥ 12 | Metadata **writing** only |
 | SQLite | bundled via `rusqlite` | No system dependency |

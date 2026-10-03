@@ -158,7 +158,7 @@ pub fn scan_files(root: &Path, progress: &dyn Progress) -> Result<ScannedFiles, 
             // Reporting every file would swamp a subscriber on a 400-shot card;
             // every 25 is enough to show a moving bar.
             let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            if n % 25 == 0 || n == total {
+            if n.is_multiple_of(25) || n == total {
                 progress.report(n, total, "reading the card");
             }
 

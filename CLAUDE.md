@@ -96,7 +96,7 @@ npm --prefix frontend/desktop run check:bulk-lut # ED-8 acceptance & lock discip
 `frontend/desktop/layout-proof/`. They assert **numbers**, not shapes — a change that makes the grid
 or preview slower or unwindows it fails them.
 
-MSRV is **1.80**, enforced by clippy. `std::iter::repeat_n` and friends are too new.
+MSRV is **1.88**, enforced by clippy (raised from 1.80 by ED-23: ONNX Runtime through `ort` 2.0 needs it).
 
 **`Cargo.toml` optimises dependencies *and* `phototools-core` in the dev profile.** Without it a
 36 MP TIFF took 7 s to convert instead of 0.26 s — and optimising dependencies alone was not

@@ -115,7 +115,7 @@ impl Default for Geometry {
 impl Geometry {
     /// Returns true if all geometric transforms are at rest (identity).
     pub fn is_identity(&self) -> bool {
-        let crop_id = self.crop.as_ref().map_or(true, |c| c.is_identity());
+        let crop_id = self.crop.as_ref().is_none_or(|c| c.is_identity());
         crop_id
             && (self.rotate % 360 == 0)
             && self.straighten.abs() < 1e-4

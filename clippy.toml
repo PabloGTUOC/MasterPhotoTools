@@ -1,2 +1,3 @@
-# Minimum supported Rust version — build plan §3 requires stable >= 1.80.
-msrv = "1.80.0"
+# Minimum supported Rust version. Raised from 1.80 to 1.88 by ED-23: ONNX Runtime through
+# `ort` 2.0 needs 1.88 (edit plan, ED-22 findings; owner's decision, 2026-10-03).
+msrv = "1.88.0"

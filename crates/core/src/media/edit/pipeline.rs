@@ -142,13 +142,13 @@ impl AdjustmentRecipe {
             && self.blacks == 0.0
             && self.brightness == 0.0
             && self.hue == 0.0
-            && self.curves.as_ref().map_or(true, |c| c.is_identity())
-            && self.hsl.as_ref().map_or(true, |h| h.is_identity())
-            && self.grading.as_ref().map_or(true, |g| g.is_identity())
-            && self.geometry.as_ref().map_or(true, |g| g.is_identity())
-            && self.vignette.as_ref().map_or(true, |v| v.is_identity())
-            && self.grain.as_ref().map_or(true, |g| g.is_identity())
-            && self.looks.as_ref().map_or(true, |l| l.is_identity())
+            && self.curves.as_ref().is_none_or(|c| c.is_identity())
+            && self.hsl.as_ref().is_none_or(|h| h.is_identity())
+            && self.grading.as_ref().is_none_or(|g| g.is_identity())
+            && self.geometry.as_ref().is_none_or(|g| g.is_identity())
+            && self.vignette.as_ref().is_none_or(|v| v.is_identity())
+            && self.grain.as_ref().is_none_or(|g| g.is_identity())
+            && self.looks.as_ref().is_none_or(|l| l.is_identity())
             && self.masks.iter().all(|m| m.is_identity())
     }
 }

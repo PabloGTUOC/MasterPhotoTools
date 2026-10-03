@@ -96,7 +96,7 @@ impl LookEffects {
             && self
                 .tone_mapper
                 .as_ref()
-                .map_or(true, |tm| tm.is_empty() || tm == "none")
+                .is_none_or(|tm| tm.is_empty() || tm == "none")
     }
 
     #[inline]

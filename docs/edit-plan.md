@@ -1112,6 +1112,13 @@ local adjustments, so most pixels pay for more than one mask.
     seconds' transient load; on a 16 GB Mac it would swap. Proposed for ED-23: run inference in a
     short-lived worker process (the desktop binary re-invoked with a flag, the logic in `core`) so
     the memory is returned the moment it finishes and a failure cannot take the editor with it.
+    **Decided (owner, 2026-10-03): no worker process.** The application runs on a Mac Studio, M1 Max,
+    32 GB, where a transient 10 GB is acceptable. Inference runs in process, off the interface
+    thread, with ONNX Runtime's arena off and the session dropped when the mask is made, so the
+    memory is not held between masks.
+  - **These timings are from an M4 Pro** (8 performance and 4 efficiency cores). The M1 Max has older
+    cores (8 performance, 2 efficiency); the subject mask is expected to take longer there and is
+    measured on it as part of MV-22, not assumed.
   - **Quality on the test photographs:** the subject mask on a dog in long grass is excellent (ears,
     fur edge, legs, grass excluded); given a landscape it takes the mountain and lake, which is what
     "the main subject" means there. The sky mask is excellent on a city skyline (around spires and

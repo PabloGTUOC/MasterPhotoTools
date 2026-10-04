@@ -528,6 +528,7 @@ G8 asks for the reason, not just the addition.
 | `base64` | `server`, `desktop` | F4's preview carries three images across a process boundary — an HTTP response or a Tauri command result — and both front ends put them straight into an `<img src>`. Data URLs avoid a second round trip per image, and a preview that needed three more requests for something looked at once would be worse. |
 | `image` | `server`, dev only | One test builds a two-panel fixture with a known divider so the preview route can be asserted against a real image rather than a fabricated JSON body. |
 | `tauri-plugin-autostart` | `desktop` | Launch at login (build plan Phase 14). §2.6 names no mechanism and the macOS one is a LaunchAgent. |
+| `ort` `=2.0.0-rc.13` | `core`, optional (`segment`), enabled by `desktop` | Automatic subject and sky masks through ONNX Runtime (edit plan ED-22, ED-23); the owner's choice. Raised the MSRV to 1.88. Details and the two models' hashes in [`phase-reports/edit-round-3.md`](phase-reports/edit-round-3.md). |
 
 All three were already in `Cargo.lock` through existing transitive dependencies, so none adds a
 tree that was not being compiled.

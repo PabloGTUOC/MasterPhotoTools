@@ -1180,6 +1180,84 @@ fn f3_rename_carries_companion_photoedit_sidecar() {
     );
 }
 
+/// A version 3 sidecar, with an automatic mask's stored pixels and brush strokes, follows its
+/// photograph through Rename byte for byte and still loads with every mask (ED-24).
+#[test]
+fn f3_rename_carries_masks_in_the_sidecar() {
+    use phototools_core::media::edit::{
+        AdjustmentRecipe, AutoTarget, LocalAdjustments, Mask, MaskKind, StoredRaster, Stroke,
+    };
+    use phototools_core::tools::edit::{load_recipe, save_recipe, sidecar_path};
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("IMG_0002.jpg", 120, 80);
+    // A mask the size the models store, with detail, so the sidecar is as large as in use.
+    let (w, h) = (1024u32, 683u32);
+    let data: Vec<u8> = (0..w * h)
+        .map(|i| (((i % w) * 7 + (i / w) * 13) % 256) as u8)
+        .collect();
+    let auto = Mask {
+        id: "subject".into(),
+        name: "Subject 1".into(),
+        kind: MaskKind::Auto {
+            target: AutoTarget::Subject,
+            mask: StoredRaster::encode(w, h, &data, "sha").unwrap(),
+        },
+        invert: false,
+        opacity: 0.8,
+        enabled: true,
+        adjustments: LocalAdjustments {
+            exposure: 0.4,
+            ..Default::default()
+        },
+        strokes: vec![Stroke {
+            points: (0..120).map(|i| [0.2 + i as f32 * 0.005, 0.5]).collect(),
+            radius: 0.03,
+            feather: 0.5,
+            flow: 1.0,
+            erase: true,
+        }],
+    };
+    let recipe = AdjustmentRecipe {
+        masks: vec![auto],
+        ..AdjustmentRecipe::default()
+    };
+    let sidecar = save_recipe(&img, &recipe).unwrap();
+    let original_bytes = fs::read(&sidecar).unwrap();
+    assert!(
+        original_bytes.len() > 50_000,
+        "a realistic sidecar: {} bytes",
+        original_bytes.len()
+    );
+
+    let plan = BatchRenamerTool
+        .plan(&BatchRenameParams {
+            paths: vec![img.clone()],
+            date: Some("20240101".into()),
+            subject: Some("Masks".into()),
+            camera: None,
+            film: None,
+            order: RenameOrder::Numeric,
+        })
+        .unwrap()
+        .data;
+    let target_sidecar = sidecar_path(&plan.actions[0].target);
+    let summary = BatchRenamerTool
+        .apply(plan, &InMemoryProgress::new())
+        .unwrap()
+        .data;
+
+    assert!(summary.failures.is_empty());
+    assert_eq!(fs::read(&target_sidecar).unwrap(), original_bytes);
+    let loaded = load_recipe(&target_sidecar).unwrap();
+    assert_eq!(loaded.version, 3);
+    assert_eq!(loaded.masks, recipe.masks);
+    let MaskKind::Auto { mask, .. } = &loaded.masks[0].kind else {
+        panic!("the automatic mask should load as one");
+    };
+    assert_eq!(mask.decode().unwrap().data, data);
+}
+
 #[test]
 fn f3_rename_plans_a_conflict_when_the_sidecar_target_exists() {
     use phototools_core::media::edit::AdjustmentRecipe;

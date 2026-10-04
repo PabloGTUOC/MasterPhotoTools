@@ -224,7 +224,7 @@ const submitLabel = computed(() => {
             @input="onNameInput"
           />
           <p v-if="dialog.kind === 'save'" class="preset-dialog__hint">
-            Crop, rotation and flip stay with each photograph and are not saved.
+            Crop, rotation, flip and masks stay with each photograph and are not saved.
           </p>
           <p
             v-if="dialog.kind === 'save' && dialog.replacing"

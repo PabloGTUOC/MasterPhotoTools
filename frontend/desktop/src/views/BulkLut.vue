@@ -511,7 +511,8 @@ onMounted(() => {
         </select>
         <p class="muted preset-note">
           The whole look is applied: tone, colour, curves, grading, effects and any LUT the
-          preset uses. Crop and rotation are never part of a preset.
+          preset uses. Crop, rotation and masks are never part of a preset: they belong to the
+          photograph they were made on.
         </p>
       </div>
 

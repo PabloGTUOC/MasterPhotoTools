@@ -907,7 +907,7 @@ verification case. Every commit can be launched, tested, and visually evaluated.
 
 ## Round 3 — Local adjustments (masks)
 
-> **ED-19 to ED-23 built (ED-22 measured); ED-24 planned. MV-22 awaits the Mac Studio.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
+> **Built: ED-19 to ED-24 (ED-22 measured). MV-22 awaits the Mac Studio.** Asked for by the owner after trying Round 2 on the Mac (2026-10-02),
 > who chose gradients, a brush, and automatic subject and sky masks. Rounds 1 and 2 excluded
 > local adjustments to keep to whole-frame work; this round lifts that exclusion and nothing
 > else. RapidRAW remains a feature list only, under the Round 2 clean-room declaration.
@@ -1170,6 +1170,19 @@ local adjustments, so most pixels pay for more than one mask.
   so where a person would otherwise expect them; sidecar size reported in the phase report.
 - Manual checks **MV-22**: a graduated sky on a landscape, a radial on a portrait, a brushed
   dodge and burn, an automatic subject refined with the brush, and preview against export.
+- **As built:**
+  - **Rename** moves the sidecar as a file, so masks travel intact: asserted with a version 3
+    sidecar holding a full-size automatic mask and a 120-point stroke
+    (`f3_rename_carries_masks_in_the_sidecar`), byte for byte, and loading with every mask. Card
+    delivery never meets a sidecar (cards are read-only) and publishing skips them, as before.
+  - **Said where a person would expect otherwise:** the Save as preset dialog ("Crop, rotation, flip
+    and masks stay with each photograph"), the confirmation after applying a preset or pasting
+    ("Crop, rotation and masks kept", asserted in `check:edit`), and Batch Grade's preset note.
+  - **Sidecar size:** an automatic mask adds 19–122 KB on the test photographs (a smooth mask
+    compresses well; the synthetic worst case in the Rename test exceeds 50 KB); a brush stroke adds
+    about 12 bytes a point, a few kilobytes a stroke after thinning. Nothing in the application
+    reads sidecars in bulk, so the size costs disk, not time.
+  - Manual checks: MV-22 in `manual-verification.md`.
 
 ## Not in this plan (Rounds 1 & 2)
 

@@ -784,7 +784,7 @@ async function applyPreset(name: string) {
   try {
     const preset = await desktop.loadPreset(name);
     selectedPreset.value = name;
-    replaceLook(preset, `Applied preset ${name}. Crop and rotation kept.`);
+    replaceLook(preset, `Applied preset ${name}. Crop, rotation and masks kept.`);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     error.value = `Couldn't apply preset ${name}: ${msg}`;
@@ -822,7 +822,7 @@ function pasteSettings() {
   const copied = copiedSettings.value;
   if (!copied || !sessionId.value) return;
   selectedPreset.value = null;
-  replaceLook(copied.recipe, `Pasted settings from ${copied.from}. Crop and rotation kept.`);
+  replaceLook(copied.recipe, `Pasted settings from ${copied.from}. Crop, rotation and masks kept.`);
 }
 
 async function openImage(path: string) {

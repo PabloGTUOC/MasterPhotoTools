@@ -1603,7 +1603,9 @@ try {
   if (v.exposure !== 1.2 || v.straighten !== 2 || lastRender.exposure !== 1.2 || lastRender.straighten !== 2) {
     failures.push(`Applying a preset should set exposure 1.2 and keep straighten 2; got controls ${JSON.stringify(v)}, render ${JSON.stringify(lastRender)}`);
   }
-  if (!v.notice.includes('Applied preset Warm')) failures.push(`No notice after applying a preset: "${v.notice}"`);
+  if (!v.notice.includes('Applied preset Warm') || !v.notice.includes('masks kept')) {
+    failures.push(`Applying a preset should say what it kept, masks included: "${v.notice}"`);
+  }
 
   await page.locator('button[data-testid="edit-notice-undo"]').click();
   await page.waitForTimeout(100);

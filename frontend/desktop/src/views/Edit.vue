@@ -11,7 +11,7 @@
  * - Sidecar safety: Unreadable sidecars disable autosave to avoid overwriting existing edits.
  * - Full export: `exportEditedImage` with collision protection and destination validation.
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type {
   AdjustmentRecipe,
   AutoTarget,
@@ -586,6 +586,11 @@ function handleKeyDown(e: KeyboardEvent) {
       return;
     }
   }
+  // Esc leaves a mask's editing once painting is not in the way (painting stops first).
+  if (e.key === 'Escape' && selectedMaskId.value && !textIsInPlay() && !document.querySelector('[role="dialog"]')) {
+    finishMaskEditing();
+    return;
+  }
   const mod = e.metaKey || e.ctrlKey;
   if (mod && !e.shiftKey && !e.altKey && (e.key === 'c' || e.key === 'v')) {
     if (textIsInPlay() || !sessionId.value || document.querySelector('[role="dialog"]')) return;
@@ -1033,6 +1038,12 @@ function onStrokeEnd() {
   onRecipeValueChange();
 }
 
+/** Back to the whole photograph: the mask stays, only its editing ends. */
+function finishMaskEditing() {
+  painting.value = false;
+  selectedMaskId.value = null;
+}
+
 function undoStroke() {
   const m = selectedMask.value;
   if (!m?.strokes?.length) return;
@@ -1053,8 +1064,25 @@ function nudgeBrush(delta: number) {
   brushSize.value = Math.min(BRUSH_MAX, Math.max(BRUSH_MIN, +(brushSize.value + delta).toFixed(1)));
 }
 
-watch(selectedMaskId, (id) => {
-  if (!id) painting.value = false;
+watch(selectedMaskId, async (id, previous) => {
+  if (!id) {
+    painting.value = false;
+    return;
+  }
+  // The mask's controls appear at the top of the panel; when it was chosen from further down
+  // (the list, a pin on the photograph, + Radial), bring them into view just below the pinned
+  // histogram, or the person would not see them arrive.
+  if (id === previous) return;
+  await nextTick();
+  const panel = document.querySelector<HTMLElement>('.adjustment-panel');
+  const block = document.querySelector<HTMLElement>('[data-testid="mask-editing"]');
+  const hist = document.querySelector<HTMLElement>('.adjustment-panel__histogram');
+  if (!panel || !block) return;
+  const gap = 8;
+  const offset =
+    block.getBoundingClientRect().top - panel.getBoundingClientRect().top -
+    (hist?.getBoundingClientRect().height ?? 0) - gap;
+  panel.scrollTop += offset;
 });
 
 async function addAutoMask(target: AutoTarget) {
@@ -1919,11 +1947,171 @@ onUnmounted(() => {
           :histogram="histogram"
         />
 
+        <!-- ED-20: a selected mask takes the panel, as in every darkroom application, so its
+             sliders cannot be mistaken for the whole photograph's. -->
+        <section v-if="selectedMask" class="mask-editing" data-testid="mask-editing">
+          <header class="mask-editing__head">
+            <span class="mask-editing__title">
+              Editing mask <strong data-testid="mask-editing-name">{{ selectedMask.name }}</strong>
+            </span>
+            <button type="button" class="primary" data-testid="mask-done" @click="finishMaskEditing">
+              Done
+            </button>
+          </header>
+          <p class="mask-note">
+            These sliders act only where the mask covers. Done (or Esc) returns to the whole
+            photograph.
+          </p>
+        <div class="effects-group" data-testid="mask-controls">
+          <label class="mask-name">
+            <span class="effects-group-title">Name</span>
+            <input
+              type="text"
+              class="mask-name__input"
+              maxlength="40"
+              :value="selectedMask.name"
+              data-testid="mask-name-input"
+              @change="(e) => renameMask(selectedMask!.id, (e.target as HTMLInputElement).value)"
+            />
+          </label>
+          <button
+            type="button"
+            class="ghost mask-show"
+            :class="{ active: showMaskOverlay }"
+            :aria-pressed="showMaskOverlay"
+            data-testid="mask-show-overlay"
+            @click="showMaskOverlay = !showMaskOverlay"
+          >
+            {{ showMaskOverlay ? 'Hide mask overlay' : 'Show mask overlay' }}
+          </button>
+
+          <div class="brush-tool" data-testid="brush-tool">
+            <div class="brush-tool__row">
+              <button
+                type="button"
+                class="ghost mask-show"
+                :class="{ active: painting }"
+                :aria-pressed="painting"
+                :disabled="isReadOnly || isCropMode"
+                data-testid="brush-paint"
+                :title="selectedMask.kind.type === 'brush' ? 'Paint the mask' : 'Paint onto this mask to refine it'"
+                @click="painting = !painting"
+              >
+                {{ painting ? 'Painting' : 'Paint' }}
+              </button>
+              <button
+                type="button"
+                class="ghost mask-show"
+                :class="{ active: brushErase }"
+                :aria-pressed="brushErase"
+                data-testid="brush-erase"
+                title="Erase instead of adding (or hold ⌥ while painting)"
+                @click="brushErase = !brushErase"
+              >
+                Erase
+              </button>
+            </div>
+            <template v-if="painting">
+              <AdjustmentSlider
+                v-model="brushSize"
+                label="Brush size"
+                :min="BRUSH_MIN"
+                :max="BRUSH_MAX"
+                :step="0.5"
+                unit="%"
+                :default-value="4"
+                test-id="brush-size"
+              />
+              <AdjustmentSlider
+                v-model="brushFeather"
+                label="Brush feather"
+                :min="0"
+                :max="100"
+                :step="1"
+                unit="%"
+                :default-value="50"
+                test-id="brush-feather"
+              />
+              <AdjustmentSlider
+                v-model="brushFlow"
+                label="Brush flow"
+                :min="1"
+                :max="100"
+                :step="1"
+                unit="%"
+                :default-value="100"
+                test-id="brush-flow"
+              />
+              <p class="mask-note">[ and ] change the size; hold ⌥ to erase; Esc stops.</p>
+            </template>
+            <div v-if="selectedMask.strokes?.length" class="brush-tool__row">
+              <button
+                type="button"
+                class="ghost mask-show"
+                data-testid="brush-undo-stroke"
+                @click="undoStroke"
+              >
+                Undo stroke
+              </button>
+              <button
+                type="button"
+                class="ghost mask-show"
+                data-testid="brush-clear"
+                @click="clearStrokes"
+              >
+                Clear painting
+              </button>
+            </div>
+          </div>
+          <AdjustmentSlider
+            v-for="s in MASK_SLIDERS"
+            :key="s.key"
+            :label="s.label"
+            :model-value="selectedMask.adjustments[s.key]"
+            :min="s.min"
+            :max="s.max"
+            :step="s.step"
+            :unit="s.unit"
+            :default-value="0"
+            :disabled="isReadOnly"
+            :test-id="`mask-${s.key}`"
+            @update:model-value="(v) => setMaskLocal(s.key, v, false)"
+            @change="(v) => setMaskLocal(s.key, v, true)"
+          />
+          <AdjustmentSlider
+            label="Opacity"
+            :model-value="Math.round(selectedMask.opacity * 100)"
+            :min="0"
+            :max="100"
+            :step="1"
+            unit="%"
+            :default-value="100"
+            test-id="mask-opacity"
+            @update:model-value="(v) => setMaskField('opacity', v, false)"
+            @change="(v) => setMaskField('opacity', v, true)"
+          />
+          <AdjustmentSlider
+            v-if="selectedMask.kind.type === 'radial'"
+            label="Feather"
+            :model-value="Math.round(selectedMask.kind.feather * 100)"
+            :min="0"
+            :max="100"
+            :step="1"
+            unit="%"
+            :default-value="50"
+            test-id="mask-feather"
+            @update:model-value="(v) => setMaskField('feather', v, false)"
+            @change="(v) => setMaskField('feather', v, true)"
+          />
+        </div>
+        </section>
+
         <div class="adjustment-panel__sections">
           <!-- 1. Basic -->
           <CollapsibleSection
             title="Basic"
             test-id="section-basic"
+            v-show="!selectedMask"
             :default-open="true"
             @reset="resetBasic"
           >
@@ -2220,155 +2408,18 @@ onUnmounted(() => {
                 </li>
               </ul>
 
-              <div v-if="selectedMask" class="effects-group" data-testid="mask-controls">
-                <label class="mask-name">
-                  <span class="effects-group-title">Name</span>
-                  <input
-                    type="text"
-                    class="mask-name__input"
-                    maxlength="40"
-                    :value="selectedMask.name"
-                    data-testid="mask-name-input"
-                    @change="(e) => renameMask(selectedMask!.id, (e.target as HTMLInputElement).value)"
-                  />
-                </label>
-                <button
-                  type="button"
-                  class="ghost mask-show"
-                  :class="{ active: showMaskOverlay }"
-                  :aria-pressed="showMaskOverlay"
-                  data-testid="mask-show-overlay"
-                  @click="showMaskOverlay = !showMaskOverlay"
-                >
-                  {{ showMaskOverlay ? 'Hide mask overlay' : 'Show mask overlay' }}
-                </button>
-
-                <div class="brush-tool" data-testid="brush-tool">
-                  <div class="brush-tool__row">
-                    <button
-                      type="button"
-                      class="ghost mask-show"
-                      :class="{ active: painting }"
-                      :aria-pressed="painting"
-                      :disabled="isReadOnly || isCropMode"
-                      data-testid="brush-paint"
-                      :title="selectedMask.kind.type === 'brush' ? 'Paint the mask' : 'Paint onto this mask to refine it'"
-                      @click="painting = !painting"
-                    >
-                      {{ painting ? 'Painting' : 'Paint' }}
-                    </button>
-                    <button
-                      type="button"
-                      class="ghost mask-show"
-                      :class="{ active: brushErase }"
-                      :aria-pressed="brushErase"
-                      data-testid="brush-erase"
-                      title="Erase instead of adding (or hold ⌥ while painting)"
-                      @click="brushErase = !brushErase"
-                    >
-                      Erase
-                    </button>
-                  </div>
-                  <template v-if="painting">
-                    <AdjustmentSlider
-                      v-model="brushSize"
-                      label="Brush size"
-                      :min="BRUSH_MIN"
-                      :max="BRUSH_MAX"
-                      :step="0.5"
-                      unit="%"
-                      :default-value="4"
-                      test-id="brush-size"
-                    />
-                    <AdjustmentSlider
-                      v-model="brushFeather"
-                      label="Brush feather"
-                      :min="0"
-                      :max="100"
-                      :step="1"
-                      unit="%"
-                      :default-value="50"
-                      test-id="brush-feather"
-                    />
-                    <AdjustmentSlider
-                      v-model="brushFlow"
-                      label="Brush flow"
-                      :min="1"
-                      :max="100"
-                      :step="1"
-                      unit="%"
-                      :default-value="100"
-                      test-id="brush-flow"
-                    />
-                    <p class="mask-note">[ and ] change the size; hold ⌥ to erase; Esc stops.</p>
-                  </template>
-                  <div v-if="selectedMask.strokes?.length" class="brush-tool__row">
-                    <button
-                      type="button"
-                      class="ghost mask-show"
-                      data-testid="brush-undo-stroke"
-                      @click="undoStroke"
-                    >
-                      Undo stroke
-                    </button>
-                    <button
-                      type="button"
-                      class="ghost mask-show"
-                      data-testid="brush-clear"
-                      @click="clearStrokes"
-                    >
-                      Clear painting
-                    </button>
-                  </div>
-                </div>
-                <AdjustmentSlider
-                  label="Opacity"
-                  :model-value="Math.round(selectedMask.opacity * 100)"
-                  :min="0"
-                  :max="100"
-                  :step="1"
-                  unit="%"
-                  :default-value="100"
-                  test-id="mask-opacity"
-                  @update:model-value="(v) => setMaskField('opacity', v, false)"
-                  @change="(v) => setMaskField('opacity', v, true)"
-                />
-                <AdjustmentSlider
-                  v-if="selectedMask.kind.type === 'radial'"
-                  label="Feather"
-                  :model-value="Math.round(selectedMask.kind.feather * 100)"
-                  :min="0"
-                  :max="100"
-                  :step="1"
-                  unit="%"
-                  :default-value="50"
-                  test-id="mask-feather"
-                  @update:model-value="(v) => setMaskField('feather', v, false)"
-                  @change="(v) => setMaskField('feather', v, true)"
-                />
-                <AdjustmentSlider
-                  v-for="s in MASK_SLIDERS"
-                  :key="s.key"
-                  :label="s.label"
-                  :model-value="selectedMask.adjustments[s.key]"
-                  :min="s.min"
-                  :max="s.max"
-                  :step="s.step"
-                  :unit="s.unit"
-                  :default-value="0"
-                  :disabled="isReadOnly"
-                  :test-id="`mask-${s.key}`"
-                  @update:model-value="(v) => setMaskLocal(s.key, v, false)"
-                  @change="(v) => setMaskLocal(s.key, v, true)"
-                />
-              </div>
             </div>
           </CollapsibleSection>
+
+          <p v-if="selectedMask" class="mask-note" data-testid="global-put-away">
+            The whole photograph's adjustments are put away while a mask is edited.
+          </p>
 
           <!-- 2. Tone Curve -->
           <CollapsibleSection
             title="Tone Curve"
             test-id="section-tone-curve"
+            v-show="!selectedMask"
             :default-open="false"
             @reset="resetToneCurve"
           >
@@ -2385,6 +2436,7 @@ onUnmounted(() => {
           <CollapsibleSection
             title="Colour / HSL"
             test-id="section-hsl"
+            v-show="!selectedMask"
             :default-open="false"
             @reset="resetHsl"
           >
@@ -2430,7 +2482,7 @@ onUnmounted(() => {
                   </button>
                 </div>
 
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Hue"
                   :model-value="recipe.hsl?.[selectedHslBand]?.hue ?? 0"
                   :min="-180"
@@ -2443,7 +2495,7 @@ onUnmounted(() => {
                   @change="(v) => onHslSliderChange('hue', v)"
                 />
 
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Saturation"
                   :model-value="recipe.hsl?.[selectedHslBand]?.saturation ?? 0"
                   :min="-100"
@@ -2456,7 +2508,7 @@ onUnmounted(() => {
                   @change="(v) => onHslSliderChange('saturation', v)"
                 />
 
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Luminance"
                   :model-value="recipe.hsl?.[selectedHslBand]?.luminance ?? 0"
                   :min="-100"
@@ -2476,6 +2528,7 @@ onUnmounted(() => {
           <CollapsibleSection
             title="Colour Grading"
             test-id="section-grading"
+            v-show="!selectedMask"
             :default-open="false"
             @reset="resetGrading"
           >
@@ -2533,7 +2586,7 @@ onUnmounted(() => {
 
               <!-- Tonal Range Sliders: Blending and Balance -->
               <div class="grading-range-controls">
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Blending"
                   :model-value="recipe.grading?.blending ?? 50"
                   :min="0"
@@ -2546,7 +2599,7 @@ onUnmounted(() => {
                   @change="(v) => onGradingParamChange('blending', v)"
                 />
 
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Balance"
                   :model-value="recipe.grading?.balance ?? 0"
                   :min="-100"
@@ -2565,6 +2618,7 @@ onUnmounted(() => {
           <CollapsibleSection
             title="Look"
             test-id="section-look"
+            v-show="!selectedMask"
             :default-open="true"
             @reset="resetLook"
           >
@@ -2620,7 +2674,7 @@ onUnmounted(() => {
               <!-- Glow -->
               <div class="look-group">
                 <div class="look-group-title">Glow</div>
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Amount"
                   :model-value="recipe.looks?.glow_amount ?? 0"
                   :min="0"
@@ -2633,7 +2687,7 @@ onUnmounted(() => {
                   @update:model-value="(v) => onLooksSliderInput('glow_amount', v)"
                   @change="(v) => onLooksSliderChange('glow_amount', v)"
                 />
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Threshold"
                   :model-value="recipe.looks?.glow_threshold ?? 70"
                   :min="0"
@@ -2646,7 +2700,7 @@ onUnmounted(() => {
                   @update:model-value="(v) => onLooksSliderInput('glow_threshold', v)"
                   @change="(v) => onLooksSliderChange('glow_threshold', v)"
                 />
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Radius"
                   :model-value="recipe.looks?.glow_radius ?? 30"
                   :min="0"
@@ -2664,7 +2718,7 @@ onUnmounted(() => {
               <!-- Halation -->
               <div class="look-group">
                 <div class="look-group-title">Halation</div>
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Amount"
                   :model-value="recipe.looks?.halation_amount ?? 0"
                   :min="0"
@@ -2677,7 +2731,7 @@ onUnmounted(() => {
                   @update:model-value="(v) => onLooksSliderInput('halation_amount', v)"
                   @change="(v) => onLooksSliderChange('halation_amount', v)"
                 />
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Threshold"
                   :model-value="recipe.looks?.halation_threshold ?? 80"
                   :min="0"
@@ -2690,7 +2744,7 @@ onUnmounted(() => {
                   @update:model-value="(v) => onLooksSliderInput('halation_threshold', v)"
                   @change="(v) => onLooksSliderChange('halation_threshold', v)"
                 />
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Radius"
                   :model-value="recipe.looks?.halation_radius ?? 20"
                   :min="0"
@@ -2711,6 +2765,7 @@ onUnmounted(() => {
           <CollapsibleSection
             title="Geometry"
             test-id="section-geometry"
+            v-show="!selectedMask"
             :default-open="false"
             @reset="resetGeometry"
           >
@@ -2813,13 +2868,14 @@ onUnmounted(() => {
           <CollapsibleSection
             title="Effects"
             test-id="section-effects"
+            v-show="!selectedMask"
             :default-open="false"
             @reset="resetEffects"
           >
             <div class="effects-panel" data-testid="effects-panel">
               <div class="effects-group">
                 <div class="effects-group-title">Vignette</div>
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Amount"
                   :model-value="recipe.vignette?.amount ?? 0"
                   :min="-100"
@@ -2831,7 +2887,7 @@ onUnmounted(() => {
                   @update:model-value="(v) => onVignetteSliderInput('amount', v)"
                   @change="(v) => onVignetteSliderChange('amount', v)"
                 />
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Midpoint"
                   :model-value="recipe.vignette?.midpoint ?? 50"
                   :min="0"
@@ -2844,7 +2900,7 @@ onUnmounted(() => {
                   @update:model-value="(v) => onVignetteSliderInput('midpoint', v)"
                   @change="(v) => onVignetteSliderChange('midpoint', v)"
                 />
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Roundness"
                   :model-value="recipe.vignette?.roundness ?? 0"
                   :min="-100"
@@ -2856,7 +2912,7 @@ onUnmounted(() => {
                   @update:model-value="(v) => onVignetteSliderInput('roundness', v)"
                   @change="(v) => onVignetteSliderChange('roundness', v)"
                 />
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Feather"
                   :model-value="recipe.vignette?.feather ?? 50"
                   :min="0"
@@ -2873,7 +2929,7 @@ onUnmounted(() => {
 
               <div class="effects-group">
                 <div class="effects-group-title">Film Grain</div>
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Amount"
                   :model-value="recipe.grain?.amount ?? 0"
                   :min="0"
@@ -2885,7 +2941,7 @@ onUnmounted(() => {
                   @update:model-value="(v) => onGrainSliderInput('amount', v)"
                   @change="(v) => onGrainSliderChange('amount', v)"
                 />
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Size"
                   :model-value="recipe.grain?.size ?? 25"
                   :min="0"
@@ -2897,7 +2953,7 @@ onUnmounted(() => {
                   @update:model-value="(v) => onGrainSliderInput('size', v)"
                   @change="(v) => onGrainSliderChange('size', v)"
                 />
-                <AdjustmentSlider
+          <AdjustmentSlider
                   label="Roughness"
                   :model-value="recipe.grain?.roughness ?? 50"
                   :min="0"
@@ -3608,6 +3664,39 @@ onUnmounted(() => {
 .auto-busy button {
   min-height: 40px;
   font-size: 12px;
+}
+
+.mask-editing {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--border-active);
+  background: var(--bg-panel);
+}
+
+.mask-editing__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.mask-editing__title {
+  font-family: var(--font-label);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.mask-editing__title strong {
+  color: var(--accent);
+  font-weight: normal;
+}
+
+.mask-editing__head button {
+  min-height: 40px;
+  padding: 0 var(--space-4);
 }
 
 .mask-note {

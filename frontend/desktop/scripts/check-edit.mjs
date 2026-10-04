@@ -2109,6 +2109,88 @@ try {
   }
   await page.screenshot({ path: join(OUT, 'edit-auto-masks.png'), fullPage: true });
 
+  // 9o. Editing a mask takes the panel, so its sliders cannot be mistaken for the whole
+  // photograph's (owner's report after testing masks, 2026-10-04).
+  console.log('Asserting a selected mask takes the panel, and Done or Esc give it back...');
+  await openPhoto('/Volumes/Photos/focus_a.jpg');
+  if (!(await page.locator('[data-testid="add-radial-mask"]').isVisible())) {
+    await page.locator('button[data-testid="section-masks-toggle"]').click();
+  }
+  await page.locator('[data-testid="add-radial-mask"]').click();
+  await page.waitForTimeout(100);
+  const editing = await page.evaluate(() => {
+    const box = (sel) => document.querySelector(sel)?.getBoundingClientRect();
+    const visible = (sel) => {
+      const el = document.querySelector(sel);
+      return !!el && getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0;
+    };
+    return {
+      header: visible('[data-testid="mask-editing"]'),
+      name: document.querySelector('[data-testid="mask-editing-name"]')?.textContent?.trim(),
+      basicShown: visible('[data-testid="section-basic"]'),
+      effectsShown: visible('[data-testid="section-effects"]'),
+      controlsAboveList:
+        (box('[data-testid="mask-controls"]')?.top ?? 1e9) < (box('[data-testid="section-masks"]')?.top ?? 0),
+      note: visible('[data-testid="global-put-away"]'),
+      // The header must be in view, below the pinned histogram, not scrolled out of sight.
+      headerInView: (() => {
+        const h = box('[data-testid="mask-editing"]');
+        const hist = box('.adjustment-panel__histogram');
+        const panel = box('.adjustment-panel');
+        return !!h && !!hist && !!panel && h.top >= hist.bottom - 1 && h.top < panel.bottom - 40;
+      })(),
+    };
+  });
+  if (!editing.header || editing.name !== 'Radial 1' || editing.basicShown || editing.effectsShown || !editing.controlsAboveList || !editing.note || !editing.headerInView) {
+    failures.push(`Selecting a mask should show "Editing mask Radial 1" with its sliders on top and the whole-photograph sections put away; got ${JSON.stringify(editing)}`);
+  }
+
+  await page.screenshot({ path: join(OUT, 'edit-mask-editing.png'), fullPage: true });
+
+  // The Exposure in view now is the mask's: the whole photograph's is untouched.
+  await page.locator('input[data-testid="mask-exposure-number"]').fill('0.8');
+  await page.locator('input[data-testid="mask-exposure-number"]').press('Enter');
+  await page.waitForTimeout(100);
+  const after = await page.evaluate(() => {
+    const r = window.__STUB__.renders.at(-1).recipe;
+    return { global: r.exposure, local: r.masks[0].adjustments.exposure };
+  });
+  if (after.global !== 0 || after.local !== 0.8) {
+    failures.push(`While editing a mask, its Exposure must change only the mask; got ${JSON.stringify(after)}`);
+  }
+
+  // Done gives the panel back; the mask stays.
+  await page.locator('[data-testid="mask-done"]').click();
+  await page.waitForTimeout(50);
+  const done = await page.evaluate(() => ({
+    header: !!document.querySelector('[data-testid="mask-editing"]'),
+    basic: getComputedStyle(document.querySelector('[data-testid="section-basic"]')).display !== 'none',
+    masks: window.__STUB__.renders.at(-1).recipe.masks.length,
+  }));
+  if (done.header || !done.basic || done.masks !== 1) {
+    failures.push(`Done should return to the whole photograph and keep the mask; got ${JSON.stringify(done)}`);
+  }
+
+  // Selecting again, painting, then Esc twice: the first stops painting, the second leaves the mask.
+  const focusId = (await lastMasks())[0].id;
+  await page.locator(`[data-testid="mask-select-${focusId}"]`).click();
+  await page.locator('[data-testid="brush-paint"]').click();
+  await blurAll();
+  await page.keyboard.press('Escape');
+  const afterFirstEsc = await page.evaluate(() => ({
+    painting: document.querySelector('[data-testid="brush-paint"]')?.getAttribute('aria-pressed'),
+    editing: !!document.querySelector('[data-testid="mask-editing"]'),
+  }));
+  await page.keyboard.press('Escape');
+  const afterSecondEsc = !!(await page.locator('[data-testid="mask-editing"]').count());
+  if (afterFirstEsc.painting !== 'false' || !afterFirstEsc.editing || afterSecondEsc) {
+    failures.push(`Esc should stop painting first, then leave the mask; got ${JSON.stringify({ afterFirstEsc, afterSecondEsc })}`);
+  } else {
+    console.log('  A selected mask takes the panel; its Exposure is its own; Done and Esc give the panel back.');
+  }
+  const doneBox = await page.locator('[data-testid="add-radial-mask"]').boundingBox();
+  if (!doneBox || doneBox.height < 39.5) failures.push('Mask controls must stay 40 px targets');
+
   // Corrupted sidecar
   await pathInput.fill('/Volumes/Photos/corrupted_sidecar.jpg');
   await pathInput.press('Enter');

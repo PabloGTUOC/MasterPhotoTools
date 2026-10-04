@@ -1049,6 +1049,13 @@ local adjustments, so most pixels pay for more than one mask.
     overlay, handles following a changed frame map, pin selection, delete and Undo, paste keeping
     masks, the four-mask limit, Reset all and Undo. Each fails with its fix removed.
   - Not yet: a mask cannot be moved in crop mode (handles hide there, as the crop owns the canvas).
+  - **Changed after the owner's first test (2026-10-04): a selected mask takes the panel.** With a
+    mask selected the Basic Exposure still moved the whole photograph, which read as the mask
+    failing. Now selecting a mask (from the list, a pin, or by adding one) shows "Editing mask …"
+    under the histogram with that mask's sliders first, puts every whole-photograph section away,
+    and scrolls the panel so the editor is in view; Done or Esc (after painting has stopped) returns
+    to the whole photograph. `check:edit` 9o asserts it, including that the mask's Exposure leaves the
+    global exposure at 0.
 
 #### `ED-21` · Brush
 - Strokes stored as normalised points with radius, feather and flow, plus an erase flag; the

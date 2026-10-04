@@ -4,9 +4,9 @@ Phases 0–14 are built and pass their gates. What is left is everything a machi
 Mac, no NAS and no Google account could not settle — the numbered checks in
 [`manual-verification.md`](manual-verification.md).
 
-**72 checks in all.** Two are retired rather than done — MV-13.3 and MV-13.4, whose subjects the
-workflow change removed — and MV-11's five cover a road being withdrawn once MV-16 confirms its
-replacement. The rest are actionable.
+**121 checks in all** (counted 2026-10-04), eight of them done. Two are retired rather than done —
+MV-13.3 and MV-13.4, whose subjects the workflow change removed — and MV-11's five cover a road being
+withdrawn once MV-16 confirms its replacement. The rest are actionable.
 
 This file gets you to the point where you can start them.
 
@@ -165,6 +165,8 @@ problem later and more confusingly.
 | 8 | **Scans** | MV-4.1 – MV-4.4 | Independent of everything above; do whenever you have scans. |
 | 9 | **Geotagging** | MV-15.1 – MV-15.13 | Needs the Mac and photographs from days a track covers. Independent of the NAS and of Google. |
 | 10 | **Edit tab and Bulk LUT** | MV-20.1 – MV-20.8 | Needs the Mac. All checks run locally and need no server, but MV-20.7 needs a card and a mounted share. MV-20.8 is run on a release build (`cargo tauri build`) for accurate timing. |
+| 10b | **Edit, second round** | MV-21.1 – MV-21.11 | Curves, colour, grading, geometry, effects, looks, presets, Batch Grade, the histogram. Same Mac, same photographs as MV-20. |
+| 10c | **Masks** | MV-22.1 – MV-22.6 | Gradients, the brush, and automatic subject and sky masks. MV-22.5 downloads the two models (about 400 MB) on first use; MV-22.6 times them on the M1 Max with the `auto_mask` example. |
 | 11 | **Publishing a folder** | MV-16.1 – MV-16.8 | Needs the NAS and the Google client. MV-16.8 is the whole pipeline in one go. |
 | 12 | **Packaging** | MV-14.1 – MV-14.3 | Last, because it is the only session that needs everything else to have worked. |
 

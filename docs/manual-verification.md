@@ -33,11 +33,16 @@ established from a machine with no camera, no Mac, no NAS and no Google account.
 | A Firebase project | 6.2 | 1 |
 | Real photographs, and your eyes | 2, 4, 9, 10, 15 | 28 |
 
-**72 checks in all.** Two are being retired rather than done — MV-13.3 and MV-13.4, whose subjects
-the workflow change removed — and MV-11's five cover a road that WF-5 withdraws once MV-16 has
-confirmed its replacement. The rest are actionable. Four are done — MV-2.1, MV-7.1, MV-7.2 and
-MV-7.3 — and **three of those four found defects**, which is the argument for doing the rest. The
-suggested order, and why, is in [`testing.md`](testing.md#5-suggested-order).
+The table counts MV-1 to MV-15. MV-16 to MV-22 came later, and each section's opening says what it
+needs: MV-16 a NAS and the Google client, MV-17 a browser, MV-18 the Mac and the NAS, MV-19 a phone,
+and MV-20 to MV-22 (the Edit tab, its second round, and masks) the Mac Studio with real photographs.
+
+**121 checks in all** (counted 2026-10-04). Two are being retired rather than done — MV-13.3 and
+MV-13.4, whose subjects the workflow change removed — and MV-11's five cover a road that WF-5
+withdraws once MV-16 has confirmed its replacement. The rest are actionable. Eight are done — MV-2.1,
+MV-7.1, MV-7.2, MV-7.3, MV-16.3, MV-16.4, MV-16.5 and MV-16.7 — and **three of the first four found
+defects**, which is the argument for doing the rest. The suggested order, and why, is in
+[`testing.md`](testing.md#5-suggested-order).
 
 > **These checks are not the only way to find things.** Sixteen defects were found in two sessions
 > simply by using the tabs with real photographs — a rename that renamed the folder, tools that

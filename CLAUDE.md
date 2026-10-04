@@ -15,7 +15,7 @@ cause: **the tools had only ever been exercised with typed file paths, and the f
 pointing at a folder the normal gesture.**
 
 The numbered checks in [`manual-verification.md`](docs/manual-verification.md) remain the
-structured half of that work — 72 of them, all actionable.
+structured half of that work — 121 of them (2026-10-04), eight done.
 
 | Read this | For |
 |---|---|

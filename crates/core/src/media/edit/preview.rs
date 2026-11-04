@@ -535,7 +535,7 @@ pub fn downscale_image_buffer(buf: &ImageBuffer, max_edge: u32) -> Result<ImageB
                 .map_err(|e| Error::Internal(format!("resize: {e:?}")))?;
             let dst_bytes = dst.into_vec();
             let mut out16 = Vec::with_capacity(dst_bytes.len() / 2);
-            for chunk in dst_bytes.chunks_exact(2) {
+            for chunk in dst_bytes.as_chunks::<2>().0.iter() {
                 out16.push(u16::from_ne_bytes([chunk[0], chunk[1]]));
             }
             Ok(ImageBuffer::Rgb16 {
@@ -818,7 +818,7 @@ pub fn render_rgba_frame_masked(
                 // Pass 1: Linear adjustments + Oklab stage + Vignette (low register pressure, no display/LUT/packing)
                 for (i, (slot, in_px)) in lin_buf[..count]
                     .iter_mut()
-                    .zip(in_c.chunks_exact(3))
+                    .zip(in_c.as_chunks::<3>().0.iter())
                     .enumerate()
                 {
                     let local_params;
@@ -958,8 +958,12 @@ pub fn render_rgba_frame_masked(
                 }
 
                 // Pass 2: Display transfer + Tone curves + 3D LUT + Film Grain + byte packing (no linear math or Oklab)
-                for (i, (out_px, &[r, g, b])) in
-                    out_c.chunks_exact_mut(4).zip(&lin_buf[..count]).enumerate()
+                for (i, (out_px, &[r, g, b])) in out_c
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .zip(&lin_buf[..count])
+                    .enumerate()
                 {
                     // Display transfer (linear light to display-encoded sRGB [0.0, 1.0])
                     let disp_r = fast_linear_to_srgb_table(r, srgb_table);

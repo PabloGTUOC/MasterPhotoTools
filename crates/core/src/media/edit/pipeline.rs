@@ -372,8 +372,10 @@ impl LinearBuffer {
                 let y_f = y as f32;
                 let py1 = (y_f + 0.5) * inv_w * compiled_grain.k_base;
                 for (x, (out_px, in_px)) in out_row
-                    .chunks_exact_mut(3)
-                    .zip(in_row.chunks_exact(3))
+                    .as_chunks_mut::<3>()
+                    .0
+                    .iter_mut()
+                    .zip(in_row.as_chunks::<3>().0.iter())
                     .enumerate()
                 {
                     let disp_r = linear_to_srgb(in_px[0]);
@@ -507,8 +509,10 @@ impl LinearBuffer {
                 let y_f = y as f32;
                 let py1 = (y_f + 0.5) * inv_w * compiled_grain.k_base;
                 for (x, (out_px, in_px)) in out_row
-                    .chunks_exact_mut(3)
-                    .zip(in_row.chunks_exact(3))
+                    .as_chunks_mut::<3>()
+                    .0
+                    .iter_mut()
+                    .zip(in_row.as_chunks::<3>().0.iter())
                     .enumerate()
                 {
                     let disp_r = linear_to_srgb(in_px[0]);
@@ -607,7 +611,7 @@ impl LinearBuffer {
             .enumerate()
             .for_each(|(y, row)| {
                 let cursor = masks.map(|m| (m, m.row(y as u32, w, h)));
-                for (x, px) in row.chunks_exact_mut(3).enumerate() {
+                for (x, px) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
                     let local_params;
                     let p = match cursor {
                         Some((m, c)) => {

@@ -218,7 +218,7 @@ impl Geometry {
                 let mut cur_x = x0;
                 let mut cur_y = y0;
 
-                for px in row_slice.chunks_exact_mut(3) {
+                for px in row_slice.as_chunks_mut::<3>().0.iter_mut() {
                     let (r, g, b) =
                         sample_bilinear(src_data, src_w_usize, src_h_usize, cur_x, cur_y);
                     px[0] = r;

@@ -567,7 +567,7 @@ pub fn apply_looks_linear(linear: &mut LinearBuffer, looks: &LookEffects) {
             .for_each(|(y, row)| {
                 let v = (y as f32 + 0.5) * inv_scale_y - 0.5;
                 let sampler = bloom.row_sampler(v);
-                for (x, px) in row.chunks_exact_mut(3).enumerate() {
+                for (x, px) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
                     let u = (x as f32 + 0.5) * inv_scale_x - 0.5;
                     let b = sampler.sample(u);
                     px[0] += b[0];

@@ -1706,13 +1706,18 @@ fn a_preview_frame_is_rgba_of_the_proxy_size() {
     assert_eq!(drag.width, 1280);
     assert_eq!(drag.height, 853);
     assert_eq!(drag.bytes.len(), 1280 * 853 * 4);
-    assert!(drag.bytes.chunks_exact(4).all(|px| px[3] == 255));
+    assert!(drag.bytes.as_chunks::<4>().0.iter().all(|px| px[3] == 255));
 
     let settle = session.render(&recipe, None, PreviewStage::Settle).unwrap();
     assert_eq!(settle.width, 2560);
     assert_eq!(settle.height, 1706);
     assert_eq!(settle.bytes.len(), 2560 * 1706 * 4);
-    assert!(settle.bytes.chunks_exact(4).all(|px| px[3] == 255));
+    assert!(settle
+        .bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|px| px[3] == 255));
 }
 
 /// The frame the Edit view decodes carries the histogram of exactly the pixels it
@@ -2187,7 +2192,7 @@ fn benchmark_edit_preview() {
             .data
             .par_chunks_exact(row_in_len)
             .for_each(|row| {
-                for px in row.chunks_exact(3) {
+                for px in row.as_chunks::<3>().0.iter() {
                     let mut r = px[0] * 1.414;
                     let mut g = px[1] * 1.414;
                     let mut b = px[2] * 1.414;
@@ -2255,7 +2260,7 @@ fn benchmark_edit_preview() {
             .data
             .par_chunks_exact(row_in_len)
             .for_each(|row| {
-                for px in row.chunks_exact(3) {
+                for px in row.as_chunks::<3>().0.iter() {
                     let out = compiled_hsl.apply_linear_srgb(px[0], px[1], px[2]);
                     std::hint::black_box(out);
                 }
@@ -2270,7 +2275,7 @@ fn benchmark_edit_preview() {
             .data
             .par_chunks_exact(row_in_len)
             .for_each(|row| {
-                for px in row.chunks_exact(3) {
+                for px in row.as_chunks::<3>().0.iter() {
                     let out = (
                         phototools_core::media::edit::preview::fast_linear_to_srgb(px[0]),
                         phototools_core::media::edit::preview::fast_linear_to_srgb(px[1]),
@@ -2291,7 +2296,7 @@ fn benchmark_edit_preview() {
             .data
             .par_chunks_exact(row_in_len)
             .for_each(|row| {
-                for px in row.chunks_exact(3) {
+                for px in row.as_chunks::<3>().0.iter() {
                     let out = curves_table.apply(px[0], px[1], px[2]);
                     std::hint::black_box(out);
                 }
@@ -2309,7 +2314,7 @@ fn benchmark_edit_preview() {
             .data
             .par_chunks_exact(row_in_len)
             .for_each(|row| {
-                for px in row.chunks_exact(3) {
+                for px in row.as_chunks::<3>().0.iter() {
                     let out = grading_table.apply(px[0], px[1], px[2]);
                     std::hint::black_box(out);
                 }
@@ -2324,7 +2329,7 @@ fn benchmark_edit_preview() {
             .data
             .par_chunks_exact(row_in_len)
             .for_each(|row| {
-                for px in row.chunks_exact(3) {
+                for px in row.as_chunks::<3>().0.iter() {
                     let out = lut33.sample([px[0], px[1], px[2]]);
                     std::hint::black_box(out);
                 }
@@ -2344,7 +2349,7 @@ fn benchmark_edit_preview() {
                 let y_f = y as f32;
                 let v = (y_f + 0.5 - compiled_vignette.yc) * compiled_vignette.inv_hy;
                 let v2 = v * v;
-                for (x, px) in row.chunks_exact(3).enumerate() {
+                for (x, px) in row.as_chunks::<3>().0.iter().enumerate() {
                     let gain = compiled_vignette.gain_with_v(x as f32, v, v2);
                     let out = (px[0] * gain, px[1] * gain, px[2] * gain);
                     std::hint::black_box(out);
@@ -2370,7 +2375,7 @@ fn benchmark_edit_preview() {
                 let y_f = y as f32;
                 let py1 = (y_f + 0.5) * inv_w_s * compiled_grain.k_base;
                 let rp = compiled_grain.row_params(py1);
-                for (x, px) in row.chunks_exact(3).enumerate() {
+                for (x, px) in row.as_chunks::<3>().0.iter().enumerate() {
                     let u = (x as f32 + 0.5) * inv_w_s;
                     let delta = compiled_grain.sample_delta_with_row(u, &rp, px[0], px[1], px[2]);
                     let out = (px[0] + delta, px[1] + delta, px[2] + delta);
@@ -2397,7 +2402,7 @@ fn benchmark_edit_preview() {
             .data
             .par_chunks_exact(row_in_len)
             .for_each(|row| {
-                for px in row.chunks_exact(3) {
+                for px in row.as_chunks::<3>().0.iter() {
                     let r = phototools_core::media::edit::aces_narkowicz(px[0]);
                     let g = phototools_core::media::edit::aces_narkowicz(px[1]);
                     let b = phototools_core::media::edit::aces_narkowicz(px[2]);

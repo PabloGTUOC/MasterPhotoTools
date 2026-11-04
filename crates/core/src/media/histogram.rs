@@ -131,7 +131,7 @@ pub fn histogram(rgba: &[u8], width: u32, height: u32) -> Result<Histogram, Erro
     let counts = rgba
         .par_chunks(PIXELS_PER_TASK * 4)
         .fold(Counts::zero, |mut acc, chunk| {
-            for pixel in chunk.chunks_exact(4) {
+            for pixel in chunk.as_chunks::<4>().0.iter() {
                 acc.add(pixel[0] as u32, pixel[1] as u32, pixel[2] as u32);
             }
             acc
@@ -211,7 +211,7 @@ mod tests {
         assert!((w * h) as usize > 3 * PIXELS_PER_TASK);
 
         let mut serial = Counts::zero();
-        for p in rgba.chunks_exact(4) {
+        for p in rgba.as_chunks::<4>().0.iter() {
             serial.add(p[0] as u32, p[1] as u32, p[2] as u32);
         }
 

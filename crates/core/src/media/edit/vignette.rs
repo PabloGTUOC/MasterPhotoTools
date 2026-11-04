@@ -180,7 +180,7 @@ pub fn apply_vignette(buffer: &mut LinearBuffer, vignette: &Vignette) {
         .enumerate()
         .for_each(|(y, row)| {
             let y_f = y as f32;
-            for (x, px) in row.chunks_exact_mut(3).enumerate() {
+            for (x, px) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
                 let gain = compiled.gain(x as f32, y_f);
                 px[0] *= gain;
                 px[1] *= gain;

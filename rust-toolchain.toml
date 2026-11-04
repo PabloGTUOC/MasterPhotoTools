@@ -1,3 +1,8 @@
 [toolchain]
-channel = "stable"
+# Pinned, not "stable". CI installs whatever stable is that day, and clippy runs with
+# `-D warnings`, so a new compiler release can turn CI red with no code changed: Rust
+# 1.99's clippy added `chunks_exact_to_as_chunks` and failed main on twelve untouched
+# lines (2026-10-04). Moving to a newer release is now a deliberate commit, and anything
+# a new lint finds is fixed in that commit rather than discovered by the next push.
+channel = "1.99.0"
 components = ["rustfmt", "clippy"]

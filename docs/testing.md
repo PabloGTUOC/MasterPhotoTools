@@ -16,7 +16,7 @@ This file gets you to the point where you can start them.
 
 | | Version | Install |
 |---|---|---|
-| Rust | stable ≥ 1.88 | `rustup toolchain install stable` — `rustfmt` and `clippy` come from `rust-toolchain.toml` |
+| Rust | 1.99.0, pinned | Nothing to choose: `rustup` installs the version `rust-toolchain.toml` names, with `rustfmt` and `clippy`, the first time `cargo` runs here |
 | Node | ≥ 20 (CI uses 22) | `brew install node` |
 | `exiftool` | ≥ 12 | `brew install exiftool` — **metadata writing only** (G3) |
 | Xcode CLT | current | `xcode-select --install` — Tauri needs it |

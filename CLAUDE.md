@@ -98,6 +98,10 @@ or preview slower or unwindows it fails them.
 
 MSRV is **1.88**, enforced by clippy (raised from 1.80 by ED-23: ONNX Runtime through `ort` 2.0 needs it).
 
+**The toolchain is pinned to 1.99.0** in `rust-toolchain.toml`, so CI, the Mac and any other machine run the
+same compiler and the same lints. It used to say `stable`, and a Rust release once failed `main` with no code
+changed. Moving to a newer release is a deliberate commit that fixes whatever new lints it brings.
+
 **`Cargo.toml` optimises dependencies *and* `phototools-core` in the dev profile.** Without it a
 36 MP TIFF took 7 s to convert instead of 0.26 s — and optimising dependencies alone was not
 enough, because `fast_image_resize` is generic and its kernels are monomorphised into `core`. Any

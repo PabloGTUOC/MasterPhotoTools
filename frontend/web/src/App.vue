@@ -113,6 +113,14 @@ onUnmounted(() => window.clearInterval(ticking));
      final control on a short phone viewport, which check:layout would pass and
      a thumb would not. */
   grid-template-rows: auto auto 1fr auto;
+  /* `minmax(0, 1fr)`, not the implicit `auto`. An `auto` column grows to the widest
+     row's minimum width, and the status bar's is one unbreakable line of Orbitron —
+     a proportional face, so it even changes width as the clock ticks. It sat 13–18px
+     under 390 on one machine and 5–11px over on CI, and a signed-in name only a few
+     letters long pushed it over everywhere, scrolling the whole application sideways.
+     With a zero minimum the column is the screen, and the status bar's own ellipsis
+     (`.statusbar__right`) does the work it was written for. */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 /* --- top bar (§5.1) ------------------------------------------------------ */

@@ -11,6 +11,14 @@ decoding and metadata, and almost nothing else.
 **Rollchrome** is the second one, as its own application. The name is *roll* plus *-chrome*, the
 suffix slide film carries (Ektachrome, Kodachrome, Fujichrome), without using any of them.
 
+It has three screens:
+
+| Screen | |
+|---|---|
+| **Edit** | Moves from PhotoTools: exposure, light, colour, curves, grading, masks. |
+| **Batch Grade** | Moves from PhotoTools **unchanged** (owner, 2026-11-05). |
+| **Develop** | New: a folder of RAW files, a film look each, developed straight to JPEG or TIFF. Its own plan, [`develop-plan.md`](develop-plan.md), steps DV-1 to DV-4, after RC-1. |
+
 Steps have stable ids (`RC-1`), like the ED and MV numbers, so one can be named in a commit or a
 conversation: *"do RC-1"*.
 

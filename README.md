@@ -108,6 +108,10 @@ everything else. The last state with both in one application is frozen on the **
 branch. The decisions, the boundary as measured and the steps are in
 [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md).
 
+Rollchrome also gains a screen PhotoTools never had: **Develop** — a folder of RAW files, a film
+look for each, developed straight to JPEG or TIFF from the sensor data rather than the camera's
+preview. [`docs/develop-plan.md`](docs/develop-plan.md).
+
 ## How work is done
 
 Two agents, run by the owner in Orca. **Claude Code is the architect and the reviewer**: it writes a
@@ -129,6 +133,7 @@ for, are in [`CLAUDE.md`](CLAUDE.md).
 | [`docs/known-gaps.md`](docs/known-gaps.md) | What is open in the code — missed criteria, awkward seams, places the specification is incomplete. |
 | [`docs/phase-reports/`](docs/phase-reports/) | One report per phase, and one per piece of work since: delivered, deviations, measurements, gates. |
 | [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | **The next work**: splitting the editor out into Rollchrome. |
+| [`docs/develop-plan.md`](docs/develop-plan.md) | Rollchrome's Develop screen: RAW to JPEG or TIFF, a film look each. |
 | [`docs/briefs/`](docs/briefs/) | One file per step being built: the architect's brief, the implementer's report, the review. |
 | [`docs/geotag-plan.md`](docs/geotag-plan.md) · [`timeline-plan.md`](docs/timeline-plan.md) · [`owntracks-plan.md`](docs/owntracks-plan.md) · [`timeline-sync-plan.md`](docs/timeline-sync-plan.md) · [`publish-folder-plan.md`](docs/publish-folder-plan.md) · [`workflow-plan.md`](docs/workflow-plan.md) · [`edit-plan.md`](docs/edit-plan.md) | The plans written since the phases closed. Each was written before its code and corrected where the build diverged. |
 

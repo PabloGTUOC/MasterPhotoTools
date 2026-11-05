@@ -367,6 +367,28 @@ said plainly. Do not tick the acceptance boxes above; the review does that.
 
 *Written by the implementer.*
 
+### Stopped at Step 2 — Baseline could not be recorded (`cargo` not installed)
+
+Per the brief's first acceptance criterion (*"Baseline recorded first. Before any change, on `rc-1` as cut: `cargo test --workspace` and `cargo test -p phototools-core` totals in the report. Expected **1011** and **901**. If either differs, report it before going further"*), I cut branch `rc-1` from `main` (`1e14ae7`) and ran the baseline test commands before changing any files.
+
+Actual output:
+
+```text
+$ cargo test --workspace
+zsh:1: command not found: cargo
+
+$ which rustup rustc cargo; ls -la ~/.cargo ~/.rustup 2>&1
+rustup not found
+rustc not found
+cargo not found
+ls: /Users/pablogtorres/.cargo: No such file or directory
+ls: /Users/pablogtorres/.rustup: No such file or directory
+```
+
+A filesystem search across `/opt`, `/usr/local`, and `$HOME` confirmed that no Rust toolchain (`rustup`, `rustc`, `cargo`) is installed on this machine.
+
+In accordance with the instructions (*"if cargo is not available or the counts are not 1011 and 901, stop and write that in the Report section"*), no code or configuration files were modified. Once the Rust toolchain (`1.99.0` per `rust-toolchain.toml`) is installed on this machine, `RC-1` can be implemented and verified against all gates.
+
 ---
 
 ## Review

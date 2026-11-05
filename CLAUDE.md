@@ -7,6 +7,11 @@ and maintain a photo library on a NAS.
 
 **Phases 0–14 are built and pass their gates.** Every phase of the build plan is closed.
 
+**Next: the editor leaves for an application of its own, Rollchrome** — a desktop-only film
+emulator. [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) has the decisions, the measured
+boundary and the steps; start at **RC-1**. The state before the split is frozen on the
+**`FullEdition`** branch.
+
 The active job is **using the application on a Mac and fixing what that finds.** Two sessions of
 working through the tabs with real photographs turned up sixteen defects that no test had caught —
 a rename that renamed the folder instead of the photographs, a metadata reader that silently
@@ -28,6 +33,7 @@ structured half of that work — 121 of them (2026-10-04), eight done.
 | [`docs/timeline-plan.md`](docs/timeline-plan.md) | The Timeline tab: the track library on a map, and points placed by hand. Stage A built; MV-17 awaits a browser. Google's location history is Stages B–C, not built |
 | [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
+| [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | Splitting Edit and Batch Grade out into Rollchrome, a desktop-only film emulator. Planned; RC-1 next |
 | [`docs/edit-plan.md`](docs/edit-plan.md) | The Edit tab and the Batch Grade tool: non-destructive exposure adjustments and 3D LUT grading. Rounds 1 and 2 built (ED-1–ED-18); MV-20 and MV-21 await a Mac. Round 3, masks (ED-19–ED-24), built; MV-20 to MV-22 await the Mac Studio |
 | [`docs/deployment.md`](docs/deployment.md) | Deploying the server and the desktop app, and every environment variable |
 | [`docs/phase-reports/`](docs/phase-reports/) | One report per phase: what was delivered, what deviated, and why |

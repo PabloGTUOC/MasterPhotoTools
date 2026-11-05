@@ -207,4 +207,5 @@ cargo test --workspace            # expect 1011, the baseline RC-1 must preserve
 cargo test -p phototools-core     # expect 901
 ```
 
-Then: *"Read docs/rollchrome-plan.md and do RC-1."*
+Then, to the architect: *"Write the brief for RC-1."* It goes in `docs/briefs/RC-1.md`, and agy
+implements from that — see *How work is done* in `CLAUDE.md`.

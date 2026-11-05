@@ -9,8 +9,8 @@ and maintain a photo library on a NAS.
 
 **Next: the editor leaves for an application of its own, Rollchrome** — a desktop-only film
 emulator. [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) has the decisions, the measured
-boundary and the steps; start at **RC-1**. The state before the split is frozen on the
-**`FullEdition`** branch.
+boundary and the steps; the first brief is **RC-1**. The state before the split is frozen on
+the **`FullEdition`** branch.
 
 The active job is **using the application on a Mac and fixing what that finds.** Two sessions of
 working through the tabs with real photographs turned up sixteen defects that no test had caught —
@@ -40,6 +40,47 @@ structured half of that work — 121 of them (2026-10-04), eight done.
 
 The user may name items directly — *"do MV-8.6"*, *"MV-11.2 came back at 380 of 400, work out
 why"*. Look the item up before acting; each says what passing looks like.
+
+## How work is done: architect, implementer, reviewer
+
+**Claude Code is the architect and the reviewer. agy — the Gemini agent — is the implementer.** The
+owner runs both in Orca. Claude does not write the implementation unless the owner asks it to: it
+decides what to build, writes that down so another agent can build it without this conversation,
+and then checks what came back. Claude's own work is briefs, plans, reviews and the documents in
+`docs/`.
+
+The unit of work is a **brief**: one file per step in [`docs/briefs/`](docs/briefs/), named for the
+step it implements (`RC-1.md`), written from [`TEMPLATE.md`](docs/briefs/TEMPLATE.md). Its three
+sections are filled in turn:
+
+| Section | Written by | Holds |
+|---|---|---|
+| **Brief** | Claude | The goal and why; the files to change and the ones not to touch; acceptance criteria someone else can check, with expected numbers; the exact gate commands. **Self-contained** — agy has none of Claude's context, so anything not written there does not exist for it. |
+| **Report** | agy | What was done; what deviated from the brief and why; every gate's **actual output**, counts not "passed"; anything left unverified. |
+| **Review** | Claude | **Approved**, or **Changes requested** as a numbered list agy can act on. |
+
+brief → implement → report → review → *(changes requested → implement → report → review)* →
+**approved** → merged to `main`.
+
+### Reviewing
+
+The report is a claim; the review checks it. **Re-run the gates on the branch rather than reading
+the report's account of them**, then look for what an implementer under pressure to make things
+pass tends to do:
+
+- **Weakened tests (G7).** A changed assertion, a loosened timing budget, a new `#[ignore]`, a
+  deleted or renamed test, a count below the brief's expected number. Compare counts before and
+  after: every test is accounted for, or the work is not done.
+- **Scope beyond the brief (G11).** Refactors nobody asked for, renamed things, a new dependency,
+  a "while I was here" fix. Useful ideas go in the report, not the code.
+- **The ground rules.** Logic in a binary crate (G1); `core` failing alone (G2); exiftool reading
+  metadata (G3); a dependency without its reason recorded (G8); `todo!()`, a bare `unwrap()` or a
+  swallowed error on a shipped path (G10).
+- **Claims without evidence.** "All tests pass" without the numbers is not a report.
+- **Documents.** The plan's status line, `CLAUDE.md` and the docs describe what now exists.
+
+A review that finds nothing should say what it checked. *Approved* means the reviewer ran the gates
+and read the diff, not that the report sounded convincing.
 
 ## The authority documents
 
@@ -211,8 +252,12 @@ The rules that matter:
 
 ## Commit and branch
 
-- One branch per phase while phases were being built. Phase 14 closed the last of them, and work
-  since has gone straight to `main` at the user's instruction.
+- **A brief is committed to `main`; its implementation is not.** agy works on a branch named for
+  the brief (`rc-1`), cut from `main` once the brief is there, and the branch reaches `main` only
+  after the review says **Approved** — the review needs a diff to review, and `main` stays green.
+  Briefs, plans and other documents the architect writes go straight to `main`.
+- Before this workflow, phases had a branch each, and after Phase 14 work went straight to `main`
+  at the owner's instruction.
 - Imperative subject under 72 characters; the body explains **why**, referencing the requirement
   (`F14`, `G6`, `§9.2`).
 - Do not put a model identifier in commits, PR bodies or code comments.

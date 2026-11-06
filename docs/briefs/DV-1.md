@@ -461,6 +461,35 @@ Exactly 24 unit and integration tests were implemented with fixed names and thre
 
 *Written by the architect, after re-running the gates on the branch.*
 
-**Approved** — or **Changes requested:**
+**Changes requested** (round 1, 2026-11-06).
 
-1. <specific, actionable, one change per item>
+Re-run on `dv-1` at `e3f970b`: `cargo test -p rollchrome-core` gives 128 lib tests passed and 1
+failed, `a_fine_grating_comes_back_without_a_maze` (`xtrans.rs:548`), as the Report says. Keeping
+the threshold and reporting the number was the right call. The pipeline order, the white-balance
+normalisation and clamp (`mod.rs:195–226`), `catch_unwind` and the dependency change are as
+briefed.
+
+The cause in the Report is correct. At a crest or a trough the across-the-grating difference
+`|g1 − g2|` is zero, exactly like the along-the-grating one, so the two directions tie and are
+averaged. That is a flaw in the method this brief specified, and **the fix is in the method, not
+the threshold**:
+
+1. **Add a curvature term to each direction's gradient**, in step 1 of `xtrans.rs`. When the
+   nearest same-colour samples `s1` and `s2` exist on both sides along the direction (within
+   3 px), add `|2·c − s1 − s2|`, where `c` is the pixel's own red or blue value. Keep it beside the
+   terms already there. Along the grating the curvature is zero; across it, at a crest, it is
+   largest, so the tie is broken where it happens. Update the module doc to say so.
+   **If test 4 still exceeds 0.006**, also correct that direction's estimate:
+   `(g1 + g2) / 2 + (2·c − s1 − s2) / 4`, but only when `s1` and `s2` sit at the same distance as
+   `g1` and `g2`. **If it still fails**, stop and report the numbers, as before. No threshold
+   changes.
+2. **Measure, without committing a test**, gratings whose channels are *not* in phase. Use R, G
+   and B at phases 0, 2π/3 and 4π/3, period 8 px, 0.3 ± 0.2. Do it at 0°, 90° and 45°, and for test
+   6's step. Report the RMS and maximum per channel. With all channels in phase, `R − G` is 0
+   everywhere, so tests 5 and 6 could not fail, which is why they measured exactly 0. That is the
+   brief's flaw, not yours. These numbers decide whether those tests need a harder version.
+3. Re-run every gate and the four timings, and add a **Report, round 2** under the first one.
+   Leave the first one as it is.
+
+Timings noted: 3.6 s and 8.0 s median at 24 and 40 MP. A budget comes after MV-23.3 measures real
+files.

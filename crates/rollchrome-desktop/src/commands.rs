@@ -15,6 +15,8 @@ pub mod auto_masks;
 pub use auto_masks::*;
 pub mod bulk_edit;
 pub use bulk_edit::*;
+pub mod develop;
+pub use develop::*;
 pub mod edit;
 pub use edit::*;
 pub mod presets;

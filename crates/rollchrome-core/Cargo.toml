@@ -30,6 +30,7 @@ tempfile = "3.10"
 chrono = { version = "0.4", features = ["serde"] }
 image = "0.25.10"
 sha2 = "0.11.0"
+nom-exif = "3.6.2"
 
 # The measuring tool for automatic masks (ED-23, MV-22); it runs the models, so it needs them.
 [[example]]

@@ -1,0 +1,200 @@
+//! Filesystem adapter for Develop folder operations (DV-2b).
+//!
+//! Implements `DevelopStore` over standard filesystem directories. This is the
+//! single place in this step where `Path` and `PathBuf` types are used (R2).
+
+use std::collections::BTreeSet;
+use std::io::Write;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use phototools_core::error::Error;
+use phototools_core::media::ExifWriter;
+
+use crate::media::develop::OutputFormat;
+use crate::media::edit::lut::Lut;
+use crate::tools::develop::DevelopStore;
+use crate::tools::lut_library::find_lut_by_name_or_sha256;
+
+/// Storage adapter for developing a physical folder on disk.
+pub struct FolderStore {
+    folder: PathBuf,
+    lut_dir: PathBuf,
+    exiftool_program: Option<String>,
+    writer: Option<ExifWriter>,
+}
+
+impl FolderStore {
+    /// Creates a store targeting `folder` with LUTs resolved from `lut_dir`.
+    pub fn new(folder: PathBuf, lut_dir: PathBuf) -> Self {
+        Self::with_exiftool(folder, lut_dir, None)
+    }
+
+    /// Creates a store with a specific exiftool binary (used for single-process G4 tests).
+    pub fn with_exiftool(folder: PathBuf, lut_dir: PathBuf, program: Option<String>) -> Self {
+        Self {
+            folder,
+            lut_dir,
+            exiftool_program: program,
+            writer: None,
+        }
+    }
+
+    /// The destination folder for rendered outputs (`<folder>/Developed`).
+    pub fn output_dir(&self) -> PathBuf {
+        self.folder.join("Developed")
+    }
+
+    /// Read existing output file names in the `Developed/` directory in lower case.
+    pub fn existing_outputs(&self) -> Result<BTreeSet<String>, Error> {
+        let dev_dir = self.output_dir();
+        if !dev_dir.exists() {
+            return Ok(BTreeSet::new());
+        }
+
+        let entries = std::fs::read_dir(&dev_dir).map_err(Error::Io)?;
+
+        let mut existing = BTreeSet::new();
+        for entry in entries {
+            let entry = entry.map_err(Error::Io)?;
+            if let Ok(ft) = entry.file_type() {
+                if ft.is_file() {
+                    existing.insert(entry.file_name().to_string_lossy().to_lowercase());
+                }
+            }
+        }
+        Ok(existing)
+    }
+
+    fn ensure_writer(&mut self) -> Result<&mut ExifWriter, Error> {
+        if self.writer.is_none() {
+            let writer = match &self.exiftool_program {
+                Some(prog) => ExifWriter::start_with(prog, Duration::from_secs(60))?,
+                None => ExifWriter::start()?,
+            };
+            self.writer = Some(writer);
+        }
+        match self.writer.as_mut() {
+            Some(w) => Ok(w),
+            None => Err(Error::Internal(
+                "failed to access exiftool writer".to_string(),
+            )),
+        }
+    }
+}
+
+impl DevelopStore for FolderStore {
+    fn existing_outputs(&self) -> Result<BTreeSet<String>, Error> {
+        let dev_dir = self.output_dir();
+        if !dev_dir.exists() {
+            return Ok(BTreeSet::new());
+        }
+
+        let entries = std::fs::read_dir(&dev_dir).map_err(Error::Io)?;
+
+        let mut existing = BTreeSet::new();
+        for entry in entries {
+            let entry = entry.map_err(Error::Io)?;
+            if let Ok(ft) = entry.file_type() {
+                if ft.is_file() {
+                    existing.insert(entry.file_name().to_string_lossy().to_lowercase());
+                }
+            }
+        }
+        Ok(existing)
+    }
+
+    fn read(&self, name: &str) -> Result<Vec<u8>, Error> {
+        let path = self.folder.join(name);
+        std::fs::read(&path).map_err(Error::Io)
+    }
+
+    fn look(&self, look: &str) -> Result<Lut, Error> {
+        match find_lut_by_name_or_sha256(&self.lut_dir, look)? {
+            Some((_path, lut)) => Ok(lut),
+            None => Err(Error::Refused(format!(
+                "the look '{look}' is not in the LUT library"
+            ))),
+        }
+    }
+
+    fn create_new(&mut self, output: &str, bytes: &[u8]) -> Result<(), Error> {
+        let dev_dir = self.output_dir();
+        std::fs::create_dir_all(&dev_dir).map_err(Error::Io)?;
+
+        let path = dev_dir.join(output);
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(Error::Refused(format!("Developed/{output} already exists")));
+            }
+            Err(e) => return Err(Error::Io(e)),
+        };
+
+        if let Err(e) = file.write_all(bytes) {
+            let _ = std::fs::remove_file(&path);
+            return Err(Error::Io(e));
+        }
+
+        if let Err(e) = file.sync_all() {
+            let _ = std::fs::remove_file(&path);
+            return Err(Error::Io(e));
+        }
+
+        Ok(())
+    }
+
+    fn carry_metadata(
+        &mut self,
+        source: &str,
+        output: &str,
+        width: u32,
+        height: u32,
+        format: OutputFormat,
+    ) -> Result<(), Error> {
+        let src_path = self.folder.join(source);
+        let dst_path = self.output_dir().join(output);
+
+        let writer = self.ensure_writer()?;
+
+        // 1. Copy metadata to derivative.
+        // upright is false: pixels are stored as captured (DV-1 reports orientation and does not apply it),
+        // so the original Orientation tag remains valid and accurate.
+        writer.copy_metadata_to_derivative(&src_path, &dst_path, width, height, false)?;
+
+        // 2. Format-specific and DNG tag corrections in a single set_tags call:
+        let mut corrections = Vec::new();
+        match format {
+            OutputFormat::Jpeg { .. } => {
+                // JPEG is rendered in sRGB; tag with ExifIFD:ColorSpace=1 (sRGB)
+                corrections.push("-ExifIFD:ColorSpace#=1".to_string());
+            }
+            OutputFormat::Tiff => {
+                // TIFF is 16-bit ProPhoto RGB with an embedded ICC profile.
+                // ExifIFD:ColorSpace=65535 (Uncalibrated) signals that viewers must consult the
+                // embedded ICC profile instead of assuming sRGB.
+                corrections.push("-ExifIFD:ColorSpace#=65535".to_string());
+                // Delete InteropIFD:InteropIndex (e.g. "R98") which would incorrectly assert sRGB.
+                corrections.push("-InteropIFD:InteropIndex=".to_string());
+            }
+        }
+
+        // Delete DNG identification tags so TIFF/JPEG derivatives are not mistaken for sensor RAW DNGs.
+        corrections.push("-IFD0:DNGVersion=".to_string());
+        corrections.push("-IFD0:DNGBackwardVersion=".to_string());
+
+        writer.set_tags(&dst_path, &corrections)?;
+
+        Ok(())
+    }
+
+    fn finish(&mut self) {
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.close();
+        }
+    }
+}

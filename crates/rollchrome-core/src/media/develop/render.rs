@@ -6,6 +6,7 @@
 use image::DynamicImage;
 use phototools_core::error::Error;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::media::develop::colour;
 use crate::media::develop::tone;
@@ -13,7 +14,8 @@ use crate::media::develop::Developed;
 use crate::media::edit::lut::Lut;
 
 /// Format for rendered output files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OutputFormat {
     /// 8-bit sRGB JPEG with quality in 1..=100.
     Jpeg { quality: u8 },

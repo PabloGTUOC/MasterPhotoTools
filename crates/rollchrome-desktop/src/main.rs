@@ -93,6 +93,8 @@ fn main() {
             commands::delete_preset,
             commands::plan_bulk_edit,
             commands::apply_bulk_edit,
+            commands::plan_develop,
+            commands::apply_develop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Rollchrome desktop application");

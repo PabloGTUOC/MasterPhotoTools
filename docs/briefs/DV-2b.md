@@ -288,7 +288,147 @@ not tick the acceptance boxes above; the review does that.
 
 ## Report
 
-*Written by the implementer.*
+### Baseline counts
+Recorded on `dv-2b` as cut from `main` (commit `f35327f`), before any changes:
+- `phototools-core`: 713 passed
+- `rollchrome-core`: 222 passed
+- `phototools-desktop`: 26 passed
+- `rollchrome-desktop`: 13 passed
+- `phototools-server`: 71 passed
+- Workspace: 1045 passed (0 failed, 0 ignored)
+
+### What was done
+1. **Output format serde:**
+   Added `#[derive(Serialize, Deserialize)]` and `#[serde(tag = "kind", rename_all = "snake_case")]` to `OutputFormat` in `crates/rollchrome-core/src/media/develop/render.rs`.
+
+2. **Dependency:**
+   Added `nom-exif = "3.6.2"` under `[dev-dependencies]` in `crates/rollchrome-core/Cargo.toml` (under G8, matching `phototools-core`'s version).
+
+3. **Core develop tools:**
+   - Created `crates/rollchrome-core/src/tools/develop.rs` containing `DevelopItem`, `DevelopAction`, `DevelopPlan`, `DevelopSummary`, `DevelopStore`, pure `plan_develop` (sorting by name order, strict validation of names, look presence, extension against `RAW_EXTENSIONS`, and non-overwriting skip detection), and `execute_develop` (sequential decode and render with cached look resolution, non-overwriting `create_new`, and metadata propagation). Strictly zero `Path` or `PathBuf` types in this file (R2).
+   - Created `crates/rollchrome-core/src/tools/develop_folder.rs` providing `FolderStore` implementing `DevelopStore`, handling `<folder>/Developed` paths, non-overwriting `create_new`, and batch metadata copying via a single long-lived `ExifWriter` process (G4).
+   - Re-exported modules in `crates/rollchrome-core/src/tools/mod.rs`.
+
+4. **Desktop commands:**
+   - Created `crates/rollchrome-desktop/src/commands/develop.rs` implementing `plan_develop` and `apply_develop` (with testable `_impl` functions). Both commands validate the input folder with `resolve_input` (G6) and validate `<folder>/Developed` with `resolve_output` (MV-16.7).
+   - Re-exported commands in `crates/rollchrome-desktop/src/commands.rs` and registered in `crates/rollchrome-desktop/src/main.rs`.
+
+5. **Tests:**
+   Implemented exactly 21 new tests:
+   - Tests 1–12: Unit tests in `crates/rollchrome-core/src/tools/develop.rs`.
+   - Tests 13–19: Integration tests in `crates/rollchrome-core/tests/develop_folder_tests.rs`.
+   - Tests 20–21: Desktop command integration tests in `crates/rollchrome-desktop/tests/develop_desktop.rs`.
+
+### Metadata findings & acceptance questions
+- **DNG tags copy (Test 16):**
+  When copying metadata via `copy_metadata_to_derivative(source, output, width, height, upright: false)` with ExifTool's `-all:all`, IFD0 DNG tags (specifically `DNGVersion` tag 50706 and `DNGBackwardVersion` tag 50707) are copied over to TIFF derivatives if present in the source. Left untouched, raw decoders (such as rawler) mistake the resulting TIFF for a DNG and attempt to demosaic the RGB data. Explicit corrections `-IFD0:DNGVersion=` and `-IFD0:DNGBackwardVersion=` were added in `FolderStore::carry_metadata` to strip them.
+- **InteropIndex reading:**
+  In Test 15, InteropIndex was checked with `nom-exif` (verifying no tag `0x0001` exists in the EXIF entries iterator), and additionally verified via the `tiff` crate decoder confirming tag `0xa005` (`InteropOffset`) is not present in IFD0. `ColorSpace` in Tests 14 and 15 was read using `nom-exif` MediaParser parsing tag `0xa001`.
+- **ExifTool behavior / surprises:**
+  ExifTool's `-all:all` copy creates an `InteropIFD` if not suppressed. For TIFFs, explicitly deleting `-InteropIFD:InteropIndex=` removes the Interop IFD, ensuring the file remains cleanly uncalibrated (`ColorSpace = 65535`) without stray pointers. Single-process lifecycle across the entire batch (G4) functioned reliably with `ExifWriter`.
+
+### Deviations
+None.
+
+### Gate results
+
+#### `cargo fmt --all --check`
+Clean (exit code 0, no diff output).
+
+#### `cargo clippy --workspace --all-targets -- -D warnings`
+Clean (exit code 0, 0 warnings).
+
+#### `cargo build --workspace`
+Clean (exit code 0).
+
+#### `cargo test -p phototools-core`
+```
+test result: ok. 518 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.12s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.62s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.48s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.59s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.53s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+Total: 713 passed.
+
+#### `cargo test -p rollchrome-core`
+```
+test result: ok. 149 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.65s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.84s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.02s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+Total: 241 passed (222 baseline + 19 new).
+
+#### `cargo test -p phototools-desktop`
+```
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.36s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.83s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+Total: 26 passed.
+
+#### `cargo test -p rollchrome-desktop`
+```
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+Total: 15 passed (13 baseline + 2 new).
+
+#### `cargo test --workspace`
+```
+test result: ok. 518 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.16s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.67s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.41s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.58s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.54s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.53s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.86s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+test result: ok. 149 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.87s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+Total: 1066 passed (0 failed, 0 ignored).
+
+#### `npm --prefix frontend/rollchrome run typecheck`
+Clean (exit code 0).
 
 ---
 

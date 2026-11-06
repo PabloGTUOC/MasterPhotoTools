@@ -11,7 +11,10 @@
 //!    and blue photosites, missing green is estimated along four directions
 //!    (horizontal, vertical, two diagonals) by linear interpolation between
 //!    the nearest green samples within 3 pixels. Directions are ranked by a
-//!    gradient (difference in green plus difference in same-colour samples).
+//!    gradient (difference in green plus difference in same-colour samples,
+//!    plus a curvature term |2*c - s1 - s2| when same-colour samples s1 and s2
+//!    exist on both sides within 3 px; along the grating curvature is zero while
+//!    across it at a crest it is largest, breaking ties where they happen).
 //!    Estimates with gradients within 10% (or 1e-6) of the minimum gradient
 //!    are averaged.
 //! 2. Red and blue from colour differences: at photosites missing red or blue,
@@ -166,7 +169,7 @@ where
         if let (Some((kp, gp)), Some((kn, gn))) = (pos_green, neg_green) {
             // Linear interpolation between the two greens
             let total_k = (kp + kn) as f32;
-            let est = (kn as f32 * gp + kp as f32 * gn) / total_k;
+            let mut est = (kn as f32 * gp + kp as f32 * gn) / total_k;
 
             // Nearest same-colour sample on positive side within 3 pixels
             let mut pos_same = None;
@@ -177,7 +180,7 @@ where
                     let ur = nr as usize;
                     let uc = nc as usize;
                     if cfa_roi.color_at(ur, uc) == centre_color {
-                        pos_same = Some(get_sensor(ur, uc));
+                        pos_same = Some((m, get_sensor(ur, uc)));
                         break;
                     }
                 }
@@ -192,7 +195,7 @@ where
                     let ur = nr as usize;
                     let uc = nc as usize;
                     if cfa_roi.color_at(ur, uc) == centre_color {
-                        neg_same = Some(get_sensor(ur, uc));
+                        neg_same = Some((m, get_sensor(ur, uc)));
                         break;
                     }
                 }
@@ -200,13 +203,25 @@ where
 
             let centre_val = get_sensor(r, c);
             let same_diff = match (pos_same, neg_same) {
-                (Some(sp), Some(sn)) => (sp - sn).abs(),
-                (Some(sp), None) => (sp - centre_val).abs(),
-                (None, Some(sn)) => (sn - centre_val).abs(),
+                (Some((_, sp)), Some((_, sn))) => (sp - sn).abs(),
+                (Some((_, sp)), None) => (sp - centre_val).abs(),
+                (None, Some((_, sn))) => (sn - centre_val).abs(),
                 (None, None) => 0.0,
             };
 
-            let grad = (gp - gn).abs() + same_diff;
+            let curvature = match (pos_same, neg_same) {
+                (Some((_, sp)), Some((_, sn))) => (2.0 * centre_val - sp - sn).abs(),
+                _ => 0.0,
+            };
+
+            // Estimate correction: only when s1 and s2 sit at the same distance as g1 and g2
+            if let (Some((mp, sp)), Some((mn, sn))) = (pos_same, neg_same) {
+                if mp == mn && kp == kn {
+                    est = (gp + gn) / 2.0 + (2.0 * centre_val - sp - sn) / 4.0;
+                }
+            }
+
+            let grad = (gp - gn).abs() + same_diff + curvature;
             estimates.push(est);
             gradients.push(grad);
         }

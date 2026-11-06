@@ -457,6 +457,69 @@ Exactly 24 unit and integration tests were implemented with fixed names and thre
 
 ---
 
+## Report, round 2
+
+*Written by the implementer, addressing Review round 1.*
+
+### 1. Curvature Term & Estimate Correction
+- In `crates/rollchrome-core/src/media/develop/xtrans.rs` (Step 1):
+  - Added the curvature term `|2·c − s1 − s2|` to each direction's gradient when same-colour samples `s1` and `s2` exist on both sides along the direction within 3 pixels, where `c` is the pixel's recorded sensor value.
+  - Updated the module docstring in `xtrans.rs` explaining the curvature term and how it breaks ties at crests and troughs.
+  - Implemented the estimate correction `(gp + gn) / 2.0 + (2.0 * c - sp - sn) / 4.0` when `s1` and `s2` sit symmetrically along the direction with symmetric greens (`mp == mn && kp == kn`).
+- **Test 4 Outcome**:
+  - Test 4 (`a_fine_grating_comes_back_without_a_maze`) was re-run with threshold strictly kept at $\le 0.006$ (no threshold changes).
+  - Measured 0° grating RMS: R = **0.006276**, G = **0.006764**, B = **0.006244** (threshold 0.006, failed on R, G, B).
+  - Measured 90° grating RMS: R = **0.006244**, G = **0.006764**, B = **0.006276** (threshold 0.006, failed on R, G, B).
+  - *Analysis*: In the Fujifilm 6×6 X-Trans CFA pattern, isolated red/blue photosites (e.g. pattern row 4 col 2, row 0 col 2, row 1 col 5, row 3 col 2) have no same-colour photosites on either side within 3 pixels along the horizontal direction (same-colour photosites along that row are 6 pixels away) or on the negative side along the vertical direction (distance is 4 pixels). Because neither side has same-colour samples within 3 pixels along horizontal and vertical, `pos_same` and `neg_same` are both `None` along H and V for those photosites. Therefore, neither the curvature term nor the estimate correction activates along H and V at those extrema, and H and V continue to report gradient 0 and tie at troughs and crests. Per instruction ("If it still fails, stop and report the numbers, as before. No threshold changes"), the threshold was not touched and the failure is stopped and reported.
+
+### 2. Out-of-Phase Gratings and Step Edge Measurements
+Measured via test harness without committing a test (reverted after measurement, keeping the test count strictly at 24):
+
+#### Out-of-Phase Gratings
+Signals: R, G, B at phases $0$, $2\pi/3$, and $4\pi/3$, period $8$ px, $0.3 \pm 0.2$:
+- **0° Grating (horizontal, varies with $x$)**:
+  - **RMS Error**: R = **0.086309**, G = **0.000000**, B = **0.086773**
+  - **Maximum Error**: R = **0.177394**, G = **0.000000**, B = **0.177309**
+- **90° Grating (vertical, varies with $y$)**:
+  - **RMS Error**: R = **0.086204**, G = **0.000000**, B = **0.086677**
+  - **Maximum Error**: R = **0.177394**, G = **0.000000**, B = **0.177309**
+- **45° Grating (diagonal, varies with $(x+y)/\sqrt{2}$)**:
+  - **RMS Error**: R = **0.074794**, G = **0.000000**, B = **0.074786**
+  - **Maximum Error**: R = **0.152015**, G = **0.000000**, B = **0.152011**
+
+#### Test 6 Step Edge
+Step between `col1 = [0.2, 0.5, 0.3]` and `col2 = [0.6, 0.4, 0.1]`:
+- **Vertical Step ($c = 48$)**:
+  - *Far-field ($> 3$ px from step)*: RMS: R = **0.000000**, G = **0.000000**, B = **0.000000**; Max: R = **0.000000**, G = **0.000000**, B = **0.000000**
+  - *All interior pixels ($r, c \in [4, 92)$)*: RMS: R = **0.022284**, G = **0.000000**, B = **0.004469**; Max: R = **0.207463**, G = **0.000000**, B = **0.041493**
+- **Horizontal Step ($r = 48$)**:
+  - *Far-field ($> 3$ px from step)*: RMS: R = **0.000000**, G = **0.000000**, B = **0.000000**; Max: R = **0.000000**, G = **0.000000**, B = **0.000000**
+  - *All interior pixels ($r, c \in [4, 92)$)*: RMS: R = **0.022346**, G = **0.000000**, B = **0.004457**; Max: R = **0.207463**, G = **0.000000**, B = **0.041493**
+- **Diagonal Step ($r + c = 96$)**:
+  - *Far-field ($> 3$ px from step)*: RMS: R = **0.000000**, G = **0.000000**, B = **0.000000**; Max: R = **0.000000**, G = **0.000000**, B = **0.000000**
+  - *All interior pixels ($r, c \in [4, 92)$)*: RMS: R = **0.023977**, G = **0.000000**, B = **0.004795**; Max: R = **0.165247**, G = **0.000000**, B = **0.033049**
+
+### 3. Synthetic Benchmarks (Round 2)
+Re-run with `cargo run --release -p rollchrome-core --example develop -- --synthetic <W>x<H> <bayer|xtrans>`:
+- **6000×4000 X-Trans (24 MP)**: Run 1: 7.04s, Run 2: 4.52s, Run 3: 5.13s. **Median: 5.13s**
+- **6000×4000 Bayer (24 MP)**: Run 1: 3.35s, Run 2: 2.86s, Run 3: 2.50s. **Median: 2.86s**
+- **7728×5152 X-Trans (40 MP)**: Run 1: 8.43s, Run 2: 8.06s, Run 3: 7.79s. **Median: 8.06s**
+- **7728×5152 Bayer (40 MP)**: Run 1: 6.65s, Run 2: 8.10s, Run 3: 8.26s. **Median: 8.10s**
+
+### 4. Gate Outputs (Round 2)
+1. `cargo fmt --all --check`: clean (exit code 0, no output)
+2. `cargo clippy --workspace --all-targets -- -D warnings`: clean (exit code 0, 0 warnings)
+3. `cargo build --workspace`: clean (exit code 0)
+4. `cargo test -p phototools-core`: **713** passed, 0 failed, 0 ignored
+5. `cargo test -p phototools-desktop`: **26** passed, 0 failed, 0 ignored
+6. `cargo test -p rollchrome-desktop`: **13** passed, 0 failed, 0 ignored
+7. `cargo test -p phototools-server`: **71** passed, 0 failed, 0 ignored
+8. `cargo test -p rollchrome-core`: **212** passed, **1** failed (`a_fine_grating_comes_back_without_a_maze`), 0 ignored (total 213 tests = 189 baseline + 24)
+9. `cargo test --workspace`: **1034** passed, **1** failed (`a_fine_grating_comes_back_without_a_maze`), 0 ignored (total 1035 tests)
+10. `npm --prefix frontend/rollchrome run typecheck`: clean (exit code 0)
+
+---
+
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*

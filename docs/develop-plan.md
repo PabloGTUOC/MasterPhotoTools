@@ -1,6 +1,6 @@
 # Develop — RAW files to finished photographs, a film look each
 
-> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2 next.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
+> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a briefed.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
 > ([`rollchrome-plan.md`](rollchrome-plan.md)). DV-1 needs RC-1. Nothing here touches PhotoTools.
 >
 > **Functionality first.** The screen is discussed with the owner before it becomes a step
@@ -193,6 +193,9 @@ Acceptance, in outline — the brief sets the numbers, after measuring:
   look, no maze pattern on X-Trans.
 
 ### `DV-2` · Develop, the function
+
+Briefed in two halves: **[DV-2a](briefs/DV-2a.md)**, the look and the encode, from a developed
+RAW to a file's bytes; then **DV-2b**, the folder, the plan, the metadata and the commands.
 
 Needs DV-1; its commands need RC-2. `tools::develop` in `rollchrome-core`: a folder, and for each
 photograph a look and an exposure offset, give a plan; executing the plan gives the outputs and a

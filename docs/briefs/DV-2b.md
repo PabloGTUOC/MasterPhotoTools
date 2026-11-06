@@ -1,6 +1,6 @@
 # `DV-2b` · Develop a folder: the plan, the outputs, the metadata, the commands
 
-> **Status:** briefed
+> **Status:** **approved** (2026-11-06, round 2)
 > **Plan:** [`docs/develop-plan.md`](../develop-plan.md), step `DV-2`, second half · **Branch:** `dv-2b`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -586,3 +586,25 @@ A check that cannot see the tag passes whether or not the deletion works.
 
 Re-run the gates. The counts do not move (the test changes, it is not added). Add a **Report,
 round 2**.
+
+---
+
+**Approved** (round 2, 2026-11-06).
+
+Re-run on `dv-2b` at `36a86bc`: fmt and clippy at 0. Workspace **1066**, `rollchrome-core`
+**241**, both 0 failed and 0 ignored. The other counts are as in round 1, and nothing else changed.
+
+Test 15 now walks IFD0 → Exif IFD (34665) → Interop IFD (0xa005) → tag 0x0001 with a reader
+written for it. It asserts **`R98` on the source** before asserting **absence on the output**, so
+it can fail. The Report explains why neither `nom-exif` (it does not descend into the Interop IFD)
+nor `tiff` (it refuses a CFA DNG) could do this.
+
+The test 17 change was not asked for, and it is right. moxcms stamps the encode time into the
+ICC header (bytes 24–36). Two encodes either side of a second boundary differ there and nowhere
+else, so masking those 12 bytes keeps the claim (the profile survives the copy) without a test
+that fails once in a while. It is reported, as a deviation should be.
+
+**Develop's function is complete.** A folder, a look and an exposure per photograph give
+`Developed/<name>.jpg|.tif` with the original's metadata, never overwriting. Unverified on real
+files until MV-23. There is also no screen yet, by the owner's decision.
+

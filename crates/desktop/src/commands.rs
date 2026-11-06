@@ -25,15 +25,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::State;
 
-pub mod auto_masks;
-pub use auto_masks::*;
-pub mod bulk_edit;
-pub use bulk_edit::*;
-pub mod edit;
-pub use edit::*;
-pub mod presets;
-pub use presets::*;
-
 /// Commands answer with a message, not a `Result<_, Error>`, because Tauri
 /// serialises the error side as an opaque string. This keeps the reason visible.
 pub(crate) type CommandResult<T> = Result<T, String>;

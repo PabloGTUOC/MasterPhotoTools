@@ -15,7 +15,7 @@
  * - Saved edits reload: reopening a photo restores saved recipe parameters into sliders.
  * - Unreadable sidecar: reports error and disables autosave to avoid overwriting.
  * - Orientations 1-8: marked corner maps to correct visual quadrant and rotated canvas fits in viewport.
- * - Screenshot written to frontend/desktop/layout-proof/edit.png.
+ * - Screenshot written to frontend/rollchrome/layout-proof/edit.png.
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';

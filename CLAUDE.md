@@ -117,9 +117,11 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 1011 passing
+cargo test --workspace          # 1012 passing
 cargo test -p phototools-core   # 713 passing — G2
-cargo test -p rollchrome-core   # 188 passing — G2
+cargo test -p rollchrome-core   # 189 passing — G2
+cargo test -p phototools-desktop   # 26 passing
+cargo test -p rollchrome-desktop   # 13 passing
 ```
 
 Front ends:
@@ -136,13 +138,17 @@ npm --prefix frontend/web run check:ingest      # Phase 13 acceptance, measured 
 npm --prefix frontend/desktop run typecheck
 npm --prefix frontend/desktop run build
 npm --prefix frontend/desktop run check:transport
-npm --prefix frontend/desktop run check:edit    # ED-7 acceptance & render timing budget, measured in a browser
-npm --prefix frontend/desktop run check:bulk-lut # ED-8 acceptance & lock discipline, measured in a browser
+
+npm --prefix frontend/rollchrome run typecheck
+npm --prefix frontend/rollchrome run build
+npm --prefix frontend/rollchrome run check:transport   # and no HTTP client
+npm --prefix frontend/rollchrome run check:edit    # ED-7 acceptance & render timing budget, measured in a browser
+npm --prefix frontend/rollchrome run check:bulk-lut # ED-8 acceptance & lock discipline, measured in a browser
 ```
 
 `check:layout` and `check:ingest` drive Chromium and write screenshots to
 `frontend/web/layout-proof/`; `check:edit` and `check:bulk-lut` drive Chromium and write screenshots to
-`frontend/desktop/layout-proof/`. They assert **numbers**, not shapes — a change that makes the grid
+`frontend/rollchrome/layout-proof/`. They assert **numbers**, not shapes — a change that makes the grid
 or preview slower or unwindows it fails them.
 
 MSRV is **1.88**, enforced by clippy (raised from 1.80 by ED-23: ONNX Runtime through `ort` 2.0 needs it).

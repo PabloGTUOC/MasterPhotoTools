@@ -28,8 +28,8 @@ import type {
 } from '@host/api';
 import { desktop } from '@host/api';
 import JobProgress from '@ui/components/JobProgress.vue';
-import LutPicker from '@ui/components/LutPicker.vue';
-import type { LutItem } from '@ui/components/LutPicker.vue';
+import LutPicker from '../components/LutPicker.vue';
+import type { LutItem } from '../components/LutPicker.vue';
 import PathField from '@ui/components/PathField.vue';
 import PathListField from '@ui/components/PathListField.vue';
 import { useRoots } from '@ui/useRoots';

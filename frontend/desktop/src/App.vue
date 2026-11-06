@@ -22,19 +22,12 @@ import { runSync } from './sync';
  * The sidebar reads as the workflow does. Ingest is step 01 because it is
  * where a card enters, and the shared tools number on from there; publishing
  * is the last step and is not offered here (`docs/workflow-plan.md`).
- *
- * Single-image editing (ED-7) sits after conversion and half-frame splitting,
- * before print bordering and contact sheets.
  */
 const rawLinks: Array<{ to: string; label: string }> = [
   { to: '/', label: 'Ingest' },
 ];
 for (const link of sharedToolLinks) {
   rawLinks.push({ to: link.to, label: link.label });
-  if (link.to === '/split') {
-    rawLinks.push({ to: '/edit', label: 'Edit' });
-    rawLinks.push({ to: '/bulk-lut', label: 'Batch Grade' });
-  }
 }
 
 const links = rawLinks.map((link, index) => ({

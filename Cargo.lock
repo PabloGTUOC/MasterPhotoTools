@@ -4222,7 +4222,6 @@ dependencies = [
  "notify",
  "phototools-core",
  "reqwest 0.12.28",
- "rollchrome-core",
  "serde",
  "serde_json",
  "tauri",
@@ -5006,6 +5005,20 @@ dependencies = [
  "sha2 0.11.0",
  "tempfile",
  "tiff",
+]
+
+[[package]]
+name = "rollchrome-desktop"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "phototools-core",
+ "rollchrome-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tempfile",
 ]
 
 [[package]]

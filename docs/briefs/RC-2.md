@@ -432,6 +432,31 @@ Do not tick the acceptance boxes above; the review does that.
 
 *Written by the implementer.*
 
+**What I did.** Cut `rc-2` from `main`; recorded the baseline; then Brief sections 1-7: `rollchrome_core::config::ledger_path` (+1 test); new crate `crates/rollchrome-desktop` (lib, jobs with `rollchrome://job`, commands root with the copied helpers, main with the 25 handlers, no plugins, capabilities `core:default` only, icons copied, `gen/` committed); the four command files and `bulk_edit_desktop.rs` moved with `git mv`; the nine tests moved from `local_tools.rs` (only the crate name differs, plus the `use phototools_core::jobs::NoEvents;` line they need); PhotoTools' desktop crate, `Cargo.toml` (only `rollchrome-core` removed), `main.ts`, `App.vue`, `api.ts` and `package.json` scripts trimmed; new `frontend/rollchrome` with the screens, nine components, recipe clipboard, check scripts and harnesses moved by `git mv`; root `Cargo.toml`, `CLAUDE.md` Gates block, `docs/testing.md`, `docs/rollchrome-plan.md` updated. The work was done across two sessions (the first model hit its quota); I re-checked the whole tree against the brief before the gates.
+
+**Baseline (measured on `rc-2` before any change, in the first session; I am reporting it from that record, not re-derived):** workspace **1011**; phototools-core **713**; rollchrome-core **188**; phototools-desktop **39**; phototools-server **71**. All matched.
+
+**Gates (actual output).**
+- `cargo fmt --all --check`: no output. `cargo clippy --workspace --all-targets -- -D warnings`: no warnings. `cargo build --workspace`: ok.
+- `cargo test --workspace`: **1012 passed, 0 failed, 0 ignored**.
+- `-p phototools-core` **713** (518+11+8+24+16+44+37+12+33+10); `-p rollchrome-core` **189** (116+10+32+31); `-p phototools-desktop` **26** (19+7); `-p rollchrome-desktop` **13** (4+9); `-p phototools-server` **71** (24+41+6). 0 failed, 0 ignored in each.
+- web: shared build, typecheck, build, `check:transport` (26 files), `check:layout` (all 12 routes clean at 390x844), `check:ingest` all pass.
+- desktop: typecheck, build, `check:transport` (27 files) pass.
+- rollchrome: `npm ci`, typecheck, build pass; `check:transport` passes (21 files) and a deliberate `import { x } from '@phototools/shared'` fails it (checked, file removed).
+- `check:edit` PASSED, budgets unchanged: **drag p95 = 11.0 ms** (budget 50), median 9.5, min 8.4; **settle p95 = 41.7 ms** (budget 120), median 39.1, min 36.7. `check:bulk-lut` PASSED.
+- Browser checks ran with no cargo process running.
+- Acceptance greps (rollchrome in crates/desktop and frontend/desktop; `cargo tree` for `ort`/`rollchrome-core`; moved command names; moved component names; HTTP-client terms in `frontend/rollchrome/src`; `git diff main --stat` of core/server/web/.github/SPECIFICATION.md): all empty.
+- Moved tests: `bulk_edit_desktop.rs` is identical to the original after `phototools_desktop` -> `rollchrome_desktop`. `Cargo.lock`: adds the `rollchrome-desktop` package and drops `rollchrome-core` from `phototools-desktop`'s list.
+
+**Deviations / notes.**
+1. `frontend/rollchrome/package-lock.json` was seeded from `frontend/desktop`'s lock and then `npm install` was run. A fresh install resolved vue 3.5.45 while `frontend/shared` has 3.5.41; two Vue copies made the shared `PathField` props fail typecheck (`Ref` not unwrapped). Seeding keeps the same resolved versions as PhotoTools (vue 3.5.41). Versions in `package.json` are as briefed.
+2. `check:transport` first-draft regex for "value import from @phototools/shared" matched across statements; fixed to stop at `;` before the gates above were run.
+3. No extra shared files were needed in `tsconfig.app.json` beyond the expected five (no TS6307). No crate or package added beyond those named.
+4. `check-edit.mjs`: only a header-comment path changed (`frontend/desktop/layout-proof` -> `frontend/rollchrome/layout-proof`). The two stub-api harness files still import the type `ServerStatus` from `../../src/api`, which Rollchrome's api does not export; it is a type-only import erased at runtime and scripts are outside typecheck, so I left it (moving without tidying). Idea for RC-3.
+5. `cargo fmt --all` was run before the check; it changed nothing in moved tests (verified above).
+
+**Not verified.** `cargo tauri dev` / `cargo tauri build` for Rollchrome: **not run**. The owner's on-Mac acceptance items (open, edit, export, grade a folder, both apps at once, existing LUTs/presets listed) are not verified.
+
 ---
 
 ## Review

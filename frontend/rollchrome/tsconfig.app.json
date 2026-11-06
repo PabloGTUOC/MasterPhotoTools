@@ -1,0 +1,28 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  // Only the shared files Rollchrome compiles are listed here, not all of
+  // `../shared/src/ui/**`: the shared tool views call ApiClient methods
+  // Rollchrome does not offer.
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.vue",
+    "../shared/src/ui/useRoots.ts",
+    "../shared/src/ui/components/JobProgress.vue",
+    "../shared/src/ui/components/PathField.vue",
+    "../shared/src/ui/components/PathListField.vue",
+    "../shared/src/ui/components/FolderPicker.vue"
+  ],
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "types": ["vite/client"],
+    "paths": {
+      "@ui/*": ["../shared/src/ui/*"],
+      "@host/*": ["./src/*"]
+    }
+  }
+}

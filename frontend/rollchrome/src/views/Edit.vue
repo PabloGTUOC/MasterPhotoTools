@@ -34,17 +34,17 @@ import type {
   LookEffects,
 } from '@host/api';
 import { desktop } from '@host/api';
-import AdjustmentSlider from '@ui/components/AdjustmentSlider.vue';
-import CollapsibleSection from '@ui/components/CollapsibleSection.vue';
-import ColorWheel from '@ui/components/ColorWheel.vue';
-import CropOverlay from '@ui/components/CropOverlay.vue';
-import CurveEditor from '@ui/components/CurveEditor.vue';
-import Histogram, { type HistogramMode } from '@ui/components/Histogram.vue';
+import AdjustmentSlider from '../components/AdjustmentSlider.vue';
+import CollapsibleSection from '../components/CollapsibleSection.vue';
+import ColorWheel from '../components/ColorWheel.vue';
+import CropOverlay from '../components/CropOverlay.vue';
+import CurveEditor from '../components/CurveEditor.vue';
+import Histogram, { type HistogramMode } from '../components/Histogram.vue';
 import JobProgress from '@ui/components/JobProgress.vue';
-import MaskOverlay from '@ui/components/MaskOverlay.vue';
-import PresetBar from '@ui/components/PresetBar.vue';
+import MaskOverlay from '../components/MaskOverlay.vue';
+import PresetBar from '../components/PresetBar.vue';
 import { copiedSettings } from '../recipeClipboard';
-import LutPicker from '@ui/components/LutPicker.vue';
+import LutPicker from '../components/LutPicker.vue';
 import PathField from '@ui/components/PathField.vue';
 import { useRoots } from '@ui/useRoots';
 

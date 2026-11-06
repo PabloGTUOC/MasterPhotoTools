@@ -33,9 +33,9 @@ fn fixture() -> Fixture {
     }
 }
 
-fn make_state(f: &Fixture) -> phototools_desktop::AppState {
+fn make_state(f: &Fixture) -> rollchrome_desktop::AppState {
     let ledger = Ledger::open(&f.config.database).unwrap();
-    phototools_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents))
+    rollchrome_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents))
 }
 
 // ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ fn preset_saved_listed_loaded_and_deleted_round_trip() {
     };
 
     // Save
-    phototools_desktop::commands::presets::save_preset_impl(
+    rollchrome_desktop::commands::presets::save_preset_impl(
         &state,
         "WarmFilm".into(),
         recipe.clone(),
@@ -63,20 +63,20 @@ fn preset_saved_listed_loaded_and_deleted_round_trip() {
     .unwrap();
 
     // List
-    let list = phototools_desktop::commands::presets::list_presets_impl(&state).unwrap();
+    let list = rollchrome_desktop::commands::presets::list_presets_impl(&state).unwrap();
     assert_eq!(list.presets.len(), 1);
     assert_eq!(list.presets[0].name, "WarmFilm");
 
     // Load
     let loaded =
-        phototools_desktop::commands::presets::load_preset_impl(&state, "WarmFilm".into()).unwrap();
+        rollchrome_desktop::commands::presets::load_preset_impl(&state, "WarmFilm".into()).unwrap();
     assert_eq!(loaded.exposure, 0.75);
     assert_eq!(loaded.contrast, 0.25);
 
     // Delete
-    phototools_desktop::commands::presets::delete_preset_impl(&state, "WarmFilm".into()).unwrap();
+    rollchrome_desktop::commands::presets::delete_preset_impl(&state, "WarmFilm".into()).unwrap();
 
-    let after = phototools_desktop::commands::presets::list_presets_impl(&state).unwrap();
+    let after = rollchrome_desktop::commands::presets::list_presets_impl(&state).unwrap();
     assert_eq!(after.presets.len(), 0);
 }
 
@@ -98,7 +98,7 @@ fn batch_planned_from_a_preset_name() {
         exposure: 0.5,
         ..Default::default()
     };
-    phototools_desktop::commands::presets::save_preset_impl(
+    rollchrome_desktop::commands::presets::save_preset_impl(
         &state,
         "Brighten".into(),
         recipe.clone(),
@@ -110,10 +110,10 @@ fn batch_planned_from_a_preset_name() {
     std::fs::create_dir_all(&out_dir).unwrap();
 
     // Plan from preset name
-    let source = phototools_desktop::commands::bulk_edit::RecipeSource::Preset {
+    let source = rollchrome_desktop::commands::bulk_edit::RecipeSource::Preset {
         name: "Brighten".into(),
     };
-    let plan = phototools_desktop::commands::bulk_edit::plan_bulk_edit_impl(
+    let plan = rollchrome_desktop::commands::bulk_edit::plan_bulk_edit_impl(
         &state,
         vec![img.to_string_lossy().to_string()],
         source,
@@ -138,7 +138,7 @@ fn batch_apply_with_stale_reviewed_hash_is_refused() {
         exposure: 0.5,
         ..Default::default()
     };
-    phototools_desktop::commands::presets::save_preset_impl(
+    rollchrome_desktop::commands::presets::save_preset_impl(
         &state,
         "Brighten".into(),
         recipe.clone(),
@@ -150,10 +150,10 @@ fn batch_apply_with_stale_reviewed_hash_is_refused() {
     std::fs::create_dir_all(&out_dir).unwrap();
 
     // Plan
-    let source = phototools_desktop::commands::bulk_edit::RecipeSource::Preset {
+    let source = rollchrome_desktop::commands::bulk_edit::RecipeSource::Preset {
         name: "Brighten".into(),
     };
-    let plan = phototools_desktop::commands::bulk_edit::plan_bulk_edit_impl(
+    let plan = rollchrome_desktop::commands::bulk_edit::plan_bulk_edit_impl(
         &state,
         vec![img.to_string_lossy().to_string()],
         source.clone(),
@@ -168,7 +168,7 @@ fn batch_apply_with_stale_reviewed_hash_is_refused() {
         exposure: 0.9,
         ..Default::default()
     };
-    phototools_desktop::commands::presets::save_preset_impl(
+    rollchrome_desktop::commands::presets::save_preset_impl(
         &state,
         "Brighten".into(),
         changed,
@@ -177,7 +177,7 @@ fn batch_apply_with_stale_reviewed_hash_is_refused() {
     .unwrap();
 
     // Apply with the old reviewed hash: refused with an error, so no job id exists to follow.
-    let err = phototools_desktop::commands::bulk_edit::apply_bulk_edit_impl(
+    let err = rollchrome_desktop::commands::bulk_edit::apply_bulk_edit_impl(
         &state,
         vec![img.to_string_lossy().to_string()],
         source,
@@ -205,14 +205,14 @@ fn output_directory_outside_roots_is_refused() {
         exposure: 0.5,
         ..Default::default()
     };
-    let source = phototools_desktop::commands::bulk_edit::RecipeSource::Recipe {
+    let source = rollchrome_desktop::commands::bulk_edit::RecipeSource::Recipe {
         recipe: Box::new(recipe),
     };
 
     let outside = f._temp.path().join("outside");
     std::fs::create_dir_all(&outside).unwrap();
 
-    let err = phototools_desktop::commands::bulk_edit::plan_bulk_edit_impl(
+    let err = rollchrome_desktop::commands::bulk_edit::plan_bulk_edit_impl(
         &state,
         vec![img.to_string_lossy().to_string()],
         source,

@@ -2,5 +2,6 @@
 //!
 //! Desktop-only; depends on `phototools-core` for decoding, RAW and metadata.
 
+pub mod config;
 pub mod media;
 pub mod tools;

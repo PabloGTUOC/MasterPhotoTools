@@ -1,0 +1,53 @@
+{
+  "productName": "Rollchrome",
+  "version": "0.1.0",
+  "identifier": "com.phototools.rollchrome",
+  "build": {
+    "beforeDevCommand": {
+      "script": "npm run dev",
+      "cwd": "../../frontend/rollchrome"
+    },
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../../frontend/rollchrome"
+    },
+    "devUrl": "http://localhost:5175",
+    "frontendDist": "../../frontend/rollchrome/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Rollchrome",
+        "width": 1180,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false,
+        "minWidth": 900,
+        "minHeight": 600
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Photography",
+    "shortDescription": "Non-destructive photo editing and LUT grading",
+    "longDescription": "Edit photographs non-destructively with filmic curves, local masks and 3D LUTs, and batch-grade folders against a managed LUT library.",
+    "macOS": {
+      "minimumSystemVersion": "14.0"
+    }
+  }
+}

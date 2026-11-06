@@ -13,7 +13,7 @@
 import { computed, ref } from 'vue';
 import type { BrowserEntry } from '@phototools/shared';
 import AdjustmentSlider from './AdjustmentSlider.vue';
-import PathField from './PathField.vue';
+import PathField from '@ui/components/PathField.vue';
 
 export interface LutItem {
   name: string;

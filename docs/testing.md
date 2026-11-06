@@ -133,6 +133,15 @@ cargo tauri dev      # builds the Vue front end and opens the window
 cargo tauri build    # produces the .app and .dmg
 ```
 
+**Rollchrome** — from `crates/rollchrome-desktop`:
+
+```sh
+cargo tauri dev      # opens on port 5175, so it can run beside PhotoTools
+cargo tauri build
+```
+
+It reads PhotoTools' configuration and LUT library; it keeps its own job ledger.
+
 **Server** — from the repository root:
 
 ```sh

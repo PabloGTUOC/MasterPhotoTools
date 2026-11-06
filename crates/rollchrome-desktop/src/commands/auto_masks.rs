@@ -27,7 +27,7 @@ pub fn auto_mask_models(state: State<'_, AppState>) -> CommandResult<Vec<MaskMod
 }
 
 pub fn auto_mask_models_impl(state: &AppState) -> Vec<MaskModel> {
-    let dir = state.config().models_dir();
+    let dir = rollchrome_core::config::models_dir(&state.config());
     [AutoTarget::Subject, AutoTarget::Sky]
         .into_iter()
         .map(|target| {
@@ -52,7 +52,7 @@ pub fn download_mask_model(
 }
 
 pub fn download_mask_model_impl(state: &AppState, target: AutoTarget) -> CommandResult<String> {
-    let dir = state.config().models_dir();
+    let dir = rollchrome_core::config::models_dir(&state.config());
     let spec = segment::spec(target);
     state
         .jobs
@@ -71,7 +71,7 @@ pub async fn make_auto_mask(
     state: State<'_, AppState>,
 ) -> CommandResult<StoredRaster> {
     let (input, orientation) = state.segmentation_input(&session_id).map_err(describe)?;
-    let dir = state.config().models_dir();
+    let dir = rollchrome_core::config::models_dir(&state.config());
     tauri::async_runtime::spawn_blocking(move || {
         segment::auto_mask(&input, orientation, target, &dir)
     })
@@ -87,5 +87,11 @@ pub fn make_auto_mask_impl(
     target: AutoTarget,
 ) -> CommandResult<StoredRaster> {
     let (input, orientation) = state.segmentation_input(session_id).map_err(describe)?;
-    segment::auto_mask(&input, orientation, target, &state.config().models_dir()).map_err(describe)
+    segment::auto_mask(
+        &input,
+        orientation,
+        target,
+        &rollchrome_core::config::models_dir(&state.config()),
+    )
+    .map_err(describe)
 }

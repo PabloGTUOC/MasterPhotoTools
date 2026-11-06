@@ -13,7 +13,6 @@ import type {
   LutLibraryList,
   OpenPreviewResult,
   PreviewStage,
-  ServerStatus,
 } from '../../src/api';
 
 export interface StubState {
@@ -153,15 +152,6 @@ for (let i = 0; i < settleBuffer.length; i += 4) {
 export class StubDesktopApiClient {
   async health(): Promise<{ status: string; version: string }> {
     return { status: 'ok', version: 'stub' };
-  }
-
-  async serverStatus(): Promise<ServerStatus> {
-    return {
-      reachable: true,
-      base_url: 'http://localhost:8080',
-      version: '0.1.0',
-      detail: null,
-    };
   }
 
   async roots(): Promise<string[]> {

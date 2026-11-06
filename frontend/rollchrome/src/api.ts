@@ -634,6 +634,7 @@ export interface BulkEditPlanSummary {
   sample_frames: string[];
 }
 
+/** Plan summary for Bulk LUT tool (ED-6). */
 export interface BulkLutPlanSummary {
   actions_count: number;
   skipped: Array<{ file: string; reason: string }>;

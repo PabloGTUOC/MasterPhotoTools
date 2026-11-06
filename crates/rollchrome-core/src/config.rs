@@ -5,6 +5,7 @@
 //! (decision A), while keeping its jobs in a ledger of its own (decision B).
 
 use phototools_core::config::Config;
+use phototools_core::dirs;
 use std::path::PathBuf;
 
 /// Returns the path to Rollchrome's job ledger (`rollchrome.sqlite3`), beside PhotoTools'
@@ -15,6 +16,54 @@ use std::path::PathBuf;
 /// PhotoTools is running a job never marks PhotoTools' live job as interrupted.
 pub fn ledger_path(config: &Config) -> PathBuf {
     config.database.with_file_name("rollchrome.sqlite3")
+}
+
+/// Directory where the managed 3D LUT library is stored (ED-6).
+///
+/// Stored alongside the application database in the app data directory
+/// (e.g. `~/Library/Application Support/masterphototools/luts` on macOS).
+pub fn lut_dir(config: &Config) -> PathBuf {
+    config
+        .database
+        .parent()
+        .map(|p| p.join("luts"))
+        .unwrap_or_else(|| {
+            dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("masterphototools/luts")
+        })
+}
+
+/// Directory where the automatic-mask models are kept once downloaded (ED-23).
+///
+/// Beside the database, like the LUTs and presets; never bundled with the
+/// application, since the two models are 400 MB together.
+pub fn models_dir(config: &Config) -> PathBuf {
+    config
+        .database
+        .parent()
+        .map(|p| p.join("models"))
+        .unwrap_or_else(|| {
+            dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("masterphototools/models")
+        })
+}
+
+/// Directory where presets are stored (ED-17).
+///
+/// Stored alongside the application database in the app data directory
+/// (e.g. `~/Library/Application Support/masterphototools/presets` on macOS).
+pub fn presets_dir(config: &Config) -> PathBuf {
+    config
+        .database
+        .parent()
+        .map(|p| p.join("presets"))
+        .unwrap_or_else(|| {
+            dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("masterphototools/presets")
+        })
 }
 
 #[cfg(test)]

@@ -248,6 +248,104 @@ Do not tick the acceptance boxes above; the review does that.
 
 *Written by the implementer.*
 
+### What was done
+1. **Moved editor directory helpers out of core Config**:
+   - Removed `lut_dir`, `models_dir`, and `presets_dir` methods from `Config` in `crates/core/src/config.rs`.
+   - Exported `pub use dirs;` from `crates/core/src/lib.rs` so that `rollchrome-core` can call `dirs::data_dir()` without modifying `Cargo.lock`.
+   - Added free functions `pub fn lut_dir(config: &Config) -> PathBuf`, `pub fn models_dir(config: &Config) -> PathBuf`, and `pub fn presets_dir(config: &Config) -> PathBuf` to `crates/rollchrome-core/src/config.rs`. Their bodies match the removed methods with `self` replaced by `config`.
+   - Updated all 20 call sites across `crates/rollchrome-desktop/src/commands/{auto_masks,bulk_edit,edit,presets}.rs`, the single test call site in `crates/rollchrome-desktop/tests/local_tools.rs`, and doc comments in `crates/rollchrome-core/src/{media/segment.rs,tools/bulk_edit.rs}`.
+2. **Removed duplicate editor types from shared**:
+   - Removed `CurvePoint`, `ToneCurves`, `HslBand`, `HslAdjustments`, `ColorWheel`, `ColorGrading`, `NormalizedCrop`, `Geometry`, `Vignette`, and `FilmGrain` from `frontend/shared/src/types.ts`.
+   - Built shared types (`npm --prefix frontend/shared run build`).
+   - Updated `ColorWheel.vue`, `CropOverlay.vue`, and `CurveEditor.vue` in `frontend/rollchrome/src/components/` to import these types from `../api`.
+3. **Trimmed unused dev dependencies**:
+   - Removed `image = "0.25"` dev-dependency from `crates/desktop/Cargo.toml`.
+   - Uninstalled `playwright` from `frontend/desktop` via `npm uninstall --prefix frontend/desktop playwright`.
+   - Verified that `Cargo.lock` changed only by removing `image` from `phototools-desktop`.
+   - Verified that `frontend/desktop/package-lock.json` only removed `playwright`, `playwright-core`, and nested `fsevents`.
+4. **Resolved RC-2 review nits**:
+   - Restored doc comment `/** Plan summary for Bulk LUT tool (ED-6). */` on `BulkLutPlanSummary` in `frontend/rollchrome/src/api.ts`.
+   - Removed unused `ServerStatus` import and `async serverStatus()` stub method from `frontend/rollchrome/scripts/edit-harness/stub-api.ts` and `frontend/rollchrome/scripts/bulk-lut-harness/stub-api.ts`.
+5. **CI workflow integration (`.github/workflows/ci.yml`)**:
+   - Added `cargo test -p rollchrome-core` to the `test` job.
+   - Added `frontend/rollchrome/package-lock.json` to the npm dependency cache hash key.
+   - Added `Rollchrome front end` build and validation step (`ci`, `typecheck`, `build`, `check:transport`).
+   - Added `Rollchrome Edit — timing budgets` (`check:edit`) and `Rollchrome Batch Grade` (`check:bulk-lut`) steps.
+   - Added second upload artifact step for `frontend/rollchrome/layout-proof/` with `if: always()`.
+6. **Documentation updates**:
+   - Added note to `frontend/shared/src/ui/README.md` clarifying which components Rollchrome compiles and that it has no shared views.
+   - Updated status line in `docs/rollchrome-plan.md` to `*RC-3 done (branch rc-3); DV-1 next.*`.
+
+### Deviations
+None. All tasks were implemented according to the Brief section of `docs/briefs/RC-3.md`. (Using `pub use dirs;` in `phototools-core` allowed `rollchrome-core::config` to keep the exact body of `lut_dir`/`models_dir`/`presets_dir` using `dirs::data_dir()` without altering `Cargo.lock` dependencies).
+
+### Baseline Test Counts (before changes)
+- `cargo test --workspace`: **1012 passed**, 0 failed, 0 ignored
+- `cargo test -p phototools-core`: **713 passed** (518 unittests, 11 auto_curate, 8 benchmark, 24 card, 16 deliver, 44 derivation, 37 google_photos, 12 raw, 33 tools, 10 validation)
+- `cargo test -p rollchrome-core`: **189 passed** (116 unittests, 10 bulk_edit, 32 media, 31 tools)
+- `cargo test -p phototools-desktop`: **26 passed** (19 unittests, 7 local_tools)
+- `cargo test -p rollchrome-desktop`: **13 passed** (4 bulk_edit, 9 local_tools)
+- `cargo test -p phototools-server`: **71 passed** (24 unittests, 41 integration, 6 system)
+
+### Gate Outputs
+
+1. `cargo fmt --all --check`
+   Output: clean, exit code 0 (no output).
+2. `cargo clippy --workspace --all-targets -- -D warnings`
+   Output: Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.76s (0 warnings).
+3. `cargo build --workspace`
+   Output: Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.50s (0 errors).
+4. `cargo test --workspace`
+   Output: 1012 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.53s.
+5. `cargo test -p phototools-core`
+   Output: 713 passed; 0 failed; 0 ignored (518 unit + 11 auto_curate + 8 benchmark + 24 card + 16 deliver + 44 derivation + 37 google_photos + 12 raw + 33 tools + 10 validation; 0 doc-tests).
+6. `cargo test -p rollchrome-core`
+   Output: 189 passed; 0 failed; 0 ignored (116 unit + 10 bulk_edit + 32 media + 31 tools; 0 doc-tests).
+7. `cargo test -p phototools-desktop`
+   Output: 26 passed; 0 failed; 0 ignored (19 unit + 7 local_tools; 0 doc-tests).
+8. `cargo test -p rollchrome-desktop`
+   Output: 13 passed; 0 failed; 0 ignored (4 bulk_edit + 9 local_tools; 0 doc-tests).
+9. `npm --prefix frontend/shared run build`
+   Output: clean, exit code 0.
+10. `npm --prefix frontend/web run typecheck`
+    Output: vue-tsc --build --force exited with code 0.
+11. `npm --prefix frontend/web run build`
+    Output: built in 1.12s, dist/assets produced.
+12. `npm --prefix frontend/web run check:transport`
+    Output: `transport check: 26 files, no view reaches the network directly`
+13. `npm --prefix frontend/web run check:layout`
+    Output: `All 12 routes clean at 390x844. Screenshots in layout-proof/`
+14. `npm --prefix frontend/web run check:ingest`
+    Output: `ingest check: 400 shots render responsively, one press bulk-resizes them, and publish is gated`
+15. `npm --prefix frontend/desktop ci`
+    Output: added 60 packages, audited 62 packages.
+16. `npm --prefix frontend/desktop run typecheck`
+    Output: vue-tsc --build --force exited with code 0.
+17. `npm --prefix frontend/desktop run build`
+    Output: built in 1.02s, dist/assets produced.
+18. `npm --prefix frontend/desktop run check:transport`
+    Output: `transport check: 27 files, no view reaches the network directly`
+19. `npm --prefix frontend/rollchrome ci`
+    Output: added 60 packages, audited 62 packages.
+20. `npm --prefix frontend/rollchrome run typecheck`
+    Output: vue-tsc --build --force exited with code 0.
+21. `npm --prefix frontend/rollchrome run build`
+    Output: built in 792ms, dist/assets produced.
+22. `npm --prefix frontend/rollchrome run check:transport`
+    Output: `transport check: 21 files, no view reaches the network directly and no HTTP client is imported`
+23. `npm --prefix frontend/rollchrome run check:edit`
+    - Drag responsiveness: min=8.5 ms, median=9.7 ms, **p95=12.5 ms** (budget <= 50 ms)
+    - Settle responsiveness: min=37.5 ms, median=40.2 ms, **p95=46.6 ms** (budget <= 120 ms)
+    - Result: `PASSED all checks.`
+24. `npm --prefix frontend/rollchrome run check:bulk-lut`
+    - Output: `check:bulk-lut PASSED cleanly: all acceptance assertions and benchmarks verified.`
+25. YAML parser verification:
+    - Command: `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/ci.yml")' && echo "ci.yml parses"`
+    - Output: `ci.yml parses`
+
+### Unverified
+CI execution on GitHub Actions cannot be verified locally and will run once the owner reviews, merges, and pushes the branch.
+
 ---
 
 ## Review

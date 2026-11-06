@@ -57,6 +57,13 @@ the half it cannot do — was rejected. A capability that exists in the type
 system and fails at runtime is worse than one the type system never offered:
 the first is discovered by a person pressing a button, the second by a compiler.
 
+A third application, Rollchrome (`frontend/rollchrome`), compiles **some**
+shared components (`JobProgress`, `PathField`, `PathListField`, `FolderPicker`)
+and `useRoots`, and **no shared views**. Its `@host/api` offers `roots`,
+`list`, `job`, `watchJob` and `cancelJob`, not `ApiClient`. So a component that
+reaches for any other `api` method breaks Rollchrome's typecheck. The editor's
+own components live in `frontend/rollchrome/src/components/`, not here.
+
 ## What stays in the applications
 
 `App.vue`, `main.ts` and `api.ts` are per-application and deliberately not here:

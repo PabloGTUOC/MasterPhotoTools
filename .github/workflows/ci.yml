@@ -66,6 +66,10 @@ jobs:
       - name: Isolated core tests
         run: cargo test -p phototools-core
 
+      # G2: isolated library tests for the second library.
+      - name: Isolated rollchrome-core tests
+        run: cargo test -p rollchrome-core
+
   frontend:
     name: Front end
     runs-on: ubuntu-latest
@@ -81,6 +85,7 @@ jobs:
             frontend/shared/package-lock.json
             frontend/web/package-lock.json
             frontend/desktop/package-lock.json
+            frontend/rollchrome/package-lock.json
 
       # Both front ends consume the shared package: the client as compiled
       # output, and the views as source compiled into each application's own
@@ -115,6 +120,15 @@ jobs:
           npm --prefix frontend/desktop run build
           npm --prefix frontend/desktop run check:transport
 
+      # Rollchrome compiles a few shared components over its own Tauri
+      # transport, and has no HTTP client.
+      - name: Rollchrome front end
+        run: |
+          npm --prefix frontend/rollchrome ci
+          npm --prefix frontend/rollchrome run typecheck
+          npm --prefix frontend/rollchrome run build
+          npm --prefix frontend/rollchrome run check:transport
+
       # Phase 6 acceptance: layout at 390 px. Needs a browser, so it installs
       # one here rather than assuming the runner has it.
       - name: Install Chromium
@@ -129,10 +143,26 @@ jobs:
       - name: Ingest UI — 400 shots, bulk resize, publish gate
         run: npm --prefix frontend/web run check:ingest
 
+      # Acceptance & render timing budgets: until now they ran only on the Mac.
+      - name: Rollchrome Edit — timing budgets
+        run: npm --prefix frontend/rollchrome run check:edit
+
+      # Bulk LUT acceptance & lock discipline: until now they ran only on the Mac.
+      - name: Rollchrome Batch Grade
+        run: npm --prefix frontend/rollchrome run check:bulk-lut
+
       - name: Upload layout screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: layout-390px
           path: frontend/web/layout-proof/
+          if-no-files-found: ignore
+
+      - name: Upload Rollchrome layout screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollchrome-proof
+          path: frontend/rollchrome/layout-proof/
           if-no-files-found: ignore

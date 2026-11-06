@@ -20,7 +20,7 @@ pub fn list_presets(state: State<'_, AppState>) -> CommandResult<PresetList> {
 }
 
 pub fn list_presets_impl(state: &AppState) -> CommandResult<PresetList> {
-    let presets_dir = state.config().presets_dir();
+    let presets_dir = rollchrome_core::config::presets_dir(&state.config());
     core_list_presets(&presets_dir).map_err(describe)
 }
 
@@ -30,7 +30,7 @@ pub fn load_preset(name: String, state: State<'_, AppState>) -> CommandResult<Ad
 }
 
 pub fn load_preset_impl(state: &AppState, name: String) -> CommandResult<AdjustmentRecipe> {
-    let presets_dir = state.config().presets_dir();
+    let presets_dir = rollchrome_core::config::presets_dir(&state.config());
     core_load_preset(&presets_dir, &name).map_err(describe)
 }
 
@@ -50,7 +50,7 @@ pub fn save_preset_impl(
     recipe: AdjustmentRecipe,
     overwrite: bool,
 ) -> CommandResult<()> {
-    let presets_dir = state.config().presets_dir();
+    let presets_dir = rollchrome_core::config::presets_dir(&state.config());
     core_save_preset(&presets_dir, &name, &recipe, overwrite).map_err(describe)
 }
 
@@ -60,7 +60,7 @@ pub fn rename_preset(from: String, to: String, state: State<'_, AppState>) -> Co
 }
 
 pub fn rename_preset_impl(state: &AppState, from: String, to: String) -> CommandResult<()> {
-    let presets_dir = state.config().presets_dir();
+    let presets_dir = rollchrome_core::config::presets_dir(&state.config());
     core_rename_preset(&presets_dir, &from, &to).map_err(describe)
 }
 
@@ -70,6 +70,6 @@ pub fn delete_preset(name: String, state: State<'_, AppState>) -> CommandResult<
 }
 
 pub fn delete_preset_impl(state: &AppState, name: String) -> CommandResult<()> {
-    let presets_dir = state.config().presets_dir();
+    let presets_dir = rollchrome_core::config::presets_dir(&state.config());
     core_delete_preset(&presets_dir, &name).map_err(describe)
 }

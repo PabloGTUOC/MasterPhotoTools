@@ -52,8 +52,8 @@ pub fn plan_bulk_edit_impl(
     let resolved_inputs = resolve_inputs(&config, &inputs)?;
     let resolved_out = resolve_output(&config, &out_dir)?;
 
-    let recipe = recipe_from_source(&config.presets_dir(), &source)?;
-    let lut_dir = config.lut_dir();
+    let recipe = recipe_from_source(&rollchrome_core::config::presets_dir(&config), &source)?;
+    let lut_dir = rollchrome_core::config::lut_dir(&config);
 
     let mut params = BulkEditParams::new(resolved_inputs, recipe, lut_dir, resolved_out);
     params.recursive = recursive;
@@ -108,8 +108,8 @@ pub fn apply_bulk_edit_impl(
     let resolved_inputs = resolve_inputs(&config, &inputs)?;
     let resolved_out = resolve_output(&config, &out_dir)?;
 
-    let recipe = recipe_from_source(&config.presets_dir(), &source)?;
-    let lut_dir = config.lut_dir();
+    let recipe = recipe_from_source(&rollchrome_core::config::presets_dir(&config), &source)?;
+    let lut_dir = rollchrome_core::config::lut_dir(&config);
 
     // Refuse a stale review here, as `apply_bulk_lut` does, rather than starting a
     // job that fails at once: a refusal the person sees beside the Run button says

@@ -140,7 +140,7 @@ fn apply_bulk_lut_refuses_when_the_lut_changed_after_the_reviewed_plan() {
     let reviewed_lut_sha256 = plan.lut_sha256;
 
     // 2. The LUT file on disk is modified after review
-    let lut_in_lib = f.config.lut_dir().join("test.cube");
+    let lut_in_lib = rollchrome_core::config::lut_dir(&f.config).join("test.cube");
     let modified_content = "\
 TITLE \"Modified Test Cube\"
 LUT_3D_SIZE 2

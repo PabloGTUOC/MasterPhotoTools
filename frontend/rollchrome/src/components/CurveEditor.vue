@@ -18,7 +18,7 @@
  * - Reset button restores current channel to identity line [(0,0), (1,1)].
  */
 import { computed, ref, onUnmounted } from 'vue';
-import type { CurvePoint, ToneCurves } from '@phototools/shared';
+import type { CurvePoint, ToneCurves } from '../api';
 
 const props = withDefaults(
   defineProps<{

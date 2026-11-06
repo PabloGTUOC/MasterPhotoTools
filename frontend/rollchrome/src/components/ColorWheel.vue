@@ -17,7 +17,7 @@
  * - Hit targets >= 40px; controls 16px text. No drop shadows.
  */
 import { computed, ref } from 'vue';
-import type { ColorWheel } from '@phototools/shared';
+import type { ColorWheel } from '../api';
 import AdjustmentSlider from './AdjustmentSlider.vue';
 
 const props = withDefaults(

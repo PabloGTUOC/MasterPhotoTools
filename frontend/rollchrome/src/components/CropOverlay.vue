@@ -10,7 +10,7 @@
  * - Tokens only, no fallbacks, no radius above 2px.
  */
 import { computed, onMounted, ref } from 'vue';
-import type { NormalizedCrop } from '@phototools/shared';
+import type { NormalizedCrop } from '../api';
 
 const props = withDefaults(
   defineProps<{

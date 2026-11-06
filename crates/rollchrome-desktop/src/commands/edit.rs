@@ -102,7 +102,7 @@ pub fn export_edited_image_impl(
     // Enforces G6 roots AND Publishing refusal (MV-16.7)
     let resolved_out = resolve_output(&config, &out_dir)?;
 
-    let lut_dir = config.lut_dir();
+    let lut_dir = rollchrome_core::config::lut_dir(&config);
     let lut_opt = match &recipe.lut {
         Some(lut_ref) => {
             let (_, lut) = resolve_recipe_lut(&lut_dir, lut_ref).map_err(describe)?;
@@ -156,7 +156,7 @@ pub fn plan_bulk_lut_impl(
     // Enforces G6 roots AND Publishing refusal (MV-16.7)
     let resolved_out = resolve_output(&config, &out_dir)?;
 
-    let lut_dir = config.lut_dir();
+    let lut_dir = rollchrome_core::config::lut_dir(&config);
     let (lut_path, lut_obj) = find_lut_by_name_or_sha256(&lut_dir, &lut)
         .map_err(describe)?
         .ok_or_else(|| format!("LUT '{lut}' was not found in the library"))?;
@@ -216,7 +216,7 @@ pub fn apply_bulk_lut_impl(
     let resolved_inputs = resolve_inputs(&config, &inputs)?;
     let resolved_out = resolve_output(&config, &out_dir)?;
 
-    let lut_dir = config.lut_dir();
+    let lut_dir = rollchrome_core::config::lut_dir(&config);
     let (lut_path, _) = find_lut_by_name_or_sha256(&lut_dir, &lut)
         .map_err(describe)?
         .ok_or_else(|| format!("LUT '{lut}' was not found in the library"))?;
@@ -304,7 +304,7 @@ pub fn render_preview_impl(
     recipe: AdjustmentRecipe,
     stage: Option<PreviewStage>,
 ) -> Result<Vec<u8>, String> {
-    let lut_dir = state.config().lut_dir();
+    let lut_dir = rollchrome_core::config::lut_dir(&state.config());
     let lut_opt = match &recipe.lut {
         Some(lut_ref) => {
             let (_, lut) = resolve_recipe_lut(&lut_dir, lut_ref).map_err(describe)?;
@@ -377,7 +377,7 @@ pub fn list_luts(state: State<'_, AppState>) -> CommandResult<LutLibraryList> {
 }
 
 pub fn list_luts_impl(state: &AppState) -> CommandResult<LutLibraryList> {
-    let lut_dir = state.config().lut_dir();
+    let lut_dir = rollchrome_core::config::lut_dir(&state.config());
     core_list_luts(&lut_dir).map_err(describe)
 }
 
@@ -389,6 +389,6 @@ pub fn import_lut(path: String, state: State<'_, AppState>) -> CommandResult<Lut
 pub fn import_lut_impl(state: &AppState, path: String) -> CommandResult<LutEntry> {
     let config = state.config();
     let resolved = resolve_input(&config, &path)?;
-    let lut_dir = config.lut_dir();
+    let lut_dir = rollchrome_core::config::lut_dir(&config);
     core_import_lut(&lut_dir, &resolved).map_err(describe)
 }

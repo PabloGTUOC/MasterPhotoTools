@@ -31,7 +31,7 @@ pub struct BulkEditParams {
     pub inputs: Vec<PathBuf>,
     pub recursive: bool,
     pub recipe: AdjustmentRecipe,
-    /// The managed LUT library, for resolving `recipe.lut` (`Config::lut_dir()`).
+    /// The managed LUT library, for resolving `recipe.lut` (`rollchrome_core::config::lut_dir()`).
     pub lut_dir: PathBuf,
     pub out_dir: PathBuf,
 }

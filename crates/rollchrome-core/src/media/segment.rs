@@ -2,7 +2,7 @@
 //!
 //! Two models, chosen and measured in ED-22 (edit plan, Round 3): BiRefNet lite at full
 //! precision for the main subject, and a U²-Net trained on skies. Both are MIT-licensed,
-//! downloaded once into `Config::models_dir` and checked against the SHA-256 recorded
+//! downloaded once into `rollchrome_core::config::models_dir` and checked against the SHA-256 recorded
 //! here before every use, so a truncated or substituted file is refused rather than run.
 //!
 //! Inference runs on the CPU through ONNX Runtime. ED-22 found CoreML hung with its

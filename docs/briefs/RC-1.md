@@ -1,6 +1,6 @@
 # `RC-1` · Carve the engine into `rollchrome-core` — no behaviour change
 
-> **Status:** briefed
+> **Status:** **approved**
 > **Plan:** [`docs/rollchrome-plan.md`](../rollchrome-plan.md), step `RC-1` · **Branch:** `rc-1`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -287,10 +287,10 @@ the four files to what that file uses — clippy's `-D warnings` fails on an unu
 
 Each one checkable by someone who did not do the work.
 
-- [ ] **Baseline recorded first.** Before any change, on `rc-1` as cut: `cargo test --workspace`
+- [x] **Baseline recorded first.** Before any change, on `rc-1` as cut: `cargo test --workspace`
       and `cargo test -p phototools-core` totals in the report. Expected **1011** and **901**. If
       either differs, report it before going further — every number below assumes them.
-- [ ] **Test counts: `901` → `713` + `188`, every test accounted for.**
+- [x] **Test counts: `901` → `713` + `188`, every test accounted for.**
       - `cargo test -p phototools-core`: **713** passed, 0 failed, 0 ignored.
       - `cargo test -p rollchrome-core`: **188** passed, 0 failed, 0 ignored — the 115 unit tests
         inside the moved `src/` files, 32 from `media_tests.rs`, 31 from `tools_tests.rs`, 10 in
@@ -299,22 +299,22 @@ Each one checkable by someone who did not do the work.
       - If the split lands differently (a test classed as editing turns out to need nothing from
         the editor, or the reverse), the sum must still be 901, and the report names each test
         that deviates from the lists above and why.
-- [ ] Both libraries pass **with no binary crate present** (G2): `cargo test -p phototools-core`
+- [x] Both libraries pass **with no binary crate present** (G2): `cargo test -p phototools-core`
       and `cargo test -p rollchrome-core` each succeed on their own.
-- [ ] `grep -rnE "media::(edit|segment|histogram)|tools::(edit|lut|lut_library|presets|bulk_edit)\b" crates/core`
+- [x] `grep -rnE "media::(edit|segment|histogram)|tools::(edit|lut|lut_library|presets|bulk_edit)\b" crates/core`
       finds nothing.
-- [ ] `cargo tree -p phototools-core -e normal --prefix none | grep -E "^ort(-sys)? "` finds
+- [x] `cargo tree -p phototools-core -e normal --prefix none | grep -E "^ort(-sys)? "` finds
       nothing; `cargo tree -p rollchrome-core -e normal --features segment --prefix none | grep -E "^ort "`
       finds `ort v2.0.0-rc.13`.
-- [ ] `grep -rn "rollchrome" crates/core crates/server` finds nothing except the comment in
+- [x] `grep -rn "rollchrome" crates/core crates/server` finds nothing except the comment in
       `sidecar.rs` — `phototools-core` does not know Rollchrome exists, and the server does not either.
-- [ ] `git diff main --stat -- crates/server frontend .github SPECIFICATION.md` is empty.
-- [ ] `git log --follow --oneline crates/rollchrome-core/src/media/edit/pipeline.rs` shows the
+- [x] `git diff main --stat -- crates/server frontend .github SPECIFICATION.md` is empty.
+- [x] `git log --follow --oneline crates/rollchrome-core/src/media/edit/pipeline.rs` shows the
       file's history before this branch (it was moved, not re-created).
-- [ ] The only changed test *bodies* are the three F3 tests in `crates/core/tests/tools_tests.rs`,
+- [x] The only changed test *bodies* are the three F3 tests in `crates/core/tests/tools_tests.rs`,
       setup only. Every other moved test differs from its original by import paths alone.
-- [ ] `cargo build -p rollchrome-core --example auto_mask --features segment` succeeds.
-- [ ] No new crate in `Cargo.lock`: `git diff main -- Cargo.lock` adds only the `rollchrome-core`
+- [x] `cargo build -p rollchrome-core --example auto_mask --features segment` succeeds.
+- [x] No new crate in `Cargo.lock`: `git diff main -- Cargo.lock` adds only the `rollchrome-core`
       package entry and its dependency list.
 
 ### Gates
@@ -564,6 +564,54 @@ In accordance with the instructions (*"if cargo is not available or the counts a
 
 *Written by the architect, after re-running the gates on the branch.*
 
-**Approved** — or **Changes requested:**
+**Approved** — `c386c5a`, reviewed 2026-11-06.
 
-1. <specific, actionable, one change per item>
+### Gates, re-run on `rc-1` on the Mac (not read from the report)
+
+| Gate | Result |
+|---|---|
+| `cargo fmt --all --check` | clean |
+| `cargo clippy --workspace --all-targets -- -D warnings` | exit 0, no warnings |
+| `cargo build --workspace` | ok |
+| `cargo test --workspace` | **1011** passed, 0 failed, 0 ignored |
+| `cargo test -p phototools-core` | **713** passed, 0 failed, 0 ignored |
+| `cargo test -p rollchrome-core` | **188** passed, 0 failed, 0 ignored |
+| `cargo build -p rollchrome-core --example auto_mask --features segment` | ok |
+| `frontend/shared` build; `web` typecheck, build, `check:transport` (35 files), `check:layout` (12 routes clean at 390 px), `check:ingest` | all exit 0 |
+| `desktop` typecheck, build, `check:transport` (39 files), `check:edit` (PASSED all checks), `check:bulk-lut` (PASSED) | all exit 0 |
+
+The browser checks were run after `cargo test` had finished, not alongside it.
+
+### What was checked
+
+- **Every test accounted for (G7).** Each function in `main`'s `media_tests.rs`, `tools_tests.rs`
+  and `bulk_edit_tests.rs` was extracted and compared with its counterpart on `rc-1`, with
+  `phototools_core::` and `rollchrome_core::` treated as one. None is missing. They landed
+  44 + 32 (media) and 33 + 31 (tools), exactly as the brief listed. Seven bodies differ:
+  - the three F3 tests: setup only, `save_recipe` replaced by `plant_sidecar`, as briefed.
+    Every assertion is unchanged.
+  - four (`an_exported_jpeg_keeps_its_orientation_tag_and_capture_date`,
+    `sample_frames_spreads_across_the_folder_rather_than_taking_the_first`, and two in
+    `bulk_edit_tests.rs`): a `use` line reordered by rustfmt after the crate rename. Nothing else.
+  - No `#[ignore]` anywhere in the workspace.
+- **The moved source is a move.** Rename detection matches every moved file at 92–100% similarity.
+  The only changed lines in it are `crate::` → `phototools_core::` for items that stayed, and the
+  sidecar definitions in `tools/edit.rs` replaced by the re-export. `git log --follow` on
+  `pipeline.rs` reaches ED-1.
+- **The boundary.** No reference to the editor is left in `crates/core`. `ort` is gone from
+  `phototools-core`'s tree and present in `rollchrome-core`'s (`v2.0.0-rc.13`). `rollchrome`
+  appears in `crates/core` only in the two comments the brief wrote. There is no diff in
+  `crates/server`, `frontend`, `.github` or `SPECIFICATION.md`.
+- **Scope (G11) and dependencies (G8).** One visibility widening, `ingest::scanner::hex`, which
+  the brief expected. One manifest entry the brief did not name: `tiff` as a dev-dependency, at
+  `phototools-core`'s version. The shared fixtures need it, and the report says so. `Cargo.lock`
+  adds no new crate. The desktop diff changes only paths and the two manifest lines.
+- **Documents.** `CLAUDE.md`'s gate counts and the plan's status line and RC-3 note match what exists.
+
+### Unverified
+
+- **Nobody has opened the application.** Neither the implementer nor the reviewer ran
+  `cargo tauri dev`. `check:edit` and `check:bulk-lut` drive the screens against a harness, not
+  the real Tauri commands. The desktop's integration tests (`local_tools.rs`, 16, and
+  `bulk_edit_desktop.rs`, 4) do call the real commands, and pass. A quick look on the Mac
+  would close this: open a photograph in Edit, move a slider, run one Batch Grade.

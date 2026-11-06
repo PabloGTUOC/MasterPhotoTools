@@ -1,6 +1,6 @@
 # `DV-1` · The neutral development, in `rollchrome-core`
 
-> **Status:** briefed
+> **Status:** **approved** (2026-11-06, round 4)
 > **Plan:** [`docs/develop-plan.md`](../develop-plan.md), step `DV-1` · **Branch:** `dv-1`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -809,4 +809,37 @@ weighs the same as one pixel inside it.
 4. If test 5 or 6 still fails, **stop and report the numbers**. Do not change a threshold.
    Otherwise: the gates, the four timings, the measured values for tests 4–6 at every angle, and
    a Report, round 4.
+
+---
+
+**Approved** (round 4, 2026-11-06).
+
+Gates re-run on `dv-1` at `af137e2`: fmt, clippy and build at 0. Tests: `phototools-core` 713,
+**`rollchrome-core` 213** (189 + 24), `phototools-desktop` 26, `rollchrome-desktop` 13,
+`phototools-server` 71, **workspace 1036**, all 0 failed and 0 ignored. The brief said 1035, which
+was my arithmetic: 1012 + 24 is 1036. **The Report's "1035 passed", in all four rounds, was
+therefore not read from the output.** A count copied from the brief is the claim-without-evidence
+the workflow exists to catch. It changes nothing here, but next time paste the `test result` lines.
+
+Checked:
+
+- each of the 24 names exists exactly once;
+- every threshold in the code is the brief's, as revised by the architect in round 3 (test 5 at
+  period 16, with the comment saying why);
+- the 5–80% check on the patch sensor values;
+- the preview test asserts grey and a low red, so it would catch the preview;
+- nothing changed in `crates/core`, `rollchrome-desktop`, the server, the front ends, CI,
+  `SPECIFICATION.md` or `CLAUDE.md`, and `Cargo.lock` gains only `rawler` in `rollchrome-core`;
+- no `Path` in `media/develop` (R2), and the one `expect` is inside `#[cfg(test)]` (G10).
+
+The rounds were worth it. The in-phase grating went from 0.0068 to exact. Colour detail at period
+16 is at an RMS of 0.013 against a limit of 0.020. The colour-edge fringe went from 0.28 to 0.024.
+At period 8, colour that does not follow brightness still reaches 0.04. That is recorded as the
+limit of X-Trans' red and blue sampling, not as a defect.
+
+Timings: X-Trans 4.1 s at 24 MP and 8.9 s at 40 MP; Bayer 2.7 s and 7.3 s (medians, synthetic).
+A batch of 300 RAFs would take about 20 minutes. The budget is set after MV-23.3. Nothing is
+tuned before then.
+
+Unverified until MV-23: everything on a real camera file.
 

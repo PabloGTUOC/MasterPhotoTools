@@ -1,6 +1,6 @@
 # Develop — RAW files to finished photographs, a film look each
 
-> **DV-1 briefed (2026-11-06); the rest planned.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
+> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2 next.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
 > ([`rollchrome-plan.md`](rollchrome-plan.md)). DV-1 needs RC-1. Nothing here touches PhotoTools.
 >
 > **Functionality first.** The screen is discussed with the owner before it becomes a step
@@ -172,7 +172,7 @@ development stage in front of them changes what they receive. DV-4 settles that 
 
 ### `DV-1` · The neutral development, in `rollchrome-core`
 
-Needs RC-1. **Briefed: [`briefs/DV-1.md`](briefs/DV-1.md).** A function in `rollchrome-core`: a
+Needs RC-1. **Done: [`briefs/DV-1.md`](briefs/DV-1.md); MV-23 awaits real files.** A function in `rollchrome-core`: a
 RAW file's bytes and an exposure offset in, a 16-bit ProPhoto image out — pipeline steps 1–3. Never
 the embedded preview. X-Trans through a demosaic of our own, written from the brief's description
 (rawler has none, and the open ones are GPL or LGPL), Bayer through rawler's PPG.

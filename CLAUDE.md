@@ -10,7 +10,7 @@ and maintain a photo library on a NAS.
 **The editor has left for an application of its own, Rollchrome** — a desktop-only film
 emulator, in the same repository (RC-1 to RC-3, 2026-11-06). [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md)
 has the decisions and the steps; RC-1 to RC-3 are done, and Develop's first step,
-[DV-1](docs/briefs/DV-1.md), is briefed. The state
+[DV-1](docs/briefs/DV-1.md), the neutral RAW development, is done; DV-2 is next. The state
 before the split is frozen on the **`FullEdition`** branch.
 
 The active job is **using the application on a Mac and fixing what that finds.** Two sessions of
@@ -36,7 +36,7 @@ structured half of that work — 96 for PhotoTools, eight done, and 28 for Rollc
 | [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
 | [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | Splitting Edit and Batch Grade out into Rollchrome, a desktop-only film emulator. RC-1 to RC-3 done; Develop next |
-| [`docs/develop-plan.md`](docs/develop-plan.md) | Rollchrome's third screen, Develop: RAW files to finished JPEG or TIFF, a film look each. Planned (DV-1–DV-4, after RC-1); functionality first, the screen discussed later |
+| [`docs/develop-plan.md`](docs/develop-plan.md) | Rollchrome's third screen, Develop: RAW files to finished JPEG or TIFF, a film look each. DV-1 done (MV-23 awaits real files); DV-2 next; functionality first, the screen discussed later |
 | [`docs/rollchrome/edit-plan.md`](docs/rollchrome/edit-plan.md) | Rollchrome's Edit and Batch Grade screens: non-destructive exposure adjustments and 3D LUT grading. Rounds 1 and 2 built (ED-1–ED-18); MV-20 and MV-21 await a Mac. Round 3, masks (ED-19–ED-24), built; MV-20 to MV-22 await the Mac Studio |
 | [`docs/deployment.md`](docs/deployment.md) | Deploying the server and the desktop app, and every environment variable |
 | [`docs/phase-reports/`](docs/phase-reports/) | One report per phase: what was delivered, what deviated, and why |
@@ -119,9 +119,9 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 1012 passing
+cargo test --workspace          # 1036 passing
 cargo test -p phototools-core   # 713 passing — G2
-cargo test -p rollchrome-core   # 189 passing — G2
+cargo test -p rollchrome-core   # 213 passing — G2
 cargo test -p phototools-desktop   # 26 passing
 cargo test -p rollchrome-desktop   # 13 passing
 ```

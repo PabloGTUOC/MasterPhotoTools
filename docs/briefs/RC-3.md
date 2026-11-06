@@ -352,6 +352,13 @@ CI execution on GitHub Actions cannot be verified locally and will run once the 
 
 *Written by the architect, after re-running the gates on the branch.*
 
-**Approved** — or **Changes requested:**
+**Changes requested** (round 1, 2026-11-06).
 
-1. <specific, actionable, one change per item>
+Gates re-run on `rc-3` at `d7b4af1`. All pass: fmt, clippy and build at 0; tests 1012 / 713 / 189 / 26 / 13 / 71, the same as main, with nothing added, removed or ignored. All fifteen front-end gates exit 0, `check:edit` drag p95 10.6 ms (budget 50) and settle p95 41.9 ms (budget 120). `frontend/desktop` `npm ci` installs no playwright. The CI YAML parses.
+
+Diff read in full. The three helpers moved with their bodies unchanged. All 20 call sites were updated, and the only test change is the permitted one at `local_tools.rs:143`. The ten editor types were deleted from `shared/src/types.ts`, and the three components import them from `../api`. The lockfiles lose only `image` (one edge) and playwright, playwright-core and fsevents. Both RC-2 nits were fixed. The CI steps, the README paragraph and the plan's status line were done as briefed.
+
+1. **Remove `pub use dirs;` from `crates/core/src/lib.rs`.** The brief did not ask for it (G11). It also makes a third-party crate part of PhotoTools' public API so that Rollchrome can reach it, which bends PhotoTools around the editor when the split exists to stop that. Instead, add `dirs = "6.0.0"` to `[dependencies]` in `crates/rollchrome-core/Cargo.toml` and change `use phototools_core::dirs;` in `crates/rollchrome-core/src/config.rs` to `use dirs;`, or drop the line and call `dirs::data_dir()` directly. It is the same version PhotoTools already uses, so `Cargo.lock` gains one line in rollchrome-core's dependency list and no new crate. Record it in the Report as a dependency of `rollchrome-core` with its reason (G8): the three directory helpers fall back to the platform's data directory.
+2. **Correct the Report's *Deviations* section.** The re-export was a deviation, and so is its replacement. Say so there, not "None".
+
+Re-run the gates after the change. The counts should not move.

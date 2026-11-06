@@ -1,6 +1,6 @@
 # Develop — RAW files to finished photographs, a film look each
 
-> **Planned, not started.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
+> **DV-1 briefed (2026-11-06); the rest planned.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
 > ([`rollchrome-plan.md`](rollchrome-plan.md)). DV-1 needs RC-1. Nothing here touches PhotoTools.
 >
 > **Functionality first.** The screen is discussed with the owner before it becomes a step
@@ -49,9 +49,10 @@ Verified in the code at `2a3e085`:
   information.
 - **rawler's own development mishandles Fujifilm files.** `RawDevelop::develop_intermediate` in
   rawler 0.7.2 sends every RGB sensor pattern through PPG, a Bayer algorithm — X-Trans included,
-  because `CFA::is_rgb` (`cfa.rs:193`) only checks which letters the pattern contains. rawler *has*
-  X-Trans demosaicing (`imgop/sensor/xtrans/xtrans_markenstein.rs`); its `develop` never calls it.
-  What PPG makes of an X-Trans file has not been looked at.
+  because `CFA::is_rgb` (`cfa.rs:193`) only checks which letters the pattern contains. **rawler has
+  no X-Trans demosaic** (checked 2026-11-06, for the DV-1 brief): `imgop/sensor/xtrans/xtrans_markenstein.rs`
+  is an empty file, and `xtrans/mod.rs` declares no module, so `xtrans_fast.rs` is not compiled
+  either. An earlier version of this plan said otherwise. DV-1 writes its own.
 - **Fujifilm's DR200 and DR400 underexpose the RAW by one and two stops**, and the camera's JPEG
   brightens it back. A neutral development shows those files dark — which is why the darktable
   panel carries DR buttons, and why Develop needs an exposure offset per photograph.
@@ -171,9 +172,10 @@ development stage in front of them changes what they receive. DV-4 settles that 
 
 ### `DV-1` · The neutral development, in `rollchrome-core`
 
-Needs RC-1. A function in `rollchrome-core`: a RAW file and an exposure offset in, a 16-bit image
-out — pipeline steps 1–3. Never the embedded preview. X-Trans through an X-Trans demosaic (rawler's
-`xtrans_markenstein`, called directly), Bayer through PPG or better.
+Needs RC-1. **Briefed: [`briefs/DV-1.md`](briefs/DV-1.md).** A function in `rollchrome-core`: a
+RAW file's bytes and an exposure offset in, a 16-bit ProPhoto image out — pipeline steps 1–3. Never
+the embedded preview. X-Trans through a demosaic of our own, written from the brief's description
+(rawler has none, and the open ones are GPL or LGPL), Bayer through rawler's PPG.
 
 **Leaves alone** F14 and `media::raw` in `phototools-core` (publishing wants the camera's look and
 has it), and the RAW path of Edit and Batch Grade (decision 1, and Batch Grade stays as it is).

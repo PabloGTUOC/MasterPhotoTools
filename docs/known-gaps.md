@@ -162,6 +162,14 @@ F14 puts Canon's CR3 out of scope: it is an ISO-BMFF container rather than a TIF
 separate handling. `RAW_EXTENSIONS` omits it and a test asserts the omission. A CR3 on a card is
 reported as underivable — **MV-10.5** confirms that reads as a clear message rather than a crash.
 
+### Rung 3 sends Fujifilm X-Trans files through a Bayer demosaic
+
+Rung 3 is rawler's own development, the only rung on the Linux server. rawler 0.7.2 has no X-Trans
+demosaic, so `RawDevelop` puts a Fujifilm RAF through PPG, a Bayer algorithm. What that produces
+has not been looked at. It matters only for a RAF with no usable embedded preview, which rungs 1
+and 2 normally supply. Found while briefing Rollchrome's DV-1 (2026-11-06), which writes an X-Trans
+demosaic of its own. Whether PhotoTools should use it is open.
+
 ### Rung 3 has never produced an image in a test
 
 A RAW stub with no embedded preview also has no sensor data, and synthesising a real mosaic means

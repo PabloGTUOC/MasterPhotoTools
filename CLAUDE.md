@@ -9,7 +9,8 @@ and maintain a photo library on a NAS.
 
 **The editor has left for an application of its own, Rollchrome** — a desktop-only film
 emulator, in the same repository (RC-1 to RC-3, 2026-11-06). [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md)
-has the decisions and the steps; RC-1 to RC-3 are done, and Develop (DV-1) is next. The state
+has the decisions and the steps; RC-1 to RC-3 are done, and Develop's first step,
+[DV-1](docs/briefs/DV-1.md), is briefed. The state
 before the split is frozen on the **`FullEdition`** branch.
 
 The active job is **using the application on a Mac and fixing what that finds.** Two sessions of
@@ -20,7 +21,7 @@ cause: **the tools had only ever been exercised with typed file paths, and the f
 pointing at a folder the normal gesture.**
 
 The numbered checks in [`manual-verification.md`](docs/manual-verification.md) remain the
-structured half of that work — 96 for PhotoTools, eight done, and 25 for Rollchrome's editor in
+structured half of that work — 96 for PhotoTools, eight done, and 28 for Rollchrome in
 [`docs/rollchrome/manual-verification.md`](docs/rollchrome/manual-verification.md), same ids.
 
 | Read this | For |

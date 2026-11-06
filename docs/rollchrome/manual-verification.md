@@ -5,7 +5,7 @@ from [`../manual-verification.md`](../manual-verification.md) when the editor le
 (RC-3), and **their ids are unchanged**, so anything that names MV-20.4 still finds it.
 
 How to work through them — tick the box, replace **Result:** with what actually happened, and a
-failed check is a result — is as described at the top of that file. **25 checks**, none done yet
+failed check is a result — is as described at the top of that file. **28 checks**, none done yet
 (2026-11-06). They all need a Mac with real photographs, and MV-20.7 also a card and a mounted
 share.
 
@@ -165,4 +165,25 @@ Mac Studio, M1 Max, 32 GB. No server.
 - [ ] **MV-22.6 — Automatic mask timing and memory on the M1 Max.**
       **Run:** `cargo run --release -p rollchrome-core --features segment --example auto_mask -- <models dir> <out dir> <three of your photographs>`, with Activity Monitor open on the Memory tab.
       **Pass:** record the subject and sky times printed (measured on an M4 Pro: about 3.7 s and 0.7 s) and the peak memory (about 10 GB for the subject). Acceptable if the subject takes under 8 s and the Mac does not swap.
+      **Result:**
+
+## MV-23 — the neutral development (DV-1)
+
+[`../briefs/DV-1.md`](../briefs/DV-1.md). Needs real RAW files, one Fujifilm (X-Trans) and one Bayer,
+each with the camera's own JPEG of the same frame. No application: the measuring tool writes
+sRGB PNGs.
+
+- [ ] **MV-23.1 — Colour and no camera look.**
+      **Run:** `cargo run --release -p rollchrome-core --example develop -- <out dir> <a RAF> <a Bayer RAW>`; open each PNG beside the camera's JPEG.
+      **Pass:** similar colour and white balance; no film simulation (a Velvia frame is not Velvia); the clipped areas are white, never magenta. Record any frame that is clearly off.
+      **Result:**
+
+- [ ] **MV-23.2 — No maze on X-Trans.**
+      **Run:** the RAF's PNG from MV-23.1, at 200% on fine detail: foliage, fabric, brickwork.
+      **Pass:** no maze or worm pattern, and no coloured fringes beyond the camera JPEG's. Lens distortion and vignetting are expected to differ, since DV-1 applies no lens correction.
+      **Result:**
+
+- [ ] **MV-23.3 — Time per photograph on the Mac Studio.**
+      **Run:** the same command on a 24 MP and on a 40 MP-plus RAW.
+      **Pass:** record the printed times. They set Develop's budget; there is no pass threshold yet.
       **Result:**

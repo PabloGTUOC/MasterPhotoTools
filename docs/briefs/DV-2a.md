@@ -1,6 +1,6 @@
 # `DV-2a` · From a developed RAW to a finished file: the look and the encode
 
-> **Status:** briefed
+> **Status:** **approved** (2026-11-06)
 > **Plan:** [`docs/develop-plan.md`](../develop-plan.md), step `DV-2`, first half · **Branch:** `dv-2a`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -364,6 +364,27 @@ Completed with code 0 (clean).
 
 *Written by the architect, after re-running the gates on the branch.*
 
-**Approved** — or **Changes requested:**
+**Approved** (2026-11-06).
 
-1. <specific, actionable, one change per item>
+Gates re-run on `dv-2a` at `96fd142`: fmt and clippy at 0. Tests: workspace **1045**,
+`phototools-core` 713, `rollchrome-core` **222**, `phototools-desktop` 26, `rollchrome-desktop` 13,
+`phototools-server` 71, all 0 failed and 0 ignored. This time the Report pastes the `test result:`
+lines themselves, and they agree with mine.
+
+Checked in the diff:
+
+- DV-1's tests are unchanged; the one addition is test 9.
+- `prophoto_to_srgb8` now delegates to `render`'s conversion, so there is one copy of it, as
+  asked.
+- The ICC curve parameters are `[1.8, 1, 0, 1/16, 1/32]`, and test 2 reads them back through
+  moxcms.
+- The scope and R2 greps are clean, and `Cargo.lock` gains only edges in `rollchrome-core`.
+
+Two numbers recorded, not acted on:
+
+- **The JPEG takes 4.6 s at 24 MP** (my run), against 0.15 s for the TIFF. That is
+  `JpegOptions::deliverable`'s maximum-effort encoder, PhotoTools' deliberate choice for a
+  photograph's only encode. Added to the develop time, it nearly doubles a JPEG batch. It is
+  weighed when the budget is set after MV-23.3, not before.
+- **The 0.15 MB TIFF says nothing about real files.** The example's synthetic DNG is nearly flat,
+  although DV-1's brief asked for noise, so Deflate has nothing to do. MV-23 records a real size.

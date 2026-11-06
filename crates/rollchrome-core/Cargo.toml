@@ -14,6 +14,8 @@ fast_image_resize = "6.1.0"
 reqwest = { version = "0.13.4", features = ["blocking"] }
 dirs = "6.0.0"
 rawler = "0.7.2"
+moxcms = "0.8.1"
+tiff = "0.11.3"
 # ED-23: automatic subject and sky masks run through ONNX Runtime, the owner's choice
 # after ED-22 measured it (edit plan, Round 3). Not in §2.6 — recorded in the edit phase
 # report (G8). Optional, behind `segment`, so `core` builds and tests without it (G2) and
@@ -28,7 +30,6 @@ tempfile = "3.10"
 chrono = { version = "0.4", features = ["serde"] }
 image = "0.25.10"
 sha2 = "0.11.0"
-tiff = "0.11.3"
 
 # The measuring tool for automatic masks (ED-23, MV-22); it runs the models, so it needs them.
 [[example]]

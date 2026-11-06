@@ -23,8 +23,11 @@ use rawler::rawsource::RawSource;
 use rayon::prelude::*;
 
 pub mod colour;
+pub mod render;
 pub mod tone;
 pub mod xtrans;
+
+pub use render::{prophoto_icc_profile, render, OutputFormat, Rendered};
 
 /// Options controlling RAW development.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -324,32 +327,5 @@ pub fn develop(raw: &[u8], options: &DevelopOptions) -> Result<Developed, Error>
 /// 3. Clamps linear sRGB to 0.0..=1.0 (colours outside sRGB gamut are clipped).
 /// 4. Applies sRGB transfer function and rounds to u8.
 pub fn prophoto_to_srgb8(developed: &Developed) -> image::RgbImage {
-    let w = developed.image.width();
-    let h = developed.image.height();
-    let m = colour::prophoto_to_srgb_matrix();
-
-    let raw_u16 = developed.image.as_raw();
-    let u8_data: Vec<u8> = raw_u16
-        .par_chunks_exact(3)
-        .flat_map(|pixel| {
-            let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
-            let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
-            let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
-
-            let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
-            let mut out = [0u8; 3];
-            for c in 0..3 {
-                let v = srgb_lin[c].clamp(0.0, 1.0);
-                let s = if v <= 0.0031308 {
-                    12.92 * v
-                } else {
-                    1.055 * v.powf(1.0 / 2.4) - 0.055
-                };
-                out[c] = (s * 255.0).round().clamp(0.0, 255.0) as u8;
-            }
-            out
-        })
-        .collect();
-
-    image::RgbImage::from_raw(w, h, u8_data).unwrap_or_else(|| image::RgbImage::new(w, h))
+    render::render_srgb8_image(developed, None)
 }

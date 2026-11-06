@@ -2,7 +2,10 @@ mod support;
 
 use phototools_core::error::Error;
 use rollchrome_core::media::develop::colour::{camera_to_prophoto, invert_3x3_f32, mul_3x3_vec};
-use rollchrome_core::media::develop::{develop, develop_linear, Demosaic, DevelopOptions};
+use rollchrome_core::media::develop::{
+    develop, develop_linear, render, Demosaic, DevelopOptions, OutputFormat,
+};
+use rollchrome_core::media::edit::lut::Lut;
 use std::collections::BTreeSet;
 use support::dng::{DngBuilder, PreviewIfd0, XTRANS_PATTERN};
 
@@ -649,4 +652,87 @@ fn develop_never_reads_the_embedded_preview() {
         "Red channel is high ({}), likely preview was read instead of sensor data!",
         mid[0]
     );
+}
+
+#[test]
+fn a_developed_raw_renders_end_to_end() {
+    let width = 96u32;
+    let height = 96u32;
+    let raw_pixels = vec![3000u16; (width * height) as usize];
+    let builder = DngBuilder::new_xtrans(width, height);
+    let dng_bytes = builder.build(&raw_pixels);
+
+    let dev = develop(&dng_bytes, &DevelopOptions::default()).expect("develop X-Trans DNG");
+
+    // Inverting 17^3 .cube
+    let mut cube_str = String::from("TITLE \"Invert\"\nLUT_3D_SIZE 17\n");
+    for b in 0..17 {
+        for g in 0..17 {
+            for r in 0..17 {
+                let rf = 1.0 - r as f32 / 16.0;
+                let gf = 1.0 - g as f32 / 16.0;
+                let bf = 1.0 - b as f32 / 16.0;
+                use std::fmt::Write;
+                let _ = writeln!(&mut cube_str, "{rf:.6} {gf:.6} {bf:.6}");
+            }
+        }
+    }
+    let lut = Lut::from_cube("invert.cube", cube_str.as_bytes()).expect("valid LUT");
+
+    // Render JPEG
+    let rendered_jpeg = render(&dev, Some(&lut), OutputFormat::Jpeg { quality: 90 })
+        .expect("render JPEG with look");
+    assert_eq!(rendered_jpeg.extension, "jpg");
+    assert_eq!(rendered_jpeg.width, dev.image.width());
+    assert_eq!(rendered_jpeg.height, dev.image.height());
+    let dec_jpeg = image::load_from_memory(&rendered_jpeg.bytes).expect("decode JPEG");
+    assert_eq!(dec_jpeg.width(), dev.image.width());
+    assert_eq!(dec_jpeg.height(), dev.image.height());
+
+    // Render TIFF
+    let rendered_tiff =
+        render(&dev, Some(&lut), OutputFormat::Tiff).expect("render TIFF with look");
+    assert_eq!(rendered_tiff.extension, "tif");
+    assert_eq!(rendered_tiff.width, dev.image.width());
+    assert_eq!(rendered_tiff.height, dev.image.height());
+
+    let mut tiff_dec = tiff::decoder::Decoder::new(std::io::Cursor::new(&rendered_tiff.bytes))
+        .expect("decode TIFF");
+    assert_eq!(
+        tiff_dec.dimensions().expect("TIFF dimensions"),
+        (dev.image.width(), dev.image.height())
+    );
+    assert_eq!(
+        tiff_dec.colortype().expect("TIFF colortype"),
+        tiff::ColorType::RGB(16)
+    );
+
+    // Profile check (tag 34675)
+    let profile_tag = tiff_dec
+        .find_tag(tiff::tags::Tag::IccProfile)
+        .expect("find tag")
+        .expect("ICC tag 34675 present");
+    let icc_bytes: Vec<u8> = match profile_tag {
+        tiff::decoder::ifd::Value::List(l) => l
+            .into_iter()
+            .map(|v| match v {
+                tiff::decoder::ifd::Value::Byte(b) => b,
+                _ => panic!("expected Byte in list"),
+            })
+            .collect(),
+        tiff::decoder::ifd::Value::Byte(b) => vec![b],
+        _ => panic!("unexpected tag type"),
+    };
+    let profile = moxcms::ColorProfile::new_from_slice(&icc_bytes).expect("parse ICC profile");
+    assert!(profile.red_trc.is_some());
+
+    match tiff_dec.read_image().expect("read TIFF pixels") {
+        tiff::decoder::DecodingResult::U16(pixels) => {
+            assert_eq!(
+                pixels.len(),
+                (dev.image.width() * dev.image.height() * 3) as usize
+            );
+        }
+        _ => panic!("expected U16 decoding result"),
+    }
 }

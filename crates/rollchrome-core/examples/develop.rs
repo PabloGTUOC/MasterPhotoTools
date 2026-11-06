@@ -9,7 +9,9 @@
 #[path = "../tests/support/dng.rs"]
 mod dng;
 
-use rollchrome_core::media::develop::{develop, prophoto_to_srgb8, DevelopOptions};
+use rollchrome_core::media::develop::{
+    develop, prophoto_to_srgb8, render, DevelopOptions, OutputFormat,
+};
 use std::path::Path;
 use std::time::Instant;
 
@@ -83,6 +85,27 @@ fn run_synthetic(dim_str: &str, pattern: &str) -> Result<(), Box<dyn std::error:
     times.sort();
     let median = times[1];
     println!("Median: {:.2?}", median);
+
+    println!("Rendering 16-bit TIFF and JPEG...");
+    let developed = develop(&dng_bytes, &DevelopOptions::default())?;
+
+    let t_tiff = Instant::now();
+    let rendered_tiff = render(&developed, None, OutputFormat::Tiff)?;
+    let elapsed_tiff = t_tiff.elapsed();
+    println!(
+        "TIFF: {:.2} MB in {:.2?}",
+        rendered_tiff.bytes.len() as f64 / 1_048_576.0,
+        elapsed_tiff
+    );
+
+    let t_jpeg = Instant::now();
+    let rendered_jpeg = render(&developed, None, OutputFormat::Jpeg { quality: 90 })?;
+    let elapsed_jpeg = t_jpeg.elapsed();
+    println!(
+        "JPEG: {:.2} MB in {:.2?}",
+        rendered_jpeg.bytes.len() as f64 / 1_048_576.0,
+        elapsed_jpeg
+    );
 
     Ok(())
 }

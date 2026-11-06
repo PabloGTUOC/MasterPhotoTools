@@ -190,6 +190,174 @@ not tick the acceptance boxes above; the review does that.
 
 *Written by the implementer.*
 
+### Baseline (recorded on `dv-2a` as cut before changes)
+- `phototools-core`: 713 passed
+- `rollchrome-core`: 213 passed
+- `phototools-desktop`: 26 passed
+- `rollchrome-desktop`: 13 passed
+- `phototools-server`: 71 passed
+- Workspace: 1036 passed (0 failed, 0 ignored)
+
+### Dependencies (G8)
+- `moxcms = "0.8.1"`: Added to `crates/rollchrome-core/Cargo.toml` under `[dependencies]` to construct the 16-bit ProPhoto RGB ICC profile. `moxcms`'s standard `new_pro_photo_rgb()` uses a pure 1.8 gamma which diverges in deep shadows; `moxcms` allows replacing the colorant TRCs with ICC parametric curve type 3 ($g=1.8, a=1, b=0, c=1/16, d=1/32$) exactly matching DV-1's ROMM transfer function.
+- `tiff = "0.11.3"`: Moved from `[dev-dependencies]` to `[dependencies]` in `crates/rollchrome-core/Cargo.toml` to write 16-bit chunky RGB TIFFs with Deflate compression, horizontal predictor, and the embedded ICC profile tag 34675 (`Tag::IccProfile`).
+- No new crates added to workspace (both were already compiled transitively via `image`). `Cargo.lock` only updated `rollchrome-core`'s dependency list.
+
+### Implementation Summary
+1. Created `crates/rollchrome-core/src/media/develop/render.rs`:
+   - Defined `OutputFormat { Jpeg { quality: u8 }, Tiff }` and `Rendered { bytes: Vec<u8>, width: u32, height: u32, extension: &'static str }`.
+   - Implemented `prophoto_icc_profile()` using `moxcms::ColorProfile::new_pro_photo_rgb()` with TRCs replaced by parametric curve type 3 and description `"ProPhoto RGB (ROMM)"`.
+   - Implemented pixel colour pipeline with Rayon parallelism:
+     - No look, TIFF: 16-bit developed pixels unchanged.
+     - No look, JPEG: ROMM decode -> linear ProPhoto -> linear sRGB -> clamp -> sRGB transfer function -> u8.
+     - Look: ROMM decode -> linear ProPhoto -> linear sRGB -> clamp -> sRGB transfer function -> `lut.sample`. For JPEG: clamp -> u8. For TIFF: sRGB decode -> linear sRGB -> linear ProPhoto (`srgb_to_prophoto_matrix()`) -> `prophoto_encode` -> u16.
+     - Single conversion shared between `render_srgb8_image` and `prophoto_to_srgb8`.
+   - JPEG encoding via `phototools_core::media::jpeg::encode` with quality check (`1..=100`, refusing 0 and >100).
+   - TIFF encoding via `tiff::encoder::TiffEncoder` with Deflate compression, horizontal predictor, and tag 34675 holding `prophoto_icc_profile()`.
+   - Added unit tests 1–8 covering all requirements and thresholds.
+2. Updated `crates/rollchrome-core/src/media/develop/mod.rs`:
+   - Declared `pub mod render;` and re-exported `OutputFormat`, `Rendered`, `render`, `prophoto_icc_profile`.
+   - Updated `prophoto_to_srgb8` to delegate to `render::render_srgb8_image(developed, None)`.
+3. Added Test 9 to `crates/rollchrome-core/tests/develop_tests.rs`:
+   - `a_developed_raw_renders_end_to_end`: generates handmade X-Trans DNG, develops it, renders with inverting 17³ `.cube` LUT to both JPEG and TIFF, verifies decodes, dimensions, and ICC profile tag 34675.
+4. Updated `crates/rollchrome-core/examples/develop.rs`:
+   - Extended `run_synthetic` to render TIFF and JPEG and print output sizes and render times.
+
+### Answers to Brief Questions
+1. **Predictor support in `tiff` 0.11.3**:
+   `tiff` 0.11.3 supports `Predictor::Horizontal` for 16-bit RGB (`colortype::RGB16`). In `tiff` 0.11.3, `RGB16` implements `integer_horizontal_predict!()` for `u16` samples, and `SampleFormat::Uint` passes encoder validation. Round-trip tests confirm exact pixel identity.
+2. **moxcms parameter order**:
+   `moxcms::ToneReprCurve::Parametric` expects parameters in the order `[g, a, b, c, d]` for ICC type 3 parametric curves ($Y = (aX + b)^g$ for $X \ge d$, $Y = cX$ for $X < d$). For DV-1's ProPhoto encoding: `vec![1.8, 1.0, 0.0, 1.0 / 16.0, 1.0 / 32.0]`.
+3. **Synthetic 6000x4000 X-Trans benchmark (`develop --synthetic 6000x4000 xtrans`)**:
+   - DNG size: 45.78 MB
+   - Develop runs: 5.06s, 4.19s, 3.16s (Median: 4.19s)
+   - Rendered TIFF: **0.15 MB** in **148.49ms** (Deflate + Horizontal predictor achieves high compression on flat sensor test pattern)
+   - Rendered JPEG: **0.27 MB** in **4.94s**
+
+### Acceptance Checks
+- `git diff main --stat -- crates/core crates/rollchrome-desktop crates/server frontend .github SPECIFICATION.md CLAUDE.md`: empty.
+- `Cargo.lock`: only `rollchrome-core`'s dependency list updated (`moxcms` added).
+- `git grep -n "Path" -- crates/rollchrome-core/src/media/develop`: no matches (rule R2 satisfied).
+- `grep -n -E "unwrap\(|expect\(|todo!|unimplemented!|panic!" crates/rollchrome-core/src/media/develop/render.rs`: no matches outside `#[cfg(test)]` (rule G10 satisfied).
+- All 9 new tests pass with exact brief thresholds without modification.
+
+### Deviations
+None.
+
+### Gate Outputs
+
+#### `cargo fmt --all --check`
+No output (clean).
+
+#### `cargo clippy --workspace --all-targets -- -D warnings`
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.66s. No warnings.
+
+#### `cargo build --workspace`
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.55s.
+
+#### `cargo test -p phototools-core` (713 passed)
+```
+test result: ok. 518 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+test result: ok. 72 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.58s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.51s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+#### `cargo test -p rollchrome-core` (222 passed: 213 baseline + 9 new)
+```
+test result: ok. 137 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.91s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.92s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+#### `cargo test -p phototools-desktop` (26 passed)
+```
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.05s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.93s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+#### `cargo test -p rollchrome-desktop` (13 passed)
+```
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+#### `cargo test -p phototools-server` (71 passed)
+```
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+#### `cargo test --workspace` (1045 passed: 1036 baseline + 9 new)
+```
+test result: ok. 518 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.14s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.63s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.41s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.58s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.50s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.62s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.92s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+test result: ok. 137 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.99s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.90s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+#### `cargo run --release -p rollchrome-core --example develop -- --synthetic 6000x4000 xtrans`
+```
+Generating synthetic 6000x4000 xtrans raw...
+DNG size: 45.78 MB. Developing 3 times...
+Run 1: 5.06s
+Run 2: 4.19s
+Run 3: 3.16s
+Median: 4.19s
+Rendering 16-bit TIFF and JPEG...
+TIFF: 0.15 MB in 148.49ms
+JPEG: 0.27 MB in 4.94s
+```
+
+#### `npm --prefix frontend/rollchrome run typecheck`
+```
+> @phototools/rollchrome@0.1.0 typecheck
+> vue-tsc --build --force
+```
+Completed with code 0 (clean).
+
 ---
 
 ## Review

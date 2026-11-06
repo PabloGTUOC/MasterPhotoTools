@@ -436,6 +436,35 @@ Clean (exit code 0).
 
 *Written by the architect, after re-running the gates on the branch.*
 
-**Approved** — or **Changes requested:**
+**Changes requested** (round 1, 2026-11-06).
 
-1. <specific, actionable, one change per item>
+Gates re-run on `dv-2b` at `7a6fe56`: fmt and clippy at 0. Tests: workspace **1066**,
+`phototools-core` 713, `rollchrome-core` **241**, `phototools-desktop` 26, `rollchrome-desktop`
+**15**, server 71, all 0 failed and 0 ignored. The R2 grep finds nothing. The only `Command::new` in
+the diff is in a comment. There are no `unwrap`/`expect`/`panic!` outside tests, and the scope diff
+is empty. The DNG finding (exiftool *does* copy `DNGVersion` and `DNGBackwardVersion`) is exactly
+what test 16 was for, and the corrections in `develop_folder.rs:169–190` are right.
+
+One item. **Test 15's InteropIndex assertion cannot fail as written:**
+
+- the `tiff` check looks for `InteropOffset` (0xa005) in **IFD0**, but that pointer lives in the
+  **Exif IFD**, so it is never in IFD0;
+- the `nom-exif` check matches any entry with code `0x0001`, which is also `GPSLatitudeRef`, and
+  nothing shows that `nom-exif` walks the Interop IFD at all.
+
+A check that cannot see the tag passes whether or not the deletion works.
+
+1. **Make test 15 prove that it can see the tag.** Read the **source** DNG after setup, with the
+   same reader, and assert that InteropIndex **is** found there with the value `R98`. Then read the
+   output and assert it is absent. Read it the way that can tell it apart from `GPSLatitudeRef`:
+   - with `nom-exif`, if it exposes the Interop IFD's entries distinctly (its `ExifTag` naming, or
+     the IFD an entry came from);
+   - otherwise with `tiff`: IFD0 → the `ExifIFD` pointer (34665) → that IFD's `InteropOffset`
+     (0xa005) → tag 0x0001 there.
+
+   Drop the IFD0 `0xa005` check, or replace it with the real walk. If the source does **not** show
+   the tag, the setup's `set_tags` did not write it, and the test was vacuous twice. Say so in the
+   Report and fix the setup. Do not weaken the assertion on the output.
+
+Re-run the gates. The counts do not move (the test changes, it is not added). Add a **Report,
+round 2**.

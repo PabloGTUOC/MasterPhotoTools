@@ -201,6 +201,82 @@ fn a_developed_jpeg_says_srgb() {
     );
 }
 
+/// Read InteropIndex (tag 0x0001 in Interop IFD) by walking:
+/// IFD0 -> ExifIFD pointer (34665 / 0x8769) -> InteropOffset (0xa005) -> tag 0x0001.
+fn read_interop_index(bytes: &[u8]) -> Option<String> {
+    if bytes.len() < 8 {
+        return None;
+    }
+    let is_le = match &bytes[0..2] {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let read_u16 = |buf: &[u8], offset: usize| -> Option<u16> {
+        let slice = buf.get(offset..offset + 2)?;
+        let arr = [slice[0], slice[1]];
+        Some(if is_le {
+            u16::from_le_bytes(arr)
+        } else {
+            u16::from_be_bytes(arr)
+        })
+    };
+    let read_u32 = |buf: &[u8], offset: usize| -> Option<u32> {
+        let slice = buf.get(offset..offset + 4)?;
+        let arr = [slice[0], slice[1], slice[2], slice[3]];
+        Some(if is_le {
+            u32::from_le_bytes(arr)
+        } else {
+            u32::from_be_bytes(arr)
+        })
+    };
+
+    // Find a tag in the IFD at `ifd_offset`, returning (type, count, value_or_offset_position).
+    let find_tag_in_ifd = |ifd_offset: usize, target_tag: u16| -> Option<(u16, u32, usize)> {
+        let count = read_u16(bytes, ifd_offset)? as usize;
+        let mut cur = ifd_offset + 2;
+        for _ in 0..count {
+            if cur + 12 > bytes.len() {
+                return None;
+            }
+            let tag = read_u16(bytes, cur)?;
+            let type_ = read_u16(bytes, cur + 2)?;
+            let val_count = read_u32(bytes, cur + 4)?;
+            if tag == target_tag {
+                return Some((type_, val_count, cur + 8));
+            }
+            cur += 12;
+        }
+        None
+    };
+
+    // 1. IFD0
+    let ifd0_offset = read_u32(bytes, 4)? as usize;
+
+    // 2. ExifIFD pointer tag 0x8769 (34665) in IFD0
+    let (_, _, exif_ptr_offset) = find_tag_in_ifd(ifd0_offset, 0x8769)?;
+    let exif_offset = read_u32(bytes, exif_ptr_offset)? as usize;
+
+    // 3. InteropOffset tag 0xa005 in ExifIFD
+    let (_, _, interop_ptr_offset) = find_tag_in_ifd(exif_offset, 0xa005)?;
+    let interop_offset = read_u32(bytes, interop_ptr_offset)? as usize;
+
+    // 4. InteropIndex tag 0x0001 in InteropIFD
+    let (type_, count, val_offset) = find_tag_in_ifd(interop_offset, 0x0001)?;
+    if type_ != 2 {
+        // ASCII
+        return None;
+    }
+    let data_offset = if count <= 4 {
+        val_offset
+    } else {
+        read_u32(bytes, val_offset)? as usize
+    };
+    let str_bytes = bytes.get(data_offset..data_offset + count as usize)?;
+    let s = std::str::from_utf8(str_bytes).ok()?;
+    Some(s.trim_matches('\0').to_string())
+}
+
 #[test]
 fn a_developed_tiff_says_uncalibrated_and_has_no_interop_index() {
     let env = TestEnv::new();
@@ -217,6 +293,14 @@ fn a_developed_tiff_says_uncalibrated_and_has_no_interop_index() {
         )
         .expect("set tags");
     writer.close().expect("close writer");
+
+    // 1. Prove that the test reader sees InteropIndex = R98 on the source DNG after setup
+    let source_bytes = fs::read(&dng_path).expect("read source DNG bytes");
+    assert_eq!(
+        read_interop_index(&source_bytes),
+        Some("R98".to_string()),
+        "Source DNG must carry InteropIndex = R98 after setup"
+    );
 
     let mut store = FolderStore::new(env.raw_dir.clone(), env.lut_dir.clone());
     let items = vec![DevelopItem {
@@ -235,14 +319,13 @@ fn a_developed_tiff_says_uncalibrated_and_has_no_interop_index() {
 
     let output_path = store.output_dir().join("DSCF0001.tif");
 
-    // 1. Read ColorSpace using nom-exif (G3)
+    // 2. Read ColorSpace using nom-exif (G3)
     let mut parser = nom_exif::MediaParser::new();
     let iter = parser
         .parse_exif(nom_exif::MediaSource::open(&output_path).expect("open media"))
         .expect("parse exif");
 
     let mut color_space = None;
-    let mut interop_index_found = false;
     for entry in iter {
         if entry.tag().code() == 0xa001 {
             if let Some(val) = entry.value() {
@@ -253,10 +336,6 @@ fn a_developed_tiff_says_uncalibrated_and_has_no_interop_index() {
                 }
             }
         }
-        // InteropIndex is tag 0x0001 in Interop IFD
-        if entry.tag().code() == 0x0001 {
-            interop_index_found = true;
-        }
     }
 
     assert_eq!(
@@ -264,17 +343,13 @@ fn a_developed_tiff_says_uncalibrated_and_has_no_interop_index() {
         Some(65535),
         "TIFF must report ColorSpace = 65535 (Uncalibrated)"
     );
-    assert!(!interop_index_found, "InteropIndex should not be present");
 
-    // 2. Also verify through tiff decoder that InteropIndex (or InteropOffset 0xa005) is absent
-    let file_bytes = fs::read(&output_path).expect("read TIFF bytes");
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&file_bytes)).unwrap();
-    let interop_tag = decoder
-        .find_tag(tiff::tags::Tag::Unknown(0xa005))
-        .expect("find tag");
-    assert!(
-        interop_tag.is_none(),
-        "InteropOffset (0xa005) must be deleted in TIFF"
+    // 3. Prove with the same reader that InteropIndex is absent on the output TIFF
+    let output_bytes = fs::read(&output_path).expect("read TIFF bytes");
+    assert_eq!(
+        read_interop_index(&output_bytes),
+        None,
+        "TIFF must not carry InteropIndex (0x0001) in Interop IFD"
     );
 }
 
@@ -360,8 +435,15 @@ fn the_tiff_keeps_its_own_profile_after_the_metadata_copy() {
     };
 
     let expected_profile = prophoto_icc_profile().expect("expected profile");
+    assert_eq!(icc_bytes.len(), expected_profile.len());
+    // ColorProfile::encode() in moxcms embeds ColorDateTime::now() into the 12-byte
+    // creation_date_time field (bytes 24..36) of the ICC header. If a wall-clock second
+    // rolls over between TIFF rendering and this assertion, bytes 24..36 can differ by
+    // 1 second. Normalize the timestamp header before byte-for-byte comparison.
+    let mut actual_normalized = icc_bytes.clone();
+    actual_normalized[24..36].copy_from_slice(&expected_profile[24..36]);
     assert_eq!(
-        icc_bytes, expected_profile,
+        actual_normalized, expected_profile,
         "TIFF embedded ICC profile must match prophoto_icc_profile() byte for byte"
     );
 }

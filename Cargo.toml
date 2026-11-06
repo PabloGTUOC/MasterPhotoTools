@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/core",
+    "crates/rollchrome-core",
     "crates/server",
     "crates/desktop",
 ]
@@ -30,5 +31,12 @@ opt-level = 3
 # (G1); no pixel is touched in either, and they are the crates worth stepping
 # through.
 [profile.dev.package.phototools-core]
+opt-level = 3
+
+# The editor's engine moved to `rollchrome-core` in RC-1. For the reason above,
+# its kernels are generic and monomorphised into this crate now, and without it
+# the timing tests (`glow_pyramid_executes_within_interactive_budget_during_drag`,
+# 5 ms) measure a debug build.
+[profile.dev.package.rollchrome-core]
 opt-level = 3
 

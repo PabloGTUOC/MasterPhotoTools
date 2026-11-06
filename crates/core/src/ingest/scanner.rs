@@ -277,7 +277,7 @@ pub fn hash_file(path: &Path) -> Result<String, Error> {
     Ok(hex(&hasher.finalize()))
 }
 
-pub(crate) fn hex(bytes: &[u8]) -> String {
+pub fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
     bytes
         .iter()

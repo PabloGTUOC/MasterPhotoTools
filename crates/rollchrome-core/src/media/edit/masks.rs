@@ -27,7 +27,7 @@
 use super::brush::{BrushRaster, Stroke};
 use super::geometry::Geometry;
 use super::raster::{CoverageRaster, StoredRaster};
-use crate::error::Error;
+use phototools_core::error::Error;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

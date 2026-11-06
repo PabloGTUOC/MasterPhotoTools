@@ -6,15 +6,15 @@
 
 use super::{describe, resolve_input, resolve_inputs, resolve_output, CommandResult};
 use crate::AppState;
-use phototools_core::media::edit::pipeline::AdjustmentRecipe;
-use phototools_core::media::edit::preview::{encode_preview_frame, PreviewStage};
-use phototools_core::tools::edit::ExportResult;
-use phototools_core::tools::lut::{BulkLutParams, BulkLutTool};
-use phototools_core::tools::lut_library::{
+use phototools_core::tools::{Skip, Tool};
+use rollchrome_core::media::edit::pipeline::AdjustmentRecipe;
+use rollchrome_core::media::edit::preview::{encode_preview_frame, PreviewStage};
+use rollchrome_core::tools::edit::ExportResult;
+use rollchrome_core::tools::lut::{BulkLutParams, BulkLutTool};
+use rollchrome_core::tools::lut_library::{
     find_lut_by_name_or_sha256, import_lut as core_import_lut, list_luts as core_list_luts,
     resolve_recipe_lut, LutEntry, LutLibraryList,
 };
-use phototools_core::tools::{Skip, Tool};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Response;
 use tauri::State;
@@ -54,7 +54,7 @@ pub fn load_recipe(
 pub fn load_recipe_impl(state: &AppState, path: String) -> CommandResult<Option<AdjustmentRecipe>> {
     let config = state.config();
     let resolved = resolve_input(&config, &path)?;
-    phototools_core::tools::edit::load_recipe_for_image(&resolved).map_err(describe)
+    rollchrome_core::tools::edit::load_recipe_for_image(&resolved).map_err(describe)
 }
 
 #[tauri::command]
@@ -73,7 +73,7 @@ pub fn save_recipe_impl(
 ) -> CommandResult<String> {
     let config = state.config();
     let resolved = resolve_input(&config, &path)?;
-    let saved = phototools_core::tools::edit::save_recipe(&resolved, &recipe).map_err(describe)?;
+    let saved = rollchrome_core::tools::edit::save_recipe(&resolved, &recipe).map_err(describe)?;
     Ok(saved.display().to_string())
 }
 
@@ -111,7 +111,7 @@ pub fn export_edited_image_impl(
         None => None,
     };
 
-    phototools_core::tools::edit::export_edited_image(
+    rollchrome_core::tools::edit::export_edited_image(
         &resolved_path,
         &recipe,
         lut_opt.as_ref(),
@@ -164,7 +164,7 @@ pub fn plan_bulk_lut_impl(
     let mut params = BulkLutParams::new(resolved_inputs, lut_path, intensity, resolved_out);
     params.recursive = recursive;
     let plan = BulkLutTool.plan(&params).map_err(describe)?.data;
-    let sample_frames = phototools_core::tools::lut::sample_frames(&plan, 3)
+    let sample_frames = rollchrome_core::tools::lut::sample_frames(&plan, 3)
         .into_iter()
         .map(|p| p.display().to_string())
         .collect();
@@ -225,7 +225,7 @@ pub fn apply_bulk_lut_impl(
     // If the file at lut_path changed on disk since the plan the user reviewed,
     // refuse before running or spawning.
     let current_lut =
-        phototools_core::media::edit::lut::Lut::from_file(&lut_path).map_err(describe)?;
+        rollchrome_core::media::edit::lut::Lut::from_file(&lut_path).map_err(describe)?;
     if current_lut.sha256 != reviewed_lut_sha256 {
         return Err(format!(
             "The LUT file changed on disk since the reviewed plan (expected {}, found {}); please run another dry run",
@@ -258,7 +258,7 @@ pub fn apply_bulk_lut_impl(
                 "graded",
                 summary.failures.len(),
                 &skipped,
-                &phototools_core::tools::lut::ACCEPTED,
+                &rollchrome_core::tools::lut::ACCEPTED,
             ))
         })
         .map_err(describe)

@@ -1,6 +1,6 @@
 # Rollchrome — splitting the editor into its own application
 
-> **Planned, not started.** RC-1 is the next piece of work. `main` is green at `9a763ae`; the last
+> **RC-1 done (branch `rc-1`); RC-2 next.** `main` is green at `9a763ae`; the last
 > state with the editor inside PhotoTools is frozen on the **`FullEdition`** branch (`66c49ec`).
 
 PhotoTools grew two products. One is what the specification describes: dates, names, borders,
@@ -161,7 +161,8 @@ product decision for later, not part of this step (G11).
 
 - Remove from PhotoTools what RC-1 and RC-2 left behind: the `segment` feature on the desktop's
   `phototools-core` dependency, the editor directories in `Config`, navigation entries and styles
-  only the editor used.
+  only the editor used. The `segment` feature already left the desktop's `phototools-core`
+  dependency in RC-1, because the feature no longer exists there.
 - CI builds and tests the Rollchrome crates and runs Rollchrome's front-end checks. Today
   `check:edit` and `check:bulk-lut` run only locally; this is the moment to put them in CI.
 - Documents: `CLAUDE.md`'s *Shape* section describes two applications; `edit-plan.md`, the edit

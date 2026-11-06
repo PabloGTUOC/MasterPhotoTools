@@ -8,8 +8,8 @@
 //! Models missing from <models dir> are downloaded and verified first.
 
 use phototools_core::jobs::InMemoryProgress;
-use phototools_core::media::edit::{AutoTarget, ImageBuffer};
-use phototools_core::media::segment;
+use rollchrome_core::media::edit::{AutoTarget, ImageBuffer};
+use rollchrome_core::media::segment;
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     for photo in &args[3..] {
         let path = std::path::Path::new(photo);
-        let decoded = phototools_core::media::edit::decode_image(path)?;
+        let decoded = rollchrome_core::media::edit::decode_image(path)?;
         let ImageBuffer::Rgb8 {
             width,
             height,

@@ -3,7 +3,7 @@
 use phototools_core::config::{Config, Thresholds};
 use phototools_core::jobs::NoEvents;
 use phototools_core::ledger::Ledger;
-use phototools_core::media::edit::AdjustmentRecipe;
+use rollchrome_core::media::edit::AdjustmentRecipe;
 use std::path::PathBuf;
 use std::sync::Arc;
 

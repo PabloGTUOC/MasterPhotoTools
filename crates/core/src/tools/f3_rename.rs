@@ -207,7 +207,7 @@ impl Tool for BatchRenamerTool {
                             file: child.to_string_lossy().to_string(),
                             reason: "Hidden file — name it directly to rename it".into(),
                         });
-                    } else if crate::tools::edit::is_sidecar(&child) {
+                    } else if crate::sidecar::is_sidecar(&child) {
                         // .photoedit sidecars travel with their companion photo,
                         // never as standalone items in the list.
                         continue;
@@ -218,7 +218,7 @@ impl Tool for BatchRenamerTool {
                 continue;
             }
 
-            if crate::tools::edit::is_sidecar(path) {
+            if crate::sidecar::is_sidecar(path) {
                 skipped.push(Skip {
                     file: path.to_string_lossy().to_string(),
                     reason: "Edit sidecar — travels with its companion image".into(),
@@ -293,9 +293,9 @@ impl Tool for BatchRenamerTool {
             }
 
             // Check companion sidecar if present
-            let src_sidecar = crate::tools::edit::sidecar_path(source);
+            let src_sidecar = crate::sidecar::sidecar_path(source);
             let sidecar = if src_sidecar.exists() {
-                let target_sidecar = crate::tools::edit::sidecar_path(&target);
+                let target_sidecar = crate::sidecar::sidecar_path(&target);
                 if target != *source && target_sidecar.exists() {
                     skipped.push(Skip {
                         file: source.to_string_lossy().to_string(),

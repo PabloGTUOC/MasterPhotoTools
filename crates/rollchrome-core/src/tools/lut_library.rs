@@ -7,9 +7,9 @@
 //! All operations are atomic, non-destructive, and validate LUT formats
 //! before disk modification.
 
-use crate::error::Error;
 use crate::media::edit::lut::Lut;
 use crate::media::edit::pipeline::LutRef;
+use phototools_core::error::Error;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};

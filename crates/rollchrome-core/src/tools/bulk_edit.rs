@@ -8,9 +8,6 @@
 //! into a recipe with `tools::load_preset` and hands the recipe over. This module
 //! only knows recipes.
 
-use crate::error::Error;
-use crate::ingest::scanner;
-use crate::jobs::{Outcome, Progress, ToolResult};
 use crate::media::edit::lut::Lut;
 use crate::media::edit::pipeline::AdjustmentRecipe;
 use crate::tools::edit::{
@@ -20,7 +17,10 @@ use crate::tools::edit::{
 use crate::tools::lut::is_hidden;
 use crate::tools::lut::ACCEPTED;
 use crate::tools::lut_library::resolve_recipe_lut;
-use crate::tools::{carry_metadata_with, expand_inputs, Derived, Plan, Skip, Tool};
+use phototools_core::error::Error;
+use phototools_core::ingest::scanner;
+use phototools_core::jobs::{Outcome, Progress, ToolResult};
+use phototools_core::tools::{carry_metadata_with, expand_inputs, Derived, Plan, Skip, Tool};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -77,7 +77,7 @@ pub struct BulkEditSummary {
 /// Returns up to `n` (typically 3–5) source paths spread evenly through the
 /// folder in plan order (first, last, and intermediate evenly spaced), rather than taking the first `n`.
 pub fn sample_frames(plan: &Plan<BulkEditAction>, n: usize) -> Vec<PathBuf> {
-    crate::tools::sample_evenly(&plan.actions, n)
+    phototools_core::tools::sample_evenly(&plan.actions, n)
         .into_iter()
         .map(|a| a.source.clone())
         .collect()

@@ -4,7 +4,7 @@
 //! and vibrance/saturation in linear light, transfer-converting to/from sRGB.
 
 use super::lut::Lut;
-use crate::error::Error;
+use phototools_core::error::Error;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -1002,8 +1002,8 @@ pub fn apply_recipe_with_orientation(
 /// RAW files are decoded through `media::raw::raw_to_jpeg` (the F14 ladder),
 /// preserving modularity since `media` must never depend on `ingest`.
 pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
-    if crate::media::raw::is_raw(path) {
-        let derived = crate::media::raw::raw_to_jpeg(path)?;
+    if phototools_core::media::raw::is_raw(path) {
+        let derived = phototools_core::media::raw::raw_to_jpeg(path)?;
         let dyn_img = image::load_from_memory(&derived.bytes)
             .map_err(|e| Error::Internal(format!("failed to decode derived RAW JPEG: {e}")))?;
         return Ok(ImageBuffer::from(dyn_img));

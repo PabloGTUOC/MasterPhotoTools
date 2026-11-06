@@ -3,9 +3,9 @@
 //! A preset is an `AdjustmentRecipe` saved under a name, so it can be applied to other
 //! photographs. The name is the file stem; the file holds only the recipe JSON.
 
-use crate::error::Error;
 use crate::media::edit::AdjustmentRecipe;
 use crate::tools::{load_recipe, CURRENT_RECIPE_VERSION};
+use phototools_core::error::Error;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;

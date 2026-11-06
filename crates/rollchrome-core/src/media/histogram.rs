@@ -3,7 +3,7 @@
 //! Reads the display-encoded RGBA8 image — the values the person sees after the sRGB transfer —
 //! not linear light, so the bins line up with what is on screen.
 
-use crate::error::Error;
+use phototools_core::error::Error;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 

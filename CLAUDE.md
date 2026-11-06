@@ -118,7 +118,8 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
 cargo test --workspace          # 1011 passing
-cargo test -p phototools-core   # 901 passing — G2
+cargo test -p phototools-core   # 713 passing — G2
+cargo test -p rollchrome-core   # 188 passing — G2
 ```
 
 Front ends:

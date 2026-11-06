@@ -15,7 +15,9 @@ path = "src/main.rs"
 tauri-build = { version = "2.0.0", features = [] }
 
 [dependencies]
-phototools-core = { path = "../core", features = ["segment"] }
+phototools-core = { path = "../core" }
+# The editor's engine, split out in RC-1; leaves this crate in RC-2.
+rollchrome-core = { path = "../rollchrome-core", features = ["segment"] }
 tauri = { version = "2.0.0", features = [] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -1,15 +1,16 @@
 //! ED-18 bulk preset tests that mirror the bulk_lut test suite.
 
+#[path = "../../core/tests/fixtures/mod.rs"]
 mod fixtures;
 
 use chrono::NaiveDateTime;
 use fixtures::Fixtures;
 use phototools_core::jobs::{InMemoryProgress, Progress};
-use phototools_core::media::edit::AdjustmentRecipe;
 use phototools_core::media::{read_meta, ExifWriter};
-use phototools_core::tools::bulk_edit::{BulkEditParams, BulkEditTool};
 use phototools_core::tools::geotag::{exif, TrackPoint};
 use phototools_core::tools::Tool;
+use rollchrome_core::media::edit::AdjustmentRecipe;
+use rollchrome_core::tools::bulk_edit::{BulkEditParams, BulkEditTool};
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -47,9 +48,9 @@ fn spawn_counting_shim(f: &Fixtures) -> (std::path::PathBuf, std::path::PathBuf)
 
 #[test]
 fn bulk_preset_refuses_when_recipe_changed_since_reviewed_plan() {
-    use phototools_core::media::edit::AdjustmentRecipe;
-    use phototools_core::tools::bulk_edit::{BulkEditParams, BulkEditTool};
     use phototools_core::tools::Tool;
+    use rollchrome_core::media::edit::AdjustmentRecipe;
+    use rollchrome_core::tools::bulk_edit::{BulkEditParams, BulkEditTool};
 
     let f = Fixtures::new();
     let img = f.jpeg_without_exif("photo.jpg", 40, 40);
@@ -72,7 +73,7 @@ fn bulk_preset_refuses_when_recipe_changed_since_reviewed_plan() {
         exposure: 0.6,
         ..Default::default()
     };
-    let wrong_hash = phototools_core::tools::bulk_edit::recipe_sha256(&changed);
+    let wrong_hash = rollchrome_core::tools::bulk_edit::recipe_sha256(&changed);
 
     let err = BulkEditTool
         .apply_with(plan, &wrong_hash, &InMemoryProgress::default(), None)
@@ -89,8 +90,8 @@ fn bulk_preset_refuses_when_recipe_changed_since_reviewed_plan() {
 
 #[test]
 fn recipe_hash_ignores_the_photograph_a_recipe_was_made_on() {
-    use phototools_core::media::edit::AdjustmentRecipe;
-    use phototools_core::tools::bulk_edit::recipe_sha256;
+    use rollchrome_core::media::edit::AdjustmentRecipe;
+    use rollchrome_core::tools::bulk_edit::recipe_sha256;
 
     let a = AdjustmentRecipe {
         exposure: 0.5,
@@ -113,10 +114,10 @@ fn recipe_hash_ignores_the_photograph_a_recipe_was_made_on() {
 
 #[test]
 fn bulk_preset_applies_full_recipe_identically_to_single_export() {
-    use phototools_core::media::edit::{decode_image, AdjustmentRecipe, ImageBuffer};
-    use phototools_core::tools::bulk_edit::{BulkEditParams, BulkEditTool};
-    use phototools_core::tools::edit::export_edited_image;
     use phototools_core::tools::Tool;
+    use rollchrome_core::media::edit::{decode_image, AdjustmentRecipe, ImageBuffer};
+    use rollchrome_core::tools::bulk_edit::{BulkEditParams, BulkEditTool};
+    use rollchrome_core::tools::edit::export_edited_image;
 
     let f = Fixtures::new();
     let img = f.jpeg_without_exif("photo.jpg", 40, 40);
@@ -232,7 +233,7 @@ fn bulk_preset_cancellation_cleans_up_and_reports_accurate_counts() {
         "edited",
         summary.failures.len(),
         &summary.skipped,
-        &phototools_core::tools::lut::ACCEPTED,
+        &rollchrome_core::tools::lut::ACCEPTED,
     );
     assert_eq!(summary_line, "1 edited, 0 failed");
 }
@@ -413,7 +414,7 @@ fn bulk_preset_over_many_files_starts_exactly_one_exiftool() {
     let summary = BulkEditTool
         .apply_with(
             plan,
-            &phototools_core::tools::bulk_edit::recipe_sha256(&params.recipe),
+            &rollchrome_core::tools::bulk_edit::recipe_sha256(&params.recipe),
             &InMemoryProgress::default(),
             Some(&shim.to_string_lossy()),
         )
@@ -435,8 +436,8 @@ fn bulk_preset_over_many_files_starts_exactly_one_exiftool() {
 /// whose only change is a mask is refused as changing nothing.
 #[test]
 fn masks_are_never_applied_by_batch() {
-    use phototools_core::media::edit::{LocalAdjustments, Mask, MaskKind};
-    use phototools_core::tools::bulk_edit::recipe_sha256;
+    use rollchrome_core::media::edit::{LocalAdjustments, Mask, MaskKind};
+    use rollchrome_core::tools::bulk_edit::recipe_sha256;
 
     let f = Fixtures::new();
     let img = f.jpeg_without_exif("photo.jpg", 40, 40);

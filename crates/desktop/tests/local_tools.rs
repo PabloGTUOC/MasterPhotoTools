@@ -259,7 +259,7 @@ fn export_edited_image_refuses_destination_inside_publishing_folder() {
     let img_path = f.root.join("source.jpg");
     image::RgbImage::new(60, 40).save(&img_path).unwrap();
 
-    let recipe = phototools_core::media::edit::AdjustmentRecipe::default();
+    let recipe = rollchrome_core::media::edit::AdjustmentRecipe::default();
     let err = phototools_desktop::commands::edit::export_edited_image_impl(
         &state,
         img_path.to_string_lossy().to_string(),
@@ -444,8 +444,8 @@ fn render_preview_returns_width_height_and_rgba_of_that_size() {
     let bytes = phototools_desktop::commands::edit::render_preview_impl(
         &state,
         open_res.session_id,
-        phototools_core::media::edit::AdjustmentRecipe::default(),
-        Some(phototools_core::media::edit::preview::PreviewStage::Drag),
+        rollchrome_core::media::edit::AdjustmentRecipe::default(),
+        Some(rollchrome_core::media::edit::preview::PreviewStage::Drag),
     )
     .unwrap();
 
@@ -457,7 +457,7 @@ fn render_preview_returns_width_height_and_rgba_of_that_size() {
     assert_eq!(orientation, 1);
     assert_eq!(
         bytes.len(),
-        phototools_core::media::edit::PREVIEW_FRAME_HEADER_LEN + (60 * 40 * 4),
+        rollchrome_core::media::edit::PREVIEW_FRAME_HEADER_LEN + (60 * 40 * 4),
         "payload must contain the header and exactly width*height*4 RGBA bytes"
     );
     // A black frame: every pixel is counted, and every one is shadow-clipped.
@@ -471,7 +471,7 @@ fn render_preview_returns_width_height_and_rgba_of_that_size() {
 /// mask rather than returning nothing (ED-20, G10).
 #[test]
 fn mask_coverage_is_served_for_the_open_preview() {
-    use phototools_core::media::edit::{AdjustmentRecipe, LocalAdjustments, Mask, MaskKind};
+    use rollchrome_core::media::edit::{AdjustmentRecipe, LocalAdjustments, Mask, MaskKind};
 
     let f = fixture();
     let ledger = Ledger::open(&f.config.database).unwrap();
@@ -535,7 +535,7 @@ fn mask_coverage_is_served_for_the_open_preview() {
 /// missing rather than failing obscurely (ED-23, G10).
 #[test]
 fn an_automatic_mask_without_its_model_is_refused_by_name() {
-    use phototools_core::media::edit::AutoTarget;
+    use rollchrome_core::media::edit::AutoTarget;
 
     let f = fixture();
     let ledger = Ledger::open(&f.config.database).unwrap();
@@ -605,7 +605,7 @@ fn opening_a_second_preview_closes_the_first() {
     let err = phototools_desktop::commands::edit::render_preview_impl(
         &state,
         session1,
-        phototools_core::media::edit::AdjustmentRecipe::default(),
+        rollchrome_core::media::edit::AdjustmentRecipe::default(),
         None,
     )
     .unwrap_err();
@@ -618,7 +618,7 @@ fn opening_a_second_preview_closes_the_first() {
     let res = phototools_desktop::commands::edit::render_preview_impl(
         &state,
         session2,
-        phototools_core::media::edit::AdjustmentRecipe::default(),
+        rollchrome_core::media::edit::AdjustmentRecipe::default(),
         None,
     );
     assert!(res.is_ok(), "session 2 must be active and renderable");
@@ -633,7 +633,7 @@ fn a_saved_recipe_is_loaded_again_when_the_photo_is_reopened() {
     let img = f.root.join("reopen.jpg");
     image::RgbImage::new(40, 40).save(&img).unwrap();
 
-    let recipe = phototools_core::media::edit::AdjustmentRecipe {
+    let recipe = rollchrome_core::media::edit::AdjustmentRecipe {
         exposure: 1.5,
         temperature: -10.0,
         contrast: 25.0,

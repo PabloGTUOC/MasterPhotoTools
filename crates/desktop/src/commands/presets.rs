@@ -6,8 +6,8 @@
 
 use super::{describe, CommandResult};
 use crate::AppState;
-use phototools_core::media::edit::AdjustmentRecipe;
-use phototools_core::tools::presets::{
+use rollchrome_core::media::edit::AdjustmentRecipe;
+use rollchrome_core::tools::presets::{
     delete_preset as core_delete_preset, list_presets as core_list_presets,
     load_preset as core_load_preset, rename_preset as core_rename_preset,
     save_preset as core_save_preset, PresetList,

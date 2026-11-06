@@ -389,6 +389,175 @@ A filesystem search across `/opt`, `/usr/local`, and `$HOME` confirmed that no R
 
 In accordance with the instructions (*"if cargo is not available or the counts are not 1011 and 901, stop and write that in the Report section"*), no code or configuration files were modified. Once the Rust toolchain (`1.99.0` per `rust-toolchain.toml`) is installed on this machine, `RC-1` can be implemented and verified against all gates.
 
+### Implementation Report (after Rust 1.99.0 toolchain installation)
+
+#### Baseline (recorded before any code change)
+
+- `cargo test --workspace`: **1011 passed**, 0 failed, 0 ignored (`phototools-core` 901 + `phototools-desktop` 39 + `phototools-server` 71):
+  ```text
+  Running unittests src/lib.rs (phototools_core):       633 passed; 0 failed; 0 ignored
+  Running tests/bulk_edit_tests.rs:                      10 passed; 0 failed; 0 ignored
+  Running tests/geotag_tests.rs:                         11 passed; 0 failed; 0 ignored
+  Running tests/handoff_tests.rs:                         8 passed; 0 failed; 0 ignored
+  Running tests/image_tools_tests.rs:                    24 passed; 0 failed; 0 ignored
+  Running tests/ingest_tests.rs:                         16 passed; 0 failed; 0 ignored
+  Running tests/media_tests.rs:                          76 passed; 0 failed; 0 ignored
+  Running tests/publish_tests.rs:                        37 passed; 0 failed; 0 ignored
+  Running tests/raw_tests.rs:                            12 passed; 0 failed; 0 ignored
+  Running tests/tools_tests.rs:                          64 passed; 0 failed; 0 ignored
+  Running tests/validation_tests.rs:                     10 passed; 0 failed; 0 ignored
+  Running unittests src/lib.rs (phototools_desktop):     19 passed; 0 failed; 0 ignored
+  Running unittests src/main.rs (phototools_desktop):     0 passed; 0 failed; 0 ignored
+  Running tests/bulk_edit_desktop.rs:                     4 passed; 0 failed; 0 ignored
+  Running tests/local_tools.rs:                          16 passed; 0 failed; 0 ignored
+  Running unittests src/lib.rs (phototools_server):      24 passed; 0 failed; 0 ignored
+  Running unittests src/main.rs (phototools_server):      0 passed; 0 failed; 0 ignored
+  Running tests/api_tests.rs:                            41 passed; 0 failed; 0 ignored
+  Running tests/web_serving_tests.rs:                     6 passed; 0 failed; 0 ignored
+  ```
+- `cargo test -p phototools-core`: **901 passed**, 0 failed, 0 ignored (633 + 10 + 11 + 8 + 24 + 16 + 76 + 37 + 12 + 64 + 10 = 901).
+
+#### What was done
+
+1. **Shared sidecar contract (`crates/core/src/sidecar.rs`):** Moved `SIDECAR_EXTENSION`, `sidecar_path`, and `is_sidecar` verbatim from `tools/edit.rs` into `crates/core/src/sidecar.rs`, exported `pub mod sidecar;` from `crates/core/src/lib.rs`, pointed `crates/core/src/tools/f3_rename.rs` at `crate::sidecar::{is_sidecar, sidecar_path}`, and re-exported `pub use phototools_core::sidecar::{is_sidecar, sidecar_path, SIDECAR_EXTENSION};` from `tools/edit.rs`.
+2. **Created `crates/rollchrome-core`:** Added `Cargo.toml`, `src/lib.rs`, `src/media/mod.rs`, and `src/tools/mod.rs` mirroring the module layout and re-exports of `phototools-core`.
+3. **Moved editor engine, tools, example, and `bulk_edit_tests.rs` via `git mv`:**
+   - `crates/core/src/media/edit/` (15 files) → `crates/rollchrome-core/src/media/edit/`
+   - `crates/core/src/media/segment.rs` → `crates/rollchrome-core/src/media/segment.rs`
+   - `crates/core/src/media/histogram.rs` → `crates/rollchrome-core/src/media/histogram.rs`
+   - `crates/core/src/tools/{edit,lut,presets,bulk_edit,lut_library}.rs` → `crates/rollchrome-core/src/tools/`
+   - `crates/core/examples/auto_mask.rs` → `crates/rollchrome-core/examples/auto_mask.rs`
+   - `crates/core/tests/bulk_edit_tests.rs` → `crates/rollchrome-core/tests/bulk_edit_tests.rs`
+   - Removed the moved `pub mod` / `pub use` blocks from `crates/core/src/media/mod.rs` and `crates/core/src/tools/mod.rs`, and removed `ort`, the `segment` feature, and `[[example]] auto_mask` from `crates/core/Cargo.toml`.
+   - Updated paths inside moved files to reference `phototools_core::` for items that stayed in `phototools-core`.
+4. **Split mixed test files (`media_tests.rs` and `tools_tests.rs`):**
+   - Moved the 32 editing tests (from `decode_tables_match_the_exact_conversion_for_every_code` to the end of the file) and their 5 helpers (`radial_mask`, `marked_frame`, `centroid`, `brush_mask`, `brush_stroke`) into `crates/rollchrome-core/tests/media_tests.rs`, leaving the 44 PhotoTools media tests in `crates/core/tests/media_tests.rs`.
+   - Moved the 31 editing tests and their 2 exclusive helpers (`spawn_counting_shim`, `create_test_cube`, plus a copy of `dt`) into `crates/rollchrome-core/tests/tools_tests.rs`, leaving 33 tests in `crates/core/tests/tools_tests.rs` (including the 4 F3/sidecar tests, with `plant_sidecar` replacing `save_recipe` setup in the 3 F3 sidecar tests).
+   - Shared `../../core/tests/fixtures/mod.rs` via `#[path = "../../core/tests/fixtures/mod.rs"] mod fixtures;` across all three Rollchrome test files.
+5. **Updated `crates/desktop`:** Updated `crates/desktop/Cargo.toml` to depend on `phototools-core = { path = "../core" }` and `rollchrome-core = { path = "../rollchrome-core", features = ["segment"] }`, and updated paths to moved items in `src/lib.rs`, `src/commands/{edit,auto_masks,bulk_edit,presets}.rs`, and `tests/{local_tools,bulk_edit_desktop}.rs`.
+6. **Updated root `Cargo.toml` and docs:** Added `"crates/rollchrome-core"` to workspace `members` and `[profile.dev.package.rollchrome-core] opt-level = 3` in root `Cargo.toml`, updated the Gates block in `CLAUDE.md`, and updated the status line and RC-3 bullet in `docs/rollchrome-plan.md`.
+
+#### Deviations, visibility widenings, and manifest additions
+
+- **Deviations from the brief:** None. All 32 tests from `media_tests.rs` and 31 tests from `tools_tests.rs` landed on the exact sides listed in the brief (`901` → `713` + `188`).
+- **Visibility widenings in `phototools-core` (`pub(crate)` → `pub`):**
+  - `crates/core/src/ingest/scanner.rs:280`: `pub(crate) fn hex(bytes: &[u8]) -> String` → `pub fn hex(bytes: &[u8]) -> String` (as expected by the brief). No other visibility changes were needed.
+- **Dependencies added to `crates/rollchrome-core/Cargo.toml` not explicitly named in the brief's `[dev-dependencies]` list:**
+  - `tiff = "0.11.3"` in `[dev-dependencies]` (same version as `crates/core/Cargo.toml`), required because the shared `../../core/tests/fixtures/mod.rs` references `tiff::encoder::TiffEncoder` and `tiff::encoder::colortype::RGB8`. No new crate entered `Cargo.lock`.
+
+#### Gate outputs
+
+1. `cargo fmt --all --check`
+   ```text
+   (no output, exit code 0)
+   ```
+2. `cargo clippy --workspace --all-targets -- -D warnings`
+   ```text
+   Checking rollchrome-core v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-core)
+   Checking phototools-desktop v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/desktop)
+   Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.52s
+   ```
+3. `cargo build --workspace`
+   ```text
+   Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 00s
+   ```
+4. `cargo test --workspace` — **1011 passed, 0 failed, 0 ignored**:
+   ```text
+   Running unittests src/lib.rs (phototools_core):       518 passed; 0 failed; 0 ignored
+   Running tests/geotag_tests.rs:                         11 passed; 0 failed; 0 ignored
+   Running tests/handoff_tests.rs:                         8 passed; 0 failed; 0 ignored
+   Running tests/image_tools_tests.rs:                    24 passed; 0 failed; 0 ignored
+   Running tests/ingest_tests.rs:                         16 passed; 0 failed; 0 ignored
+   Running tests/media_tests.rs (phototools_core):        44 passed; 0 failed; 0 ignored
+   Running tests/publish_tests.rs:                        37 passed; 0 failed; 0 ignored
+   Running tests/raw_tests.rs:                            12 passed; 0 failed; 0 ignored
+   Running tests/tools_tests.rs (phototools_core):        33 passed; 0 failed; 0 ignored
+   Running tests/validation_tests.rs:                     10 passed; 0 failed; 0 ignored
+   Running unittests src/lib.rs (phototools_desktop):     19 passed; 0 failed; 0 ignored
+   Running unittests src/main.rs (phototools_desktop):     0 passed; 0 failed; 0 ignored
+   Running tests/bulk_edit_desktop.rs:                     4 passed; 0 failed; 0 ignored
+   Running tests/local_tools.rs:                          16 passed; 0 failed; 0 ignored
+   Running unittests src/lib.rs (phototools_server):      24 passed; 0 failed; 0 ignored
+   Running unittests src/main.rs (phototools_server):      0 passed; 0 failed; 0 ignored
+   Running tests/api_tests.rs:                            41 passed; 0 failed; 0 ignored
+   Running tests/web_serving_tests.rs:                     6 passed; 0 failed; 0 ignored
+   Running unittests src/lib.rs (rollchrome_core):       115 passed; 0 failed; 0 ignored
+   Running tests/bulk_edit_tests.rs:                      10 passed; 0 failed; 0 ignored
+   Running tests/media_tests.rs (rollchrome_core):        32 passed; 0 failed; 0 ignored
+   Running tests/tools_tests.rs (rollchrome_core):        31 passed; 0 failed; 0 ignored
+   Doc-tests (all 4 crates):                               0 passed; 0 failed; 0 ignored
+   ```
+5. `cargo test -p phototools-core` — **713 passed, 0 failed, 0 ignored**:
+   ```text
+   Running unittests src/lib.rs:       518 passed; 0 failed; 0 ignored; finished in 1.06s
+   Running tests/geotag_tests.rs:       11 passed; 0 failed; 0 ignored; finished in 0.42s
+   Running tests/handoff_tests.rs:       8 passed; 0 failed; 0 ignored; finished in 0.05s
+   Running tests/image_tools_tests.rs:  24 passed; 0 failed; 0 ignored; finished in 1.54s
+   Running tests/ingest_tests.rs:       16 passed; 0 failed; 0 ignored; finished in 0.34s
+   Running tests/media_tests.rs:        44 passed; 0 failed; 0 ignored; finished in 3.43s
+   Running tests/publish_tests.rs:      37 passed; 0 failed; 0 ignored; finished in 0.27s
+   Running tests/raw_tests.rs:          12 passed; 0 failed; 0 ignored; finished in 0.75s
+   Running tests/tools_tests.rs:        33 passed; 0 failed; 0 ignored; finished in 2.45s
+   Running tests/validation_tests.rs:   10 passed; 0 failed; 0 ignored; finished in 1.46s
+   Doc-tests phototools_core:            0 passed; 0 failed; 0 ignored
+   ```
+6. `cargo test -p rollchrome-core` — **188 passed, 0 failed, 0 ignored**:
+   ```text
+   Running unittests src/lib.rs:       115 passed; 0 failed; 0 ignored; finished in 0.13s
+   Running tests/bulk_edit_tests.rs:    10 passed; 0 failed; 0 ignored; finished in 0.78s
+   Running tests/media_tests.rs:        32 passed; 0 failed; 0 ignored; finished in 15.66s
+   Running tests/tools_tests.rs:        31 passed; 0 failed; 0 ignored; finished in 0.83s
+   Doc-tests rollchrome_core:            0 passed; 0 failed; 0 ignored
+   ```
+7. `cargo build -p rollchrome-core --example auto_mask --features segment`
+   ```text
+   Compiling rollchrome-core v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-core)
+   Finished `dev` profile [unoptimized + debuginfo] target(s) in 21.12s
+   ```
+8. Boundary & dependency checks:
+   - `grep -rnE "media::(edit|segment|histogram)|tools::(edit|lut|lut_library|presets|bulk_edit)\b" crates/core`: no matches.
+   - `cargo tree -p phototools-core -e normal --prefix none | grep -E "^ort(-sys)? "`: no matches.
+   - `cargo tree -p rollchrome-core -e normal --features segment --prefix none | grep -E "^ort "`: `ort v2.0.0-rc.13`.
+   - `grep -rn "rollchrome" crates/core crates/server`: matches only comments in `crates/core/src/sidecar.rs:4` and `crates/core/tests/tools_tests.rs:920` (from the brief's `plant_sidecar` doc comment).
+   - `git diff main --stat -- crates/server frontend .github SPECIFICATION.md`: empty.
+   - `git diff main -- Cargo.lock`: adds only the `rollchrome-core` package entry and updates `phototools-core` / `phototools-desktop` dependency lists.
+9. Front-end gates:
+   - `npm --prefix frontend/shared run build`: `tsc` (0 errors).
+   - `npm --prefix frontend/web run typecheck`: `vue-tsc --build --force` (0 errors).
+   - `npm --prefix frontend/web run build`: `✓ 104 modules transformed. ✓ built in 1.19s`.
+   - `npm --prefix frontend/web run check:transport`: `transport check: 35 files, no view reaches the network directly`.
+   - `npm --prefix frontend/web run check:layout`: `All 12 routes clean at 390x844. Screenshots in layout-proof/`.
+   - `npm --prefix frontend/web run check:ingest`:
+     ```text
+     first paint with 400 shots: 569 ms
+     rows built into the DOM: 29 of 400
+     filter to one failure class: 7.4 ms, 29 rows built
+     scrolling: 12.8 ms per frame
+     shots covered by that one press: 360
+     ingest check: 400 shots render responsively, one press bulk-resizes them, and publish is gated
+     ```
+   - `npm --prefix frontend/desktop run typecheck`: `vue-tsc --build --force` (0 errors).
+   - `npm --prefix frontend/desktop run build`: `✓ 129 modules transformed. ✓ built in 1.32s`.
+   - `npm --prefix frontend/desktop run check:transport`: `transport check: 39 files, no view reaches the network directly`.
+   - `npm --prefix frontend/desktop run check:edit`:
+     ```text
+     Drag frames: min=8.4 ms, median=10.1 ms, p95=11.8 ms (budget <= 50 ms)
+     Settle frames: min=36.7 ms, median=41.0 ms, p95=46.1 ms (budget <= 120 ms)
+     Latest-wins: issued 2 renders for 100 fast inputs (pixel1=208)
+     --- check:edit Summary ---
+     PASSED all checks.
+     ```
+   - `npm --prefix frontend/desktop run check:bulk-lut`:
+     ```text
+     Rendered 3 sample frame cards in preview strip.
+     Stub metrics: maxConcurrentSessions=1, samplePreviewsRequested=3
+     check:bulk-lut PASSED cleanly: all acceptance assertions and benchmarks verified.
+     ```
+
+#### Optional & unverified
+
+- Optional `cargo tauri dev` manual check: not run. All automated Rust and Chromium gates were run and verified.
+
 ---
 
 ## Review

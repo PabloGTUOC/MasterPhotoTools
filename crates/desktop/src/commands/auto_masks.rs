@@ -7,8 +7,8 @@
 
 use super::{describe, CommandResult};
 use crate::AppState;
-use phototools_core::media::edit::{AutoTarget, StoredRaster};
-use phototools_core::media::segment;
+use rollchrome_core::media::edit::{AutoTarget, StoredRaster};
+use rollchrome_core::media::segment;
 use serde::Serialize;
 use tauri::State;
 

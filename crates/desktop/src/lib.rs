@@ -13,9 +13,9 @@ use phototools_core::config::Config;
 use phototools_core::error::Error;
 use phototools_core::jobs::JobRunner;
 use phototools_core::ledger::Ledger;
-use phototools_core::media::edit::lut::Lut;
-use phototools_core::media::edit::pipeline::AdjustmentRecipe;
-use phototools_core::media::edit::preview::{PreviewSession, PreviewStage, RgbaFrame};
+use rollchrome_core::media::edit::lut::Lut;
+use rollchrome_core::media::edit::pipeline::AdjustmentRecipe;
+use rollchrome_core::media::edit::preview::{PreviewSession, PreviewStage, RgbaFrame};
 use server::ServerConnection;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -106,7 +106,7 @@ impl AppState {
         let orientation = phototools_core::media::meta::read_meta(&path)
             .map(|m| m.orientation as u32)
             .unwrap_or(1);
-        let read_only = phototools_core::tools::edit::is_card_volume(&path);
+        let read_only = rollchrome_core::tools::edit::is_card_volume(&path);
         let session_id = format!(
             "preview_{}",
             NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed)
@@ -171,7 +171,7 @@ impl AppState {
     pub fn segmentation_input(
         &self,
         session_id: &str,
-    ) -> Result<(phototools_core::media::segment::RgbImage, u32), Error> {
+    ) -> Result<(rollchrome_core::media::segment::RgbImage, u32), Error> {
         let slot = self.active_preview.lock().unwrap();
         let active = slot
             .as_ref()

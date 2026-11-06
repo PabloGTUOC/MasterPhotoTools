@@ -10,8 +10,8 @@
 //! - Aspect ratio presets: Defined in **output pixels**; normalized crop is computed from pixel aspect.
 //! - Refuses crops smaller than 16 px on either dimension.
 
-use crate::error::Error;
 use crate::media::edit::pipeline::{ImageBuffer, LinearBuffer};
+use phototools_core::error::Error;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 

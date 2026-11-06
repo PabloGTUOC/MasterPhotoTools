@@ -6,14 +6,14 @@
 //!
 //! Follows F8 as the tool template.
 
-use crate::error::Error;
-use crate::jobs::{Outcome, Progress, ToolResult};
 use crate::media::edit::lut::Lut;
 use crate::media::edit::pipeline::{AdjustmentRecipe, LutRef};
 use crate::tools::edit::{
     find_volume_root, is_card_volume_with_resolver, is_sidecar, render_and_write,
 };
-use crate::tools::{carry_metadata_with, expand_inputs, Derived, Plan, Skip, Tool};
+use phototools_core::error::Error;
+use phototools_core::jobs::{Outcome, Progress, ToolResult};
+use phototools_core::tools::{carry_metadata_with, expand_inputs, Derived, Plan, Skip, Tool};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -73,7 +73,7 @@ pub(crate) fn is_hidden(path: &Path) -> bool {
 /// folder in plan order (first, last, and intermediate evenly spaced), rather than taking the first `n`.
 pub fn sample_frames(plan: &Plan<BulkLutAction>, n: usize) -> Vec<PathBuf> {
     let actions = &plan.actions;
-    crate::tools::sample_evenly(actions, n)
+    phototools_core::tools::sample_evenly(actions, n)
         .into_iter()
         .map(|a| a.source.clone())
         .collect()

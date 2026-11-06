@@ -40,9 +40,9 @@ use super::lut::Lut;
 use super::masks::{CompiledMasks, LocalAdjustments, Mask, MaskRasters};
 use super::pipeline::{linear_to_srgb, validate_lut, AdjustmentRecipe, ImageBuffer, LinearBuffer};
 use super::raster::{CoverageRaster, StoredRaster};
-use crate::error::Error;
 use crate::media::histogram::{histogram, Histogram};
 use fast_image_resize as fr;
+use phototools_core::error::Error;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -227,8 +227,8 @@ impl PreviewSession {
     /// Decode an image from disk and construct an interactive preview session with EXIF orientation.
     pub fn open(path: &std::path::Path) -> Result<Self, Error> {
         let bytes = std::fs::read(path)?;
-        let source_sha256 = crate::ingest::scanner::hex(&sha2::Sha256::digest(&bytes));
-        let orientation = crate::media::meta::read_meta(path)
+        let source_sha256 = phototools_core::ingest::scanner::hex(&sha2::Sha256::digest(&bytes));
+        let orientation = phototools_core::media::meta::read_meta(path)
             .map(|m| m.orientation as u32)
             .unwrap_or(1);
         let image = super::pipeline::decode_image(path)?;

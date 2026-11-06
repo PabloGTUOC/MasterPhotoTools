@@ -10,4 +10,5 @@ pub mod jobs;
 pub mod ledger;
 pub mod media;
 pub mod publish;
+pub mod sidecar;
 pub mod tools;

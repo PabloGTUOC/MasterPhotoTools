@@ -6,7 +6,7 @@
 //! in the sidecar as an 8-bit greyscale PNG, base64-encoded, at most 1024 px on the long
 //! edge, in the **stored** frame like every mask, and sampled bilinearly at any size.
 
-use crate::error::Error;
+use phototools_core::error::Error;
 use serde::{Deserialize, Serialize};
 
 /// The long edge an automatic mask is stored at: the models see 1024 px or less, so more

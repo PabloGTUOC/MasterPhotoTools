@@ -5,40 +5,25 @@
 //!
 //! Drives `media::edit` and never touches pixels itself.
 
-use crate::error::Error;
 use crate::media::edit::{
     apply_recipe_with_orientation, decode_image, validate_lut, AdjustmentRecipe, ImageBuffer, Lut,
 };
-use crate::tools::{carry_metadata, Derived, Skip};
+use phototools_core::error::Error;
+use phototools_core::tools::{carry_metadata, Derived, Skip};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub const SIDECAR_EXTENSION: &str = "photoedit";
+pub use phototools_core::sidecar::{is_sidecar, sidecar_path, SIDECAR_EXTENSION};
+
 /// Version 3 added masks (ED-19). A sidecar is written at this version even without
 /// masks, so an older build refuses every sidecar a newer one wrote rather than opening
 /// one and silently dropping what it does not know.
 pub const CURRENT_RECIPE_VERSION: u32 = 3;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Compute the companion sidecar path for an image path.
-///
-/// Follows `<file name>.photoedit` (e.g. `IMG_0001.JPG.photoedit` or `IMG_0001.CR2.photoedit`),
-/// ensuring RAW and JPEG pairs side-by-side do not share a sidecar.
-pub fn sidecar_path(image_path: &Path) -> PathBuf {
-    let file_name = image_path.file_name().unwrap_or_default().to_string_lossy();
-    image_path.with_file_name(format!("{file_name}.{SIDECAR_EXTENSION}"))
-}
-
-/// Returns true if the path represents a `.photoedit` sidecar.
-pub fn is_sidecar(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.ends_with(".photoedit"))
-}
 
 /// Find the volume root (mount point) for a path.
 ///
@@ -110,7 +95,7 @@ where
     let Some(root) = resolve_root(path) else {
         return false;
     };
-    match crate::ingest::card::Card::at(&root) {
+    match phototools_core::ingest::card::Card::at(&root) {
         Ok(card) => card.looks_like_a_card(),
         Err(_) => false,
     }
@@ -180,7 +165,7 @@ where
     to_save.version = CURRENT_RECIPE_VERSION;
     if to_save.source_sha256.is_empty() {
         let bytes = std::fs::read(image_path)?;
-        to_save.source_sha256 = crate::ingest::scanner::hex(&Sha256::digest(&bytes));
+        to_save.source_sha256 = phototools_core::ingest::scanner::hex(&Sha256::digest(&bytes));
     }
 
     let target_path = sidecar_path(image_path);
@@ -298,7 +283,7 @@ pub fn render_and_write(
         return Err(Error::Refused("Source file has no stem name".into()));
     }
 
-    let orientation = crate::media::meta::read_meta(source)
+    let orientation = phototools_core::media::meta::read_meta(source)
         .map(|m| m.orientation as u32)
         .unwrap_or(1);
     let decoded = decode_image(source)?;
@@ -306,7 +291,8 @@ pub fn render_and_write(
     let mut resolved_recipe = recipe.clone();
     if resolved_recipe.source_sha256.is_empty() {
         if let Ok(bytes) = std::fs::read(source) {
-            resolved_recipe.source_sha256 = crate::ingest::scanner::hex(&Sha256::digest(&bytes));
+            resolved_recipe.source_sha256 =
+                phototools_core::ingest::scanner::hex(&Sha256::digest(&bytes));
         }
     }
 
@@ -356,9 +342,9 @@ pub fn render_and_write(
                 image::ImageBuffer::from_raw(width, height, data)
                     .ok_or_else(|| Error::Internal("failed to construct Rgb8 buffer".into()))?,
             );
-            let jpeg_bytes = crate::media::jpeg::encode(
+            let jpeg_bytes = phototools_core::media::jpeg::encode(
                 &dyn_img,
-                &crate::media::jpeg::JpegOptions::deliverable(95),
+                &phototools_core::media::jpeg::JpegOptions::deliverable(95),
             )?;
 
             std::fs::create_dir_all(out_dir)?;
@@ -425,7 +411,7 @@ where
         return Err(Error::Refused("Source file has no stem name".into()));
     }
 
-    let is_raw = crate::media::raw::is_raw(source);
+    let is_raw = phototools_core::media::raw::is_raw(source);
     let identity = is_identity(recipe, lut);
 
     // Identity recipe on already-encoded non-RAW image: byte copy without re-encoding

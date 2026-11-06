@@ -21,7 +21,7 @@
 //!   a 3D cube lattice of size N = L² (N³ = L⁶ pixels).
 //!   Ordering: Row-major scanline order is Red varies fastest, then Green, then Blue.
 
-use crate::error::Error;
+use phototools_core::error::Error;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 

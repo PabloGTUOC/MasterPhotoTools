@@ -4196,7 +4196,6 @@ dependencies = [
  "image",
  "mozjpeg",
  "nom-exif",
- "ort",
  "rawler",
  "rayon",
  "regex",
@@ -4223,6 +4222,7 @@ dependencies = [
  "notify",
  "phototools-core",
  "reqwest 0.12.28",
+ "rollchrome-core",
  "serde",
  "serde_json",
  "tauri",
@@ -4989,6 +4989,24 @@ name = "rle-decode-fast"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3582f63211428f83597b51b2ddb88e2a91a9d52d12831f9d08f5e624e8977422"
+
+[[package]]
+name = "rollchrome-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "fast_image_resize",
+ "image",
+ "ort",
+ "phototools-core",
+ "rayon",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "tiff",
+]
 
 [[package]]
 name = "rusqlite"

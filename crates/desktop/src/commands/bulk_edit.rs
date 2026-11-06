@@ -5,10 +5,10 @@
 
 use super::{describe, resolve_inputs, resolve_output, CommandResult};
 use crate::AppState;
-use phototools_core::media::edit::AdjustmentRecipe;
-use phototools_core::tools::bulk_edit::{BulkEditParams, BulkEditTool};
-use phototools_core::tools::presets::load_preset as core_load_preset;
 use phototools_core::tools::{Skip, Tool};
+use rollchrome_core::media::edit::AdjustmentRecipe;
+use rollchrome_core::tools::bulk_edit::{BulkEditParams, BulkEditTool};
+use rollchrome_core::tools::presets::load_preset as core_load_preset;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::State;
@@ -59,7 +59,7 @@ pub fn plan_bulk_edit_impl(
     params.recursive = recursive;
 
     let plan = BulkEditTool.plan(&params).map_err(describe)?.data;
-    let sample_frames = phototools_core::tools::bulk_edit::sample_frames(&plan, 3)
+    let sample_frames = rollchrome_core::tools::bulk_edit::sample_frames(&plan, 3)
         .into_iter()
         .map(|p| p.display().to_string())
         .collect();
@@ -67,7 +67,7 @@ pub fn plan_bulk_edit_impl(
         .actions
         .first()
         .map(|a| a.recipe_sha256.clone())
-        .unwrap_or_else(|| phototools_core::tools::bulk_edit::recipe_sha256(&params.recipe));
+        .unwrap_or_else(|| rollchrome_core::tools::bulk_edit::recipe_sha256(&params.recipe));
 
     Ok(BulkEditPlanSummary {
         actions_count: plan.actions.len(),
@@ -115,7 +115,7 @@ pub fn apply_bulk_edit_impl(
     // job that fails at once: a refusal the person sees beside the Run button says
     // what to do, and a failed job in the progress list only says that it failed.
     // The job checks again, since the preset can change between here and there.
-    let current = phototools_core::tools::bulk_edit::recipe_sha256(&recipe);
+    let current = rollchrome_core::tools::bulk_edit::recipe_sha256(&recipe);
     if current != reviewed_recipe_sha256 {
         return Err(
             "The recipe changed since the dry run (the preset was edited or replaced); \
@@ -143,7 +143,7 @@ pub fn apply_bulk_edit_impl(
                 "edited",
                 summary.failures.len(),
                 &skipped,
-                &phototools_core::tools::lut::ACCEPTED,
+                &rollchrome_core::tools::lut::ACCEPTED,
             ))
         })
         .map_err(describe)

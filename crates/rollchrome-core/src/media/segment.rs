@@ -20,12 +20,12 @@
 
 use super::edit::masks::AutoTarget;
 use super::edit::raster::{StoredRaster, STORED_MASK_EDGE};
-use crate::error::Error;
-use crate::jobs::Progress;
 /// Re-exported so the desktop application can hold a photograph's pixels without linking
 /// `image` itself.
 pub use image::RgbImage;
 use image::{imageops, GrayImage};
+use phototools_core::error::Error;
+use phototools_core::jobs::Progress;
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -140,7 +140,7 @@ pub fn fetch(
             progress.report(done, bytes, "Downloading the model");
         }
         file.sync_all()?;
-        let got = crate::ingest::scanner::hex(&hasher.finalize());
+        let got = phototools_core::ingest::scanner::hex(&hasher.finalize());
         if done != bytes || got != sha256 {
             return Err(Error::Refused(format!(
                 "the downloaded model is not the one expected ({done} bytes, SHA-256 {got}; \
@@ -169,7 +169,7 @@ pub fn verify_model(path: &Path, spec: &ModelSpec) -> Result<(), Error> {
         }
         hasher.update(&buf[..n]);
     }
-    let got = crate::ingest::scanner::hex(&hasher.finalize());
+    let got = phototools_core::ingest::scanner::hex(&hasher.finalize());
     if got != spec.sha256 {
         return Err(Error::Refused(format!(
             "the {} model on disk is not the one expected (SHA-256 {got}); download it again",
@@ -325,7 +325,7 @@ pub fn auto_mask(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::jobs::InMemoryProgress;
+    use phototools_core::jobs::InMemoryProgress;
     use std::io::{BufRead, BufReader};
     use std::net::TcpListener;
 
@@ -352,7 +352,7 @@ mod tests {
     }
 
     fn sha(bytes: &[u8]) -> String {
-        crate::ingest::scanner::hex(&Sha256::digest(bytes))
+        phototools_core::ingest::scanner::hex(&Sha256::digest(bytes))
     }
 
     #[test]

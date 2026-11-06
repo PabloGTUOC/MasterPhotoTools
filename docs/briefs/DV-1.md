@@ -694,3 +694,34 @@ be loosened. If one cannot be met, stop and report the numbers.**
 4. Report, round 3: gates, the four timings, and the measured RMS and maximum for tests 4, 5 and
    6 at every angle.
 
+---
+
+**Changes requested** (round 3, 2026-11-06).
+
+Re-run on `dv-1` at `c4b7d8a`: test 4 passes; tests 5 and 6 fail, as reported. Green is now exact
+in every test.
+
+**Test 5's threshold was my error, not the code's.** The plan says numbers are set after
+measuring, and I set 0.020 at period 8 without measuring. Red and blue are each 2 of every 9
+photosites on X-Trans, about 2.1 px apart on average. A colour pattern of period 8 that does not
+follow the brightness is near the limit of what those samples can carry, and the 0.04 measured is
+about what averaging them can give, as the Report's analysis says. Natural colour detail is far
+coarser than that. So the test moves to period 16, with **the thresholds unchanged**. That is a
+change to the specification, made here, by the architect, with its reason.
+
+**Test 6's fringe is a real defect.** As the Report found, a sample one pixel across the edge
+weighs the same as one pixel inside it.
+
+1. **Make the red and blue weights edge-preserving.** Multiply each weight by
+   `1 / (1 + (ΔG / 0.02)²)`, where `ΔG = |G_sample − G_centre|` on the finished green plane. A
+   sample across an edge that green can see then counts for little. The step in test 6 changes
+   green by 0.1, so such a sample weighs 1/26. Update the module doc.
+2. **Test 5 at period 16**: the same test, name and thresholds (green ≤ 0.006, red and blue
+   ≤ 0.020), with `period 8` → `16`. Add a one-line comment saying why it is 16, pointing to this
+   review.
+3. **Measure, without committing**: test 5 at period 8 after item 1, and the in-phase test 4
+   after item 1, to show that the new weight costs nothing there.
+4. If test 5 or 6 still fails, **stop and report the numbers**. Do not change a threshold.
+   Otherwise: the gates, the four timings, the measured values for tests 4–6 at every angle, and
+   a Report, round 4.
+

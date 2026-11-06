@@ -251,8 +251,8 @@ Do not tick the acceptance boxes above; the review does that.
 ### What was done
 1. **Moved editor directory helpers out of core Config**:
    - Removed `lut_dir`, `models_dir`, and `presets_dir` methods from `Config` in `crates/core/src/config.rs`.
-   - Exported `pub use dirs;` from `crates/core/src/lib.rs` so that `rollchrome-core` can call `dirs::data_dir()` without modifying `Cargo.lock`.
-   - Added free functions `pub fn lut_dir(config: &Config) -> PathBuf`, `pub fn models_dir(config: &Config) -> PathBuf`, and `pub fn presets_dir(config: &Config) -> PathBuf` to `crates/rollchrome-core/src/config.rs`. Their bodies match the removed methods with `self` replaced by `config`.
+   - Added free functions `pub fn lut_dir(config: &Config) -> PathBuf`, `pub fn models_dir(config: &Config) -> PathBuf`, and `pub fn presets_dir(config: &Config) -> PathBuf` to `crates/rollchrome-core/src/config.rs`.
+   - Added `dirs = "6.0.0"` to `crates/rollchrome-core/Cargo.toml` (recorded below under G8) so `rollchrome-core` can call `dirs::data_dir()` without bending `phototools-core`'s public API. `crates/core/src/lib.rs` is untouched.
    - Updated all 20 call sites across `crates/rollchrome-desktop/src/commands/{auto_masks,bulk_edit,edit,presets}.rs`, the single test call site in `crates/rollchrome-desktop/tests/local_tools.rs`, and doc comments in `crates/rollchrome-core/src/{media/segment.rs,tools/bulk_edit.rs}`.
 2. **Removed duplicate editor types from shared**:
    - Removed `CurvePoint`, `ToneCurves`, `HslBand`, `HslAdjustments`, `ColorWheel`, `ColorGrading`, `NormalizedCrop`, `Geometry`, `Vignette`, and `FilmGrain` from `frontend/shared/src/types.ts`.
@@ -261,7 +261,7 @@ Do not tick the acceptance boxes above; the review does that.
 3. **Trimmed unused dev dependencies**:
    - Removed `image = "0.25"` dev-dependency from `crates/desktop/Cargo.toml`.
    - Uninstalled `playwright` from `frontend/desktop` via `npm uninstall --prefix frontend/desktop playwright`.
-   - Verified that `Cargo.lock` changed only by removing `image` from `phototools-desktop`.
+   - Verified that `Cargo.lock` changed only by removing `image` from `phototools-desktop` and adding `dirs 6.0.0` to `rollchrome-core`.
    - Verified that `frontend/desktop/package-lock.json` only removed `playwright`, `playwright-core`, and nested `fsevents`.
 4. **Resolved RC-2 review nits**:
    - Restored doc comment `/** Plan summary for Bulk LUT tool (ED-6). */` on `BulkLutPlanSummary` in `frontend/rollchrome/src/api.ts`.
@@ -277,7 +277,10 @@ Do not tick the acceptance boxes above; the review does that.
    - Updated status line in `docs/rollchrome-plan.md` to `*RC-3 done (branch rc-3); DV-1 next.*`.
 
 ### Deviations
-None. All tasks were implemented according to the Brief section of `docs/briefs/RC-3.md`. (Using `pub use dirs;` in `phototools-core` allowed `rollchrome-core::config` to keep the exact body of `lut_dir`/`models_dir`/`presets_dir` using `dirs::data_dir()` without altering `Cargo.lock` dependencies).
+- In the initial implementation of step 1, `pub use dirs;` was added to `crates/core/src/lib.rs` to avoid modifying `Cargo.lock`. Following Review round 1, this re-export was removed from `phototools-core` to preserve its API boundary, and `dirs = "6.0.0"` was added as a direct dependency of `crates/rollchrome-core/Cargo.toml`. Consequently, `Cargo.lock` gains `dirs 6.0.0` in `rollchrome-core`'s dependency list (reusing the existing locked crate; no new crate is introduced).
+
+### Dependencies recorded under G8
+- `rollchrome-core`: `dirs = "6.0.0"`. Needed because the three moved editor directory helpers (`lut_dir`, `models_dir`, `presets_dir`) fall back to the platform's data directory via `dirs::data_dir()` when `config.database.parent()` is absent.
 
 ### Baseline Test Counts (before changes)
 - `cargo test --workspace`: **1012 passed**, 0 failed, 0 ignored
@@ -292,9 +295,9 @@ None. All tasks were implemented according to the Brief section of `docs/briefs/
 1. `cargo fmt --all --check`
    Output: clean, exit code 0 (no output).
 2. `cargo clippy --workspace --all-targets -- -D warnings`
-   Output: Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.76s (0 warnings).
+   Output: Finished `dev` profile [unoptimized + debuginfo] target(s) (0 warnings).
 3. `cargo build --workspace`
-   Output: Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.50s (0 errors).
+   Output: Finished `dev` profile [unoptimized + debuginfo] target(s) (0 errors).
 4. `cargo test --workspace`
    Output: 1012 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.53s.
 5. `cargo test -p phototools-core`
@@ -310,7 +313,7 @@ None. All tasks were implemented according to the Brief section of `docs/briefs/
 10. `npm --prefix frontend/web run typecheck`
     Output: vue-tsc --build --force exited with code 0.
 11. `npm --prefix frontend/web run build`
-    Output: built in 1.12s, dist/assets produced.
+    Output: built in 1.34s, dist/assets produced.
 12. `npm --prefix frontend/web run check:transport`
     Output: `transport check: 26 files, no view reaches the network directly`
 13. `npm --prefix frontend/web run check:layout`
@@ -322,7 +325,7 @@ None. All tasks were implemented according to the Brief section of `docs/briefs/
 16. `npm --prefix frontend/desktop run typecheck`
     Output: vue-tsc --build --force exited with code 0.
 17. `npm --prefix frontend/desktop run build`
-    Output: built in 1.02s, dist/assets produced.
+    Output: built in 1.08s, dist/assets produced.
 18. `npm --prefix frontend/desktop run check:transport`
     Output: `transport check: 27 files, no view reaches the network directly`
 19. `npm --prefix frontend/rollchrome ci`
@@ -330,12 +333,12 @@ None. All tasks were implemented according to the Brief section of `docs/briefs/
 20. `npm --prefix frontend/rollchrome run typecheck`
     Output: vue-tsc --build --force exited with code 0.
 21. `npm --prefix frontend/rollchrome run build`
-    Output: built in 792ms, dist/assets produced.
+    Output: built in 896ms, dist/assets produced.
 22. `npm --prefix frontend/rollchrome run check:transport`
     Output: `transport check: 21 files, no view reaches the network directly and no HTTP client is imported`
 23. `npm --prefix frontend/rollchrome run check:edit`
-    - Drag responsiveness: min=8.5 ms, median=9.7 ms, **p95=12.5 ms** (budget <= 50 ms)
-    - Settle responsiveness: min=37.5 ms, median=40.2 ms, **p95=46.6 ms** (budget <= 120 ms)
+    - Drag responsiveness: min=8.5 ms, median=9.5 ms, **p95=11.1 ms** (budget <= 50 ms)
+    - Settle responsiveness: min=36.2 ms, median=38.2 ms, **p95=41.1 ms** (budget <= 120 ms)
     - Result: `PASSED all checks.`
 24. `npm --prefix frontend/rollchrome run check:bulk-lut`
     - Output: `check:bulk-lut PASSED cleanly: all acceptance assertions and benchmarks verified.`

@@ -4,8 +4,8 @@
 //! publishing folder, LUT library, presets and mask models work without copying anything
 //! (decision A), while keeping its jobs in a ledger of its own (decision B).
 
+use dirs;
 use phototools_core::config::Config;
-use phototools_core::dirs;
 use std::path::PathBuf;
 
 /// Returns the path to Rollchrome's job ledger (`rollchrome.sqlite3`), beside PhotoTools'

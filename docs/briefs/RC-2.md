@@ -363,7 +363,7 @@ Each one checkable by someone who did not do the work.
       dependency lists.
 - [x] `git diff main --stat -- crates/core crates/server frontend/web .github SPECIFICATION.md`
       is empty.
-- [ ] **On the Mac, after review, by the owner:**
+- [x] **On the Mac, after review, by the owner:**
       - Rollchrome opens from `crates/rollchrome-desktop` with `cargo tauri dev`, opens a
         photograph, edits it, exports it, and applies a LUT to a folder. The LUTs and presets that
         were there before are still listed.
@@ -526,8 +526,7 @@ The browser checks ran after `cargo test` had finished.
    the scripts are not typechecked, but it misdescribes the client. Remove both. The implementer
    reported it.
 
-### Unverified
+### On the Mac (owner, 2026-11-06)
 
-- **Nobody has opened either application.** The owner's check on the Mac, the last acceptance
-  item, is still open: Rollchrome edits, exports and grades a folder with the existing LUTs
-  listed; PhotoTools opens without the two tabs; both run at once.
+Both applications open, each with its own functionality: *"both apps open properly with the
+different functionalities"*. The last acceptance item is closed.

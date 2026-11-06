@@ -520,6 +520,92 @@ Re-run with `cargo run --release -p rollchrome-core --example develop -- --synth
 
 ---
 
+## Report, round 3
+
+*Written by the implementer, addressing Review round 2.*
+
+### 1. Implementation Summary
+- **Green tie-break (Step 1)**:
+  - In `crates/rollchrome-core/src/media/develop/xtrans.rs`, green estimation searches up to 4 px for green samples along all 4 directions.
+  - When a second green exists on each side within 4 px, computes `near` (linear interpolation from nearest greens) and `far` (linear interpolation from second-nearest greens) and adds `|near − far|` to the direction's gradient.
+  - Preserved the same-colour curvature term `|2·c − s1 − s2|` and symmetric estimate correction where they apply.
+  - Updated module docstring in `xtrans.rs`.
+- **Orientation-weighted Red and Blue (Step 2)**:
+  - Computed green gradient `(gx, gy)` by central differences (one-sided at borders).
+  - Summed structure tensor `[gx², gx·gy; gx·gy, gy²]` over 5×5 window around each pixel.
+  - Calculated eigenvalues $\lambda_1 \ge \lambda_2$, gradient direction $\theta = \frac{1}{2}\text{atan2}(2 J_{xy}, J_{xx} - J_{yy})$, and coherence $C = ((\lambda_1 - \lambda_2) / (\lambda_1 + \lambda_2))^2$ ($C = 0$ when $\lambda_1 + \lambda_2 < 10^{-12}$).
+  - For each chroma sample at offset `(dx, dy)`, computed `across = dx·cos θ + dy·sin θ`, `along = −dx·sin θ + dy·cos θ`, and weight $w = 1 / (1 + \text{along}^2 + (1 + 24\cdot C)\cdot \text{across}^2)$.
+  - Weighted average of colour differences ($R - G$ or $B - G$) added back to green.
+  - Updated module docstring in `xtrans.rs`.
+- **Test Suite (fixed count of 24 tests)**:
+  - Replaced tests 5 and 6 with colour versions:
+    - Test 5: `a_fine_colour_grating_comes_back_without_false_colour` (phases $0, 2\pi/3, 4\pi/3$, period 8 px, $0.3 \pm 0.2$ at 0°, 90°, 45°; assertions: G $\le 0.006$, R & B $\le 0.020$).
+    - Test 6: `a_colour_step_edge_stays_sharp_and_unfringed` (far-field $>3$ px $\le 0.002$, near-edge $\le 3$ px $\le 0.10$ for vertical, horizontal, diagonal).
+  - Test 4 (`a_fine_grating_comes_back_without_a_maze`, $\le 0.006$) kept as written.
+  - Total tests in `rollchrome-core` remain strictly at 24 demosaic/develop tests (213 total in crate: 189 baseline + 24).
+  - Per brief instructions ("No threshold below may be loosened. If one cannot be met, stop and report the numbers"), all thresholds were maintained strictly without modification.
+
+### 2. Test Measurements (Tests 4, 5, and 6 at Every Angle)
+
+#### Test 4 (`a_fine_grating_comes_back_without_a_maze`, threshold $\le 0.006$)
+- **0° grating (horizontal)**:
+  - **RMS**: R = **0.000000**, G = **0.000000**, B = **0.000000**
+  - **MAX**: R = **0.000000**, G = **0.000000**, B = **0.000000**
+  - **Result: PASSED** ($\le 0.006$).
+- **90° grating (vertical)**:
+  - **RMS**: R = **0.000000**, G = **0.000000**, B = **0.000000**
+  - **MAX**: R = **0.000000**, G = **0.000000**, B = **0.000000**
+  - **Result: PASSED** ($\le 0.006$).
+- *Outcome*: Green curvature tie-break `|near − far|` completely resolved the tie between orthogonal directions at sinusoidal crests and troughs on green. Test 4 passes with 0 error.
+
+#### Test 5 (`a_fine_colour_grating_comes_back_without_false_colour`, threshold G $\le 0.006$, R/B $\le 0.020$)
+- **0° grating (horizontal)**:
+  - **RMS**: R = **0.040318**, G = **0.000000**, B = **0.039736**
+  - **MAX**: R = **0.136434**, G = **0.000000**, B = **0.136919**
+  - G passed ($\le 0.006$); R and B failed ($> 0.020$).
+- **90° grating (vertical)**:
+  - **RMS**: R = **0.040330**, G = **0.000000**, B = **0.039715**
+  - **MAX**: R = **0.136434**, G = **0.000000**, B = **0.136919**
+  - G passed ($\le 0.006$); R and B failed ($> 0.020$).
+- **45° grating (diagonal)**:
+  - **RMS**: R = **0.038105**, G = **0.000000**, B = **0.038098**
+  - **MAX**: R = **0.091184**, G = **0.000000**, B = **0.091245**
+  - G passed ($\le 0.006$); R and B failed ($> 0.020$).
+- *Analysis*: With R at phase 0 and G at phase $2\pi/3$ with amplitude 0.2, the colour difference $R - G$ is a sinusoidal signal of period 8 px and amplitude $0.2 \sqrt{3} \approx 0.346$. In the 6×6 X-Trans CFA, columns and rows containing isolated red/blue photosites have no same-colour sample at offset $dx = 0$ (or $dy = 0$). All available chroma samples lie at $|dx| \ge 1$ (phase shift $\ge \pi/4$). Local constant averaging of shifted sinusoids attenuates the recovered amplitude by $\cos(\pi/4) \approx 0.707$, producing an RMS reconstruction error of $\approx 0.040$ ($100 \times \text{amplitude}$).
+
+#### Test 6 (`a_colour_step_edge_stays_sharp_and_unfringed`, threshold far-field $\le 0.002$, near-edge $\le 0.10$)
+- **Vertical step ($c = 48$)**:
+  - *Far-field ($> 3$ px)*: RMS = [R: **0.000000**, G: **0.000000**, B: **0.000000**]; MAX = [R: **0.000000**, G: **0.000000**, B: **0.000000**]. **PASSED** ($\le 0.002$).
+  - *Near-edge ($\le 3$ px)*: RMS = [R: **0.053659**, G: **0.000000**, B: **0.010985**]; MAX = [R: **0.281472**, G: **0.000000**, B: **0.056295**]. **FAILED** on R ($0.281 > 0.10$).
+- **Horizontal step ($r = 48$)**:
+  - *Far-field ($> 3$ px)*: RMS = [R: **0.000000**, G: **0.000000**, B: **0.000000**]; MAX = [R: **0.000000**, G: **0.000000**, B: **0.000000**]. **PASSED** ($\le 0.002$).
+  - *Near-edge ($\le 3$ px)*: RMS = [R: **0.054927**, G: **0.000000**, B: **0.010732**]; MAX = [R: **0.281472**, G: **0.000000**, B: **0.056294**]. **FAILED** on R ($0.281 > 0.10$).
+- **Diagonal step ($r + c = 96$)**:
+  - *Far-field ($> 3$ px)*: RMS = [R: **0.000000**, G: **0.000000**, B: **0.000000**]; MAX = [R: **0.000000**, G: **0.000000**, B: **0.000000**]. **PASSED** ($\le 0.002$).
+  - *Near-edge ($\le 3$ px)*: RMS = [R: **0.036588**, G: **0.000000**, B: **0.007318**]; MAX = [R: **0.075811**, G: **0.000000**, B: **0.015162**]. **PASSED** ($\le 0.10$).
+- *Analysis*: Far-field isolation is perfect ($0.000000 \le 0.002$). However, directly at pixels along the step edge ($c = 48$), the orientation weight $w = 1 / (1 + \text{along}^2 + (1 + 24\cdot C)\cdot \text{across}^2)$ is quadratic in $\text{across}$. Samples on opposite sides of the edge at $\text{across} = -1$ ($R - G = -0.3$) and $\text{across} = +1$ ($R - G = +0.2$) receive equal weight. This symmetric averaging across the boundary yields a midway value on edge photosites that lack same-colour samples along the edge, causing a peak near-edge error of $0.281 > 0.10$.
+
+### 3. Synthetic Benchmarks (Round 3)
+Measured with `cargo run --release -p rollchrome-core --example develop -- --synthetic <W>x<H> <bayer|xtrans>` (median of 3 runs):
+- **6000×4000 X-Trans (24 MP)**: Run 1: 5.07s, Run 2: 3.97s, Run 3: 3.42s. **Median: 3.97s**
+- **6000×4000 Bayer (24 MP)**: Run 1: 2.60s, Run 2: 2.70s, Run 3: 2.35s. **Median: 2.60s**
+- **7728×5152 X-Trans (40 MP)**: Run 1: 8.20s, Run 2: 8.47s, Run 3: 8.06s. **Median: 8.20s**
+- **7728×5152 Bayer (40 MP)**: Run 1: 7.04s, Run 2: 7.57s, Run 3: 6.69s. **Median: 7.04s**
+
+### 4. Gate Outputs (Round 3)
+1. `cargo fmt --all --check`: clean (exit code 0, no output)
+2. `cargo clippy --workspace --all-targets -- -D warnings`: clean (exit code 0, 0 warnings)
+3. `cargo build --workspace`: clean (exit code 0)
+4. `cargo test -p phototools-core`: **713** passed, 0 failed, 0 ignored
+5. `cargo test -p phototools-desktop`: **26** passed, 0 failed, 0 ignored
+6. `cargo test -p rollchrome-desktop`: **13** passed, 0 failed, 0 ignored
+7. `cargo test -p phototools-server`: **71** passed, 0 failed, 0 ignored
+8. `cargo test -p rollchrome-core`: **211** passed, **2** failed (`a_fine_colour_grating_comes_back_without_false_colour`, `a_colour_step_edge_stays_sharp_and_unfringed`), 0 ignored (total 213 tests = 189 baseline + 24)
+9. `cargo test --workspace`: **1033** passed, **2** failed, 0 ignored (total 1035 tests)
+10. `npm --prefix frontend/rollchrome run typecheck`: clean (exit code 0)
+
+---
+
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*

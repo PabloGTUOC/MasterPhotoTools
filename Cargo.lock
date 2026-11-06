@@ -4998,6 +4998,7 @@ dependencies = [
  "image",
  "ort",
  "phototools-core",
+ "rawler",
  "rayon",
  "reqwest 0.13.4",
  "serde",

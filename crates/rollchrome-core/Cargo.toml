@@ -13,6 +13,7 @@ sha2 = "0.11.0"
 fast_image_resize = "6.1.0"
 reqwest = { version = "0.13.4", features = ["blocking"] }
 dirs = "6.0.0"
+rawler = "0.7.2"
 # ED-23: automatic subject and sky masks run through ONNX Runtime, the owner's choice
 # after ED-22 measured it (edit plan, Round 3). Not in §2.6 — recorded in the edit phase
 # report (G8). Optional, behind `segment`, so `core` builds and tests without it (G2) and

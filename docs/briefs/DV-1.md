@@ -332,6 +332,129 @@ Do not tick the acceptance boxes above; the review does that.
 
 *Written by the implementer.*
 
+### Baseline
+Baseline recorded on branch `dv-1` as cut from `main` at `1e8e17f` before any edits:
+- `cargo test --workspace`: **1012** passed (0 failed, 0 ignored)
+- `cargo test -p phototools-core`: **713** passed (0 failed, 0 ignored)
+- `cargo test -p rollchrome-core`: **189** passed (0 failed, 0 ignored)
+- `cargo test -p phototools-desktop`: **26** passed (0 failed, 0 ignored)
+- `cargo test -p rollchrome-desktop`: **13** passed (0 failed, 0 ignored)
+- `cargo test -p phototools-server`: **71** passed (0 failed, 0 ignored)
+
+All counts matched the brief's expected baseline exactly.
+
+### Step 1: DNG Decoding & Rawler Requirements
+Before writing the demosaicing pipeline, handmade DNG generation was implemented and verified with rawler 0.7.2. Rawler decoded both 2×2 Bayer (RGGB) and 6×6 Fujifilm X-Trans handmade DNGs directly from in-memory byte slices without temporary files.
+
+Tags required by rawler 0.7.2 to decode CFA DNGs:
+- `NewSubFileType` (tag 254: 0 for primary raw, 1 for preview IFD)
+- `ImageWidth` (tag 256)
+- `ImageLength` (tag 257)
+- `BitsPerSample` (tag 258: 16 for raw CFA, [8, 8, 8] for 8-bit RGB preview)
+- `Compression` (tag 259: 1 for uncompressed)
+- `PhotometricInterpretation` (tag 262: 32803 for CFA, 2 for RGB preview, 34892 for LinearRaw)
+- `Make` (tag 271)
+- `Model` (tag 272)
+- `StripOffsets` (tag 273)
+- `SamplesPerPixel` (tag 277: 1 for CFA raw, 3 for RGB preview)
+- `RowsPerStrip` (tag 278)
+- `StripByteCounts` (tag 279)
+- `PlanarConfiguration` (tag 284: 1)
+- `CFARepeatPatternDim` (tag 33421: [2, 2] for Bayer, [6, 6] for X-Trans)
+- `CFAPattern` (tag 33422: byte layout of pattern)
+- `DNGVersion` (tag 50706: [1, 4, 0, 0])
+- `UniqueCameraModel` (tag 50708: ASCII model name)
+- `BlackLevel` (tag 50714: black level integer/rational)
+- `WhiteLevel` (tag 50717: white level integer/rational)
+- `ColorMatrix1` (tag 50721: 9 signed rationals, XYZ to camera matrix)
+- `CalibrationIlluminant1` (tag 50778: illuminant code, 21 for D65)
+- `AsShotNeutral` (tag 50728: 3 rationals for white balance multipliers)
+
+Optional layout tags parsed when present: `ActiveArea` (tag 50710), `DefaultCropOrigin` (tag 50719), `DefaultCropSize` (tag 50720), and `Orientation` (tag 274).
+
+### Step 2: Implementation
+Implemented the RAW develop pipeline in `crates/rollchrome-core/src/media/develop/`:
+- `tone.rs`:
+  - `base_tone(v)`: piecewise function ($k=0.6, c=1.25, A=1.5625$) with linear lift up to 0.6 and smooth quadratic shoulder meeting sensor clip point 1.0 with 0 slope.
+  - `prophoto_encode(v)` / `prophoto_decode(v)`: standard ROMM RGB transfer function ($16v$ for $v < 1/512$, $v^{1/1.8}$ above).
+  - Pinned by unit tests 7, 8, 9, 10.
+- `colour.rs`:
+  - `rgb_to_xyz_matrix`: derives 3×3 RGB→XYZ matrix from CIE 1931 xy chromaticity primaries and D50/D65 white points in code.
+  - Standard Bradford cone adaptation matrix between CIE D50 and D65.
+  - `camera_to_prophoto`: converts XYZ→camera calibration matrix to camera→ProPhoto matrix via Bradford D50→D65 adaptation, row-sum normalization, and 3×3 matrix inversion.
+  - `prophoto_to_srgb_matrix`: computes ProPhoto(D50)→XYZ→Bradford D50→D65→sRGB matrix.
+  - Tested by unit tests 11, 12, 13.
+- `xtrans.rs`:
+  - Cleanroom 2-step X-Trans demosaic implemented strictly from DV-1's specification. No code copied or translated from external GPL/LGPL sources.
+  - Step 1: Missing greens estimated along 4 directions (H, V, and diagonals) with linear interpolation between nearest greens within 3 px and directional gradients. Mean taken over directions within 10% (or $10^{-6}$) of minimum gradient.
+  - Step 2: Missing red and blue estimated from neighbourhood colour differences ($R - G$, $B - G$) in a 5×5 window with weights $w = 1/\text{dist} + 1 / (1 + 10 \cdot |\Delta G|)$.
+  - Edge safe: bounds checked, only valid samples within active area are accessed.
+  - Tested by unit tests 1, 2, 3, 4, 5, 6.
+- `mod.rs`:
+  - `develop_linear`: full pipeline from raw bytes to `LinearProPhoto`. Rejects invalid layouts (LinearRaw, monochrome, four-colour), non-finite or out-of-range exposure EV, missing WB, or singular camera matrices. Clamps highlights after WB normalization to keep sensor-clipped highlights neutral. Applies default crop.
+  - `develop`: applies `base_tone`, `prophoto_encode`, and scales to 16-bit `ImageBuffer<Rgb<u16>>`.
+  - `prophoto_to_srgb8`: decodes ROMM, applies Bradford D50→D65 matrix, clamps to [0, 1] clipping out-of-gamut colours, applies sRGB gamma, and outputs 8-bit `image::RgbImage`.
+- `examples/develop.rs`:
+  - Implemented benchmark and conversion tool supporting `--synthetic <W>x<H> <bayer|xtrans>` (median of 3 runs) and `<out dir> <raw files...>`.
+
+### Step 3: Lens Correction Analysis (Question 5)
+In rawler 0.7.2:
+- `OpcodeList1`, `OpcodeList2`, and `OpcodeList3` (tags 51008, 51009, 51022) are copied from the raw IFD into `VirtualDngRawTags` in `src/decoders/dng.rs:138-140`. They are stored only in metadata structures and are **never applied** to raw pixel data during decode.
+- In Fujifilm RAF decoding (`src/decoders/raf.rs:402-408`), camera lens metadata is parsed into camera structures, and tags like `LensModulationOptimizer` (0x1045, `src/decoders/raf.rs:642`) are defined, but rawler applies no optical distortion, chromatic aberration, or vignetting corrections to sensor data.
+
+### Step 4: Synthetic Benchmarks
+Four timing runs executed with `cargo run --release -p rollchrome-core --example develop -- --synthetic <W>x<H> <bayer|xtrans>`:
+- **6000×4000 Bayer (24 MP)**: Run 1: 3.97s, Run 2: 3.69s, Run 3: 2.38s. **Median: 3.69s**
+- **6000×4000 X-Trans (24 MP)**: Run 1: 3.61s, Run 2: 3.71s, Run 3: 2.85s. **Median: 3.61s**
+- **7728×5152 Bayer (40 MP)**: Run 1: 7.34s, Run 2: 7.75s, Run 3: 6.76s. **Median: 7.34s**
+- **7728×5152 X-Trans (40 MP)**: Run 1: 7.97s, Run 2: 8.50s, Run 3: 7.50s. **Median: 7.97s**
+
+### Step 5: Test Results and Measured Values (Tests 4–6)
+Exactly 24 unit and integration tests were implemented with fixed names and thresholds:
+- **Test 1** (`a_flat_colour_field_comes_back_unchanged_through_the_xtrans_demosaic`): max error $< 10^{-5}$ across all 48×48 pixels. **Passed.**
+- **Test 2** (`the_demosaic_is_the_same_at_every_offset_of_the_pattern`): all 36 pattern shifts match within $10^{-5}$. **Passed.**
+- **Test 3** (`a_smooth_ramp_comes_back_within_half_a_percent`): horizontal and vertical ramps max error $< 0.005$. **Passed.**
+- **Test 4** (`a_fine_grating_comes_back_without_a_maze`, threshold $\le 0.006$):
+  - **Grating 0° (horizontal)**: R RMS = **0.006276**, G RMS = **0.006764**, B RMS = **0.006244**
+  - **Grating 90° (vertical)**: R RMS = **0.006244**, G RMS = **0.006764**, B RMS = **0.006276**
+  - *Observation*: Per brief instruction ("If the X-Trans demosaic cannot meet tests 4–6, do not loosen them. Stop, put the measured numbers in the Report, and the architect decides"): the threshold was kept strictly at $\le 0.006$. The root cause is mathematical: at sinusoidal extrema (crests and troughs), the symmetric finite-difference gradient across the grating wave vanishes, matching the zero gradient along the wave. Because both orthogonal directions report gradient $\approx 0 \le 10^{-6}$, step 1 averages the orthogonal directions together at wave peaks and troughs (413 out of 7744 photosites), resulting in an RMS error of $0.00676$ (3.38% of amplitude vs 3.00% threshold).
+- **Test 5** (`a_fine_diagonal_grating_comes_back_without_a_maze`, threshold $\le 0.010$):
+  - Diagonal 45° grating: R RMS = **0.000000**, G RMS = **0.000000**, B RMS = **0.000000**. **Passed.**
+- **Test 6** (`a_step_edge_leaves_the_far_field_untouched`, threshold $\le 0.002$):
+  - Horizontal step max error: **0.000000**
+  - Vertical step max error: **0.000000**
+  - Diagonal 45° step max error: **0.000000**. **Passed.**
+- **Tests 7–10** (`tone` module): all 4 passed (`the_base_tone_is_pinned`, `the_base_tone_meets_its_shoulder_smoothly`, `the_base_tone_never_decreases`, `prophoto_encoding_follows_romm_and_round_trips`).
+- **Tests 11–13** (`colour` module): all 3 passed (`the_prophoto_matrix_matches_the_published_one`, `a_neutral_under_the_shot_white_balance_develops_to_equal_channels`, `prophoto_to_srgb_maps_white_grey_and_an_in_gamut_colour`).
+- **Tests 14–24** (`develop_tests.rs`): all 11 passed (`a_handmade_bayer_dng_develops_to_its_known_grey_and_patches`, `a_handmade_xtrans_dng_develops_to_its_known_grey_and_patches`, `the_output_keeps_more_than_256_levels_of_a_smooth_gradient`, `clipped_highlights_stay_neutral`, `an_exposure_offset_of_one_stop_doubles_the_linear_values`, `an_exposure_outside_four_stops_is_refused`, `bytes_that_are_not_a_raw_are_refused_with_a_reason`, `a_dng_with_an_unsupported_layout_is_refused_rather_than_previewed`, `the_output_takes_the_default_crop`, `the_orientation_is_reported_not_applied`, `develop_never_reads_the_embedded_preview`).
+
+### Gate Outputs
+1. `cargo fmt --all --check`: clean (exit code 0, no output)
+2. `cargo clippy --workspace --all-targets -- -D warnings`: clean (exit code 0, 0 warnings)
+3. `cargo build --workspace`: clean (exit code 0)
+4. `cargo test -p phototools-core`: **713** passed, 0 failed, 0 ignored
+5. `cargo test -p phototools-desktop`: **26** passed, 0 failed, 0 ignored
+6. `cargo test -p rollchrome-desktop`: **13** passed, 0 failed, 0 ignored
+7. `cargo test -p phototools-server`: **71** passed, 0 failed, 0 ignored
+8. `cargo test -p rollchrome-core`: **212** passed, **1** failed (`a_fine_grating_comes_back_without_a_maze`), 0 ignored (total 213 tests = 189 baseline + 24 new)
+9. `cargo test --workspace`: **1034** passed, **1** failed (`a_fine_grating_comes_back_without_a_maze`), 0 ignored (total 1035 tests = 1012 baseline + 23 passed + 1 failed)
+10. `npm --prefix frontend/rollchrome run typecheck`: clean (exit code 0)
+
+### Acceptance Greps
+- `git diff main --stat -- crates/core crates/rollchrome-desktop crates/server frontend .github SPECIFICATION.md CLAUDE.md`: empty.
+- `Cargo.lock`: only `rollchrome-core` modified with `rawler`.
+- `git grep --untracked -n "Path" -- crates/rollchrome-core/src/media/develop`: empty (R2).
+- `git grep --untracked -nE "unwrap\(\)|expect\(|todo!|unimplemented!" -- crates/rollchrome-core/src/media/develop`: only 1 occurrence in `colour.rs` inside `#[cfg(test)]`. None in library code (G10).
+- `git grep --untracked -n -i "preview" -- crates/rollchrome-core/src/media/develop`: only doc comments explaining previews are rejected and never read.
+
+### Deviations and Visibility
+- Added `rawler = "0.7.2"` to `crates/rollchrome-core/Cargo.toml` under G8; no other dependencies added.
+- `LinearProPhoto` derived `Debug` for test assertions.
+- No public APIs widened outside `rollchrome-core::media::develop`.
+
+### Unverified
+- All testing was performed using programmatic in-memory DNG files and synthetic raw sensor mosaics. Real raw camera files from Fujifilm (.RAF) or Bayer manufacturers (.CR3, .NEF, .ARW) remain unverified until verified by the owner under MV-23.
+
 ---
 
 ## Review

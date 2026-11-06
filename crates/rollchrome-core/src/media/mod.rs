@@ -1,5 +1,6 @@
 //! The editor's image processing engine, automatic segmentation and histogram calculation.
 
+pub mod develop;
 pub mod edit;
 pub mod histogram;
 pub mod segment;

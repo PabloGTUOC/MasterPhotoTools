@@ -365,3 +365,11 @@ Diff read in full. The three helpers moved with their bodies unchanged. All 20 c
 2. **Correct the Report's *Deviations* section.** The re-export was a deviation, and so is its replacement. Say so there, not "None".
 
 Re-run the gates after the change. The counts should not move.
+
+---
+
+**Approved** (round 2, 2026-11-06).
+
+The gates were re-run on `rc-3` at `ac75862`. fmt, clippy and build all exit 0. Tests: 1012 / 713 / 189 / 26 / 13 / 71, unchanged. Only Rust and the Report changed since round 1, so the front-end results from round 1 stand. `pub use dirs;` is gone from `phototools-core`. `rollchrome-core` declares `dirs = "6.0.0"`, the version already locked, and the dependency is recorded in the Report under G8. The only change to `Cargo.lock` is that one edge. *Deviations* now describes the change.
+
+Nit, left as it is: `use dirs;` in `rollchrome-core/src/config.rs` is redundant, since a crate needs no import. Clippy passes with it, and it can go the next time that file is touched.

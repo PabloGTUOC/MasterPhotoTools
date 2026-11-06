@@ -8,8 +8,8 @@ and maintain a photo library on a NAS.
 **Phases 0–14 are built and pass their gates.** Every phase of the build plan is closed.
 
 **The editor has left for an application of its own, Rollchrome** — a desktop-only film
-emulator, in the same repository (RC-1, RC-2, 2026-11-06). [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md)
-has the decisions and the steps; **RC-3** (tidy and CI) is next, then Develop (DV-1). The state
+emulator, in the same repository (RC-1 to RC-3, 2026-11-06). [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md)
+has the decisions and the steps; RC-1 to RC-3 are done, and Develop (DV-1) is next. The state
 before the split is frozen on the **`FullEdition`** branch.
 
 The active job is **using the application on a Mac and fixing what that finds.** Two sessions of
@@ -34,7 +34,7 @@ structured half of that work — 96 for PhotoTools, eight done, and 25 for Rollc
 | [`docs/timeline-plan.md`](docs/timeline-plan.md) | The Timeline tab: the track library on a map, and points placed by hand. Stage A built; MV-17 awaits a browser. Google's location history is Stages B–C, not built |
 | [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
-| [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | Splitting Edit and Batch Grade out into Rollchrome, a desktop-only film emulator. RC-1 and RC-2 done; RC-3 next |
+| [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | Splitting Edit and Batch Grade out into Rollchrome, a desktop-only film emulator. RC-1 to RC-3 done; Develop next |
 | [`docs/develop-plan.md`](docs/develop-plan.md) | Rollchrome's third screen, Develop: RAW files to finished JPEG or TIFF, a film look each. Planned (DV-1–DV-4, after RC-1); functionality first, the screen discussed later |
 | [`docs/rollchrome/edit-plan.md`](docs/rollchrome/edit-plan.md) | Rollchrome's Edit and Batch Grade screens: non-destructive exposure adjustments and 3D LUT grading. Rounds 1 and 2 built (ED-1–ED-18); MV-20 and MV-21 await a Mac. Round 3, masks (ED-19–ED-24), built; MV-20 to MV-22 await the Mac Studio |
 | [`docs/deployment.md`](docs/deployment.md) | Deploying the server and the desktop app, and every environment variable |

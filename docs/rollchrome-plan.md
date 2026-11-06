@@ -1,6 +1,6 @@
 # Rollchrome — splitting the editor into its own application
 
-> **RC-3 done (branch `rc-3`); DV-1 next.** The last
+> **RC-1 to RC-3 done and merged (2026-11-06, briefs [RC-1](briefs/RC-1.md), [RC-2](briefs/RC-2.md), [RC-3](briefs/RC-3.md)); DV-1 next.** The last
 > state with the editor inside PhotoTools is frozen on the **`FullEdition`** branch (`66c49ec`).
 
 PhotoTools grew two products. One is what the specification describes: dates, names, borders,

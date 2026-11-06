@@ -1,7 +1,7 @@
 # Editing — development plan
 
-> **Round 1 built (ED-1–ED-8). Round 2 built (ED-9–ED-18); MV-20 and MV-21 await a Mac.
-> Round 3 (masks, ED-19–ED-24) planned, not started.**
+> **Rounds 1–3 built (ED-1–ED-24); MV-20 to MV-22 await the Mac Studio.** The editor is
+> Rollchrome's since RC-2, and this plan moved here from `docs/` in RC-3, its ids unchanged.
 > Where the Round 1 build diverged from this plan the text has been corrected in place and
 > the rationale recorded in [`docs/phase-reports/edit.md`](phase-reports/edit.md).
 > Round 2 specifies advanced photographic adjustments, tone curves, 8-band HSL,

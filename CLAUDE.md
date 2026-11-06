@@ -7,10 +7,10 @@ and maintain a photo library on a NAS.
 
 **Phases 0–14 are built and pass their gates.** Every phase of the build plan is closed.
 
-**Next: the editor leaves for an application of its own, Rollchrome** — a desktop-only film
-emulator. [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) has the decisions, the measured
-boundary and the steps; the first brief is **RC-1**. The state before the split is frozen on
-the **`FullEdition`** branch.
+**The editor has left for an application of its own, Rollchrome** — a desktop-only film
+emulator, in the same repository (RC-1, RC-2, 2026-11-06). [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md)
+has the decisions and the steps; **RC-3** (tidy and CI) is next, then Develop (DV-1). The state
+before the split is frozen on the **`FullEdition`** branch.
 
 The active job is **using the application on a Mac and fixing what that finds.** Two sessions of
 working through the tabs with real photographs turned up sixteen defects that no test had caught —
@@ -20,7 +20,8 @@ cause: **the tools had only ever been exercised with typed file paths, and the f
 pointing at a folder the normal gesture.**
 
 The numbered checks in [`manual-verification.md`](docs/manual-verification.md) remain the
-structured half of that work — 121 of them (2026-10-04), eight done.
+structured half of that work — 96 for PhotoTools, eight done, and 25 for Rollchrome's editor in
+[`docs/rollchrome/manual-verification.md`](docs/rollchrome/manual-verification.md), same ids.
 
 | Read this | For |
 |---|---|
@@ -33,9 +34,9 @@ structured half of that work — 121 of them (2026-10-04), eight done.
 | [`docs/timeline-plan.md`](docs/timeline-plan.md) | The Timeline tab: the track library on a map, and points placed by hand. Stage A built; MV-17 awaits a browser. Google's location history is Stages B–C, not built |
 | [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
-| [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | Splitting Edit and Batch Grade out into Rollchrome, a desktop-only film emulator. Planned; RC-1 next |
+| [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | Splitting Edit and Batch Grade out into Rollchrome, a desktop-only film emulator. RC-1 and RC-2 done; RC-3 next |
 | [`docs/develop-plan.md`](docs/develop-plan.md) | Rollchrome's third screen, Develop: RAW files to finished JPEG or TIFF, a film look each. Planned (DV-1–DV-4, after RC-1); functionality first, the screen discussed later |
-| [`docs/edit-plan.md`](docs/edit-plan.md) | The Edit tab and the Batch Grade tool: non-destructive exposure adjustments and 3D LUT grading. Rounds 1 and 2 built (ED-1–ED-18); MV-20 and MV-21 await a Mac. Round 3, masks (ED-19–ED-24), built; MV-20 to MV-22 await the Mac Studio |
+| [`docs/rollchrome/edit-plan.md`](docs/rollchrome/edit-plan.md) | Rollchrome's Edit and Batch Grade screens: non-destructive exposure adjustments and 3D LUT grading. Rounds 1 and 2 built (ED-1–ED-18); MV-20 and MV-21 await a Mac. Round 3, masks (ED-19–ED-24), built; MV-20 to MV-22 await the Mac Studio |
 | [`docs/deployment.md`](docs/deployment.md) | Deploying the server and the desktop app, and every environment variable |
 | [`docs/phase-reports/`](docs/phase-reports/) | One report per phase: what was delivered, what deviated, and why |
 
@@ -164,18 +165,31 @@ performance figure taken without that section is meaningless.
 
 ## Shape
 
-One Rust library, two binaries, two front ends over shared components.
+Two applications in one workspace. **PhotoTools**: one Rust library, two binaries, two front ends
+over shared components. **Rollchrome**, the editor: one library on top of PhotoTools', one binary,
+one front end, Tauri only.
 
 ```
-crates/core        all functionality — no web framework, no UI, no platform assumptions
-crates/server      axum, on the NAS in Docker. Owns the ledger and Google credentials.
-                   Also serves the built web front end from WEB_ROOT (§2.2).
-crates/desktop     Tauri v2 on macOS. Reads the card, processes locally, hands off.
+crates/core               PhotoTools' functionality — no web framework, no UI, no platform assumptions
+crates/server             axum, on the NAS in Docker. Owns the ledger and Google credentials.
+                          Also serves the built web front end from WEB_ROOT (§2.2).
+crates/desktop            Tauri v2 on macOS. Reads the card, processes locally, hands off.
 
-frontend/shared    the API client (compiled) and the shared views (source)
-frontend/web       served by the server; archive tools and publishing
-frontend/desktop   inside Tauri; card review and ingest
+crates/rollchrome-core    the editor: adjustment pipeline, LUTs, masks, presets, batch grading.
+                          Depends on core for decoding, RAW and metadata; core never depends on it.
+crates/rollchrome-desktop Tauri v2 on macOS. Rollchrome's commands and preview session.
+
+frontend/shared           the API client (compiled), the shared views (source), the design language
+frontend/web              served by the server; archive tools and publishing
+frontend/desktop          inside Tauri; card review and ingest
+frontend/rollchrome       inside Tauri; Edit and Batch Grade. Uses shared components and styles,
+                          never the HTTP client
 ```
+
+The one contract between the two is the **`.photoedit` sidecar's name**
+(`phototools_core::sidecar`): a photograph edited in Rollchrome and renamed in PhotoTools keeps its
+edits. Rollchrome reads PhotoTools' configuration file and keeps its jobs in a ledger of its own
+(`docs/briefs/RC-2.md`, decisions A and B).
 
 `core` modules map to the specification's §2.5: `media` (the only module permitted to touch image
 bytes), `tools` (F1–F9), `ingest` (F10–F14, F16), `publish` (F15), `ledger`, `jobs`, `config`.

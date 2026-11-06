@@ -69,7 +69,7 @@ the specification, each piece recorded in a plan of its own rather than folded i
   ([plan](docs/publish-folder-plan.md));
 - **cutting the two screens down to the workflow** above ([plan](docs/workflow-plan.md));
 - an **editor** on the desktop: exposure and colour, curves, grading, looks, 3D LUTs applied to a
-  whole folder, and masks, automatic subject and sky masks included ([plan](docs/edit-plan.md)).
+  whole folder, and masks, automatic subject and sky masks included ([plan](docs/rollchrome/edit-plan.md)).
 
 What each contradicts in the specification is in
 [`docs/known-gaps.md`](docs/known-gaps.md); `SPECIFICATION.md` itself is not edited.
@@ -135,6 +135,6 @@ for, are in [`CLAUDE.md`](CLAUDE.md).
 | [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | **The next work**: splitting the editor out into Rollchrome. |
 | [`docs/develop-plan.md`](docs/develop-plan.md) | Rollchrome's Develop screen: RAW to JPEG or TIFF, a film look each. |
 | [`docs/briefs/`](docs/briefs/) | One file per step being built: the architect's brief, the implementer's report, the review. |
-| [`docs/geotag-plan.md`](docs/geotag-plan.md) · [`timeline-plan.md`](docs/timeline-plan.md) · [`owntracks-plan.md`](docs/owntracks-plan.md) · [`timeline-sync-plan.md`](docs/timeline-sync-plan.md) · [`publish-folder-plan.md`](docs/publish-folder-plan.md) · [`workflow-plan.md`](docs/workflow-plan.md) · [`edit-plan.md`](docs/edit-plan.md) | The plans written since the phases closed. Each was written before its code and corrected where the build diverged. |
+| [`docs/geotag-plan.md`](docs/geotag-plan.md) · [`timeline-plan.md`](docs/timeline-plan.md) · [`owntracks-plan.md`](docs/owntracks-plan.md) · [`timeline-sync-plan.md`](docs/timeline-sync-plan.md) · [`publish-folder-plan.md`](docs/publish-folder-plan.md) · [`workflow-plan.md`](docs/workflow-plan.md) · [`rollchrome/edit-plan.md`](docs/rollchrome/edit-plan.md) | The plans written since the phases closed. Each was written before its code and corrected where the build diverged. |
 
 Start with the specification. Build from the plan.

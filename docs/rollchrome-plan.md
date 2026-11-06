@@ -168,6 +168,8 @@ product decision for later, not part of this step (G11).
 - Documents: `CLAUDE.md`'s *Shape* section describes two applications; `edit-plan.md`, the edit
   phase report and MV-20 to MV-22 move under Rollchrome's documentation, ids unchanged so nothing
   that names them breaks.
+  *Done by the architect on `main`, 2026-11-06, before RC-3 was briefed: they are in
+  [`rollchrome/`](rollchrome/), and `CLAUDE.md`'s* Shape *describes both applications.*
 
 **Acceptance:** all gates for both applications pass in CI; `CLAUDE.md` describes what exists.
 

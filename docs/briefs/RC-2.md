@@ -1,6 +1,6 @@
 # `RC-2` · The Rollchrome application
 
-> **Status:** briefed
+> **Status:** **approved**
 > **Plan:** [`docs/rollchrome-plan.md`](../rollchrome-plan.md), step `RC-2` · **Branch:** `rc-2`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -327,10 +327,10 @@ Nothing outside the editor uses those nine components; `git grep` confirms it.
 
 Each one checkable by someone who did not do the work.
 
-- [ ] **Baseline recorded first**, on `rc-2` as cut, before any change: `cargo test --workspace`
+- [x] **Baseline recorded first**, on `rc-2` as cut, before any change: `cargo test --workspace`
       **1011**; `phototools-core` **713**; `rollchrome-core` **188**; `phototools-desktop` **39**;
       `phototools-server` **71**. If any differs, report it before going further.
-- [ ] **Test counts: `1011` → `1012`, every test accounted for.**
+- [x] **Test counts: `1011` → `1012`, every test accounted for.**
       - `cargo test -p phototools-core`: **713**, unchanged.
       - `cargo test -p rollchrome-core`: **189**, the 188 plus the one new ledger-path test.
       - `cargo test -p phototools-desktop`: **26** — its 19 unit tests and the 7 integration tests
@@ -339,29 +339,29 @@ Each one checkable by someone who did not do the work.
         in `bulk_edit_desktop.rs`.
       - `cargo test -p phototools-server`: **71**, unchanged.
       - `cargo test --workspace`: **1012**. All with 0 failed and 0 ignored.
-- [ ] `git grep -n "rollchrome" -- crates/desktop frontend/desktop` finds nothing, and
+- [x] `git grep -n "rollchrome" -- crates/desktop frontend/desktop` finds nothing, and
       `cargo tree -p phototools-desktop -e normal --prefix none | grep -E "^(ort|rollchrome-core) "`
       finds nothing. PhotoTools no longer links the editor or ONNX Runtime.
-- [ ] `git grep -nE "load_recipe|open_preview|render_preview|plan_bulk_lut|plan_bulk_edit|list_luts|list_presets" -- crates/desktop/src frontend/desktop/src`
+- [x] `git grep -nE "load_recipe|open_preview|render_preview|plan_bulk_lut|plan_bulk_edit|list_luts|list_presets" -- crates/desktop/src frontend/desktop/src`
       finds nothing.
-- [ ] `git grep -nE "Edit\.vue|BulkLut\.vue|AdjustmentSlider|LutPicker|MaskOverlay|PresetBar|CurveEditor" -- frontend/desktop frontend/shared/src/ui frontend/web`
+- [x] `git grep -nE "Edit\.vue|BulkLut\.vue|AdjustmentSlider|LutPicker|MaskOverlay|PresetBar|CurveEditor" -- frontend/desktop frontend/shared/src/ui frontend/web`
       finds nothing.
-- [ ] `frontend/rollchrome` has no HTTP client: `check:transport` passes there with its extra rule,
+- [x] `frontend/rollchrome` has no HTTP client: `check:transport` passes there with its extra rule,
       and `git grep -nE "fetch\(|XMLHttpRequest|EventSource|HttpApiClient" -- frontend/rollchrome/src`
       finds nothing.
-- [ ] **The screens moved, not rewritten.** `git diff -M main --stat` shows `Edit.vue`,
+- [x] **The screens moved, not rewritten.** `git diff -M main --stat` shows `Edit.vue`,
       `BulkLut.vue`, the nine components and the two check scripts as renames. In the diff of each,
       only import specifiers or paths change.
-- [ ] **The moved tests are unchanged.** Every test in `crates/rollchrome-desktop/tests/` differs
+- [x] **The moved tests are unchanged.** Every test in `crates/rollchrome-desktop/tests/` differs
       from its original only in `phototools_desktop::` → `rollchrome_desktop::`.
-- [ ] `check:edit` and `check:bulk-lut` pass **from `frontend/rollchrome`**, with every timing
+- [x] `check:edit` and `check:bulk-lut` pass **from `frontend/rollchrome`**, with every timing
       budget unchanged (G7). Report the numbers they print: drag p95, settle p95.
-- [ ] `check:transport` passes for both `frontend/desktop` and `frontend/rollchrome`.
-- [ ] No new dependency: every crate in `crates/rollchrome-desktop/Cargo.toml` and every package in
+- [x] `check:transport` passes for both `frontend/desktop` and `frontend/rollchrome`.
+- [x] No new dependency: every crate in `crates/rollchrome-desktop/Cargo.toml` and every package in
       `frontend/rollchrome/package.json` is one an existing manifest already uses, at its version.
       `git diff main -- Cargo.lock` adds only the `rollchrome-desktop` package entry and changes
       dependency lists.
-- [ ] `git diff main --stat -- crates/core crates/server frontend/web .github SPECIFICATION.md`
+- [x] `git diff main --stat -- crates/core crates/server frontend/web .github SPECIFICATION.md`
       is empty.
 - [ ] **On the Mac, after review, by the owner:**
       - Rollchrome opens from `crates/rollchrome-desktop` with `cargo tauri dev`, opens a
@@ -463,6 +463,71 @@ Do not tick the acceptance boxes above; the review does that.
 
 *Written by the architect, after re-running the gates on the branch.*
 
-**Approved** — or **Changes requested:**
+**Approved**: `120e76f`, reviewed 2026-11-06. Two nits are carried to RC-3; they are listed at the end.
 
-1. <specific, actionable, one change per item>
+### Gates, re-run on `rc-2` on the Mac
+
+| Gate | Result |
+|---|---|
+| `cargo fmt --all --check` | clean |
+| `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
+| `cargo build --workspace` | exit 0 |
+| `cargo test --workspace` | **1012** passed, 0 failed, 0 ignored |
+| `-p phototools-core` / `-p rollchrome-core` | **713** / **189** |
+| `-p phototools-desktop` / `-p rollchrome-desktop` | **26** / **13** |
+| `-p phototools-server` | **71** |
+| `frontend/web`: typecheck, build, `check:transport` (26 files), `check:layout` (12 routes clean at 390 px), `check:ingest` | all exit 0 |
+| `frontend/desktop`: typecheck, build, `check:transport` (27 files) | all exit 0 |
+| `frontend/rollchrome`: `ci`, typecheck, build, `check:transport` (21 files, no HTTP client) | all exit 0 |
+| `frontend/rollchrome`: `check:edit` | PASSED. Drag p95 11.0 ms (budget 50), settle p95 42.1 ms (budget 120) |
+| `frontend/rollchrome`: `check:bulk-lut` | PASSED |
+
+The browser checks ran after `cargo test` had finished.
+
+### What was checked
+
+- **Every test accounted for (G7).** Each function in `main`'s `crates/desktop/tests/local_tools.rs`
+  was compared with its counterpart on `rc-2`. None is missing, none changed: 7 stayed and 9 moved,
+  exactly as briefed. `bulk_edit_desktop.rs` differs only in `phototools_desktop::` →
+  `rollchrome_desktop::`. The one new test (`ledger_path`) is the one the brief asked for.
+- **The moves are moves.** Rename detection finds the four command modules, the two views, the nine
+  components, `recipeClipboard.ts`, both check scripts and both harnesses. The only changed lines
+  in them are import specifiers (`Edit.vue`, `BulkLut.vue`, `LutPicker.vue`), crate names (the
+  tests) and one comment path (`check-edit.mjs`). The editor section of `api.ts` moved whole; the
+  differences are listed under the nits.
+- **Rollchrome's Rust.** `AppState` is PhotoTools' with the server, the card watcher and
+  `set_config` removed, and the preview code is moved verbatim. `commands.rs` holds the copied
+  helpers and the four infrastructure commands. `main.rs` loads PhotoTools' configuration, opens
+  `rollchrome.sqlite3` through `rollchrome_core::config::ledger_path`, recovers jobs and closes the
+  preview on window close. It registers 25 commands: 4 for infrastructure and the editor's 21. The
+  job event is `rollchrome://job`. Capabilities are `core:default` only.
+- **The boundary.** Nothing in `crates/desktop` or `frontend/desktop` mentions Rollchrome, and
+  `phototools-desktop`'s tree has no `ort` and no `rollchrome-core`. No editor command or component
+  remains in PhotoTools, the web front end or the shared UI. `frontend/rollchrome/src` has no
+  `fetch`, `XMLHttpRequest`, `EventSource` or `HttpApiClient`. There is no diff in `crates/core`,
+  `crates/server`, `frontend/web`, `.github` or `SPECIFICATION.md`. `rollchrome-core` gained only
+  `config.rs`.
+- **Dependencies (G8).** `rollchrome-desktop`'s manifest names only crates `crates/desktop`
+  already uses, at its versions. `frontend/rollchrome/package.json` has the briefed packages, with
+  no leaflet. The implementer seeded the lockfile from `frontend/desktop`'s. A fresh install had
+  pulled `vue` 3.5.45 against the shared package's 3.5.41, and two copies of Vue break the
+  typecheck. All three lockfiles now pin `vue` 3.5.41, so the seeding was the right call and is
+  reported.
+- **Documents.** The gate block in `CLAUDE.md`, `docs/testing.md` §4 and the plan's status line
+  match what exists.
+
+### Carried to RC-3 (nits, not blockers)
+
+1. `frontend/rollchrome/src/api.ts` dropped one doc comment in the move:
+   `/** Plan summary for Bulk LUT tool (ED-6). */` above `BulkLutPlanSummary`. Restore it.
+2. Both harness stubs (`scripts/edit-harness/stub-api.ts`, `scripts/bulk-lut-harness/stub-api.ts`)
+   still import `ServerStatus` from `../../src/api`, which Rollchrome does not export, and stub a
+   `serverStatus()` that nothing calls. It is harmless at run time, because the type is erased and
+   the scripts are not typechecked, but it misdescribes the client. Remove both. The implementer
+   reported it.
+
+### Unverified
+
+- **Nobody has opened either application.** The owner's check on the Mac, the last acceptance
+  item, is still open: Rollchrome edits, exports and grades a folder with the existing LUTs
+  listed; PhotoTools opens without the two tabs; both run at once.

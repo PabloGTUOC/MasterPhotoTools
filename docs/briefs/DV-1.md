@@ -556,3 +556,55 @@ the threshold**:
 
 Timings noted: 3.6 s and 8.0 s median at 24 and 40 MP. A budget comes after MV-23.3 measures real
 files.
+
+---
+
+**Changes requested** (round 2, 2026-11-06).
+
+Re-run on `dv-1` at `35a6365`: the same single failure. Test 4's numbers are **identical to round
+1**, and the Report's explanation is right. On X-Trans the nearest red or blue in a row is often 6 px
+away, so the curvature term I specified almost never applies. That was my mistake.
+
+The out-of-phase measurements matter more. They show the brief's step 2 is not good enough:
+
+- **red and blue** come out at an RMS of **0.086**, 43% of the amplitude, on a period-8 colour
+  grating;
+- the step edge leaves a fringe of up to **0.21** within 3 px.
+
+Green is fine, at 0.000. The 5×5 colour-difference average ignores the direction of the edge.
+Tests 5 and 6 were blind to this, because with every channel in phase `R − G` is constant. The
+two items below change the method. Item 3 makes the tests see the defect. **No threshold below may
+be loosened. If one cannot be met, stop and report the numbers.**
+
+1. **Green: break the tie with green's own curvature**, which X-Trans always has close by. For each
+   direction, when a *second* green exists on each side within 4 px, compute
+   `near` = the direction's estimate as now, from the nearest greens, and
+   `far` = the same linear interpolation from the second-nearest greens on each side.
+   Add `|near − far|` to that direction's gradient. Along a grating both are exact, so the term is
+   0. Across it at a crest they differ; on a straight ramp they agree. Keep round 2's same-colour
+   term and correction where they apply. Update the module doc.
+2. **Red and blue: weight by the edge's orientation, measured on the finished green plane.** After
+   step 1, at every pixel:
+   - Take green's gradient `(gx, gy)` by central differences (one-sided at the border).
+   - Sum the structure tensor `[gx², gx·gy; gx·gy, gy²]` over the 5×5 window centred on the
+     pixel.
+   - From its eigenvalues λ1 ≥ λ2 take the gradient direction `θ` and the coherence
+     `C = ((λ1 − λ2) / (λ1 + λ2))²`, with `C = 0` when `λ1 + λ2 < 1e-12`.
+   - For each red sample at offset `(dx, dy)` in the 5×5 window:
+     `across = dx·cos θ + dy·sin θ`, `along = −dx·sin θ + dy·cos θ`, and the weight is
+     `w = 1 / (1 + along² + (1 + 24·C)·across²)`.
+   - The weighted mean of `R − G`, added to the pixel's green, is its red. Blue is the same.
+
+   Where there is no edge (`C ≈ 0`) this is a plain distance weighting. Along a clear edge it
+   prefers the samples on the same side, which is what removes the fringe and the false colour.
+   The weights replace step 2's. Update the module doc.
+3. **Tests 5 and 6 become the colour versions**, so the count stays 24. Name and assertions:
+   - **5** `a_fine_colour_grating_comes_back_without_false_colour`: R, G, B at phases 0, 2π/3,
+     4π/3, period 8 px, 0.3 ± 0.2, 96×96, at 0°, 90° and 45°. RMS per channel, ≥ 4 px from the
+     border: green **≤ 0.006**, red and blue **≤ 0.020** (10% of the amplitude).
+   - **6** `a_colour_step_edge_stays_sharp_and_unfringed`: test 6 as it is, plus, within 3 px of
+     the edge, maximum error per channel **≤ 0.10** (a quarter of the largest step).
+   Test 4 stays as written.
+4. Report, round 3: gates, the four timings, and the measured RMS and maximum for tests 4, 5 and
+   6 at every angle.
+

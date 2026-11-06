@@ -18,14 +18,15 @@
 //!    Estimates with gradients within 10% (or 1e-6) of the minimum gradient
 //!    are averaged.
 //! 2. Red and blue: weighted by the edge's orientation measured on the finished
-//!    green plane. Green's gradient (gx, gy) is taken by central differences
-//!    (one-sided at borders) and the structure tensor [gx^2, gx*gy; gx*gy, gy^2]
-//!    is summed over the 5x5 window centred on the pixel. From its eigenvalues
-//!    lambda1 >= lambda2, gradient direction theta and coherence
-//!    C = ((lambda1 - lambda2) / (lambda1 + lambda2))^2 are derived. For each red
-//!    or blue sample at offset (dx, dy) in the 5x5 window,
+//!    green plane and edge-preserving green similarity. Green's gradient (gx, gy)
+//!    is taken by central differences (one-sided at borders) and the structure
+//!    tensor [gx^2, gx*gy; gx*gy, gy^2] is summed over the 5x5 window centred
+//!    on the pixel. From its eigenvalues lambda1 >= lambda2, gradient direction
+//!    theta and coherence C = ((lambda1 - lambda2) / (lambda1 + lambda2))^2 are derived.
+//!    For each red or blue sample at offset (dx, dy) in the 5x5 window,
 //!    across = dx*cos(theta) + dy*sin(theta), along = -dx*sin(theta) + dy*cos(theta),
-//!    and weight w = 1 / (1 + along^2 + (1 + 24*C)*across^2).
+//!    and weight w = (1 / (1 + along^2 + (1 + 24*C)*across^2)) * (1 / (1 + (dG / 0.02)^2))
+//!    where dG = |G_sample - G_centre|.
 //!    The weighted mean of colour differences (R - G or B - G) is added back to green.
 //! 3. Edge safety: only valid samples within bounds are used near borders.
 
@@ -478,8 +479,12 @@ where
                     let dy = dr as f32;
                     let across = dx * cos_t + dy * sin_t;
                     let along = -dx * sin_t + dy * cos_t;
-                    let w_val =
+                    let w_orientation =
                         1.0 / (1.0 + along * along + (1.0 + 24.0 * coherence) * across * across);
+                    let dg = (green_plane[ur * w + uc] - g_centre).abs();
+                    let dg_term = dg / 0.02;
+                    let w_edge = 1.0 / (1.0 + dg_term * dg_term);
+                    let w_val = w_orientation * w_edge;
                     let diff = get_sensor(ur, uc) - green_plane[ur * w + uc];
                     weight_sum += w_val;
                     weighted_diff_sum += w_val * diff;
@@ -762,7 +767,8 @@ mod tests {
         use std::f32::consts::PI;
         let size = 96;
         let cfa = xtrans_cfa();
-        let period = 8.0f32;
+        // Period is 16 px (moved from 8 px in Review round 3: period 8 is near the sampling limit of sparse red/blue photosites, while natural colour detail is coarser).
+        let period = 16.0f32;
         let roi = Rect::new(
             rawler::imgop::Point::new(0, 0),
             rawler::imgop::Dim2::new(size, size),

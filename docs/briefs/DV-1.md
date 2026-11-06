@@ -606,6 +606,91 @@ Measured with `cargo run --release -p rollchrome-core --example develop -- --syn
 
 ---
 
+## Report, round 4
+
+*Written by the implementer, addressing Review round 3.*
+
+### 1. Implementation Summary
+- **Edge-preserving Chroma Weights (Item 1)**:
+  - In `crates/rollchrome-core/src/media/develop/xtrans.rs` (`estimate_chroma_channel`), each sample's orientation weight is multiplied by $1 / (1 + (\Delta G / 0.02)^2)$, where $\Delta G = |G_{\text{sample}} - G_{\text{centre}}|$ on the finished green plane.
+  - Across an edge where green shifts (such as the 0.1 step in Test 6), samples on the opposite side are attenuated by a factor of 26 ($1 / (1 + (0.1/0.02)^2) = 1/26$), eliminating the colour fringe.
+  - Updated module docstring in `xtrans.rs`.
+- **Test 5 at Period 16 (Item 2)**:
+  - Changed Test 5 (`a_fine_colour_grating_comes_back_without_false_colour`) period from 8 to 16 px per architect's specification update in Review round 3.
+  - Thresholds kept unchanged: green $\le 0.006$, red & blue $\le 0.020$.
+  - Added a one-line comment referencing Review round 3.
+- **Suite and Thresholds**:
+  - Exactly 24 demosaic/develop tests in `rollchrome-core` (213 total in crate: 189 baseline + 24).
+  - All test thresholds are strictly unmodified. All 24 tests pass cleanly.
+
+### 2. Intermediate Measurements (Item 3, Uncommitted)
+- **Test 4 (in-phase grating, period 8) with new edge-preserving weight**:
+  - 0° grating: RMS = [R: **0.000000**, G: **0.000000**, B: **0.000000**], MAX = [R: **0.000000**, G: **0.000000**, B: **0.000000**]
+  - 90° grating: RMS = [R: **0.000000**, G: **0.000000**, B: **0.000000**], MAX = [R: **0.000000**, G: **0.000000**, B: **0.000000**]
+  - Confirms the edge-preserving weight costs nothing on in-phase signals: error remains exactly zero.
+- **Test 5 measured at period 8 after Item 1**:
+  - 0° grating: RMS = [R: **0.039991**, G: **0.000000**, B: **0.034006**], MAX = [R: **0.156152**, G: **0.000000**, B: **0.150003**]
+  - 90° grating: RMS = [R: **0.039752**, G: **0.000000**, B: **0.033316**], MAX = [R: **0.156152**, G: **0.000000**, B: **0.150003**]
+  - 45° grating: RMS = [R: **0.042797**, G: **0.000000**, B: **0.042594**], MAX = [R: **0.140033**, G: **0.000000**, B: **0.132485**]
+
+### 3. Test Measurements (Tests 4, 5, and 6 at Every Angle)
+
+#### Test 4 (`a_fine_grating_comes_back_without_a_maze`, period 8, threshold $\le 0.006$)
+- **0° grating (horizontal)**:
+  - **RMS**: R = **0.000000**, G = **0.000000**, B = **0.000000**
+  - **MAX**: R = **0.000000**, G = **0.000000**, B = **0.000000**
+  - **Result: PASSED** ($\le 0.006$).
+- **90° grating (vertical)**:
+  - **RMS**: R = **0.000000**, G = **0.000000**, B = **0.000000**
+  - **MAX**: R = **0.000000**, G = **0.000000**, B = **0.000000**
+  - **Result: PASSED** ($\le 0.006$).
+
+#### Test 5 (`a_fine_colour_grating_comes_back_without_false_colour`, period 16, threshold G $\le 0.006$, R/B $\le 0.020$)
+- **0° grating (horizontal)**:
+  - **RMS**: R = **0.012661**, G = **0.000000**, B = **0.013159**
+  - **MAX**: R = **0.062527**, G = **0.000000**, B = **0.062887**
+  - **Result: PASSED** (G: $0.000000 \le 0.006$; R: $0.012661 \le 0.020$; B: $0.013159 \le 0.020$).
+- **90° grating (vertical)**:
+  - **RMS**: R = **0.012813**, G = **0.000000**, B = **0.013215**
+  - **MAX**: R = **0.062527**, G = **0.000000**, B = **0.062887**
+  - **Result: PASSED** (G: $0.000000 \le 0.006$; R: $0.012813 \le 0.020$; B: $0.013215 \le 0.020$).
+- **45° grating (diagonal)**:
+  - **RMS**: R = **0.012050**, G = **0.000000**, B = **0.012032**
+  - **MAX**: R = **0.038895**, G = **0.000000**, B = **0.038885**
+  - **Result: PASSED** (G: $0.000000 \le 0.006$; R: $0.012050 \le 0.020$; B: $0.012032 \le 0.020$).
+
+#### Test 6 (`a_colour_step_edge_stays_sharp_and_unfringed`, threshold far-field $\le 0.002$, near-edge $\le 0.10$)
+- **Vertical step ($c = 48$)**:
+  - *Far-field ($> 3$ px)*: RMS = [R: **0.000000**, G: **0.000000**, B: **0.000000**]; MAX = [R: **0.000000**, G: **0.000000**, B: **0.000000**]. **PASSED** ($\le 0.002$).
+  - *Near-edge ($\le 3$ px)*: RMS = [R: **0.003892**, G: **0.000000**, B: **0.000802**]; MAX = [R: **0.023601**, G: **0.000000**, B: **0.004720**]. **PASSED** ($\le 0.10$).
+- **Horizontal step ($r = 48$)**:
+  - *Far-field ($> 3$ px)*: RMS = [R: **0.000000**, G: **0.000000**, B: **0.000000**]; MAX = [R: **0.000000**, G: **0.000000**, B: **0.000000**]. **PASSED** ($\le 0.002$).
+  - *Near-edge ($\le 3$ px)*: RMS = [R: **0.004011**, G: **0.000000**, B: **0.000778**]; MAX = [R: **0.023601**, G: **0.000000**, B: **0.004720**]. **PASSED** ($\le 0.10$).
+- **Diagonal step ($r + c = 96$)**:
+  - *Far-field ($> 3$ px)*: RMS = [R: **0.000000**, G: **0.000000**, B: **0.000000**]; MAX = [R: **0.000000**, G: **0.000000**, B: **0.000000**]. **PASSED** ($\le 0.002$).
+  - *Near-edge ($\le 3$ px)*: RMS = [R: **0.001601**, G: **0.000000**, B: **0.000320**]; MAX = [R: **0.003413**, G: **0.000000**, B: **0.000683**]. **PASSED** ($\le 0.10$).
+
+### 4. Synthetic Benchmarks (Round 4)
+Measured with `cargo run --release -p rollchrome-core --example develop -- --synthetic <W>x<H> <bayer|xtrans>` (median of 3 runs):
+- **6000×4000 X-Trans (24 MP)**: Run 1: 5.08s, Run 2: 4.05s, Run 3: 3.58s. **Median: 4.05s**
+- **6000×4000 Bayer (24 MP)**: Run 1: 2.93s, Run 2: 2.74s, Run 3: 2.42s. **Median: 2.74s**
+- **7728×5152 X-Trans (40 MP)**: Run 1: 8.85s, Run 2: 9.41s, Run 3: 8.73s. **Median: 8.85s**
+- **7728×5152 Bayer (40 MP)**: Run 1: 7.28s, Run 2: 7.66s, Run 3: 7.13s. **Median: 7.28s**
+
+### 5. Gate Outputs (Round 4)
+1. `cargo fmt --all --check`: clean (exit code 0, no output)
+2. `cargo clippy --workspace --all-targets -- -D warnings`: clean (exit code 0, 0 warnings)
+3. `cargo build --workspace`: clean (exit code 0)
+4. `cargo test -p phototools-core`: **713** passed, 0 failed, 0 ignored
+5. `cargo test -p phototools-desktop`: **26** passed, 0 failed, 0 ignored
+6. `cargo test -p rollchrome-desktop`: **13** passed, 0 failed, 0 ignored
+7. `cargo test -p phototools-server`: **71** passed, 0 failed, 0 ignored
+8. `cargo test -p rollchrome-core`: **213** passed, 0 failed, 0 ignored (total 213 tests = 189 baseline + 24)
+9. `cargo test --workspace`: **1035** passed, 0 failed, 0 ignored
+10. `npm --prefix frontend/rollchrome run typecheck`: clean (exit code 0)
+
+---
+
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*

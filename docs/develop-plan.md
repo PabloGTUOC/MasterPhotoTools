@@ -1,6 +1,6 @@
 # Develop — RAW files to finished photographs, a film look each
 
-> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-3 next; the screen is to be discussed.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
+> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 next; the screen is to be discussed.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
 > ([`rollchrome-plan.md`](rollchrome-plan.md)). DV-1 needs RC-1. Nothing here touches PhotoTools.
 >
 > **Functionality first.** The screen is discussed with the owner before it becomes a step

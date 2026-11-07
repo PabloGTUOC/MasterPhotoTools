@@ -1,6 +1,6 @@
 # Develop — RAW files to finished photographs, a film look each
 
-> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 next; the screen is to be discussed.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
+> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 done ([brief](briefs/DV-3.md)): 12 built-in looks ship; Velvia and Astia did not pass. Next: the screen, to be discussed.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
 > ([`rollchrome-plan.md`](rollchrome-plan.md)). DV-1 needs RC-1. Nothing here touches PhotoTools.
 >
 > **Functionality first.** The screen is discussed with the owner before it becomes a step
@@ -214,6 +214,16 @@ need no import into the library. Each is defined over ProPhoto's gamut, not only
 and neither clip nor fold back. Acceptance: applied to the developed chart, each look lands within
 a ΔE of the camera's JPEG on the 24 patches — the number set in the brief once a first fit shows
 what is achievable, not guessed beforehand.
+
+**Done: [`briefs/DV-3.md`](briefs/DV-3.md).** A 3×3 matrix and one monotone curve per channel,
+fitted by Levenberg–Marquardt in `media::looks::fit` — chosen after a prototype showed the
+thin-plate spline pushing up to two thirds of ProPhoto out of range and folding the strong looks.
+Thresholds: mean ΔE2000 ≤ 2.5, max over unclipped patches ≤ 7.0, leave-one-out mean ≤ 5.0. **12 of
+14 ship** (`crates/rollchrome-core/looks/`, report in `fit-report.md`), named `builtin:<id>`.
+**Velvia** (mean 3.94) and **Astia** (2.52) failed and are not shipped: Velvia's hue-dependent
+saturation is beyond the model. Whether to fit those two with a richer model is the owner's call.
+Re-run `cargo run --release -p rollchrome-core --example fit_looks -- <sources>` whenever the base
+tone changes; the sources stay outside the repository.
 
 ### `DV-4` · Film development, after Filmulator — only if the owner wants it
 

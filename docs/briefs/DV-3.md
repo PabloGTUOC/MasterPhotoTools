@@ -1,6 +1,6 @@
 # `DV-3` · The built-in looks
 
-> **Status:** changes requested (2026-11-07, round 1)
+> **Status:** **approved** (2026-11-07, round 2)
 > **Plan:** [`docs/develop-plan.md`](../develop-plan.md), step `DV-3` · **Branch:** `dv-3`, cut from `main` **after DV-1b is merged** (the Fujifilm chart cannot be developed without it)
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -196,10 +196,10 @@ the ridge, the same values for every look, recorded in the report. **Do not loos
 change the model's form to pass a look** (G7, G11) — a look that fails is reported with its numbers,
 and the owner decides.
 
-- [ ] `fit-report.md` lists all 14; every shipped `.cube` passes all three thresholds.
-- [ ] **Deterministic:** running the example twice gives byte-identical `.cube` files and report
+- [x] `fit-report.md` lists all 14; every shipped `.cube` passes all three thresholds.
+- [x] **Deterministic:** running the example twice gives byte-identical `.cube` files and report
       (`shasum` both runs, in the report).
-- [ ] No photograph, JPEG or RAW in the repository (`git diff --stat main` shows only code,
+- [x] No photograph, JPEG or RAW in the repository (`git diff --stat main` shows only code,
       `fit.json`, `fit-report.md` and `.cube` files).
 
 **Tests** (names are sentences; these, or clearer):
@@ -231,7 +231,7 @@ and the owner decides.
     produces its output, and the test store's `look` is called **zero** times.
 14. `an_unknown_builtin_look_is_skipped_with_its_reason`.
 
-- [ ] Test counts: `rollchrome-core` **244 → 258**, workspace **1069 → 1083**, others unchanged —
+- [x] Test counts: `rollchrome-core` **244 → 258**, workspace **1069 → 1083**, others unchanged —
       assuming DV-1b merged with its 3 tests; if those numbers differ when you start, say so and
       add 14 to what you find.
 
@@ -801,3 +801,28 @@ calls; test 10 iterates every cell of every shipped look.
 
 Re-run every gate and the fit **twice**, paste the `test result:` lines, the new `fit-report.md`
 and both `shasum` listings under **Report, round 2**, commit on `dv-3`.
+
+### Round 2
+
+**Approved** (2026-11-07, round 2).
+
+What I checked:
+
+- **Gates, re-run on `dv-3`:** fmt and clippy clean; workspace **1083**, `phototools-core` 713,
+  `rollchrome-core` **258**, `phototools-desktop` 26, `rollchrome-desktop` 15, `phototools-server`
+  71 — 0 failed, 0 ignored.
+- **The fit, re-run by me:** all 12 `.cube` files and `fit-report.md` byte-identical to the
+  committed ones.
+- **Item 1:** limit 0.10 with the measured reason in the comment. Cross Processing is now fitted
+  and **passes** the unchanged thresholds — mean 2.47, max unclipped 5.21, leave-one-out mean 4.52 —
+  close to all three, and shipped on the rule as written. No other look's numbers moved.
+- **Item 2:** `tone.rs` is identical to `main`; the unclamped encode is private to `fit.rs`.
+- **Item 3:** `builtin_look` returns `Result`; unknown id and parse error are distinct.
+- **Item 4:** the deviations are listed. The fold tolerance is justified by measurement — four
+  Fujifilm looks have a few cells in `(−1.4e-6, 0)`, which is the 7-decimal rounding of a
+  continuous model whose determinant is provably positive; no cell is anywhere near the
+  `−1e-5` floor.
+
+**The result: 12 of 14 looks ship.** Velvia (3.94 / 9.55 / 5.64) and Astia (2.52 mean) fail and are
+not shipped; whether to accept a richer model for them is the owner's decision, recorded in the
+plan.

@@ -3,7 +3,7 @@ mod support;
 use phototools_core::error::Error;
 use rollchrome_core::media::develop::colour::{camera_to_prophoto, invert_3x3_f32, mul_3x3_vec};
 use rollchrome_core::media::develop::{
-    develop, develop_linear, render, Demosaic, DevelopOptions, OutputFormat,
+    develop, develop_linear, render, Demosaic, DevelopOptions, Look, OutputFormat,
 };
 use rollchrome_core::media::edit::lut::Lut;
 use std::collections::BTreeSet;
@@ -678,9 +678,10 @@ fn a_developed_raw_renders_end_to_end() {
         }
     }
     let lut = Lut::from_cube("invert.cube", cube_str.as_bytes()).expect("valid LUT");
+    let look = Look::srgb(lut);
 
     // Render JPEG
-    let rendered_jpeg = render(&dev, Some(&lut), OutputFormat::Jpeg { quality: 90 })
+    let rendered_jpeg = render(&dev, Some(&look), OutputFormat::Jpeg { quality: 90 })
         .expect("render JPEG with look");
     assert_eq!(rendered_jpeg.extension, "jpg");
     assert_eq!(rendered_jpeg.width, dev.image.width());
@@ -691,7 +692,7 @@ fn a_developed_raw_renders_end_to_end() {
 
     // Render TIFF
     let rendered_tiff =
-        render(&dev, Some(&lut), OutputFormat::Tiff).expect("render TIFF with look");
+        render(&dev, Some(&look), OutputFormat::Tiff).expect("render TIFF with look");
     assert_eq!(rendered_tiff.extension, "tif");
     assert_eq!(rendered_tiff.width, dev.image.width());
     assert_eq!(rendered_tiff.height, dev.image.height());

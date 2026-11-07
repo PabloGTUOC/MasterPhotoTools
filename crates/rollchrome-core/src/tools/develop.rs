@@ -14,8 +14,7 @@ use phototools_core::media::raw::RAW_EXTENSIONS;
 use phototools_core::tools::Skip;
 use serde::{Deserialize, Serialize};
 
-use crate::media::develop::{develop, render, DevelopOptions, OutputFormat};
-use crate::media::edit::lut::Lut;
+use crate::media::develop::{develop, render, DevelopOptions, Look, OutputFormat};
 
 /// A single file in the folder presented for development.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,7 +64,7 @@ pub trait DevelopStore {
     /// Reads file bytes by name.
     fn read(&self, name: &str) -> Result<Vec<u8>, Error>;
     /// Resolves a LUT by name or sha256 from the library.
-    fn look(&self, look: &str) -> Result<Lut, Error>;
+    fn look(&self, look: &str) -> Result<Look, Error>;
     /// Writes `bytes` as a new file. Must fail with `Error::Refused` naming the file if it already exists.
     fn create_new(&mut self, output: &str, bytes: &[u8]) -> Result<(), Error>;
     /// Carries metadata from source to output with format-specific corrections.
@@ -198,7 +197,7 @@ pub fn execute_develop(
         metadata_skipped: Vec::new(),
     };
 
-    let mut look_cache: HashMap<String, Result<Lut, String>> = HashMap::new();
+    let mut look_cache: HashMap<String, Result<Look, String>> = HashMap::new();
 
     for (done, action) in plan.actions.into_iter().enumerate() {
         if progress.cancelled() {
@@ -206,11 +205,16 @@ pub fn execute_develop(
         }
         progress.report(done as u64, total, &action.source);
 
-        let lut_res = look_cache
-            .entry(action.look.clone())
-            .or_insert_with(|| store.look(&action.look).map_err(|e| e.to_string()));
+        let look_res = look_cache.entry(action.look.clone()).or_insert_with(|| {
+            if let Some(id) = action.look.strip_prefix("builtin:") {
+                crate::media::looks::builtin::builtin_look(id)
+                    .ok_or_else(|| format!("the built-in look '{id}' does not exist"))
+            } else {
+                store.look(&action.look).map_err(|e| e.to_string())
+            }
+        });
 
-        let lut = match lut_res {
+        let look = match look_res {
             Ok(l) => l,
             Err(reason) => {
                 summary.failures.push(Skip {
@@ -248,7 +252,7 @@ pub fn execute_develop(
             }
         };
 
-        let rendered = match render(&developed, Some(lut), plan.format) {
+        let rendered = match render(&developed, Some(look), plan.format) {
             Ok(r) => r,
             Err(e) => {
                 summary.failures.push(Skip {
@@ -306,6 +310,7 @@ mod dng;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::media::edit::lut::Lut;
     use std::cell::RefCell;
     use std::collections::HashSet;
     use std::sync::Mutex;
@@ -359,13 +364,13 @@ mod tests {
                 .ok_or_else(|| Error::Internal(format!("File not found: {name}")))
         }
 
-        fn look(&self, look: &str) -> Result<Lut, Error> {
+        fn look(&self, look: &str) -> Result<Look, Error> {
             *self
                 .look_call_count
                 .borrow_mut()
                 .entry(look.to_string())
                 .or_insert(0) += 1;
-            self.luts.get(look).cloned().ok_or_else(|| {
+            self.luts.get(look).cloned().map(Look::srgb).ok_or_else(|| {
                 Error::Refused(format!("the look '{look}' is not in the LUT library"))
             })
         }

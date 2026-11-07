@@ -1,0 +1,40 @@
+{
+  "source_repository": "bastibe/Darktable-Film-Simulation-Panel",
+  "source_commit": "d6effd55cf37ce208c24cf8d072ac14028ca289b",
+  "cameras": [
+    {
+      "camera": "Fujifilm X-Pro2",
+      "maker": "Fujifilm",
+      "raw": "Target.RAF",
+      "column_centres_x": [2220, 2778, 3330, 3882, 4440, 5010],
+      "row_centres_y": [1410, 1962, 2508, 3072],
+      "box_size": 120,
+      "looks": [
+        { "id": "fujifilm-provia", "display_name": "Provia", "jpeg": "Provia.jpg" },
+        { "id": "fujifilm-velvia", "display_name": "Velvia", "jpeg": "Velvia.jpg" },
+        { "id": "fujifilm-astia", "display_name": "Astia", "jpeg": "Astia.jpg" },
+        { "id": "fujifilm-classic-chrome", "display_name": "Classic Chrome", "jpeg": "Classic Chrome.jpg" },
+        { "id": "fujifilm-pro-neg-high", "display_name": "Pro Neg High", "jpeg": "Pro Neg High.jpg" },
+        { "id": "fujifilm-pro-neg-std", "display_name": "Pro Neg Std", "jpeg": "Pro Neg Std.jpg" },
+        { "id": "fujifilm-eterna", "display_name": "Eterna", "jpeg": "Eterna.jpg" }
+      ]
+    },
+    {
+      "camera": "Ricoh GR III",
+      "maker": "Ricoh",
+      "raw": "Target.DNG",
+      "column_centres_x": [1680, 2190, 2694, 3192, 3672, 4140],
+      "row_centres_y": [1368, 1860, 2364, 2880],
+      "box_size": 120,
+      "looks": [
+        { "id": "ricoh-standard", "display_name": "Standard", "jpeg": "Standard.JPG" },
+        { "id": "ricoh-vivid", "display_name": "Vivid", "jpeg": "Vivid.JPG" },
+        { "id": "ricoh-positive-film", "display_name": "Positive Film", "jpeg": "Positive Film.JPG" },
+        { "id": "ricoh-negative-film", "display_name": "Negative Film", "jpeg": "Negative Film.JPG" },
+        { "id": "ricoh-retro", "display_name": "Retro", "jpeg": "Retro.JPG" },
+        { "id": "ricoh-bleach-bypass", "display_name": "Bleach Bypass", "jpeg": "Bleach Bypass.JPG" },
+        { "id": "ricoh-cross-processing", "display_name": "Cross Processing", "jpeg": "Cross Processing.JPG" }
+      ]
+    }
+  ]
+}

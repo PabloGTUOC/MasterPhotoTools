@@ -27,7 +27,7 @@ pub mod render;
 pub mod tone;
 pub mod xtrans;
 
-pub use render::{prophoto_icc_profile, render, OutputFormat, Rendered};
+pub use render::{prophoto_icc_profile, render, Look, LookSpace, OutputFormat, Rendered};
 
 /// Options controlling RAW development.
 #[derive(Debug, Clone, Copy, PartialEq)]

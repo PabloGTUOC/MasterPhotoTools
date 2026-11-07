@@ -64,6 +64,7 @@ impl DngBuilder {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new_xtrans(width: u32, height: u32) -> Self {
         Self {
             width,
@@ -243,6 +244,7 @@ impl DngBuilder {
 
 pub const TEST_CAMERA_MATRIX: [f32; 9] = [0.9, -0.3, -0.1, -0.4, 1.2, 0.2, -0.05, 0.15, 0.7];
 
+#[allow(dead_code)]
 pub const XTRANS_PATTERN: [u8; 36] = [
     1, 1, 0, 1, 1, 2, // G G R G G B
     1, 1, 2, 1, 1, 0, // G G B G G R

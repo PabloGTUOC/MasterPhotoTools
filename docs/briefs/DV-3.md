@@ -285,7 +285,244 @@ anything you could not verify, said plainly. Do not tick the acceptance boxes; t
 
 ## Report
 
-*Written by the implementer.*
+### 1. Summary of Changes
+
+- **Clean-Room Colorimetry (`media::looks::colour`)**:
+  - Implemented exact CIEDE2000 algorithm matching Sharma, Wu, and Dalal (2005) reference values.
+  - Implemented exact Bradford chromatic adaptation between D65 and D50.
+  - Implemented bidirectional conversions between linear ProPhoto RGB and CIE $L^*a^*b^*$ (D50).
+  - Implemented 8-bit sRGB JPEG decoding and validation, converting to linear ProPhoto D50 for patch extraction.
+
+- **Clean-Room Optimizer & Curve Model (`media::looks::fit`)**:
+  - Monotone cubic Hermite spline interpolation with Fritsch-Carlson derivative conditioning for $K=8$ knots per channel, preserving monotonicity and clamping-free differentiability for highlight optimization.
+  - Levenberg-Marquardt optimizer with analytic Jacobian for curves, soft floor $\tau=10^{-4}$, gain parameter $g$, and determinant regularization maintaining $\det M > 0$.
+  - Patch extraction with edge filtering, 20% central crop, median/IQR statistics, and IQR $\le 0.04$ acceptance gate.
+  - Leave-one-out cross validation across all 18 non-neutral patches.
+  - $33\times 33\times 33$ `.cube` LUT generation evaluated on $(0, 1)$ with black pinned at 0.
+
+- **Look Architecture & Pipeline Integration (`media::develop::render`, `media::looks::builtin`, `tools::develop`)**:
+  - Introduced `LookSpace { Srgb, ProPhoto }` and `Look { lut, space }`.
+  - For `LookSpace::ProPhoto`, TIFF applies `lut.sample` directly in encoded ProPhoto space without traveling through sRGB; JPEG applies look in ProPhoto before tone mapping to sRGB 8-bit.
+  - Added built-in registry in `media::looks::builtin` embedding passing `.cube` files at compile time with `include_bytes!`.
+  - Updated `execute_develop` and `develop_folder` to intercept `builtin:<id>` without querying the LUT library.
+  - Updated existing call sites to wrap library LUTs as `LookSpace::Srgb`.
+
+- **Fitting Tool & Acceptance Tests**:
+  - Implemented `fit_looks` example in `crates/rollchrome-core/examples/fit_looks.rs`.
+  - Implemented 14 acceptance tests in `crates/rollchrome-core/tests/looks_tests.rs`.
+
+- **The Four Fujifilm Styles without Camera JPEGs**:
+  - Classic Neg, Eterna Bleach Bypass, Nostalgic Neg, and Reala Ace lack direct in-camera JPEG references for the target chart.
+  - An honest fit would require photographing the identical ColorChecker Classic under the same illumination using a Fujifilm camera body that supports those simulations (e.g. X-T4, X-T5, X-Pro3, or GFX), saving camera JPEGs side-by-side with RAW. Estimating them from Darktable HaldCLUTs or third-party LUTs would violate the camera-ground-truth methodology.
+
+### 2. Fit Results & Failing Looks
+
+From 14 candidate styles:
+- **11 Passed and Shipped**:
+  - `fujifilm-provia`: mean $\Delta E_{00} = 1.67$, max unclipped $= 4.39$, LOO mean $= 2.35$ (shipped)
+  - `fujifilm-classic-chrome`: mean $\Delta E_{00} = 1.21$, max unclipped $= 2.73$, LOO mean $= 1.34$ (shipped)
+  - `fujifilm-pro-neg-high`: mean $\Delta E_{00} = 1.92$, max unclipped $= 3.89$, LOO mean $= 2.43$ (shipped)
+  - `fujifilm-pro-neg-std`: mean $\Delta E_{00} = 1.26$, max unclipped $= 2.44$, LOO mean $= 1.65$ (shipped)
+  - `fujifilm-eterna`: mean $\Delta E_{00} = 1.18$, max unclipped $= 2.67$, LOO mean $= 1.56$ (shipped)
+  - `ricoh-standard`: mean $\Delta E_{00} = 0.95$, max unclipped $= 2.11$, LOO mean $= 1.46$ (shipped)
+  - `ricoh-vivid`: mean $\Delta E_{00} = 1.42$, max unclipped $= 2.87$, LOO mean $= 2.16$ (shipped)
+  - `ricoh-positive-film`: mean $\Delta E_{00} = 1.66$, max unclipped $= 3.20$, LOO mean $= 2.36$ (shipped)
+  - `ricoh-negative-film`: mean $\Delta E_{00} = 1.09$, max unclipped $= 2.47$, LOO mean $= 1.57$ (shipped)
+  - `ricoh-retro`: mean $\Delta E_{00} = 1.12$, max unclipped $= 2.54$, LOO mean $= 1.24$ (shipped)
+  - `ricoh-bleach-bypass`: mean $\Delta E_{00} = 1.45$, max unclipped $= 2.62$, LOO mean $= 3.52$ (shipped)
+- **3 Failed (Reported, Not Shipped)**:
+  - `fujifilm-velvia`: Mean $\Delta E_{00} = 3.94$ (threshold $\le 2.5$), Max unclipped $\Delta E_{00} = 9.55$ (threshold $\le 7.0$), LOO Mean $\Delta E_{00} = 5.64$ (threshold $\le 5.0$). Highly non-linear hue-dependent saturation cannot be expressed by a single global $3\times 3$ matrix and independent per-channel tone curves.
+  - `fujifilm-astia`: Mean $\Delta E_{00} = 2.52$ (threshold $\le 2.5$, exceeds by 0.02); Max unclipped $= 6.50$ (passes $\le 7.0$); LOO Mean $= 3.51$ (passes $\le 5.0$). Threshold held strictly per brief; not shipped.
+  - `ricoh-cross-processing`: Measure refused during patch extraction because patch 18 channel R has spread IQR $0.0471 > 0.04$, indicating non-uniform rendering across the patch box in the source image. Not shipped.
+
+- **Fit Timing**: Total run time across all 14 styles is approximately 97 seconds (~7 seconds per look in release mode).
+
+### 3. Full `crates/rollchrome-core/looks/fit-report.md`
+
+```markdown
+# Built-in Looks Fit Report (DV-3)
+
+Source: `bastibe/Darktable-Film-Simulation-Panel` commit `d6effd55cf37ce208c24cf8d072ac14028ca289b`
+
+Thresholds: Mean ΔE2000 ≤ 2.5, Max unclipped ΔE2000 ≤ 7.0, Leave-one-out mean ΔE2000 ≤ 5.0.
+
+| Look | Maker | ID | g | det M | Mean ΔE | Max unclipped ΔE | LOO Mean ΔE | LOO Max ΔE | Clipped patches | Status | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Provia | Fujifilm | `fujifilm-provia` | 3.277 | 0.933 | 1.67 | 4.39 | 2.35 | 5.31 | [6] | **PASS** | OK |
+| Velvia | Fujifilm | `fujifilm-velvia` | 3.110 | 1.593 | 3.94 | 9.55 | 5.64 | 11.33 | [6, 8, 10, 12, 17] | **FAIL** | mean ΔE2000 3.94 exceeds threshold 2.5; max unclipped ΔE2000 9.55 exceeds threshold 7.0; leave-one-out mean ΔE2000 5.64 exceeds threshold 5.0 |
+| Astia | Fujifilm | `fujifilm-astia` | 3.235 | 0.549 | 2.52 | 6.50 | 3.51 | 10.99 | [6, 11] | **FAIL** | mean ΔE2000 2.52 exceeds threshold 2.5 |
+| Classic Chrome | Fujifilm | `fujifilm-classic-chrome` | 3.427 | 0.422 | 1.21 | 2.73 | 1.34 | 3.10 | [6] | **PASS** | OK |
+| Pro Neg High | Fujifilm | `fujifilm-pro-neg-high` | 3.255 | 0.769 | 1.92 | 3.89 | 2.43 | 4.57 | none | **PASS** | OK |
+| Pro Neg Std | Fujifilm | `fujifilm-pro-neg-std` | 3.277 | 0.657 | 1.26 | 2.44 | 1.65 | 3.03 | none | **PASS** | OK |
+| Eterna | Fujifilm | `fujifilm-eterna` | 3.205 | 0.459 | 1.18 | 2.67 | 1.56 | 3.20 | none | **PASS** | OK |
+| Standard | Ricoh | `ricoh-standard` | 1.206 | 0.998 | 0.95 | 2.11 | 1.46 | 3.00 | none | **PASS** | OK |
+| Vivid | Ricoh | `ricoh-vivid` | 1.226 | 1.183 | 1.42 | 2.87 | 2.16 | 4.32 | [8, 12] | **PASS** | OK |
+| Positive Film | Ricoh | `ricoh-positive-film` | 0.999 | 0.717 | 1.66 | 3.20 | 2.36 | 4.58 | none | **PASS** | OK |
+| Negative Film | Ricoh | `ricoh-negative-film` | 1.477 | 0.515 | 1.09 | 2.47 | 1.57 | 3.36 | none | **PASS** | OK |
+| Retro | Ricoh | `ricoh-retro` | 1.506 | 0.159 | 1.12 | 2.54 | 1.24 | 3.06 | none | **PASS** | OK |
+| Bleach Bypass | Ricoh | `ricoh-bleach-bypass` | 2.716 | 0.115 | 1.45 | 2.62 | 3.52 | 12.46 | [5] | **PASS** | OK |
+| Cross Processing | Ricoh | `ricoh-cross-processing` | 0.000 | 0.000 | 0.00 | 0.00 | 0.00 | 0.00 | none | **FAIL** | Refused: image 'Cross Processing.JPG' patch 18 channel R has spread IQR 0.0471 > 0.04 |
+```
+
+### 4. Deterministic Runs: SHA256 Verification
+
+**Run 1**:
+```
+b4f38dfab192d15a8c4eda65fdff610df9381dbb139686683af0aef2f8b38e22  crates/rollchrome-core/looks/fujifilm-classic-chrome.cube
+fe955c3801e74d7fe9b70bc6b0074520170d4fdc396d0e1b31466e31c10b95e5  crates/rollchrome-core/looks/fujifilm-eterna.cube
+bb6f494351e7109c9720191ce31873529233cfc139d50b70829b1f5c1fdda83e  crates/rollchrome-core/looks/fujifilm-pro-neg-high.cube
+181a3b8839a690a0d9628a171eca1509fea6d094bc34d52c70fd20bb7416a9a3  crates/rollchrome-core/looks/fujifilm-pro-neg-std.cube
+060a9ff5422beaa7c4fd0c46c51ee7debd30ded55c073aed756ef5a40b9bf35b  crates/rollchrome-core/looks/fujifilm-provia.cube
+86a9585941f1d211cb9d9f39ef871a318e50ea658eea8ccaa545bd989db9b653  crates/rollchrome-core/looks/ricoh-bleach-bypass.cube
+a215381a6a69fc7c2a26a1c5f34c68da226da7ce5a67bf6b211dc2752507176a  crates/rollchrome-core/looks/ricoh-negative-film.cube
+93f1c98e99d4b3eb365f75e2d7c2c750fc6bf322cdce0fd87486eb8c6c70081d  crates/rollchrome-core/looks/ricoh-positive-film.cube
+ed245b018d5cad2c977b280940473b0515447aa4e6d539311769802de40b1522  crates/rollchrome-core/looks/ricoh-retro.cube
+dfd5cb9846d3695a75d0168168451f2c8e177dc3fc0bd4842924996130ec7c07  crates/rollchrome-core/looks/ricoh-standard.cube
+cf1a0eb23a34acff65bbe8533eede78a7d6cd23e8b1aa581a790b1872cd2a566  crates/rollchrome-core/looks/ricoh-vivid.cube
+9d0a21546b1f9bca9b1d5555ddfc234017ed916ce6be0a8c31a7117408312206  crates/rollchrome-core/looks/fit-report.md
+```
+
+**Run 2**:
+```
+b4f38dfab192d15a8c4eda65fdff610df9381dbb139686683af0aef2f8b38e22  crates/rollchrome-core/looks/fujifilm-classic-chrome.cube
+fe955c3801e74d7fe9b70bc6b0074520170d4fdc396d0e1b31466e31c10b95e5  crates/rollchrome-core/looks/fujifilm-eterna.cube
+bb6f494351e7109c9720191ce31873529233cfc139d50b70829b1f5c1fdda83e  crates/rollchrome-core/looks/fujifilm-pro-neg-high.cube
+181a3b8839a690a0d9628a171eca1509fea6d094bc34d52c70fd20bb7416a9a3  crates/rollchrome-core/looks/fujifilm-pro-neg-std.cube
+060a9ff5422beaa7c4fd0c46c51ee7debd30ded55c073aed756ef5a40b9bf35b  crates/rollchrome-core/looks/fujifilm-provia.cube
+86a9585941f1d211cb9d9f39ef871a318e50ea658eea8ccaa545bd989db9b653  crates/rollchrome-core/looks/ricoh-bleach-bypass.cube
+a215381a6a69fc7c2a26a1c5f34c68da226da7ce5a67bf6b211dc2752507176a  crates/rollchrome-core/looks/ricoh-negative-film.cube
+93f1c98e99d4b3eb365f75e2d7c2c750fc6bf322cdce0fd87486eb8c6c70081d  crates/rollchrome-core/looks/ricoh-positive-film.cube
+ed245b018d5cad2c977b280940473b0515447aa4e6d539311769802de40b1522  crates/rollchrome-core/looks/ricoh-retro.cube
+dfd5cb9846d3695a75d0168168451f2c8e177dc3fc0bd4842924996130ec7c07  crates/rollchrome-core/looks/ricoh-standard.cube
+cf1a0eb23a34acff65bbe8533eede78a7d6cd23e8b1aa581a790b1872cd2a566  crates/rollchrome-core/looks/ricoh-vivid.cube
+9d0a21546b1f9bca9b1d5555ddfc234017ed916ce6be0a8c31a7117408312206  crates/rollchrome-core/looks/fit-report.md
+```
+
+All 11 `.cube` files and `fit-report.md` are byte-identical across runs.
+
+### 5. Gate Outputs
+
+#### `cargo fmt --all --check`
+```
+(clean, exit 0)
+```
+
+#### `cargo clippy --workspace --all-targets -- -D warnings`
+```
+    Checking rollchrome-core v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-core)
+    Checking rollchrome-desktop v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-desktop)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.79s
+(clean, exit 0)
+```
+
+#### `cargo build --workspace`
+```
+   Compiling rollchrome-core v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-core)
+   Compiling rollchrome-desktop v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-desktop)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.60s
+(clean, exit 0)
+```
+
+#### `npm --prefix frontend/rollchrome run typecheck`
+```
+> @phototools/rollchrome@0.1.0 typecheck
+> vue-tsc --build --force
+(clean, exit 0)
+```
+
+#### `cargo test -p phototools-core`
+```
+test result: ok. 518 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.73s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.41s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.57s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.53s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+Total: 713 passed.
+
+#### `cargo test -p rollchrome-core`
+```
+test result: ok. 149 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.84s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.59s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.57s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.90s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+Total: 258 passed (baseline 244 + 14 new = 258).
+
+#### `cargo test -p phototools-desktop`
+```
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.23s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.31s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+Total: 26 passed.
+
+#### `cargo test -p rollchrome-desktop`
+```
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+Total: 15 passed.
+
+#### `cargo test --workspace`
+```
+test result: ok. 518 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.73s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.41s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.57s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.53s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.23s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.31s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+test result: ok. 149 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.84s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.59s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.57s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.90s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+Total: 1083 passed (baseline 1069 + 14 new = 1083).
+
+### 6. Deviations & Verification Notes
+
+- **Deviations**: None. The pipeline and model adhere strictly to the brief's model equations ($y = C_c(u_c)$, $u = g \cdot M \cdot x$, monotone Fritsch-Carlson Hermite curves, $K=8$ knots, soft floor $\tau=10^{-4}$, and no-folding guarantee $\det M > 0$).
+- **Cleanliness**: No photographs, RAWs, or camera JPEGs are tracked in git (`git status` and `git diff --stat main` verify only code, `fit.json`, `fit-report.md`, and 11 `.cube` files).
+- **Verification**: All 14 tests pass; all gates pass cleanly; two separate executions of `fit_looks` yield byte-identical `.cube` files and `fit-report.md`. Acceptance checkboxes are left unticked for review.
 
 ---
 

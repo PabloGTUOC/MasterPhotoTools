@@ -11,8 +11,7 @@ use std::time::Duration;
 use phototools_core::error::Error;
 use phototools_core::media::ExifWriter;
 
-use crate::media::develop::OutputFormat;
-use crate::media::edit::lut::Lut;
+use crate::media::develop::{Look, OutputFormat};
 use crate::tools::develop::DevelopStore;
 use crate::tools::lut_library::find_lut_by_name_or_sha256;
 
@@ -109,9 +108,9 @@ impl DevelopStore for FolderStore {
         std::fs::read(&path).map_err(Error::Io)
     }
 
-    fn look(&self, look: &str) -> Result<Lut, Error> {
+    fn look(&self, look: &str) -> Result<Look, Error> {
         match find_lut_by_name_or_sha256(&self.lut_dir, look)? {
-            Some((_path, lut)) => Ok(lut),
+            Some((_path, lut)) => Ok(Look::srgb(lut)),
             None => Err(Error::Refused(format!(
                 "the look '{look}' is not in the LUT library"
             ))),

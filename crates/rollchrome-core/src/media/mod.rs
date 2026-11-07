@@ -3,6 +3,7 @@
 pub mod develop;
 pub mod edit;
 pub mod histogram;
+pub mod looks;
 pub mod segment;
 
 pub use edit::{

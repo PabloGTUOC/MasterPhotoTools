@@ -23,6 +23,41 @@ pub enum OutputFormat {
     Tiff,
 }
 
+/// Space in which a Look is applied (DV-3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LookSpace {
+    /// sRGB space (library .cube LUTs).
+    Srgb,
+    /// 16-bit ROMM-encoded ProPhoto RGB space (built-in looks).
+    ProPhoto,
+}
+
+/// A 3D LUT look together with its expected colour space (DV-3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Look {
+    pub lut: Lut,
+    pub space: LookSpace,
+}
+
+impl Look {
+    /// Creates a look operating in sRGB space.
+    pub fn srgb(lut: Lut) -> Self {
+        Self {
+            lut,
+            space: LookSpace::Srgb,
+        }
+    }
+
+    /// Creates a look operating in ProPhoto RGB space.
+    pub fn prophoto(lut: Lut) -> Self {
+        Self {
+            lut,
+            space: LookSpace::ProPhoto,
+        }
+    }
+}
+
 /// Result of rendering a developed RAW image.
 #[derive(Debug)]
 pub struct Rendered {
@@ -80,10 +115,10 @@ pub fn prophoto_icc_profile() -> Result<Vec<u8>, Error> {
         .map_err(|e| Error::Internal(format!("Failed to encode ICC profile: {e:?}")))
 }
 
-/// Renders a developed image to sRGB 8-bit image buffer, optionally applying a LUT.
+/// Renders a developed image to sRGB 8-bit image buffer, optionally applying a Look.
 ///
 /// Shared between JPEG rendering, `prophoto_to_srgb8`, and unit tests.
-pub(crate) fn render_srgb8_image(developed: &Developed, look: Option<&Lut>) -> image::RgbImage {
+pub(crate) fn render_srgb8_image(developed: &Developed, look: Option<&Look>) -> image::RgbImage {
     let w = developed.image.width();
     let h = developed.image.height();
     let m = colour::prophoto_to_srgb_matrix();
@@ -92,77 +127,155 @@ pub(crate) fn render_srgb8_image(developed: &Developed, look: Option<&Lut>) -> i
     let u8_data: Vec<u8> = raw_u16
         .par_chunks_exact(3)
         .flat_map(|pixel| {
-            let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
-            let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
-            let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
+            match look {
+                None => {
+                    let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
+                    let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
+                    let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
 
-            let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
-            let mut s = [
-                linear_to_srgb(srgb_lin[0]),
-                linear_to_srgb(srgb_lin[1]),
-                linear_to_srgb(srgb_lin[2]),
-            ];
+                    let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
+                    let s = [
+                        linear_to_srgb(srgb_lin[0]),
+                        linear_to_srgb(srgb_lin[1]),
+                        linear_to_srgb(srgb_lin[2]),
+                    ];
 
-            if let Some(lut) = look {
-                let sampled = lut.sample(s);
-                s[0] = sampled[0].clamp(0.0, 1.0);
-                s[1] = sampled[1].clamp(0.0, 1.0);
-                s[2] = sampled[2].clamp(0.0, 1.0);
+                    [
+                        (s[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        (s[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        (s[2] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    ]
+                }
+                Some(look) if look.space == LookSpace::Srgb => {
+                    let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
+                    let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
+                    let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
+
+                    let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
+                    let mut s = [
+                        linear_to_srgb(srgb_lin[0]),
+                        linear_to_srgb(srgb_lin[1]),
+                        linear_to_srgb(srgb_lin[2]),
+                    ];
+
+                    let sampled = look.lut.sample(s);
+                    s[0] = sampled[0].clamp(0.0, 1.0);
+                    s[1] = sampled[1].clamp(0.0, 1.0);
+                    s[2] = sampled[2].clamp(0.0, 1.0);
+
+                    [
+                        (s[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        (s[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        (s[2] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    ]
+                }
+                Some(look) => {
+                    // ProPhoto look: sample in ROMM ProPhoto space, then convert looked ProPhoto to sRGB
+                    let in_pro = [
+                        pixel[0] as f32 / 65535.0,
+                        pixel[1] as f32 / 65535.0,
+                        pixel[2] as f32 / 65535.0,
+                    ];
+                    let sampled = look.lut.sample(in_pro);
+                    let pro_enc = [
+                        sampled[0].clamp(0.0, 1.0),
+                        sampled[1].clamp(0.0, 1.0),
+                        sampled[2].clamp(0.0, 1.0),
+                    ];
+
+                    let r_lin = tone::prophoto_decode(pro_enc[0]);
+                    let g_lin = tone::prophoto_decode(pro_enc[1]);
+                    let b_lin = tone::prophoto_decode(pro_enc[2]);
+
+                    let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
+                    let s = [
+                        linear_to_srgb(srgb_lin[0]),
+                        linear_to_srgb(srgb_lin[1]),
+                        linear_to_srgb(srgb_lin[2]),
+                    ];
+
+                    [
+                        (s[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        (s[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        (s[2] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    ]
+                }
             }
-
-            let mut out = [0u8; 3];
-            for c in 0..3 {
-                out[c] = (s[c] * 255.0).round().clamp(0.0, 255.0) as u8;
-            }
-            out
         })
         .collect();
 
     image::RgbImage::from_raw(w, h, u8_data).unwrap_or_else(|| image::RgbImage::new(w, h))
 }
 
-/// Renders 16-bit ProPhoto pixels with a 3D LUT look applied.
-pub(crate) fn render_tiff_u16(developed: &Developed, lut: &Lut) -> Vec<u16> {
-    let m_pro_to_srgb = colour::prophoto_to_srgb_matrix();
-    let m_srgb_to_pro = colour::srgb_to_prophoto_matrix();
+/// Renders 16-bit ProPhoto pixels with a Look applied.
+pub fn render_tiff_u16(developed: &Developed, look: &Look) -> Vec<u16> {
     let raw_u16 = developed.image.as_raw();
 
-    raw_u16
-        .par_chunks_exact(3)
-        .flat_map(|pixel| {
-            let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
-            let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
-            let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
+    match look.space {
+        LookSpace::Srgb => {
+            let m_pro_to_srgb = colour::prophoto_to_srgb_matrix();
+            let m_srgb_to_pro = colour::srgb_to_prophoto_matrix();
 
-            let srgb_lin = colour::mul_3x3_vec(m_pro_to_srgb, [r_lin, g_lin, b_lin]);
-            let s_in = [
-                linear_to_srgb(srgb_lin[0]),
-                linear_to_srgb(srgb_lin[1]),
-                linear_to_srgb(srgb_lin[2]),
-            ];
+            raw_u16
+                .par_chunks_exact(3)
+                .flat_map(|pixel| {
+                    let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
+                    let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
+                    let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
 
-            let sampled = lut.sample(s_in);
-            let s_out = [
-                sampled[0].clamp(0.0, 1.0),
-                sampled[1].clamp(0.0, 1.0),
-                sampled[2].clamp(0.0, 1.0),
-            ];
+                    let srgb_lin = colour::mul_3x3_vec(m_pro_to_srgb, [r_lin, g_lin, b_lin]);
+                    let s_in = [
+                        linear_to_srgb(srgb_lin[0]),
+                        linear_to_srgb(srgb_lin[1]),
+                        linear_to_srgb(srgb_lin[2]),
+                    ];
 
-            let lin_srgb = [
-                srgb_to_linear(s_out[0]),
-                srgb_to_linear(s_out[1]),
-                srgb_to_linear(s_out[2]),
-            ];
+                    let sampled = look.lut.sample(s_in);
+                    let s_out = [
+                        sampled[0].clamp(0.0, 1.0),
+                        sampled[1].clamp(0.0, 1.0),
+                        sampled[2].clamp(0.0, 1.0),
+                    ];
 
-            let lin_pro = colour::mul_3x3_vec(m_srgb_to_pro, lin_srgb);
-            let mut out = [0u16; 3];
-            for c in 0..3 {
-                let enc = tone::prophoto_encode(lin_pro[c].max(0.0));
-                out[c] = (enc * 65535.0).round().clamp(0.0, 65535.0) as u16;
-            }
-            out
-        })
-        .collect()
+                    let lin_srgb = [
+                        srgb_to_linear(s_out[0]),
+                        srgb_to_linear(s_out[1]),
+                        srgb_to_linear(s_out[2]),
+                    ];
+
+                    let lin_pro = colour::mul_3x3_vec(m_srgb_to_pro, lin_srgb);
+                    let mut out = [0u16; 3];
+                    for c in 0..3 {
+                        let enc = tone::prophoto_encode(lin_pro[c].max(0.0));
+                        out[c] = (enc * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                    }
+                    out
+                })
+                .collect()
+        }
+        LookSpace::ProPhoto => raw_u16
+            .par_chunks_exact(3)
+            .flat_map(|pixel| {
+                let in_pro = [
+                    pixel[0] as f32 / 65535.0,
+                    pixel[1] as f32 / 65535.0,
+                    pixel[2] as f32 / 65535.0,
+                ];
+                let sampled = look.lut.sample(in_pro);
+                [
+                    (sampled[0].clamp(0.0, 1.0) * 65535.0)
+                        .round()
+                        .clamp(0.0, 65535.0) as u16,
+                    (sampled[1].clamp(0.0, 1.0) * 65535.0)
+                        .round()
+                        .clamp(0.0, 65535.0) as u16,
+                    (sampled[2].clamp(0.0, 1.0) * 65535.0)
+                        .round()
+                        .clamp(0.0, 65535.0) as u16,
+                ]
+            })
+            .collect(),
+    }
 }
 
 fn encode_tiff(
@@ -200,7 +313,7 @@ fn encode_tiff(
 /// Renders a developed RAW image to the specified format with an optional film look.
 pub fn render(
     developed: &Developed,
-    look: Option<&Lut>,
+    look: Option<&Look>,
     format: OutputFormat,
 ) -> Result<Rendered, Error> {
     let width = developed.image.width();
@@ -228,8 +341,8 @@ pub fn render(
             let icc_profile = prophoto_icc_profile()?;
             let bytes = match look {
                 None => encode_tiff(width, height, developed.image.as_raw(), &icc_profile)?,
-                Some(lut) => {
-                    let pixels = render_tiff_u16(developed, lut);
+                Some(look) => {
+                    let pixels = render_tiff_u16(developed, look);
                     encode_tiff(width, height, &pixels, &icc_profile)?
                 }
             };
@@ -466,10 +579,11 @@ mod tests {
         let dev = four_patch_developed();
         let cube_bytes = generate_identity_cube(17);
         let identity_lut = Lut::from_cube("identity.cube", &cube_bytes).unwrap();
+        let identity_look = Look::srgb(identity_lut);
 
         // 1. TIFF: pixels within +/-64/65535 of no-look TIFF for the four patches
         let rendered_no_look = render(&dev, None, OutputFormat::Tiff).unwrap();
-        let rendered_with_look = render(&dev, Some(&identity_lut), OutputFormat::Tiff).unwrap();
+        let rendered_with_look = render(&dev, Some(&identity_look), OutputFormat::Tiff).unwrap();
 
         let mut d1 =
             tiff::decoder::Decoder::new(std::io::Cursor::new(&rendered_no_look.bytes)).unwrap();
@@ -500,7 +614,7 @@ mod tests {
 
         // 2. JPEG buffer before encoding within +/-1
         let buf_no_look = render_srgb8_image(&dev, None);
-        let buf_with_look = render_srgb8_image(&dev, Some(&identity_lut));
+        let buf_with_look = render_srgb8_image(&dev, Some(&identity_look));
 
         for (cx, cy) in centres {
             let pix1 = buf_no_look.get_pixel(cx, cy);
@@ -554,7 +668,8 @@ mod tests {
         // With identity look: converted back to linear sRGB, every component within -1e-3..=1+1e-3
         let cube_bytes = generate_identity_cube(17);
         let identity_lut = Lut::from_cube("identity.cube", &cube_bytes).unwrap();
-        let rendered_with_look = render(&dev, Some(&identity_lut), OutputFormat::Tiff).unwrap();
+        let identity_look = Look::srgb(identity_lut);
+        let rendered_with_look = render(&dev, Some(&identity_look), OutputFormat::Tiff).unwrap();
         let mut d2 =
             tiff::decoder::Decoder::new(std::io::Cursor::new(&rendered_with_look.bytes)).unwrap();
         let p2 = match d2.read_image().unwrap() {
@@ -586,7 +701,9 @@ mod tests {
         let s_val = base_srgb.get_pixel(8, 8)[0];
 
         let invert_lut = Lut::from_cube("invert.cube", &generate_inverting_cube(17)).unwrap();
-        let rendered = render(&dev, Some(&invert_lut), OutputFormat::Jpeg { quality: 95 }).unwrap();
+        let invert_look = Look::srgb(invert_lut);
+        let rendered =
+            render(&dev, Some(&invert_look), OutputFormat::Jpeg { quality: 95 }).unwrap();
 
         let decoded = image::load_from_memory(&rendered.bytes).unwrap().to_rgb8();
         let dec_val = decoded.get_pixel(8, 8)[0];

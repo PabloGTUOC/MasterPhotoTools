@@ -1,6 +1,6 @@
 # `DV-3` · The built-in looks
 
-> **Status:** briefed
+> **Status:** changes requested (2026-11-07, round 1)
 > **Plan:** [`docs/develop-plan.md`](../develop-plan.md), step `DV-3` · **Branch:** `dv-3`, cut from `main` **after DV-1b is merged** (the Fujifilm chart cannot be developed without it)
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -529,3 +529,42 @@ Total: 1083 passed (baseline 1069 + 14 new = 1083).
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Changes requested** (2026-11-07, round 1). The fit, the model and the shipped path are right; four
+items, one of them a correction to the brief's own spec.
+
+What I checked: gates re-run on `dv-3` — fmt and clippy clean; workspace **1083**,
+`phototools-core` 713, `rollchrome-core` **258**, `phototools-desktop` 26, `rollchrome-desktop` 15,
+0 failed, 0 ignored. **The fit, re-run by me** (114 s): all 11 `.cube` files and `fit-report.md`
+byte-identical to the committed ones. The model matches *The model, exactly* (soft floor, Hermite
+curves with `1 − ε` cap and exponential shoulder, LM with ridge, `det M > 0` enforced during and after);
+the report's numbers are measured through `render` → TIFF → decode, as asked. Velvia fails as
+predicted (3.94 / 9.55 / 5.64); Astia fails the mean by 0.02 (2.52) — correctly not shipped, and not
+to be rescued by tuning a threshold. No photograph is in the diff. Test 13 asserts zero library
+calls; test 10 iterates every cell of every shipped look.
+
+1. **Cross Processing — my spec was wrong; raise the spread limit to 0.10.** I measured every box on
+   the Ricoh JPEGs: the 24 patch boxes reach IQR **0.047** from noise alone in a contrast-boosting
+   look (Cross Processing #18; Vivid and Bleach Bypass 0.039), while a box genuinely half across a
+   patch edge reads **0.31–0.56**. 0.04 sat inside the noise band. Change the limit in
+   `measure_patch_box` to **0.10**, with a comment giving those numbers as the reason (the median
+   tolerates a box less than half off a patch, which is why the median is used). Re-run the fit; Cross
+   Processing is then fitted and shipped **only if** it passes the unchanged quality thresholds.
+   Expected test counts unchanged.
+2. **Restore `tone::prophoto_encode` / `prophoto_decode` exactly as they were** (clamps and doc
+   comments). The fit needs an unclamped encode for `u > 1`; put a private unclamped helper in
+   `media/looks/fit.rs` instead. I checked that every current caller clamps afterwards, so nothing
+   changed in output — but these functions belong to the development, which the brief put out of
+   scope, and a later caller relying on the clamp would break silently. This was also a deviation
+   the report said did not exist.
+3. **`builtin_look` swallows a parse error** (`Lut::from_bytes(..).ok()?`), so a corrupt shipped cube
+   would be reported as "does not exist" (G10). Return `Result<Look, Error>`: `Refused("the built-in
+   look '<id>' does not exist")` for an unknown id, the parse error otherwise; `execute_develop`
+   keeps skipping with the error's message.
+4. **The report's *Deviations* must list what deviated**, including: item 2 (now reverted); the fold
+   test's tolerance `det ≥ −1e-5` rather than `≥ 0`, and why (7-decimal rounding — say whether any
+   cell actually lands in `(−1e-5, 0)`); `render_tiff_u16` made `pub` for test 12. Keep it if test 12
+   needs it, and say so.
+
+Re-run every gate and the fit **twice**, paste the `test result:` lines, the new `fit-report.md`
+and both `shasum` listings under **Report, round 2**, commit on `dv-3`.

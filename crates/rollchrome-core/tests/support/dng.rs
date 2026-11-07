@@ -205,7 +205,7 @@ impl DngBuilder {
             tags.insert(50706, TiffEntry::bytes(&[1, 4, 0, 0])); // DNGVersion
             tags.insert(50708, TiffEntry::ascii(&self.unique_camera_model));
             if let Some(aa) = self.active_area {
-                tags.insert(50710, TiffEntry::longs(&aa));
+                tags.insert(50829, TiffEntry::longs(&aa)); // ActiveArea (tag 50829 / 0xC68D)
             }
             if self.samples_per_pixel == 3 {
                 tags.insert(

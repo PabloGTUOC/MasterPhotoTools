@@ -144,6 +144,172 @@ boxes above; the review does that.
 
 *Written by the implementer.*
 
+### Baseline
+
+Before any changes were made on branch `dv-1b` (cut from `main` at `3b873cf`):
+- `cargo test -p phototools-core`: 713 passed
+- `cargo test -p rollchrome-core`: 241 passed
+- `cargo test -p phototools-desktop`: 26 passed
+- `cargo test -p rollchrome-desktop`: 15 passed
+- `cargo test -p phototools-server`: 71 passed
+- `cargo test --workspace`: 1066 passed (0 failed, 0 ignored)
+
+### What was done
+
+1. **ActiveArea tag fix in test harness (`tests/support/dng.rs`)**:
+   Corrected the TIFF tag emitted for `ActiveArea` from 50710 (`CFAPlaneColor`) to 50829 (`ActiveArea` / `0xC68D`), conforming to the DNG specification and rawler's reader.
+
+2. **Crop and ActiveArea bounding box handling (`crates/rollchrome-core/src/media/develop/mod.rs`)**:
+   - Eliminated all usage of `Rect::adapt` and any rawler helpers that assert. Verified with `grep -rn "adapt(" crates/rollchrome-core/src/media/develop/` which returns no matches.
+   - Replaced `active_area` calculation with `demosaic_rect`, computing the bounding box of `active_area` and `crop_area`, clamped to sensor dimensions `[0..sensor_w, 0..sensor_h]`. Both Bayer (PPG) and X-Trans demosaic paths receive this demosaic rectangle.
+   - Added a comment explaining that rawler's camera tables can understate the active area (e.g. Fujifilm X-Pro2 reports 5920 wide when the picture is 6016 wide), and the file's own crop is authoritative on what the camera meant to retain.
+   - Offset the crop inside the demosaiced pixel buffer using checked subtraction (`off_x = crop.p.x - demosaic_rect.p.x`, `off_y = crop.p.y - demosaic_rect.p.y`).
+   - Crops reaching outside the sensor itself are checked and return `Error::Refused` naming the crop and sensor dimensions.
+
+3. **Panic guard**:
+   - Wrapped `develop_linear` with `std::panic::catch_unwind` converting any panic in development into `Error::Internal("RAW development panicked: <message>")`.
+   - Preserved the existing inner decode error handling (`Error::Refused(format!("RAW decode failed: {e}")))`.
+
+4. **Tests added (`crates/rollchrome-core/tests/develop_tests.rs`)**:
+   - `a_default_crop_wider_than_the_active_area_still_develops`: Verified that a Bayer DNG with crop wider than active area develops cleanly to exact crop dimensions with expected grey level.
+   - `an_xtrans_crop_beyond_the_active_area_keeps_its_colours`: Verified that an X-Trans DNG with crop exceeding active area preserves exact patch colours across the boundary.
+   - `a_crop_outside_the_sensor_is_refused_not_panicked`: Verified that a DNG with crop extending outside the sensor returns `Err(Error::Refused(..))` without panicking. Note: rawler's DNG decoder internally catches its own panic during offset subtraction when a crop exceeds sensor dimensions and returns `DecoderFailed`, which `develop_linear` returns as `Error::Refused`.
+
+### Deviations
+
+None.
+
+### Real-file check
+
+Executed:
+```sh
+cargo run --release -p rollchrome-core --example develop -- /tmp/dv1b \
+  ~/Desktop/Projects/rollchrome-chart-sources/styles_source/Target.RAF \
+  ~/Desktop/Projects/rollchrome-chart-sources/styles_source/Target.DNG
+```
+
+Outputs:
+- Timing:
+  - `Target.RAF`: `9.05s`
+  - `Target.DNG`: `7.20s`
+- Dimensions (`sips -g pixelWidth -g pixelHeight`):
+  - `Target.RAF` output: `6000 x 4000`
+  - `Target.DNG` output: `6000 x 4000`
+
+### Gates
+
+#### 1. Format check
+```
+$ cargo fmt --all --check
+(clean, exit 0)
+```
+
+#### 2. Clippy
+```
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Checking rollchrome-core v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-core)
+    Checking rollchrome-desktop v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-desktop)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.29s
+```
+
+#### 3. Workspace build
+```
+$ cargo build --workspace
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.26s
+```
+
+#### 4. phototools-core (713 passed)
+```
+$ cargo test -p phototools-core
+test result: ok. 518 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.14s
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.70s
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.49s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.75s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.51s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+#### 5. rollchrome-core (244 passed)
+```
+$ cargo test -p rollchrome-core
+test result: ok. 149 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.39s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 35.90s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+#### 6. phototools-desktop (26 passed)
+```
+$ cargo test -p phototools-desktop
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.20s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.21s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+#### 7. rollchrome-desktop (15 passed)
+```
+$ cargo test -p rollchrome-desktop
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+#### 8. Workspace tests (1069 passed)
+```
+$ cargo test --workspace
+test result: ok. 518 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.14s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.68s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.43s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.61s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.55s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.17s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.77s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s
+test result: ok. 149 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.62s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Total: 1069 passed, 0 failed, 0 ignored
+```
+
+#### 9. Frontend typecheck
+```
+$ npm --prefix frontend/rollchrome run typecheck
+> @phototools/rollchrome@0.1.0 typecheck
+> vue-tsc --build --force
+(clean, exit 0)
+```
+
 ---
 
 ## Review

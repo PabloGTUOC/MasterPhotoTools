@@ -736,3 +736,235 @@ fn a_developed_raw_renders_end_to_end() {
         _ => panic!("expected U16 decoding result"),
     }
 }
+
+#[test]
+fn a_default_crop_wider_than_the_active_area_still_develops() {
+    let width = 96u32;
+    let height = 64u32;
+    let black = 512u32;
+    let white = 16383u32;
+    let wb = [1.0f32, 1.0f32, 1.0f32];
+
+    let cam2prophoto = camera_to_prophoto(TEST_CAM_3X3).expect("invertible camera matrix");
+    let prophoto2cam = invert_3x3_f32(cam2prophoto).expect("invertible prophoto-to-camera matrix");
+
+    let grey_pro = [0.18f32, 0.18, 0.18];
+    let (_grey_cam, grey_u16) = prophoto_to_sensor(grey_pro, prophoto2cam, wb, black, white);
+
+    let bayer_color_at = |r: usize, c: usize| -> usize {
+        match (r % 2, c % 2) {
+            (0, 0) => 0,
+            (0, 1) => 1,
+            (1, 0) => 1,
+            (1, 1) => 2,
+            _ => unreachable!(),
+        }
+    };
+
+    let mut raw_pixels = vec![0u16; (width * height) as usize];
+    for r in 0..(height as usize) {
+        for c in 0..(width as usize) {
+            let ch = bayer_color_at(r, c);
+            raw_pixels[r * width as usize + c] = grey_u16[ch];
+        }
+    }
+
+    let mut builder = DngBuilder::new_bayer(width, height);
+    // Active area is 80 columns wide: [top=0, left=0, bottom=64, right=80]
+    builder.active_area = Some([0, 0, height, 80]);
+    // Crop is 88 columns wide: origin [0, 0], size [88, 64]
+    builder.default_crop_origin = Some([0, 0]);
+    builder.default_crop_size = Some([88, height]);
+
+    let dng_bytes = builder.build(&raw_pixels);
+    let res = develop_linear(&dng_bytes, &DevelopOptions::default())
+        .expect("develop_linear Bayer DNG with wide crop");
+
+    assert_eq!(res.demosaic, Demosaic::Bayer);
+    assert_eq!(res.width, 88);
+    assert_eq!(res.height, height);
+
+    // Verify grey field at centre of crop
+    let grey_dev = res.pixels[(32 * 88 + 44) as usize];
+    for c in 0..3 {
+        let rel_err = (grey_dev[c] - grey_pro[c]).abs() / grey_pro[c];
+        assert!(
+            rel_err <= 0.01,
+            "Grey surround ch {}: got {}, expected {}, rel err {}",
+            c,
+            grey_dev[c],
+            grey_pro[c],
+            rel_err
+        );
+    }
+
+    // Also verify grey field in the columns 80..88 (outside active area)
+    let grey_dev_outside = res.pixels[(32 * 88 + 84) as usize];
+    for c in 0..3 {
+        let rel_err = (grey_dev_outside[c] - grey_pro[c]).abs() / grey_pro[c];
+        assert!(
+            rel_err <= 0.01,
+            "Grey outside active area ch {}: got {}, expected {}, rel err {}",
+            c,
+            grey_dev_outside[c],
+            grey_pro[c],
+            rel_err
+        );
+    }
+}
+
+#[test]
+fn an_xtrans_crop_beyond_the_active_area_keeps_its_colours() {
+    let width = 96u32;
+    let height = 72u32;
+    let black = 512u32;
+    let white = 16383u32;
+    let wb = [1.0f32, 1.0f32, 1.0f32];
+
+    let cam2prophoto = camera_to_prophoto(TEST_CAM_3X3).expect("invertible camera matrix");
+    let prophoto2cam = invert_3x3_f32(cam2prophoto).expect("invertible prophoto-to-camera matrix");
+
+    let grey_pro = [0.18f32, 0.18, 0.18];
+    let (_grey_cam, grey_u16) = prophoto_to_sensor(grey_pro, prophoto2cam, wb, black, white);
+
+    // Patches arranged so at least one patch lies partly in the columns outside the active area (width 78).
+    // Columns outside active area are 78..90.
+    let patches = [
+        (
+            "Patch 1 (warm)",
+            [0.35f32, 0.22, 0.16],
+            (12..36, 12..36),
+            (24, 24),
+        ),
+        (
+            "Patch 2 (green straddling)",
+            [0.16f32, 0.32, 0.18],
+            (12..36, 66..90),
+            (24, 78),
+        ),
+        (
+            "Patch 3 (blue)",
+            [0.15f32, 0.20, 0.38],
+            (42..66, 12..36),
+            (54, 24),
+        ),
+        (
+            "Patch 4 (yellow straddling)",
+            [0.38f32, 0.32, 0.14],
+            (42..66, 66..90),
+            (54, 78),
+        ),
+    ];
+
+    let mut patch_u16_map = Vec::new();
+    for (name, pro, _, _) in &patches {
+        let (cam, u16s) = prophoto_to_sensor(*pro, prophoto2cam, wb, black, white);
+        for (c, &val) in cam.iter().enumerate() {
+            assert!(
+                (0.05..=0.80).contains(&val),
+                "{} channel {} sensor value {} outside 5%..80%",
+                name,
+                c,
+                val
+            );
+        }
+        patch_u16_map.push(u16s);
+    }
+
+    let xtrans_color_at = |r: usize, c: usize| -> usize {
+        let pr = r % 6;
+        let pc = c % 6;
+        XTRANS_PATTERN[pr * 6 + pc] as usize
+    };
+
+    let mut raw_pixels = vec![0u16; (width * height) as usize];
+    for r in 0..(height as usize) {
+        for c in 0..(width as usize) {
+            let ch = xtrans_color_at(r, c);
+            let mut pixel_val = grey_u16[ch];
+            for (idx, (_, _, (r_range, c_range), _)) in patches.iter().enumerate() {
+                if r_range.contains(&r) && c_range.contains(&c) {
+                    pixel_val = patch_u16_map[idx][ch];
+                    break;
+                }
+            }
+            raw_pixels[r * width as usize + c] = pixel_val;
+        }
+    }
+
+    let mut builder = DngBuilder::new_xtrans(width, height);
+    // Active area is 78 columns wide: [top=0, left=0, bottom=72, right=78]
+    builder.active_area = Some([0, 0, height, 78]);
+    // Crop is 90 columns wide: origin [0, 0], size [90, 72]
+    builder.default_crop_origin = Some([0, 0]);
+    builder.default_crop_size = Some([90, height]);
+
+    let dng_bytes = builder.build(&raw_pixels);
+    let res = develop_linear(&dng_bytes, &DevelopOptions::default())
+        .expect("develop_linear X-Trans DNG with wide crop");
+
+    assert_eq!(res.demosaic, Demosaic::XTrans);
+    assert_eq!(res.width, 90);
+    assert_eq!(res.height, height);
+
+    // Verify grey surround at (10, 50)
+    let grey_dev = res.pixels[10 * 90 + 50];
+    for c in 0..3 {
+        let rel_err = (grey_dev[c] - grey_pro[c]).abs() / grey_pro[c];
+        assert!(
+            rel_err <= 0.01,
+            "X-Trans Grey surround ch {}: got {}, expected {}, rel err {}",
+            c,
+            grey_dev[c],
+            grey_pro[c],
+            rel_err
+        );
+    }
+
+    // Verify patches at centre (including those straddling columns outside the active area)
+    for (name, pro, _, (cr, cc)) in &patches {
+        let dev = res.pixels[cr * 90 + cc];
+        for c in 0..3 {
+            let rel_err = (dev[c] - pro[c]).abs() / pro[c];
+            assert!(
+                rel_err <= 0.01,
+                "X-Trans {} ch {}: got {}, expected {}, rel err {}",
+                name,
+                c,
+                dev[c],
+                pro[c],
+                rel_err
+            );
+        }
+    }
+}
+
+#[test]
+fn a_crop_outside_the_sensor_is_refused_not_panicked() {
+    let width = 96u32;
+    let height = 64u32;
+    let raw_pixels = vec![1000u16; (width * height) as usize];
+
+    let mut builder = DngBuilder::new_bayer(width, height);
+    // Crop origin [10, 0], size [90, 64] -> right edge 10 + 90 = 100 > width (96)
+    builder.default_crop_origin = Some([10, 0]);
+    builder.default_crop_size = Some([90, height]);
+
+    let dng_bytes = builder.build(&raw_pixels);
+    let err = develop_linear(&dng_bytes, &DevelopOptions::default())
+        .expect_err("crop extending beyond sensor must return Err");
+
+    match err {
+        Error::Refused(msg) => {
+            // rawler's DNG decoder catches its own panic when calculating crop offsets
+            // beyond image bounds and returns DecoderFailed ("Caught a panic while decoding"),
+            // which develop_linear maps to Error::Refused. If rawler had decoded it, our
+            // demosaic sensor boundary check would also return Error::Refused naming the crop.
+            assert!(
+                msg.contains("crop") || msg.contains("RAW decode failed"),
+                "expected crop or decode failure in Error::Refused: {msg}"
+            );
+        }
+        other => panic!("expected Error::Refused, got {other:?}"),
+    }
+}

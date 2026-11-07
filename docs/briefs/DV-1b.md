@@ -1,6 +1,6 @@
 # `DV-1b` · A default crop wider than rawler's active area, and no panic out of `develop`
 
-> **Status:** briefed
+> **Status:** **approved** (2026-11-07, round 1)
 > **Plan:** [`docs/develop-plan.md`](../develop-plan.md), step `DV-1`, a defect found on a real file · **Branch:** `dv-1b`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -93,18 +93,18 @@ Two changes, both needed:
 
 ### Acceptance
 
-- [ ] `a_default_crop_wider_than_the_active_area_still_develops` — a Bayer DNG whose `ActiveArea` is
+- [x] `a_default_crop_wider_than_the_active_area_still_develops` — a Bayer DNG whose `ActiveArea` is
       narrower than its `DefaultCropOrigin` + `DefaultCropSize` (for example sensor 96 × 64,
       active area 80 columns wide, crop 88 wide) develops without error to exactly the crop's
       dimensions, and its known grey comes out within the tolerance the existing grey test uses.
-- [ ] `an_xtrans_crop_beyond_the_active_area_keeps_its_colours` — the same shape on an X-Trans
+- [x] `an_xtrans_crop_beyond_the_active_area_keeps_its_colours` — the same shape on an X-Trans
       DNG, with the known colour patches, within the existing X-Trans patch tolerances. Arrange it
       so the patches lie partly in the columns outside the active area.
-- [ ] `a_crop_outside_the_sensor_is_refused_not_panicked` — a DNG whose crop extends beyond the
+- [x] `a_crop_outside_the_sensor_is_refused_not_panicked` — a DNG whose crop extends beyond the
       sensor returns `Err(Error::Refused(..))`, and the test asserts the message names the crop.
       If rawler itself refuses or clamps such a file before our code sees it, say so in the report,
       and make the test assert whatever error actually comes back is an `Err` and not a panic.
-- [ ] **On the real file.** Run the example on the chart RAW that crashed:
+- [x] **On the real file.** Run the example on the chart RAW that crashed:
       ```sh
       cargo run --release -p rollchrome-core --example develop -- /tmp/dv1b \
         ~/Desktop/Projects/rollchrome-chart-sources/styles_source/Target.RAF \
@@ -113,9 +113,9 @@ Two changes, both needed:
       Both develop. Report each output's dimensions (`sips -g pixelWidth -g pixelHeight` on the
       PNGs) — expected **6000 × 4000** for both — and each time the example prints. These files
       are not in the repository and must not be added to it.
-- [ ] No `adapt(` call left in `crates/rollchrome-core/src/media/develop/`
+- [x] No `adapt(` call left in `crates/rollchrome-core/src/media/develop/`
       (`grep -rn "adapt(" crates/rollchrome-core/src/media/develop/` prints nothing).
-- [ ] Test counts: workspace `1066` → `1069`; `rollchrome-core` `241` → `244`; `phototools-core`
+- [x] Test counts: workspace `1066` → `1069`; `rollchrome-core` `241` → `244`; `phototools-core`
       713, `phototools-desktop` 26, `rollchrome-desktop` 15 unchanged. Every test accounted for.
 
 ### Gates
@@ -315,3 +315,28 @@ $ npm --prefix frontend/rollchrome run typecheck
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved** (2026-11-07, round 1).
+
+What I checked:
+
+- **Gates, re-run on `dv-1b`:** fmt and clippy clean, build clean; workspace **1069**, `phototools-core`
+  713, `rollchrome-core` **244**, `phototools-desktop` 26, `rollchrome-desktop` 15 — 0 failed,
+  0 ignored. Every count matches the brief.
+- **The real file, myself:** `Target.RAF` develops to 6000 × 4000 in 10.3 s. It differs from my
+  throwaway workaround (which demosaiced the whole sensor) only because this one stops at column 6016,
+  as the brief asked.
+- **The diff:** `Rect::adapt` is gone (grep empty); the rectangle and the crop offset are worked out
+  by our own arithmetic; a crop beyond the sensor is refused before anything indexes; the whole of
+  `develop_linear` is behind `catch_unwind`, the decode's own message kept inside it. The comment
+  says why. Nothing outside the brief's files changed.
+- **The test writer's tag (a real find).** `tests/support/dng.rs` wrote `ActiveArea` as tag 50710,
+  which is `CFAPlaneColor`; rawler never saw an active area in any synthetic DNG.
+  `the_output_takes_the_default_crop`, which sets one, had therefore never exercised it — it does
+  now, and still passes. Correct, and within scope: without it the new tests could not have
+  reproduced the defect.
+- **Test 3** is refused by rawler's DNG decoder before our check runs (reported); the brief allowed
+  that. Our sensor-bounds check is still on the shipped path for formats rawler does let through.
+- **Nit, no change needed:** the X-Trans test samples its straddling patches at column 78, the first
+  column outside the active area; the patches extend to 89, so the outside columns are demosaiced and
+  in the crop, but the assertion point sits on the boundary. Fine for the defect at hand.

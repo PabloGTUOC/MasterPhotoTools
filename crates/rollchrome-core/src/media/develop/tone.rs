@@ -28,33 +28,35 @@ pub fn base_tone(v: f32) -> f32 {
     }
 }
 
-/// ROMM (ProPhoto RGB) transfer function encoding linear float to gamma-space.
+/// ROMM (ProPhoto RGB) transfer function encoding linear float to gamma-space [0.0, 1.0].
 ///
 /// - For v < 1/512: 16.0 * v
 /// - For v >= 1/512: v^(1/1.8)
+/// - Clamped to 0.0..=1.0.
 #[inline]
 pub fn prophoto_encode(v: f32) -> f32 {
     if v <= 0.0 {
         0.0
     } else if v < 1.0 / 512.0 {
-        16.0 * v
+        (16.0 * v).clamp(0.0, 1.0)
     } else {
-        v.powf(1.0 / 1.8)
+        v.powf(1.0 / 1.8).clamp(0.0, 1.0)
     }
 }
 
-/// Inverse ROMM (ProPhoto RGB) decoding from gamma-space back to linear float.
+/// Inverse ROMM (ProPhoto RGB) decoding from gamma-space [0.0, 1.0] back to linear float.
 ///
 /// - For y < (1/512) * 16 = 1/32: y / 16.0
 /// - For y >= 1/32: y^1.8
+/// - Clamped to 0.0..=1.0.
 #[inline]
 pub fn prophoto_decode(y: f32) -> f32 {
     if y <= 0.0 {
         0.0
     } else if y < 1.0 / 32.0 {
-        y / 16.0
+        (y / 16.0).clamp(0.0, 1.0)
     } else {
-        y.powf(1.8)
+        y.powf(1.8).clamp(0.0, 1.0)
     }
 }
 

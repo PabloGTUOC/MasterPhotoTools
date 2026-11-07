@@ -11,6 +11,19 @@ use crate::media::develop::Developed;
 use crate::media::edit::lut::Lut;
 use crate::media::looks::colour as looks_colour;
 
+/// ROMM (ProPhoto RGB) transfer function encoding linear float to gamma-space without clamping to [0, 1].
+/// Clamping-free encoding is needed during fitting when u > 1.
+#[inline]
+fn prophoto_encode_unclamped(v: f32) -> f32 {
+    if v <= 0.0 {
+        0.0
+    } else if v < 1.0 / 512.0 {
+        16.0 * v
+    } else {
+        v.powf(1.0 / 1.8)
+    }
+}
+
 /// Threshold constants from DV-3 brief.
 pub const THRESHOLD_MEAN_DELTA_E: f32 = 2.5;
 pub const THRESHOLD_MAX_DELTA_E: f32 = 7.0;
@@ -221,9 +234,9 @@ impl LookModel {
 
         // Step 4: u = prophoto_encode(s)
         let u = [
-            tone::prophoto_encode(s[0]),
-            tone::prophoto_encode(s[1]),
-            tone::prophoto_encode(s[2]),
+            prophoto_encode_unclamped(s[0]),
+            prophoto_encode_unclamped(s[1]),
+            prophoto_encode_unclamped(s[2]),
         ];
 
         // Step 5: out_c = C_c(u)
@@ -321,9 +334,14 @@ pub fn measure_patch_box(
             let q3_idx = (n as f32 * 0.75).floor() as usize;
             let iqr = v[q3_idx] - v[q1_idx];
 
-            if iqr > 0.04 {
+            // Spread limit is 0.10 (raised from initial 0.04 specification): on the Ricoh JPEGs,
+            // 24 patch boxes reach IQR ~0.047 from noise alone in contrast-boosting looks
+            // (Cross Processing #18 reaches 0.047; Vivid and Bleach Bypass reach 0.039),
+            // while a box genuinely half across a patch edge reads 0.31-0.56.
+            // The median tolerates a box less than half off a patch, which is why the median is used.
+            if iqr > 0.10 {
                 return Err(Error::Refused(format!(
-                    "image '{image_name}' patch {patch_idx} channel {ch_name} has spread IQR {iqr:.4} > 0.04"
+                    "image '{image_name}' patch {patch_idx} channel {ch_name} has spread IQR {iqr:.4} > 0.10"
                 )));
             }
         }

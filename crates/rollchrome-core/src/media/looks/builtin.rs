@@ -1,5 +1,7 @@
 //! Built-in look registry and parser (DV-3).
 
+use phototools_core::error::Error;
+
 use crate::media::develop::render::{Look, LookSpace};
 use crate::media::edit::lut::Lut;
 
@@ -81,6 +83,12 @@ const SHIPPED_LOOKS: &[BuiltinLook] = &[
         maker: "Ricoh",
         bytes: include_bytes!("../../../looks/ricoh-vivid.cube"),
     },
+    BuiltinLook {
+        id: "ricoh-cross-processing",
+        display_name: "Cross Processing",
+        maker: "Ricoh",
+        bytes: include_bytes!("../../../looks/ricoh-cross-processing.cube"),
+    },
 ];
 
 /// Lists all shipped built-in looks.
@@ -89,11 +97,14 @@ pub fn builtin_looks() -> Vec<BuiltinLook> {
 }
 
 /// Resolves and parses a built-in look by its id into a `Look` operating in ProPhoto space.
-pub fn builtin_look(id: &str) -> Option<Look> {
-    let entry = SHIPPED_LOOKS.iter().find(|l| l.id == id)?;
+pub fn builtin_look(id: &str) -> Result<Look, Error> {
+    let entry = SHIPPED_LOOKS
+        .iter()
+        .find(|l| l.id == id)
+        .ok_or_else(|| Error::Refused(format!("the built-in look '{id}' does not exist")))?;
     let filename = format!("{}.cube", entry.id);
-    let lut = Lut::from_bytes(&filename, entry.bytes).ok()?;
-    Some(Look {
+    let lut = Lut::from_bytes(&filename, entry.bytes)?;
+    Ok(Look {
         lut,
         space: LookSpace::ProPhoto,
     })

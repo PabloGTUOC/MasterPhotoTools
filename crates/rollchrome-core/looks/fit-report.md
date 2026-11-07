@@ -19,4 +19,4 @@ Thresholds: Mean ΔE2000 ≤ 2.5, Max unclipped ΔE2000 ≤ 7.0, Leave-one-out m
 | Negative Film | Ricoh | `ricoh-negative-film` | 1.477 | 0.515 | 1.09 | 2.47 | 1.57 | 3.36 | none | **PASS** | OK |
 | Retro | Ricoh | `ricoh-retro` | 1.506 | 0.159 | 1.12 | 2.54 | 1.24 | 3.06 | none | **PASS** | OK |
 | Bleach Bypass | Ricoh | `ricoh-bleach-bypass` | 2.716 | 0.115 | 1.45 | 2.62 | 3.52 | 12.46 | [5] | **PASS** | OK |
-| Cross Processing | Ricoh | `ricoh-cross-processing` | 0.000 | 0.000 | 0.00 | 0.00 | 0.00 | 0.00 | none | **FAIL** | Refused: image 'Cross Processing.JPG' patch 18 channel R has spread IQR 0.0471 > 0.04 |
+| Cross Processing | Ricoh | `ricoh-cross-processing` | 1.992 | 0.735 | 2.47 | 5.21 | 4.52 | 11.62 | [12, 15, 17] | **PASS** | OK |

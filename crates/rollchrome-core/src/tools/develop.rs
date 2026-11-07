@@ -207,8 +207,7 @@ pub fn execute_develop(
 
         let look_res = look_cache.entry(action.look.clone()).or_insert_with(|| {
             if let Some(id) = action.look.strip_prefix("builtin:") {
-                crate::media::looks::builtin::builtin_look(id)
-                    .ok_or_else(|| format!("the built-in look '{id}' does not exist"))
+                crate::media::looks::builtin::builtin_look(id).map_err(|e| e.to_string())
             } else {
                 store.look(&action.look).map_err(|e| e.to_string())
             }

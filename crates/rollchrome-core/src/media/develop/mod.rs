@@ -81,6 +81,22 @@ pub struct Developed {
 /// 7. Default crop.
 /// 8. Exposure scale multiplication.
 pub fn develop_linear(raw: &[u8], options: &DevelopOptions) -> Result<LinearProPhoto, Error> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        develop_linear_impl(raw, options)
+    }))
+    .unwrap_or_else(|panic_payload| {
+        let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown panic".to_string()
+        };
+        Err(Error::Internal(format!("RAW development panicked: {msg}")))
+    })
+}
+
+fn develop_linear_impl(raw: &[u8], options: &DevelopOptions) -> Result<LinearProPhoto, Error> {
     if !options.exposure_ev.is_finite() || options.exposure_ev < -4.0 || options.exposure_ev > 4.0 {
         return Err(Error::Refused(format!(
             "exposure_ev {} is outside supported range -4.0..=4.0 or not finite",
@@ -157,17 +173,60 @@ pub fn develop_linear(raw: &[u8], options: &DevelopOptions) -> Result<LinearProP
         }
     };
 
+    // Validate crop area against sensor bounds
+    if let Some(crop) = raw_image.crop_area {
+        let crop_right = crop.p.x.saturating_add(crop.d.w);
+        let crop_bottom = crop.p.y.saturating_add(crop.d.h);
+        if crop_right > raw_image.width || crop_bottom > raw_image.height {
+            return Err(Error::Refused(format!(
+                "crop {}x{} at ({}, {}) extends beyond sensor size {}x{}",
+                crop.d.w, crop.d.h, crop.p.x, crop.p.y, raw_image.width, raw_image.height
+            )));
+        }
+    }
+
     // Step 3: Rescale sensor levels to 0.0..1.0
     raw_image
         .apply_scaling()
         .map_err(|e| Error::Refused(format!("RAW sensor scaling failed: {}", e)))?;
 
-    // Step 4: Demosaic active area
+    // Step 4: Demosaic active area or bounding box of active area and crop
     let full_rect = Rect::new(
         Point::new(0, 0),
         Dim2::new(raw_image.width, raw_image.height),
     );
     let active_area = raw_image.active_area.unwrap_or(full_rect);
+
+    // rawler's camera tables can understate the active area (the X-Pro2's says
+    // 5920 wide; the picture is 6016, and the file's crop is 6000 wide). The file's
+    // own crop is the authority on what the camera meant to keep.
+    // When the default crop is not inside the active area, demosaic the smallest
+    // rectangle that contains both, clamped to 0..width x 0..height.
+    let demosaic_rect = match raw_image.crop_area {
+        Some(crop) => {
+            let crop_inside = crop.p.x >= active_area.p.x
+                && crop.p.y >= active_area.p.y
+                && crop.p.x + crop.d.w <= active_area.p.x + active_area.d.w
+                && crop.p.y + crop.d.h <= active_area.p.y + active_area.d.h;
+            if crop_inside {
+                active_area
+            } else {
+                let min_x = active_area.p.x.min(crop.p.x);
+                let min_y = active_area.p.y.min(crop.p.y);
+                let max_x = (active_area.p.x + active_area.d.w)
+                    .max(crop.p.x + crop.d.w)
+                    .min(raw_image.width);
+                let max_y = (active_area.p.y + active_area.d.h)
+                    .max(crop.p.y + crop.d.h)
+                    .min(raw_image.height);
+                Rect::new(
+                    Point::new(min_x, min_y),
+                    Dim2::new(max_x.saturating_sub(min_x), max_y.saturating_sub(min_y)),
+                )
+            }
+        }
+        None => active_area,
+    };
 
     let pix_f32 = PixF32::new_with(
         raw_image.data.as_f32().into_owned(),
@@ -178,10 +237,10 @@ pub fn develop_linear(raw: &[u8], options: &DevelopOptions) -> Result<LinearProP
     let demosaiced_rgb: Vec<[f32; 3]> = match demosaic {
         Demosaic::Bayer => {
             let ppg = PPGDemosaic::new();
-            let c2d = ppg.demosaic(&pix_f32, &cfa, &PlaneColor::default(), active_area);
+            let c2d = ppg.demosaic(&pix_f32, &cfa, &PlaneColor::default(), demosaic_rect);
             c2d.into_inner()
         }
-        Demosaic::XTrans => xtrans::demosaic(&pix_f32, &cfa, active_area),
+        Demosaic::XTrans => xtrans::demosaic(&pix_f32, &cfa, demosaic_rect),
     };
 
     // Step 5: As-shot white balance
@@ -231,21 +290,24 @@ pub fn develop_linear(raw: &[u8], options: &DevelopOptions) -> Result<LinearProP
         })
         .collect();
 
-    // Step 7: Default crop adapted to active area
-    let (mut final_pixels, final_w, final_h) = if let Some(crop_area) = raw_image.crop_area {
-        let crop = crop_area.adapt(&active_area);
+    // Step 7: Default crop
+    let dw = demosaic_rect.width();
+    let dh = demosaic_rect.height();
+
+    let (mut final_pixels, final_w, final_h) = if let Some(crop) = raw_image.crop_area {
         let cw = crop.width();
         let ch = crop.height();
-        let aw = active_area.width();
+        let off_x = crop.p.x.saturating_sub(demosaic_rect.p.x);
+        let off_y = crop.p.y.saturating_sub(demosaic_rect.p.y);
 
         let cropped: Vec<[f32; 3]> = (0..ch)
             .into_par_iter()
             .flat_map(|cy| {
-                let sy = crop.p.y + cy;
-                let row_start = sy * aw;
+                let sy = off_y + cy;
+                let row_start = sy * dw;
                 let mut row = Vec::with_capacity(cw);
                 for cx in 0..cw {
-                    let sx = crop.p.x + cx;
+                    let sx = off_x + cx;
                     row.push(prophoto_pixels[row_start + sx]);
                 }
                 row
@@ -253,11 +315,7 @@ pub fn develop_linear(raw: &[u8], options: &DevelopOptions) -> Result<LinearProP
             .collect();
         (cropped, cw as u32, ch as u32)
     } else {
-        (
-            prophoto_pixels,
-            active_area.width() as u32,
-            active_area.height() as u32,
-        )
+        (prophoto_pixels, dw as u32, dh as u32)
     };
 
     // Step 8: Exposure adjustment

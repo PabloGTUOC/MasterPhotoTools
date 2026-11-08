@@ -1,6 +1,6 @@
 # `RP-2b` · RAW only in Develop
 
-> **Status:** briefed
+> **Status:** **approved**
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-2b` · **Branch:** `rp-2b`, cut from `main` **after RP-3 is merged**
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -47,11 +47,11 @@ fine. This step removes that path, and PNG with it, so the three tabs mean what 
 
 ### Acceptance
 
-- [ ] The existing unit test in `pipeline.rs` that decodes a synthetic `.nef` through `decode_image` asserted the behaviour the owner has withdrawn. Rewrite it, in place, as
+- [x] The existing unit test in `pipeline.rs` that decodes a synthetic `.nef` through `decode_image` asserted the behaviour the owner has withdrawn. Rewrite it, in place, as
   `a_raw_file_is_refused_for_editing_and_points_at_develop`, asserting `Error::Refused` with the exact message, for `decode_image` and `PreviewSession::open`. Say so in the Report. It is the **only** existing test whose meaning may change (G7).
-- [ ] `rollchrome-core` gains exactly three more: `a_png_is_refused_for_editing`, `an_edit_export_of_a_raw_file_is_refused_and_writes_nothing`, `a_batch_given_a_raw_file_skips_it_and_says_so`.
-- [ ] Counts: workspace 1108 → 1111, `rollchrome-core` 278 → 281; everything else unchanged. If a Rust test elsewhere fed a RAW or a PNG to Edit or Batch and now fails, stop and list it in the Report rather than changing it.
-- [ ] No `todo!()` or swallowed error on a shipped path (G10).
+- [x] `rollchrome-core` gains exactly three more: `a_png_is_refused_for_editing`, `an_edit_export_of_a_raw_file_is_refused_and_writes_nothing`, `a_batch_given_a_raw_file_skips_it_and_says_so`.
+- [x] Counts: workspace 1108 → 1111, `rollchrome-core` 278 → 281; everything else unchanged. If a Rust test elsewhere fed a RAW or a PNG to Edit or Batch and now fails, stop and list it in the Report rather than changing it.
+- [x] No `todo!()` or swallowed error on a shipped path (G10).
 
 ### Gates
 
@@ -908,3 +908,7 @@ Asserting 18: With brush active, double-click changes neither zoom nor pan...
 --- check:viewing Summary ---
 PASSED all 18 viewing requirements successfully.
 ```
+
+### Round 2 — **Approved**
+
+**Checked.** Re-ran every gate on `rp-2b` at `df36a81` with `--no-fail-fast`: fmt and clippy clean, build clean; workspace 1111, `phototools-core` 713, `rollchrome-core` 281, `phototools-desktop` 26, `rollchrome-desktop` 20, none failed or ignored; typecheck, build, `check:transport`, `check:edit`, `check:bulk-lut`, `check:develop`, `check:viewing` pass. The round 2 change is three file names in fixtures and no assertion. `a_raw_is_decoded_through_the_media_raw_ladder` was rewritten in place, as the brief allowed.

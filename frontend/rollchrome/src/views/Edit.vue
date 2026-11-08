@@ -33,6 +33,7 @@ import type {
   ToneCurves,
   Vignette,
   LookEffects,
+  Snapshot,
 } from '@host/api';
 import { desktop } from '@host/api';
 import AdjustmentSlider from '../components/AdjustmentSlider.vue';
@@ -44,7 +45,8 @@ import Histogram, { type HistogramMode } from '../components/Histogram.vue';
 import JobProgress from '@ui/components/JobProgress.vue';
 import MaskOverlay from '../components/MaskOverlay.vue';
 import PresetBar from '../components/PresetBar.vue';
-import { copiedSettings } from '../recipeClipboard';
+import { copiedSettings, copyToClipboard } from '../recipeClipboard';
+import { EditHistory } from '../editHistory';
 import LutPicker from '../components/LutPicker.vue';
 import PathField from '@ui/components/PathField.vue';
 import { useRoots } from '@ui/useRoots';
@@ -223,10 +225,34 @@ function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
     looks: null,
     black_and_white: null,
     masks: [],
+    snapshots: [],
   };
 }
 
 const recipe = ref<AdjustmentRecipe>(createIdentityRecipe());
+
+// ---------------------------------------------------------------------------
+// History and Snapshots state (RP-5)
+// ---------------------------------------------------------------------------
+
+const history = new EditHistory();
+const historyCursor = ref(-1);
+const historyEntries = ref<Array<{ label: string }>>([]);
+let lastCommittedRecipe: AdjustmentRecipe | null = null;
+
+const reversedHistory = computed(() => {
+  return historyEntries.value
+    .map((item, index) => ({ label: item.label, index }))
+    .reverse();
+});
+
+function syncHistoryState() {
+  historyCursor.value = history.cursor;
+  historyEntries.value = [...history.entries];
+}
+
+const newSnapshotName = ref('');
+const snapshotMessage = ref('');
 
 // ---------------------------------------------------------------------------
 // Colour tools: Eyedropper, Auto Tone, Black & White (RP-4)
@@ -301,7 +327,7 @@ async function onEyedropperSample(e: MouseEvent | PointerEvent) {
     const before = JSON.parse(JSON.stringify(recipe.value));
     recipe.value.temperature = Math.round(pick.temperature);
     recipe.value.tint = Math.round(pick.tint);
-    onRecipeValueChange();
+    commitRecipeChange('White balance');
     const tempSign = pick.temperature > 0 ? '+' : '';
     const tintSign = pick.tint > 0 ? '+' : '';
     const clampedNote = pick.clamped ? ' (slider range reached)' : '';
@@ -323,7 +349,7 @@ async function triggerAutoTone() {
     recipe.value.exposure = res.exposure;
     recipe.value.whites = res.whites;
     recipe.value.blacks = res.blacks;
-    onRecipeValueChange();
+    commitRecipeChange('Auto');
     const expSign = res.exposure > 0 ? '+' : '';
     const wSign = res.whites > 0 ? '+' : '';
     const bSign = res.blacks > 0 ? '+' : '';
@@ -370,7 +396,7 @@ function toggleBlackAndWhite() {
   } else {
     recipe.value.black_and_white = { ...lastBwMix.value };
   }
-  onRecipeValueChange();
+  commitRecipeChange('Black & white');
 }
 
 function getBwBand(key: BwBandKey): number {
@@ -1171,7 +1197,64 @@ watch(compareMode, async () => {
   if (lastBeforeFrame) paintBeforePixels(lastBeforeFrame);
 });
 
-function scheduleSave() {
+function deriveLabel(before: AdjustmentRecipe | null, after: AdjustmentRecipe): string {
+  if (!before) return 'Edit';
+  const changed: string[] = [];
+
+  if (before.exposure !== after.exposure) changed.push('Exposure');
+  if (before.temperature !== after.temperature) changed.push('Temperature');
+  if (before.tint !== after.tint) changed.push('Tint');
+  if (before.contrast !== after.contrast) changed.push('Contrast');
+  if (before.highlights !== after.highlights) changed.push('Highlights');
+  if (before.shadows !== after.shadows) changed.push('Shadows');
+  if (before.whites !== after.whites) changed.push('Whites');
+  if (before.blacks !== after.blacks) changed.push('Blacks');
+  if (before.vibrance !== after.vibrance) changed.push('Vibrance');
+  if (before.saturation !== after.saturation) changed.push('Saturation');
+  if (before.brightness !== after.brightness) changed.push('Brightness');
+  if (before.hue !== after.hue) changed.push('Hue');
+
+  if (JSON.stringify(before.lut) !== JSON.stringify(after.lut) || before.lut_intensity !== after.lut_intensity) {
+    changed.push('LUT');
+  }
+  if (JSON.stringify(before.black_and_white) !== JSON.stringify(after.black_and_white)) {
+    changed.push('Black & white');
+  }
+  if (JSON.stringify(before.curves) !== JSON.stringify(after.curves)) {
+    changed.push('Tone curve');
+  }
+  if (JSON.stringify(before.hsl) !== JSON.stringify(after.hsl)) {
+    changed.push('HSL');
+  }
+  if (JSON.stringify(before.grading) !== JSON.stringify(after.grading)) {
+    changed.push('Color grading');
+  }
+  if (JSON.stringify(before.geometry) !== JSON.stringify(after.geometry)) {
+    changed.push('Crop');
+  }
+  if (JSON.stringify(before.vignette) !== JSON.stringify(after.vignette)) {
+    changed.push('Vignette');
+  }
+  if (JSON.stringify(before.grain) !== JSON.stringify(after.grain)) {
+    changed.push('Grain');
+  }
+  if (JSON.stringify(before.looks) !== JSON.stringify(after.looks)) {
+    changed.push('Looks');
+  }
+  if (JSON.stringify(before.masks) !== JSON.stringify(after.masks)) {
+    if ((after.masks?.length ?? 0) > (before.masks?.length ?? 0)) {
+      changed.push('Add mask');
+    } else {
+      changed.push('Masks');
+    }
+  }
+
+  if (changed.length === 0) return 'Edit';
+  if (changed.length === 1) return changed[0];
+  return 'Several settings';
+}
+
+function triggerSaveWithoutHistory() {
   if (isReadOnly.value) {
     saveStatus.value = 'Read-only: card media';
     return;
@@ -1199,6 +1282,17 @@ function scheduleSave() {
   }, 300);
 }
 
+function scheduleSave(explicitLabel?: string) {
+  const label = explicitLabel || deriveLabel(lastCommittedRecipe, recipe.value);
+  const committed = history.commit(recipe.value, label);
+  if (committed) {
+    lastCommittedRecipe = cloneRecipe(recipe.value);
+    syncHistoryState();
+  }
+
+  triggerSaveWithoutHistory();
+}
+
 function onRecipeValueInput() {
   requestRender('Drag');
 }
@@ -1206,6 +1300,94 @@ function onRecipeValueInput() {
 function onRecipeValueChange() {
   requestRender('Settle');
   scheduleSave();
+}
+
+function commitRecipeChange(explicitLabel?: string) {
+  requestRender('Settle');
+  scheduleSave(explicitLabel);
+}
+
+function undoStep() {
+  const restored = history.undo();
+  if (!restored) return;
+  applyRestoredRecipe(restored);
+}
+
+function redoStep() {
+  const restored = history.redo();
+  if (!restored) return;
+  applyRestoredRecipe(restored);
+}
+
+function jumpToHistory(index: number) {
+  const restored = history.jump(index);
+  if (!restored) return;
+  applyRestoredRecipe(restored);
+}
+
+function applyRestoredRecipe(restored: AdjustmentRecipe) {
+  const curSnapshots = recipe.value.snapshots ? cloneRecipe({ snapshots: recipe.value.snapshots } as any).snapshots : [];
+  const next = cloneRecipe(restored);
+  if (curSnapshots && curSnapshots.length > 0) {
+    next.snapshots = curSnapshots;
+  } else {
+    delete next.snapshots;
+  }
+  recipe.value = next;
+  lastCommittedRecipe = cloneRecipe(next);
+  syncHistoryState();
+
+  if (selectedMaskId.value && !recipe.value.masks?.some((m) => m.id === selectedMaskId.value)) {
+    selectedMaskId.value = null;
+    painting.value = false;
+  }
+
+  requestRender('Settle');
+  triggerSaveWithoutHistory();
+}
+
+function saveSnapshot() {
+  const name = newSnapshotName.value.trim();
+  if (!name) {
+    snapshotMessage.value = 'Snapshot name cannot be empty.';
+    return;
+  }
+  if (recipe.value.snapshots?.some((s) => s.name === name)) {
+    snapshotMessage.value = `A snapshot named "${name}" already exists.`;
+    return;
+  }
+  snapshotMessage.value = '';
+  const snapRecipe = cloneRecipe(recipe.value);
+  delete snapRecipe.snapshots;
+  const snap: Snapshot = {
+    name,
+    recipe: snapRecipe,
+  };
+  if (!recipe.value.snapshots) {
+    recipe.value.snapshots = [];
+  }
+  recipe.value.snapshots.push(snap);
+  newSnapshotName.value = '';
+  triggerSaveWithoutHistory();
+}
+
+function restoreSnapshot(snap: Snapshot) {
+  const curSnapshots = recipe.value.snapshots ? cloneRecipe({ snapshots: recipe.value.snapshots } as any).snapshots : [];
+  const next = cloneRecipe(snap.recipe);
+  if (curSnapshots && curSnapshots.length > 0) {
+    next.snapshots = curSnapshots;
+  } else {
+    delete next.snapshots;
+  }
+  recipe.value = next;
+  requestRender('Settle');
+  scheduleSave(`Snapshot: ${snap.name}`);
+}
+
+function deleteSnapshot(name: string) {
+  if (!recipe.value.snapshots) return;
+  recipe.value.snapshots = recipe.value.snapshots.filter((s) => s.name !== name);
+  triggerSaveWithoutHistory();
 }
 
 function setLut(lut: LutRef | null) {
@@ -1267,6 +1449,19 @@ function handleKeyDown(e: KeyboardEvent) {
     if (e.key === '\\' && !isTextInputFocused()) {
       e.preventDefault();
       setBefore(true);
+    }
+    return;
+  }
+
+  // Undo and Redo: Cmd-Z and Cmd-Shift-Z (RP-5)
+  const isMod = e.metaKey || e.ctrlKey;
+  if (isMod && (e.key === 'z' || e.key === 'Z')) {
+    e.preventDefault();
+    if (isCropMode.value) return;
+    if (e.shiftKey) {
+      redoStep();
+    } else {
+      undoStep();
     }
     return;
   }
@@ -1446,6 +1641,10 @@ function normaliseRecipe(existing: AdjustmentRecipe, sourceSha: string): Adjustm
         }
       : null,
     masks: (existing.masks ?? []).map(normaliseMask),
+    snapshots: (existing.snapshots ?? []).map((s) => ({
+      name: s.name,
+      recipe: cloneRecipe(s.recipe),
+    })),
     source_sha256: existing.source_sha256 || sourceSha,
   };
 }
@@ -1525,7 +1724,7 @@ async function refreshPresets() {
  * previous recipe is kept for Undo, because a preset applies on one click and a
  * paste on one keystroke, and neither would be safe to offer without a way back.
  */
-function replaceLook(incoming: AdjustmentRecipe, text: string) {
+function replaceLook(incoming: AdjustmentRecipe, text: string, explicitLabel?: string) {
   const before = cloneRecipe(recipe.value);
   const next = normaliseRecipe(cloneRecipe(incoming), before.source_sha256 ?? '');
   next.geometry = before.geometry;
@@ -1533,17 +1732,15 @@ function replaceLook(incoming: AdjustmentRecipe, text: string) {
   // another photograph's settings or a preset's.
   next.masks = before.masks;
   next.source_sha256 = before.source_sha256;
+  next.snapshots = before.snapshots;
   recipe.value = next;
-  onRecipeValueChange();
+  commitRecipeChange(explicitLabel);
   showNotice(text, before);
 }
 
 function undoReplace() {
-  const previous = notice.value?.undo;
-  if (!previous) return;
-  recipe.value = previous;
-  onRecipeValueChange();
-  showNotice('Undone.');
+  dismissNotice();
+  undoStep();
 }
 
 async function applyPreset(name: string) {
@@ -1551,7 +1748,7 @@ async function applyPreset(name: string) {
   try {
     const preset = await desktop.loadPreset(name);
     selectedPreset.value = name;
-    replaceLook(preset, `Applied preset ${name}. Crop, rotation and masks kept.`);
+    replaceLook(preset, `Applied preset ${name}. Crop, rotation and masks kept.`, name);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     error.value = `Couldn't apply preset ${name}: ${msg}`;
@@ -1581,15 +1778,15 @@ async function deletePreset(name: string) {
 
 function copySettings() {
   if (!sessionId.value) return;
-  copiedSettings.value = { recipe: cloneRecipe(recipe.value), from: fileName(sourcePath.value) };
-  showNotice(`Copied settings from ${copiedSettings.value.from}.`);
+  copyToClipboard(recipe.value, fileName(sourcePath.value));
+  showNotice(`Copied settings from ${fileName(sourcePath.value)}.`);
 }
 
 function pasteSettings() {
   const copied = copiedSettings.value;
   if (!copied || !sessionId.value) return;
   selectedPreset.value = null;
-  replaceLook(copied.recipe, `Pasted settings from ${copied.from}. Crop, rotation and masks kept.`);
+  replaceLook(copied.recipe, `Pasted settings from ${copied.from}. Crop, rotation and masks kept.`, 'Paste settings');
 }
 
 async function openImage(path: string) {
@@ -1661,6 +1858,10 @@ async function openImage(path: string) {
       recipe.value = createIdentityRecipe(info.source_sha256 ?? '');
       isCropMode.value = false;
     }
+
+    history.reset(recipe.value);
+    lastCommittedRecipe = cloneRecipe(recipe.value);
+    syncHistoryState();
 
     // Default export directory to image directory
     const parts = path.trim().split('/');
@@ -1777,7 +1978,7 @@ function addMask(type: 'linear' | 'radial' | 'brush') {
   selectedMaskId.value = mask.id;
   // A brush mask is nothing until painted: start painting at once.
   painting.value = type === 'brush';
-  onRecipeValueChange();
+  commitRecipeChange('Add mask');
 }
 
 /** The brush radius the overlay paints with, or null when not painting. */
@@ -2376,7 +2577,7 @@ function toggleCropMode() {
   if (isCropMode.value) {
     isCropMode.value = false;
     requestRender('Settle');
-    scheduleSave();
+    scheduleSave('Crop');
   } else {
     const g = ensureGeometry();
     if (!g.crop) {
@@ -2393,7 +2594,7 @@ function applyCrop(crop: NormalizedCrop) {
   g.crop = crop;
   isCropMode.value = false;
   requestRender('Settle');
-  scheduleSave();
+  scheduleSave('Crop');
 }
 
 function cancelCrop() {
@@ -3993,6 +4194,105 @@ onUnmounted(() => {
               </div>
             </div>
           </CollapsibleSection>
+
+          <!-- 8. History (RP-5) -->
+          <CollapsibleSection
+            title="History"
+            test-id="section-history"
+            v-show="!selectedMask"
+            :default-open="false"
+          >
+            <div class="history-panel" data-testid="history-panel">
+              <div v-if="historyEntries.length === 0" class="history-empty" data-testid="history-empty">
+                No history
+              </div>
+              <ul v-else class="history-list" data-testid="history-list">
+                <li
+                  v-for="item in reversedHistory"
+                  :key="item.index"
+                  class="history-item"
+                  :class="{ 'history-item--current': item.index === historyCursor }"
+                  :data-testid="`history-item-${item.index}`"
+                  :data-current="item.index === historyCursor ? 'true' : undefined"
+                  @click="jumpToHistory(item.index)"
+                >
+                  <span class="history-item__label">{{ item.label }}</span>
+                  <span v-if="item.index === historyCursor" class="history-item__current-badge">Current</span>
+                </li>
+              </ul>
+            </div>
+          </CollapsibleSection>
+
+          <!-- 9. Snapshots (RP-5) -->
+          <CollapsibleSection
+            title="Snapshots"
+            test-id="section-snapshots"
+            v-show="!selectedMask"
+            :default-open="false"
+          >
+            <div class="snapshots-panel" data-testid="snapshots-panel">
+              <div class="snapshots-form">
+                <input
+                  v-model="newSnapshotName"
+                  type="text"
+                  placeholder="Snapshot name"
+                  class="snapshots-input"
+                  data-testid="snapshot-name-input"
+                  :disabled="loading || !sessionId"
+                  @keydown.enter="saveSnapshot"
+                />
+                <button
+                  type="button"
+                  class="snapshots-save-btn"
+                  data-testid="snapshot-save-btn"
+                  :disabled="loading || !sessionId"
+                  @click="saveSnapshot"
+                >
+                  Save snapshot
+                </button>
+              </div>
+              <div
+                v-if="snapshotMessage"
+                class="snapshots-message"
+                data-testid="snapshot-message"
+              >
+                {{ snapshotMessage }}
+              </div>
+              <div v-if="!recipe.snapshots || recipe.snapshots.length === 0" class="snapshots-empty" data-testid="snapshots-empty">
+                No snapshots
+              </div>
+              <ul v-else class="snapshots-list" data-testid="snapshots-list">
+                <li
+                  v-for="snap in recipe.snapshots"
+                  :key="snap.name"
+                  class="snapshot-item"
+                  :data-testid="`snapshot-item-${snap.name}`"
+                >
+                  <span class="snapshot-item__name">{{ snap.name }}</span>
+                  <div class="snapshot-item__actions">
+                    <button
+                      type="button"
+                      class="snapshot-action-btn"
+                      :data-testid="`snapshot-restore-${snap.name}`"
+                      :disabled="loading || !sessionId"
+                      @click="restoreSnapshot(snap)"
+                    >
+                      Restore
+                    </button>
+                    <button
+                      type="button"
+                      class="snapshot-action-btn snapshot-action-btn--delete"
+                      :data-testid="`snapshot-delete-${snap.name}`"
+                      :disabled="loading || !sessionId"
+                      @click="deleteSnapshot(snap.name)"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </CollapsibleSection>
         </div>
 
         <!-- Save Status Line -->
@@ -5121,5 +5421,194 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+/* --- History Section (RP-5) --------------------------------------------- */
+.history-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.history-empty {
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: var(--space-2) 0;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.history-item:hover {
+  border-color: var(--text-muted);
+}
+
+.history-item--current {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+  font-weight: 600;
+}
+
+.history-item__current-badge {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+
+/* --- Snapshots Section (RP-5) ------------------------------------------- */
+.snapshots-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.snapshots-form {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.snapshots-input {
+  flex: 1;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-label);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  box-sizing: border-box;
+}
+
+.snapshots-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.snapshots-save-btn {
+  min-height: 40px;
+  min-width: 40px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-heading);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.snapshots-save-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.snapshots-save-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.snapshots-message {
+  font-family: var(--font-label);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.snapshots-empty {
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: var(--space-1) 0;
+}
+
+.snapshots-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.snapshot-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 40px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  background: var(--bg-panel);
+  gap: var(--space-2);
+}
+
+.snapshot-item__name {
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-item__actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.snapshot-action-btn {
+  min-height: 40px;
+  min-width: 40px;
+  padding: var(--space-1) var(--space-3);
+  font-family: var(--font-label);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.snapshot-action-btn:hover:not(:disabled) {
+  color: var(--text-heading);
+  border-color: var(--text-muted);
+}
+
+.snapshot-action-btn--delete:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.snapshot-action-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 </style>

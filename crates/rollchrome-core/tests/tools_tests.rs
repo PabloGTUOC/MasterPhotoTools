@@ -1330,3 +1330,148 @@ fn a_batch_given_a_raw_file_skips_it_and_says_so() {
         "Not a file type this tool accepts"
     );
 }
+
+// ---------------------------------------------------------------------------
+// RP-5 Snapshots & History tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_snapshot_survives_a_save_and_a_load() {
+    use rollchrome_core::media::edit::{AdjustmentRecipe, Snapshot};
+    use rollchrome_core::tools::edit::{load_recipe, save_recipe, sidecar_path};
+
+    let f = Fixtures::new();
+    let img_path = f.path().join("photo.jpg");
+    fs::write(&img_path, b"fake jpeg image data").unwrap();
+
+    let snap_recipe = AdjustmentRecipe {
+        exposure: 1.2,
+        temperature: 25.0,
+        ..Default::default()
+    };
+    let recipe = AdjustmentRecipe {
+        exposure: -0.5,
+        snapshots: vec![Snapshot {
+            name: "Warm sunset".into(),
+            recipe: snap_recipe,
+        }],
+        ..Default::default()
+    };
+
+    save_recipe(&img_path, &recipe).expect("save recipe with snapshot");
+    let sidecar = sidecar_path(&img_path);
+    assert!(sidecar.exists());
+
+    let loaded = load_recipe(&sidecar).expect("load saved recipe");
+    assert_eq!(loaded.exposure, -0.5);
+    assert_eq!(loaded.snapshots.len(), 1);
+    assert_eq!(loaded.snapshots[0].name, "Warm sunset");
+    assert_eq!(loaded.snapshots[0].recipe.exposure, 1.2);
+    assert_eq!(loaded.snapshots[0].recipe.temperature, 25.0);
+}
+
+#[test]
+fn a_saved_snapshot_never_holds_snapshots_of_its_own() {
+    use rollchrome_core::media::edit::{AdjustmentRecipe, Snapshot};
+    use rollchrome_core::tools::edit::{load_recipe, save_recipe, sidecar_path};
+
+    let f = Fixtures::new();
+    let img_path = f.path().join("photo2.jpg");
+    fs::write(&img_path, b"fake jpeg image data").unwrap();
+
+    let nested_snap = Snapshot {
+        name: "Nested".into(),
+        recipe: AdjustmentRecipe::default(),
+    };
+    let snap_with_nested = Snapshot {
+        name: "Top-level".into(),
+        recipe: AdjustmentRecipe {
+            exposure: 0.75,
+            snapshots: vec![nested_snap],
+            ..Default::default()
+        },
+    };
+    let recipe = AdjustmentRecipe {
+        snapshots: vec![snap_with_nested],
+        ..Default::default()
+    };
+
+    save_recipe(&img_path, &recipe).expect("save recipe");
+    let loaded = load_recipe(&sidecar_path(&img_path)).expect("load recipe");
+    assert_eq!(loaded.snapshots.len(), 1);
+    assert!(
+        loaded.snapshots[0].recipe.snapshots.is_empty(),
+        "a saved snapshot's recipe must have its snapshots cleared"
+    );
+}
+
+#[test]
+fn a_preset_saved_from_a_recipe_with_snapshots_carries_none() {
+    use rollchrome_core::media::edit::{AdjustmentRecipe, Snapshot};
+    use rollchrome_core::tools::presets::{load_preset, save_preset};
+
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.8,
+        snapshots: vec![Snapshot {
+            name: "Should be dropped".into(),
+            recipe: AdjustmentRecipe::default(),
+        }],
+        ..Default::default()
+    };
+
+    save_preset(dir, "clean_preset", &recipe, false).expect("save preset");
+    let loaded = load_preset(dir, "clean_preset").expect("load preset");
+    assert_eq!(loaded.exposure, 0.8);
+    assert!(
+        loaded.snapshots.is_empty(),
+        "a preset must carry no snapshots"
+    );
+}
+
+#[test]
+fn a_recipe_without_snapshots_is_written_without_the_field() {
+    use rollchrome_core::media::edit::AdjustmentRecipe;
+    use rollchrome_core::tools::edit::{save_recipe, sidecar_path};
+
+    let f = Fixtures::new();
+    let img_path = f.path().join("no_snaps.jpg");
+    fs::write(&img_path, b"fake jpeg image data").unwrap();
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        snapshots: Vec::new(),
+        ..Default::default()
+    };
+
+    save_recipe(&img_path, &recipe).expect("save recipe");
+    let content = fs::read_to_string(sidecar_path(&img_path)).unwrap();
+    assert!(
+        !content.contains("\"snapshots\""),
+        "recipe without snapshots must not serialize the snapshots field"
+    );
+}
+
+#[test]
+fn a_recipe_with_only_snapshots_is_still_identity() {
+    use rollchrome_core::media::edit::{AdjustmentRecipe, Snapshot};
+
+    let recipe = AdjustmentRecipe {
+        snapshots: vec![Snapshot {
+            name: "Snapshot 1".into(),
+            recipe: AdjustmentRecipe {
+                exposure: 2.5,
+                contrast: 50.0,
+                ..Default::default()
+            },
+        }],
+        ..Default::default()
+    };
+
+    assert!(
+        recipe.is_identity(),
+        "a recipe with only snapshots and no edits must be identity"
+    );
+}

@@ -96,6 +96,18 @@ pub struct AdjustmentRecipe {
     /// Masks, each with its own adjustments, in stored-frame coordinates (`masks`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub masks: Vec<super::masks::Mask>,
+
+    // RP-5 snapshots:
+    /// Saved snapshots of adjustments for this photograph.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub snapshots: Vec<Snapshot>,
+}
+
+/// A named snapshot of an adjustment recipe (RP-5).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Snapshot {
+    pub name: String,
+    pub recipe: AdjustmentRecipe,
 }
 
 impl Default for AdjustmentRecipe {
@@ -126,6 +138,7 @@ impl Default for AdjustmentRecipe {
             grain: None,
             looks: None,
             masks: Vec::new(),
+            snapshots: Vec::new(),
         }
     }
 }

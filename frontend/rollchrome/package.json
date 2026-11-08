@@ -12,7 +12,8 @@
     "check:bulk-lut": "node scripts/check-bulk-lut.mjs",
     "check:develop": "node scripts/check-develop.mjs",
     "check:viewing": "node scripts/check-viewing.mjs",
-    "check:colour": "node scripts/check-colour.mjs"
+    "check:colour": "node scripts/check-colour.mjs",
+    "check:history": "node scripts/check-history.mjs"
   },
   "dependencies": {
     "@phototools/shared": "file:../shared",

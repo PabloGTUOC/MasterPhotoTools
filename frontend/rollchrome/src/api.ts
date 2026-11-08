@@ -611,6 +611,14 @@ export interface AdjustmentRecipe {
   looks?: LookEffects | null;
   /** Masks with their own adjustments, in stored-frame coordinates (ED-19). */
   masks?: Mask[];
+  /** Named snapshots of adjustment recipes for this photograph (RP-5). */
+  snapshots?: Snapshot[];
+}
+
+/** A named snapshot of an adjustment recipe (RP-5). */
+export interface Snapshot {
+  name: string;
+  recipe: AdjustmentRecipe;
 }
 
 /** The adjustments a mask applies where it covers, in the global sliders' units (ED-19). */

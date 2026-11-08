@@ -169,6 +169,8 @@ pub fn save_preset(
     recipe.geometry = None;
     // Masks for the same reason as the geometry: placed on this photograph's content (ED-19).
     recipe.masks.clear();
+    // Snapshots are specific to this photograph (RP-5).
+    recipe.snapshots.clear();
     recipe.version = CURRENT_RECIPE_VERSION;
 
     // Serialize to JSON

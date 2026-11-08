@@ -8,6 +8,6 @@ pub mod segment;
 
 pub use edit::{
     apply_recipe, decode_image, validate_lut, AdjustmentRecipe, ImageBuffer, LinearBuffer, Lut,
-    LutRef, PreviewSession, PreviewStage, RgbaFrame,
+    LutRef, PreviewSession, PreviewStage, RgbaFrame, Snapshot,
 };
 pub use histogram::{histogram, Histogram};

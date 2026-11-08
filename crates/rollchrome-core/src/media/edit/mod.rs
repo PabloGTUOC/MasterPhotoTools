@@ -34,8 +34,8 @@ pub use masks::{AutoTarget, CompiledMasks, LocalAdjustments, Mask, MaskKind};
 pub use pipeline::{
     apply_recipe, apply_recipe_with_orientation, decode_image, linear_to_srgb, linear_to_u16,
     linear_to_u8, srgb_to_linear, tone_weights, u16_to_linear, u8_to_linear, validate_lut,
-    white_black_weights, AdjustmentRecipe, ImageBuffer, LinearBuffer, LutRef, SRGB_TO_LINEAR_U16,
-    SRGB_TO_LINEAR_U8,
+    white_black_weights, AdjustmentRecipe, ImageBuffer, LinearBuffer, LutRef, Snapshot,
+    SRGB_TO_LINEAR_U16, SRGB_TO_LINEAR_U8,
 };
 pub use preview::{
     downscale_image_buffer, encode_preview_frame, fit_full_edge, render_rgba_frame, AutoTone,

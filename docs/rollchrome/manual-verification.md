@@ -5,7 +5,7 @@ from [`../manual-verification.md`](../manual-verification.md) when the editor le
 (RC-3), and **their ids are unchanged**, so anything that names MV-20.4 still finds it.
 
 How to work through them — tick the box, replace **Result:** with what actually happened, and a
-failed check is a result — is as described at the top of that file. **28 checks**, none done yet
+failed check is a result — is as described at the top of that file. **31 checks**, none done yet
 (2026-11-06). They all need a Mac with real photographs, and MV-20.7 also a card and a mounted
 share.
 
@@ -230,4 +230,18 @@ the automated check drives the screen against a stub.
 - [ ] **MV-25.3 — Black & white.**
       **Run:** press `V`, move the Blue and Green sliders, add a colour grade. Export.
       **Pass:** no colour without the grade; the skies and foliage respond; the export matches the screen.
+      **Result:**
+
+## MV-26 — Undo, history and snapshots (RP-5)
+
+[`../briefs/RP-5.md`](../briefs/RP-5.md). Real photographs in the real application.
+
+- [ ] **MV-26.1 — Undo across a real editing session.**
+      **Run:** in Edit, open a photograph and make several adjustments: sliders, black & white, crop, and a mask. Use Cmd-Z and Cmd-Shift-Z to step backward and forward through changes, and jump between states using the History list.
+      **Pass:** every change steps backward and forward smoothly without orphaned state or skipped steps; clicking in the History list restores the exact chosen state; deselects mask if undone.
+      **Result:**
+
+- [ ] **MV-26.2 — Snapshot surviving an application restart.**
+      **Run:** in Edit, create an edit, save a snapshot named "Grade A", make further adjustments and save "Grade B". Quit Rollchrome completely, reopen it, and load the same photograph.
+      **Pass:** both "Grade A" and "Grade B" appear in the Snapshots list; restoring each reproduces its exact recipe; deleting removes it and persists across reload.
       **Result:**

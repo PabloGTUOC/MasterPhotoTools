@@ -164,6 +164,10 @@ where
 
     let mut to_save = recipe.clone();
     to_save.version = CURRENT_RECIPE_VERSION;
+    // Clear snapshots inside each snapshot's own recipe so that they never nest (RP-5).
+    for snap in &mut to_save.snapshots {
+        snap.recipe.snapshots.clear();
+    }
     if to_save.source_sha256.is_empty() {
         let bytes = std::fs::read(image_path)?;
         to_save.source_sha256 = phototools_core::ingest::scanner::hex(&Sha256::digest(&bytes));

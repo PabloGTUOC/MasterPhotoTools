@@ -16,6 +16,7 @@ import type {
   PreviewStage,
   WhiteBalancePick,
 } from '../../src/api';
+import { EditHistory } from '../../src/editHistory';
 
 export interface StubState {
   rendersIssued: number;
@@ -46,6 +47,8 @@ export interface StubState {
   autoToneCalls: string[];
   autoToneResult: AutoTone | null;
   autoToneError: string | null;
+  saveCalls: Array<{ path: string; recipe: AdjustmentRecipe }>;
+  recipesByPath: Record<string, AdjustmentRecipe | null>;
 }
 
 const stubState: StubState = {
@@ -72,6 +75,8 @@ const stubState: StubState = {
   autoToneCalls: [],
   autoToneResult: null,
   autoToneError: null,
+  saveCalls: [],
+  recipesByPath: {},
 };
 
 interface StubHistogram {
@@ -135,10 +140,12 @@ function uniformHistogram(pixels: number, fill: number, markers: number[][]): St
 declare global {
   interface Window {
     __STUB__: StubState;
+    __EditHistory__: typeof EditHistory;
   }
 }
 if (typeof window !== 'undefined') {
   window.__STUB__ = stubState;
+  window.__EditHistory__ = EditHistory;
 }
 
 // Reusable frame buffers to avoid GC pressure during rapid benchmark scrubs
@@ -573,6 +580,11 @@ export class StubDesktopApiClient {
     if (path.includes('corrupted_sidecar')) {
       throw new Error('Syntax error: invalid JSON in sidecar');
     }
+    if (stubState.recipesByPath && stubState.recipesByPath[path] !== undefined) {
+      return stubState.recipesByPath[path]
+        ? JSON.parse(JSON.stringify(stubState.recipesByPath[path]))
+        : null;
+    }
     return null;
   }
 
@@ -580,7 +592,9 @@ export class StubDesktopApiClient {
     if (stubState.readOnly) {
       throw new Error('Card media is read-only (G5). Copy files to a working folder to save edits.');
     }
-    stubState.lastSavedRecipe = { ...recipe };
+    const cloned = JSON.parse(JSON.stringify(recipe));
+    stubState.lastSavedRecipe = cloned;
+    stubState.saveCalls.push({ path, recipe: cloned });
     return `${path}.photoedit`;
   }
 

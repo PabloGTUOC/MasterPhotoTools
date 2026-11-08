@@ -558,3 +558,53 @@ check:develop PASSED: all 9 checks verified successfully.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+### Round 1 — Changes requested
+
+**Checked.** Re-ran every gate on `rp-1`: fmt and clippy clean, build clean; workspace 1093, `phototools-core`
+713, `rollchrome-core` 264, `phototools-desktop` 26, `rollchrome-desktop` 19, none failed or ignored;
+typecheck, build, `check:transport`, `check:edit`, `check:bulk-lut` and `check:develop` pass. No existing test
+was changed. `Do not touch` respected, no new dependency. Tauri argument names and `OutputFormat`'s serde form
+match the Rust. `unsafe` in `preview.rs` follows `media/edit/preview.rs`. The 5.02 s and 251 ms timings were
+reported, not re-measured.
+
+The Rust is right. The defects are in how the screen behaves over time, which the check does not exercise.
+
+1. **A preview request starts a full development for every slider step.** Each new exposure is a new cache key.
+   `AdjustmentSlider` emits on every input, `triggerPreview` calls the command each time, and *latest wins* only
+   discards the *result*: a drag across the slider starts dozens of 5-second, all-core developments of a 26 MP
+   RAW that run to completion in parallel. Clicking quickly through photographs does the same. In
+   `triggerPreview`, keep **at most one request in flight**; while one runs, remember only the newest wanted state,
+   and send that when it returns. Add to `check:develop`: *10. During a burst of ten exposure changes against a
+   slow stub, no two preview requests overlap, at most two are sent, and the last carries the final exposure.*
+   Assertion 5 keeps its meaning (the newest choice is what stays on screen); adapt its stub timing only if
+   serialising forces it, and say so in the Report.
+2. **A look follows a file name into another folder.** `moduleAssignments` is keyed by name alone and survives
+   changing folder. Cameras reuse names, so `DSCF0001.RAF` in a second folder silently takes the first folder's
+   look and exposure. Clear assignments and selection when the folder **changes**, but not on a remount. Add:
+   *11. Assigning a look, then changing to a folder with a file of the same name, shows that file with no look.*
+3. **Leaving the tab does not stop the thumbnail loop.** `thumbnailToken` belongs to the instance and nothing
+   bumps it on unmount, so after going to Edit and back the old loop and the new one both run, which is the overlap
+   the brief forbids, and object URLs are never revoked. Add `onBeforeUnmount`: bump the token and revoke every
+   thumbnail and preview URL; revoke thumbnail URLs when the folder changes too. Add: *12. Unmounting and remounting
+   while thumbnails load gives no overlapping thumbnail requests.*
+4. **A running development is forgotten on leaving the tab.** `jobId` and `isDeveloping` are instance state. Come back
+   from Edit during a run and the progress is gone and the screen will start a second run. Hold them in
+   `developState.ts`; on mount, re-attach `JobProgress` to the job, and if it has already ended, clear the running
+   state and show its outcome. Add: *13. Remounting during a run shows its progress and keeps Develop disabled.*
+5. **Everything in the folder is always developed.** My brief left this out; it is needed. Assigning looks to five
+   photographs of three hundred must not develop three hundred. Add a choice beside the run controls, **All
+   photographs** (the default) or **Selected only**, showing the count. `makeItems` sends the matching items; changing
+   the choice or, under *Selected only*, the selection invalidates the dry run. Add: *14. With Selected only, the items
+   sent to `plan_develop` are exactly the selection, and changing the selection locks Develop.*
+6. **Thumbnails show the internal id** (`builtin:ricoh-posit…`). Show the look's display name, and the LUT's name for
+   library looks; *None* for no look.
+7. **The check cannot see a picture.** `layout-proof/develop.png` has an empty preview and six empty thumbnails: the
+   stub's bytes are not an image. Return a valid small JPEG and assert `naturalWidth > 0` on the thumbnails and the
+   preview. The stub's looks should be the twelve that ship: it lists an Astia, which does not.
+8. **Small.** `lib.rs`: the two new `lock().unwrap()` become `unwrap_or_else(|e| e.into_inner())`, since a poisoned cache
+   is still a usable cache and the brief's acceptance says no `unwrap()`; leave the existing six alone (G11). Remove
+   `developSummary` and its banner, which nothing ever sets.
+
+Counts stay at 1093 / 264 / 19. `check:develop` now asserts fourteen. Write **Report round 2** above this Review
+section's end, as new text, deleting nothing.

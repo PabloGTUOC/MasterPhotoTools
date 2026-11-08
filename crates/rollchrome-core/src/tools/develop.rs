@@ -183,6 +183,17 @@ pub fn plan_develop(
     }
 }
 
+/// Resolves a look identifier into a `Look` (RP-1).
+///
+/// Resolves `builtin:<id>` itself and everything else through `DevelopStore::look`.
+pub fn resolve_look(id: &str, store: &dyn DevelopStore) -> Result<Look, Error> {
+    if let Some(builtin_id) = id.strip_prefix("builtin:") {
+        crate::media::looks::builtin::builtin_look(builtin_id)
+    } else {
+        store.look(id)
+    }
+}
+
 /// Executes a development plan sequentially.
 pub fn execute_develop(
     plan: DevelopPlan,
@@ -205,13 +216,9 @@ pub fn execute_develop(
         }
         progress.report(done as u64, total, &action.source);
 
-        let look_res = look_cache.entry(action.look.clone()).or_insert_with(|| {
-            if let Some(id) = action.look.strip_prefix("builtin:") {
-                crate::media::looks::builtin::builtin_look(id).map_err(|e| e.to_string())
-            } else {
-                store.look(&action.look).map_err(|e| e.to_string())
-            }
-        });
+        let look_res = look_cache
+            .entry(action.look.clone())
+            .or_insert_with(|| resolve_look(&action.look, store).map_err(|e| e.to_string()));
 
         let look = match look_res {
             Ok(l) => l,

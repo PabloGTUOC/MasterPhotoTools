@@ -9,8 +9,9 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 
 const links = [
-  { to: '/', label: 'Edit', step: '01' },
-  { to: '/bulk-lut', label: 'Batch Grade', step: '02' },
+  { to: '/', label: 'Develop', step: '01' },
+  { to: '/edit', label: 'Edit', step: '02' },
+  { to: '/batch', label: 'Batch', step: '03' },
 ];
 
 /** The status bar's live clock (§5.8). */

@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use phototools_core::error::Error;
@@ -196,4 +196,47 @@ impl DevelopStore for FolderStore {
             let _ = writer.close();
         }
     }
+}
+
+/// Returns the list of RAW file names in `folder`, non-recursive, sorted by name (RP-1).
+pub fn raw_names(folder: &Path) -> Result<Vec<String>, Error> {
+    if !folder.is_dir() {
+        return Err(Error::Refused(format!(
+            "{} is not a directory",
+            folder.display()
+        )));
+    }
+    let entries = std::fs::read_dir(folder).map_err(Error::Io)?;
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(Error::Io)?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if phototools_core::media::raw::RAW_EXTENSIONS
+                    .contains(&ext.to_lowercase().as_str())
+                {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+/// Generates an upright thumbnail JPEG for a RAW file, fit to `max_edge` (RP-1).
+pub fn thumbnail(path: &Path, max_edge: u32) -> Result<Vec<u8>, Error> {
+    let derived = phototools_core::media::raw::raw_to_jpeg(path)?;
+    let dyn_img = image::load_from_memory(&derived.bytes)
+        .map_err(|e| Error::Internal(format!("failed to decode raw preview JPEG: {e}")))?;
+    let orientation = phototools_core::media::meta::read_meta(path)
+        .map(|m| m.orientation)
+        .unwrap_or(phototools_core::media::meta::Orientation::Normal);
+    let upright = phototools_core::media::image_ops::apply_orientation(dyn_img, orientation);
+    let scaled = phototools_core::media::image_ops::downscale_to_max_edge(&upright, max_edge)?;
+    let opts = phototools_core::media::jpeg::JpegOptions::deliverable(85);
+    phototools_core::media::jpeg::encode(&scaled, &opts)
 }

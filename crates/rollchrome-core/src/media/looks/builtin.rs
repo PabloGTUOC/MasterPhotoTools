@@ -1,6 +1,7 @@
 //! Built-in look registry and parser (DV-3).
 
 use phototools_core::error::Error;
+use serde::{Deserialize, Serialize};
 
 use crate::media::develop::render::{Look, LookSpace};
 use crate::media::edit::lut::Lut;
@@ -108,4 +109,27 @@ pub fn builtin_look(id: &str) -> Result<Look, Error> {
         lut,
         space: LookSpace::ProPhoto,
     })
+}
+
+/// Serializable information about a shipped built-in look (RP-1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuiltinLookInfo {
+    /// Full identifier suitable for `DevelopItem.look`, e.g. `builtin:fujifilm-classic-chrome`.
+    pub id: String,
+    /// Human-readable display name, e.g. `Classic Chrome`.
+    pub name: String,
+    /// Camera maker, e.g. `Fujifilm` or `Ricoh`.
+    pub maker: String,
+}
+
+/// Lists all shipped built-in looks formatted for the UI picker and develop items.
+pub fn builtin_look_list() -> Vec<BuiltinLookInfo> {
+    SHIPPED_LOOKS
+        .iter()
+        .map(|l| BuiltinLookInfo {
+            id: format!("builtin:{}", l.id),
+            name: l.display_name.to_string(),
+            maker: l.maker.to_string(),
+        })
+        .collect()
 }

@@ -121,11 +121,11 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 1083 passing
+cargo test --workspace          # 1093 passing
 cargo test -p phototools-core   # 713 passing — G2
-cargo test -p rollchrome-core   # 258 passing — G2
+cargo test -p rollchrome-core   # 264 passing — G2
 cargo test -p phototools-desktop   # 26 passing
-cargo test -p rollchrome-desktop   # 15 passing
+cargo test -p rollchrome-desktop   # 19 passing
 ```
 
 Front ends:
@@ -148,10 +148,11 @@ npm --prefix frontend/rollchrome run build
 npm --prefix frontend/rollchrome run check:transport   # and no HTTP client
 npm --prefix frontend/rollchrome run check:edit    # ED-7 acceptance & render timing budget, measured in a browser
 npm --prefix frontend/rollchrome run check:bulk-lut # ED-8 acceptance & lock discipline, measured in a browser
+npm --prefix frontend/rollchrome run check:develop # RP-1 Develop acceptance, measured in a browser
 ```
 
 `check:layout` and `check:ingest` drive Chromium and write screenshots to
-`frontend/web/layout-proof/`; `check:edit` and `check:bulk-lut` drive Chromium and write screenshots to
+`frontend/web/layout-proof/`; `check:edit`, `check:bulk-lut` and `check:develop` drive Chromium and write screenshots to
 `frontend/rollchrome/layout-proof/`. They assert **numbers**, not shapes — a change that makes the grid
 or preview slower or unwindows it fails them.
 
@@ -185,7 +186,7 @@ crates/rollchrome-desktop Tauri v2 on macOS. Rollchrome's commands and preview s
 frontend/shared           the API client (compiled), the shared views (source), the design language
 frontend/web              served by the server; archive tools and publishing
 frontend/desktop          inside Tauri; card review and ingest
-frontend/rollchrome       inside Tauri; Edit and Batch Grade. Uses shared components and styles,
+frontend/rollchrome       inside Tauri; Develop, Edit and Batch. Uses shared components and styles,
                           never the HTTP client
 ```
 

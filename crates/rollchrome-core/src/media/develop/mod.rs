@@ -23,10 +23,12 @@ use rawler::rawsource::RawSource;
 use rayon::prelude::*;
 
 pub mod colour;
+pub mod preview;
 pub mod render;
 pub mod tone;
 pub mod xtrans;
 
+pub use preview::{DevelopPreview, PREVIEW_MAX_EDGE};
 pub use render::{prophoto_icc_profile, render, Look, LookSpace, OutputFormat, Rendered};
 
 /// Options controlling RAW development.

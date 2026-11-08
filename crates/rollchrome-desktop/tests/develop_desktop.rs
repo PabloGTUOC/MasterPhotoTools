@@ -122,3 +122,119 @@ fn plan_develop_plans_a_folder_inside_the_roots() {
     assert_eq!(plan.skipped[0].file, "notes.txt");
     assert_eq!(plan.skipped[0].reason, "not a RAW file Develop can read");
 }
+
+#[test]
+fn preview_refuses_a_name_that_leaves_the_folder() {
+    let f = fixture();
+    let state = make_state(&f);
+    let folder = f.root.to_string_lossy().to_string();
+
+    let err1 = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        folder.clone(),
+        "../escape.dng".to_string(),
+        None,
+        0.0,
+    )
+    .unwrap_err();
+    assert!(err1.contains("path separators or '..'"));
+
+    let err2 = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        folder.clone(),
+        "..".to_string(),
+        None,
+        0.0,
+    )
+    .unwrap_err();
+    assert!(err2.contains("path separators or '..'"));
+
+    let err3 = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        folder,
+        "sub/file.dng".to_string(),
+        None,
+        0.0,
+    )
+    .unwrap_err();
+    assert!(err3.contains("path separators or '..'"));
+}
+
+#[test]
+fn preview_refuses_a_folder_outside_the_roots() {
+    let f = fixture();
+    let state = make_state(&f);
+    let outside = f._temp.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+
+    let err = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        outside.to_string_lossy().to_string(),
+        "sample.dng".to_string(),
+        None,
+        0.0,
+    )
+    .unwrap_err();
+
+    assert!(err.contains("outside the folders this application may touch"));
+}
+
+#[test]
+fn preview_develop_returns_a_jpeg_for_a_synthetic_raw() {
+    let f = fixture();
+    let state = make_state(&f);
+
+    let pixels = vec![2500u16; 64 * 48];
+    let dng = dng::DngBuilder::new_bayer(64, 48).build(&pixels);
+    std::fs::write(f.root.join("sample.dng"), dng).unwrap();
+
+    let jpeg_bytes = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        f.root.to_string_lossy().to_string(),
+        "sample.dng".to_string(),
+        Some("builtin:fujifilm-classic-chrome".to_string()),
+        0.0,
+    )
+    .expect("preview develop");
+
+    assert!(
+        jpeg_bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "output must be a valid JPEG file"
+    );
+}
+
+#[test]
+fn a_second_look_on_the_same_photo_does_not_develop_it_again() {
+    let f = fixture();
+    let state = make_state(&f);
+
+    let pixels = vec![3000u16; 64 * 48];
+    let dng = dng::DngBuilder::new_bayer(64, 48).build(&pixels);
+    std::fs::write(f.root.join("photo.dng"), dng).unwrap();
+
+    assert_eq!(state.develop_preview_runs(), 0);
+
+    // First look: develops the RAW
+    let _ = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        f.root.to_string_lossy().to_string(),
+        "photo.dng".to_string(),
+        Some("builtin:fujifilm-classic-chrome".to_string()),
+        0.0,
+    )
+    .expect("first look");
+
+    assert_eq!(state.develop_preview_runs(), 1);
+
+    // Second look: re-uses the cached DevelopPreview, developing count stays 1
+    let _ = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        f.root.to_string_lossy().to_string(),
+        "photo.dng".to_string(),
+        Some("builtin:ricoh-standard".to_string()),
+        0.0,
+    )
+    .expect("second look");
+
+    assert_eq!(state.develop_preview_runs(), 1);
+}

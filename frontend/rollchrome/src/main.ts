@@ -3,6 +3,7 @@ import { createRouter, createWebHashHistory } from 'vue-router';
 import '@ui/style.css';
 import App from './App.vue';
 
+import Develop from './views/Develop.vue';
 import Edit from './views/Edit.vue';
 import BulkLut from './views/BulkLut.vue';
 
@@ -11,8 +12,10 @@ import BulkLut from './views/BulkLut.vue';
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/', component: Edit },
-    { path: '/bulk-lut', component: BulkLut },
+    { path: '/', component: Develop },
+    { path: '/edit', component: Edit },
+    { path: '/batch', component: BulkLut },
+    { path: '/bulk-lut', redirect: '/batch' },
   ],
 });
 

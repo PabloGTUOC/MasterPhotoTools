@@ -300,6 +300,50 @@ export class RollchromeClient {
   deletePreset(name: string): Promise<void> {
     return invoke<void>('delete_preset', { name });
   }
+
+  listBuiltinLooks(): Promise<BuiltinLookInfo[]> {
+    return invoke<BuiltinLookInfo[]>('list_builtin_looks');
+  }
+
+  listDevelopFolder(folder: string): Promise<string[]> {
+    return invoke<string[]>('list_develop_folder', { folder });
+  }
+
+  async developThumbnail(folder: string, name: string): Promise<Uint8Array> {
+    const res = await invoke<ArrayBuffer | Uint8Array>('develop_thumbnail', { folder, name });
+    return res instanceof Uint8Array ? res : new Uint8Array(res);
+  }
+
+  async previewDevelop(
+    folder: string,
+    name: string,
+    look: string | null,
+    exposureEv: number,
+  ): Promise<Uint8Array> {
+    const res = await invoke<ArrayBuffer | Uint8Array>('preview_develop', {
+      folder,
+      name,
+      look,
+      exposureEv,
+    });
+    return res instanceof Uint8Array ? res : new Uint8Array(res);
+  }
+
+  planDevelop(
+    folder: string,
+    items: DevelopItem[],
+    format: OutputFormat,
+  ): Promise<DevelopPlan> {
+    return invoke<DevelopPlan>('plan_develop', { folder, items, format });
+  }
+
+  applyDevelop(
+    folder: string,
+    items: DevelopItem[],
+    format: OutputFormat,
+  ): Promise<string> {
+    return invoke<string>('apply_develop', { folder, items, format });
+  }
 }
 
 /** Counts of the frame on screen, made by `core` from the pixels it sent (ED-15). */
@@ -659,6 +703,46 @@ export interface LutError {
 export interface LutLibraryList {
   luts: LutEntry[];
   errors: LutError[];
+}
+
+/** Output format for develop export (RP-1). Matches Rust serde tag="kind", rename_all="snake_case". */
+export type OutputFormat =
+  | { kind: 'jpeg'; quality: number }
+  | { kind: 'tiff' };
+
+/** Information about a built-in look (RP-1). */
+export interface BuiltinLookInfo {
+  id: string;
+  name: string;
+  maker: string;
+}
+
+/** One item in a develop plan. */
+export interface DevelopItem {
+  name: string;
+  look: string | null;
+  exposure_ev: number;
+}
+
+/** One planned develop action. */
+export interface DevelopAction {
+  source: string;
+  output: string;
+  look: string;
+  exposure_ev: number;
+}
+
+/** One item skipped during develop planning. */
+export interface DevelopSkip {
+  file: string;
+  reason: string;
+}
+
+/** Reviewed development plan summary (RP-1). */
+export interface DevelopPlan {
+  actions: DevelopAction[];
+  skipped: DevelopSkip[];
+  format: OutputFormat;
 }
 
 export const rollchrome = new RollchromeClient();

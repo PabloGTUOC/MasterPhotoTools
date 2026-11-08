@@ -969,3 +969,192 @@ fn a_crop_outside_the_sensor_is_refused_not_panicked() {
         other => panic!("expected Error::Refused, got {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// RP-1 Develop screen & preview tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_preview_fits_the_long_edge_and_keeps_the_aspect_ratio() {
+    let width = 240u32;
+    let height = 160u32; // 3:2 aspect ratio
+    let pixels = vec![2000u16; (width * height) as usize];
+    let dng = DngBuilder::new_bayer(width, height).build(&pixels);
+
+    let max_edge = 120u32;
+    let preview = rollchrome_core::media::develop::DevelopPreview::new(&dng, 0.0, max_edge)
+        .expect("develop preview");
+    let rendered = preview.render(None).expect("render preview");
+
+    assert_eq!(rendered.width, 120);
+    assert_eq!(rendered.height, 80);
+    assert_eq!(rendered.extension, "jpg");
+}
+
+#[test]
+fn a_preview_is_upright_for_a_rotated_raw() {
+    let width = 240u32;
+    let height = 160u32; // Landscape stored: 240x160
+    let pixels = vec![2000u16; (width * height) as usize];
+    let mut builder = DngBuilder::new_bayer(width, height);
+    builder.orientation = Some(6); // 90 degrees clockwise -> Upright portrait: 160x240
+    let dng = builder.build(&pixels);
+
+    let max_edge = 120u32;
+    let preview = rollchrome_core::media::develop::DevelopPreview::new(&dng, 0.0, max_edge)
+        .expect("develop preview");
+    let rendered = preview.render(None).expect("render preview");
+
+    // Upright should be portrait: width 80, height 120
+    assert_eq!(rendered.width, 80);
+    assert_eq!(rendered.height, 120);
+}
+
+#[test]
+fn a_preview_with_a_look_matches_the_full_render_within_two_levels() {
+    let width = 96u32;
+    let height = 64u32;
+    let pixels = vec![4000u16; (width * height) as usize];
+    let dng = DngBuilder::new_bayer(width, height).build(&pixels);
+
+    let look = rollchrome_core::media::looks::builtin::builtin_look("fujifilm-classic-chrome")
+        .expect("builtin look");
+
+    // Full render
+    let full_dev = develop(&dng, &DevelopOptions::default()).expect("develop");
+    let full_rendered =
+        render(&full_dev, Some(&look), OutputFormat::Jpeg { quality: 90 }).expect("full render");
+    let full_img = image::load_from_memory(&full_rendered.bytes)
+        .expect("decode full jpeg")
+        .to_rgb8();
+
+    // Preview render (reduced to max edge 48)
+    let preview = rollchrome_core::media::develop::DevelopPreview::new(&dng, 0.0, 48)
+        .expect("preview develop");
+    let prev_rendered = preview.render(Some(&look)).expect("preview render");
+    let prev_img = image::load_from_memory(&prev_rendered.bytes)
+        .expect("decode preview jpeg")
+        .to_rgb8();
+
+    // Sample center pixel of both uniform images
+    let full_px = full_img.get_pixel(full_img.width() / 2, full_img.height() / 2);
+    let prev_px = prev_img.get_pixel(prev_img.width() / 2, prev_img.height() / 2);
+
+    for c in 0..3 {
+        let diff = (full_px[c] as i32 - prev_px[c] as i32).abs();
+        assert!(
+            diff <= 2,
+            "Channel {c} diff {diff} > 2 levels: full={}, preview={}",
+            full_px[c],
+            prev_px[c]
+        );
+    }
+}
+
+#[test]
+fn the_builtin_look_list_has_twelve_entries_that_all_resolve() {
+    let list = rollchrome_core::media::looks::builtin::builtin_look_list();
+    assert_eq!(list.len(), 12, "expected exactly 12 built-in looks");
+
+    for info in &list {
+        assert!(
+            info.id.starts_with("builtin:"),
+            "id must start with 'builtin:': {}",
+            info.id
+        );
+        assert!(!info.name.is_empty());
+        assert!(!info.maker.is_empty());
+
+        let raw_id = info.id.strip_prefix("builtin:").unwrap();
+        let look = rollchrome_core::media::looks::builtin::builtin_look(raw_id);
+        assert!(
+            look.is_ok(),
+            "built-in look '{}' failed to resolve: {:?}",
+            info.id,
+            look.err()
+        );
+    }
+}
+
+#[test]
+fn a_folder_lists_only_its_raw_files_sorted() {
+    let temp = tempfile::tempdir().unwrap();
+    let folder = temp.path();
+
+    // Create a mix of RAW files, non-RAW files, and a directory
+    std::fs::write(folder.join("IMG_0003.CR2"), b"raw").unwrap();
+    std::fs::write(folder.join("DSCF0002.dng"), b"raw").unwrap();
+    std::fs::write(folder.join("DSCF0001.RAF"), b"raw").unwrap();
+    std::fs::write(folder.join("preview.jpg"), b"jpeg").unwrap();
+    std::fs::write(folder.join("notes.txt"), b"text").unwrap();
+    std::fs::create_dir(folder.join("subfolder")).unwrap();
+
+    let names = rollchrome_core::tools::develop_folder::raw_names(folder).expect("list raw names");
+
+    assert_eq!(
+        names,
+        vec![
+            "DSCF0001.RAF".to_string(),
+            "DSCF0002.dng".to_string(),
+            "IMG_0003.CR2".to_string(),
+        ]
+    );
+}
+
+struct TestResolveStore {
+    custom_look: Look,
+}
+
+impl rollchrome_core::tools::develop::DevelopStore for TestResolveStore {
+    fn existing_outputs(&self) -> Result<BTreeSet<String>, Error> {
+        Ok(BTreeSet::new())
+    }
+    fn read(&self, _name: &str) -> Result<Vec<u8>, Error> {
+        Ok(Vec::new())
+    }
+    fn look(&self, name: &str) -> Result<Look, Error> {
+        if name == "custom.cube" {
+            Ok(self.custom_look.clone())
+        } else {
+            Err(Error::Refused(format!("LUT '{name}' not found")))
+        }
+    }
+    fn create_new(&mut self, _output: &str, _bytes: &[u8]) -> Result<(), Error> {
+        Ok(())
+    }
+    fn carry_metadata(
+        &mut self,
+        _source: &str,
+        _output: &str,
+        _width: u32,
+        _height: u32,
+        _format: OutputFormat,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+#[test]
+fn resolve_look_finds_builtin_and_library_and_refuses_an_unknown_name() {
+    let custom_look = rollchrome_core::media::looks::builtin::builtin_look("ricoh-standard")
+        .expect("builtin look");
+    let store = TestResolveStore { custom_look };
+
+    // 1. Builtin look resolves directly
+    let builtin =
+        rollchrome_core::tools::develop::resolve_look("builtin:fujifilm-classic-chrome", &store);
+    assert!(builtin.is_ok(), "failed to resolve builtin look");
+
+    // 2. Library look resolves through store
+    let library = rollchrome_core::tools::develop::resolve_look("custom.cube", &store);
+    assert!(library.is_ok(), "failed to resolve library look");
+
+    // 3. Unknown builtin refused
+    let unknown_builtin =
+        rollchrome_core::tools::develop::resolve_look("builtin:nonexistent-look", &store);
+    assert!(unknown_builtin.is_err());
+
+    // 4. Unknown library look refused
+    let unknown_library = rollchrome_core::tools::develop::resolve_look("unknown.cube", &store);
+    assert!(unknown_library.is_err());
+}

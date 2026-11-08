@@ -40,6 +40,12 @@ pub struct ActivePreview {
     pub session: PreviewSession,
 }
 
+struct CachedDevelopPreview {
+    path: PathBuf,
+    exposure_bits: u32,
+    preview: Arc<rollchrome_core::media::develop::DevelopPreview>,
+}
+
 pub struct AppState {
     config: RwLock<Arc<Config>>,
     pub jobs: JobRunner,
@@ -51,6 +57,12 @@ pub struct AppState {
     /// closes and frees the first. The session is also closed when explicitly dismissed
     /// or when the window closes (via `on_window_event` in `main.rs` calling `close_any_preview`).
     active_preview: Mutex<Option<ActivePreview>>,
+    /// Cached develop preview (RP-1).
+    ///
+    /// Memory: at most one DevelopPreview is kept, keyed by resolved path and exposure.
+    /// Changing a look re-renders without re-developing the RAW.
+    develop_preview: Mutex<Option<CachedDevelopPreview>>,
+    develop_preview_runs: AtomicU64,
 }
 
 impl AppState {
@@ -63,6 +75,8 @@ impl AppState {
             config: RwLock::new(Arc::new(config)),
             jobs: JobRunner::new(ledger, sink),
             active_preview: Mutex::new(None),
+            develop_preview: Mutex::new(None),
+            develop_preview_runs: AtomicU64::new(0),
         }
     }
 
@@ -181,5 +195,50 @@ impl AppState {
             ));
         }
         active.session.mask_coverage(recipe, mask_id, stage)
+    }
+
+    /// Number of actual RAW developments performed for develop preview (RP-1).
+    pub fn develop_preview_runs(&self) -> u64 {
+        self.develop_preview_runs.load(Ordering::SeqCst)
+    }
+
+    /// Returns a cached DevelopPreview or creates and caches one (RP-1).
+    ///
+    /// The lock is NOT held during the slow RAW development.
+    pub fn get_or_create_develop_preview(
+        &self,
+        path: &std::path::Path,
+        exposure_ev: f32,
+    ) -> Result<Arc<rollchrome_core::media::develop::DevelopPreview>, Error> {
+        let exp_bits = exposure_ev.to_bits();
+        // 1. Check cache with lock held briefly
+        {
+            let slot = self.develop_preview.lock().unwrap();
+            if let Some(cached) = slot.as_ref() {
+                if cached.path == path && cached.exposure_bits == exp_bits {
+                    return Ok(cached.preview.clone());
+                }
+            }
+        }
+
+        // 2. Lock is dropped. Develop RAW without holding the lock!
+        let raw = std::fs::read(path).map_err(Error::Io)?;
+        self.develop_preview_runs.fetch_add(1, Ordering::SeqCst);
+        let preview = Arc::new(rollchrome_core::media::develop::DevelopPreview::new(
+            &raw,
+            exposure_ev,
+            rollchrome_core::media::develop::PREVIEW_MAX_EDGE,
+        )?);
+
+        // 3. Re-acquire lock and store the single cached preview
+        {
+            let mut slot = self.develop_preview.lock().unwrap();
+            *slot = Some(CachedDevelopPreview {
+                path: path.to_path_buf(),
+                exposure_bits: exp_bits,
+                preview: preview.clone(),
+            });
+        }
+        Ok(preview)
     }
 }

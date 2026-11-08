@@ -1,6 +1,6 @@
 # Rollchrome towards a Lightroom replacement — plan
 
-> **Status (2026-11-08):** planned; RP-1 briefed. Steps have stable ids (`RP-4`), each built from a
+> **Status (2026-11-08):** RP-1 implemented (three tabs, Develop screen). Steps have stable ids (`RP-4`), each built from a
 > brief in [`docs/briefs/`](../briefs/).
 
 **The owner's goal is to stop paying for a Lightroom subscription.** The list comes from comparing

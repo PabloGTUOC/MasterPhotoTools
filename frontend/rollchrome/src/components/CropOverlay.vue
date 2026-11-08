@@ -106,7 +106,9 @@ const activeDrag = ref<{
 function startDrag(e: PointerEvent, type: HandleType) {
   e.preventDefault();
   e.stopPropagation();
-  (e.currentTarget as Element)?.setPointerCapture?.(e.pointerId);
+  try {
+    (e.currentTarget as Element)?.setPointerCapture?.(e.pointerId);
+  } catch {}
 
   activeDrag.value = {
     type,
@@ -114,6 +116,9 @@ function startDrag(e: PointerEvent, type: HandleType) {
     startY: e.clientY,
     initialCrop: { ...crop.value },
   };
+  window.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+  window.addEventListener('pointercancel', onPointerUp);
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -205,8 +210,13 @@ function onPointerMove(e: PointerEvent) {
 
 function onPointerUp(e: PointerEvent) {
   if (activeDrag.value) {
-    (e.currentTarget as Element)?.releasePointerCapture?.(e.pointerId);
+    try {
+      (e.currentTarget as Element)?.releasePointerCapture?.(e.pointerId);
+    } catch {}
     activeDrag.value = null;
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', onPointerUp);
   }
 }
 

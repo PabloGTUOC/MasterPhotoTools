@@ -4,7 +4,7 @@
  * Runs against the Edit harness with devicePixelRatio = 2,
  * stub 6000x4000 source, and 2560x1707 settle proxy.
  *
- * Asserts all 13 requirements:
+ * Asserts all 18 requirements:
  * 1. On opening, zoom is fit and no Full is requested.
  * 2. Cmd-1: the canvas's CSS width is 3000 ± 1, and Full is requested exactly once.
  * 3. At a zoom the settle proxy can serve, only Settle is requested.
@@ -18,6 +18,11 @@
  * 11. Split: dragging the divider to 30% gives clip-path at 30% ± 1.
  * 12. Entering crop mode turns compare off and zoom to fit.
  * 13. Every new control is at least 40 px. Screenshots of zoomed, side-by-side and split go to layout-proof/.
+ * 14. Orientation 6, no geometry: at 100% the visible canvas is 2000 × 3000 ± 1 and Full is requested.
+ * 15. Orientation 6 with a geometry present, and orientation 1 with rotate: 90: at 100% the visible canvas is 2000 × 3000 ± 1.
+ * 16. A 40% crop at 100% requests Full, and the visible canvas is 40% of the full width ± 1.
+ * 17. For the orientation 6 case, panning past each edge leaves no gap, measured from the visible canvas's box.
+ * 18. With a brush active, a double-click changes neither zoom nor pan.
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -648,6 +653,316 @@ try {
   }
   console.log(`  Control touch target audit: ${controlSizeCheck.length} violations`);
 
+  // Helper to blur all active elements so keyboard shortcuts are never suppressed
+  const blurAll = async () => {
+    await page.evaluate(() => {
+      if (document.activeElement && document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+      window.getSelection()?.removeAllRanges();
+    });
+  };
+
+  // 14. Orientation 6, no geometry: at 100% the visible canvas is 2000 × 3000 ± 1 and Full is requested.
+  console.log('Asserting 14: Orientation 6, no geometry: at 100% visible canvas is 2000 × 3000 ± 1 and Full is requested...');
+  await page.evaluate(() => {
+    window.__STUB__.orientation = 6;
+    window.__STUB__.renders = [];
+  });
+  await pathInput.fill('/Volumes/Photos/orient6.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(200);
+  await blurAll();
+
+  // Clear renders to track 100% zoom request
+  await page.evaluate(() => {
+    window.__STUB__.renders = [];
+  });
+
+  // Zoom to 100% (Cmd-1)
+  await page.keyboard.press('Meta+1');
+  await page.waitForTimeout(200);
+
+  const orient6Check = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas[data-testid="edit-canvas"]');
+    const renders = window.__STUB__.renders;
+    const fullRenders = renders.filter((r) => r.stage === 'Full');
+    const rect = canvas ? canvas.getBoundingClientRect() : null;
+    return {
+      rect: rect ? { width: Math.round(rect.width), height: Math.round(rect.height) } : null,
+      fullCount: fullRenders.length,
+    };
+  });
+
+  if (!orient6Check.rect || Math.abs(orient6Check.rect.width - 2000) > 1 || Math.abs(orient6Check.rect.height - 3000) > 1) {
+    failures.push(`Requirement 14 failed: orientation 6 visible canvas was ${orient6Check.rect?.width}x${orient6Check.rect?.height} (expected 2000x3000 ± 1)`);
+  }
+  if (orient6Check.fullCount < 1) {
+    failures.push(`Requirement 14 failed: Full was not requested at 100% for orientation 6 (count=${orient6Check.fullCount})`);
+  }
+  console.log(`  Orientation 6 (no geom): canvas = ${orient6Check.rect?.width}x${orient6Check.rect?.height}, Full count = ${orient6Check.fullCount}`);
+
+  // 15. Orientation 6 with a geometry present, and orientation 1 with rotate: 90: at 100% the visible canvas is 2000 × 3000 ± 1.
+  console.log('Asserting 15: Orientation 6 with geometry, and orientation 1 with rotate: 90: visible canvas is 2000 × 3000 ± 1...');
+  // (a) Orientation 6 with geometry present (straighten = 1.0)
+  const geomToggle15 = page.locator('button[data-testid="section-geometry-toggle"]');
+  if (!(await page.locator('input[data-testid="geometry-straighten-number"]').isVisible())) {
+    await geomToggle15.click();
+    await page.waitForTimeout(100);
+  }
+  const straightenInput = page.locator('input[data-testid="geometry-straighten-number"]');
+  await straightenInput.fill('1.0');
+  await straightenInput.press('Enter');
+  await page.waitForTimeout(200);
+  await blurAll();
+  await page.keyboard.press('Meta+1');
+  await page.waitForTimeout(200);
+
+  const orient6GeomCheck = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas[data-testid="edit-canvas"]');
+    const rect = canvas ? canvas.getBoundingClientRect() : null;
+    return rect ? { width: Math.round(rect.width), height: Math.round(rect.height) } : null;
+  });
+
+  if (!orient6GeomCheck || Math.abs(orient6GeomCheck.width - 2000) > 1 || Math.abs(orient6GeomCheck.height - 3000) > 1) {
+    failures.push(`Requirement 15 failed: orientation 6 with geometry was ${orient6GeomCheck?.width}x${orient6GeomCheck?.height} (expected 2000x3000 ± 1)`);
+  }
+
+  // (b) Orientation 1 with rotate: 90
+  await page.evaluate(() => {
+    window.__STUB__.orientation = 1;
+  });
+  await pathInput.fill('/Volumes/Photos/orient1_rot.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(200);
+  await blurAll();
+
+  // Click rotate CW (+90°)
+  if (!(await page.locator('button[data-testid="rotate-cw-btn"]').isVisible())) {
+    await geomToggle15.click();
+    await page.waitForTimeout(100);
+  }
+  await page.locator('button[data-testid="rotate-cw-btn"]').click();
+  await page.waitForTimeout(100);
+  await blurAll();
+  // Zoom to 100%
+  await page.keyboard.press('Meta+1');
+  await page.waitForTimeout(200);
+
+  const orient1RotCheck = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas[data-testid="edit-canvas"]');
+    const rect = canvas ? canvas.getBoundingClientRect() : null;
+    return rect ? { width: Math.round(rect.width), height: Math.round(rect.height) } : null;
+  });
+
+  if (!orient1RotCheck || Math.abs(orient1RotCheck.width - 2000) > 1 || Math.abs(orient1RotCheck.height - 3000) > 1) {
+    failures.push(`Requirement 15 failed: orientation 1 with rotate: 90 was ${orient1RotCheck?.width}x${orient1RotCheck?.height} (expected 2000x3000 ± 1)`);
+  }
+  console.log(`  Orientation 6 with geom: ${orient6GeomCheck?.width}x${orient6GeomCheck?.height}, Orientation 1 rotate 90: ${orient1RotCheck?.width}x${orient1RotCheck?.height}`);
+
+  // 16. A 40% crop at 100% requests Full, and the visible canvas is 40% of the full width ± 1.
+  console.log('Asserting 16: A 40% crop at 100% requests Full, and visible canvas is 40% of full width ± 1...');
+  // Open fresh orientation 1 image (6000x4000)
+  await page.evaluate(() => {
+    window.__STUB__.orientation = 1;
+  });
+  await pathInput.fill('/Volumes/Photos/crop_test.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(200);
+  await blurAll();
+
+  // Enter crop mode
+  if (!(await page.locator('button[data-testid="crop-mode-toggle-btn"]').isVisible())) {
+    await geomToggle15.click();
+    await page.waitForTimeout(100);
+  }
+  await page.locator('button[data-testid="crop-mode-toggle-btn"]').click();
+  await page.waitForTimeout(100);
+
+  // Drag se handle to make 40% crop (0.4 width, 0.4 height)
+  await page.evaluate(() => {
+    const se = document.querySelector('[data-test="crop-handle-se"]');
+    const stage = document.querySelector('.canvas-viewport__stage');
+    if (!se || !stage) return;
+    const stageRect = stage.getBoundingClientRect();
+    const startX = stageRect.left + stageRect.width;
+    const startY = stageRect.top + stageRect.height;
+    const targetX = stageRect.left + stageRect.width * 0.4;
+    const targetY = stageRect.top + stageRect.height * 0.4;
+
+    se.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: startY, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: targetX, clientY: targetY, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: targetX, clientY: targetY, bubbles: true }));
+  });
+  await page.waitForTimeout(100);
+
+  // Exit crop mode (click Done Cropping)
+  await page.locator('button[data-testid="crop-mode-toggle-btn"]').click();
+  await page.waitForTimeout(200);
+  await blurAll();
+
+  // Clear renders to check if Full is requested on zoom 100%
+  await page.evaluate(() => {
+    window.__STUB__.renders = [];
+  });
+
+  // Zoom to 100%
+  await page.keyboard.press('Meta+1');
+  await page.waitForTimeout(200);
+
+  const cropCheck = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas[data-testid="edit-canvas"]');
+    const rect = canvas ? canvas.getBoundingClientRect() : null;
+    const fullRenders = window.__STUB__.renders.filter((r) => r.stage === 'Full');
+    return {
+      width: rect ? Math.round(rect.width) : null,
+      fullCount: fullRenders.length,
+    };
+  });
+
+  // Full width is 6000 / 2 = 3000. 40% of 3000 is 1200.
+  if (cropCheck.width === null || Math.abs(cropCheck.width - 1200) > 1) {
+    failures.push(`Requirement 16 failed: visible canvas width was ${cropCheck.width} (expected 1200 ± 1, 40% of 3000)`);
+  }
+  if (cropCheck.fullCount < 1) {
+    failures.push(`Requirement 16 failed: Full was not requested at 100% for 40% crop (count=${cropCheck.fullCount})`);
+  }
+  console.log(`  40% crop at 100%: canvas width = ${cropCheck.width} (expected 1200 ± 1), Full count = ${cropCheck.fullCount}`);
+
+  // 17. For the orientation 6 case, panning past each edge leaves no gap, measured from the visible canvas's box.
+  console.log('Asserting 17: Orientation 6 panning past each edge leaves no gap, measured from visible canvas box...');
+  await page.evaluate(() => {
+    window.__STUB__.orientation = 6;
+  });
+  await pathInput.fill('/Volumes/Photos/orient6_pan.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(200);
+  await blurAll();
+
+  // Zoom to 100%
+  await page.keyboard.press('Meta+1');
+  await page.waitForTimeout(200);
+
+  const orient6PanCheck = await page.evaluate(async () => {
+    const container = document.querySelector('.canvas-viewport__container');
+    const canvas = document.querySelector('canvas[data-testid="edit-canvas"]');
+    if (!container || !canvas) return { error: 'elements missing' };
+
+    const cRect = container.getBoundingClientRect();
+
+    // 1. Pan far right (+3000px)
+    container.dispatchEvent(new PointerEvent('pointerdown', { clientX: 500, clientY: 500, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 3500, clientY: 500, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: 3500, clientY: 500, bubbles: true }));
+    const leftGap = canvas.getBoundingClientRect().left - cRect.left;
+
+    // 2. Pan far left (-5000px)
+    container.dispatchEvent(new PointerEvent('pointerdown', { clientX: 500, clientY: 500, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: -4500, clientY: 500, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: -4500, clientY: 500, bubbles: true }));
+    const rightGap = cRect.right - canvas.getBoundingClientRect().right;
+
+    // 3. Pan far down (+3000px)
+    container.dispatchEvent(new PointerEvent('pointerdown', { clientX: 500, clientY: 500, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 500, clientY: 3500, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: 500, clientY: 3500, bubbles: true }));
+    const topGap = canvas.getBoundingClientRect().top - cRect.top;
+
+    // 4. Pan far up (-5000px)
+    container.dispatchEvent(new PointerEvent('pointerdown', { clientX: 500, clientY: 500, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 500, clientY: -4500, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: 500, clientY: -4500, bubbles: true }));
+    const bottomGap = cRect.bottom - canvas.getBoundingClientRect().bottom;
+
+    return {
+      leftGap,
+      rightGap,
+      topGap,
+      bottomGap,
+    };
+  });
+
+  if (orient6PanCheck.leftGap > 1) {
+    failures.push(`Requirement 17 failed: left gap after panning right was ${orient6PanCheck.leftGap} px (expected <= 1)`);
+  }
+  if (orient6PanCheck.rightGap > 1) {
+    failures.push(`Requirement 17 failed: right gap after panning left was ${orient6PanCheck.rightGap} px (expected <= 1)`);
+  }
+  if (orient6PanCheck.topGap > 1) {
+    failures.push(`Requirement 17 failed: top gap after panning down was ${orient6PanCheck.topGap} px (expected <= 1)`);
+  }
+  if (orient6PanCheck.bottomGap > 1) {
+    failures.push(`Requirement 17 failed: bottom gap after panning up was ${orient6PanCheck.bottomGap} px (expected <= 1)`);
+  }
+  console.log(`  Orientation 6 pan gaps: left = ${orient6PanCheck.leftGap.toFixed(1)} px, right = ${orient6PanCheck.rightGap.toFixed(1)} px, top = ${orient6PanCheck.topGap.toFixed(1)} px, bottom = ${orient6PanCheck.bottomGap.toFixed(1)} px`);
+
+  // 18. With a brush active, a double-click changes neither zoom nor pan.
+  console.log('Asserting 18: With brush active, double-click changes neither zoom nor pan...');
+  // Open fresh orientation 1 image at fit
+  await page.evaluate(() => {
+    window.__STUB__.orientation = 1;
+  });
+  await pathInput.fill('/Volumes/Photos/brush_dblclick.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(200);
+  await blurAll();
+
+  // Add brush mask and make paint active
+  if (!(await page.locator('[data-testid="add-brush-mask"]').isVisible())) {
+    await page.locator('button[data-testid="section-masks-toggle"]').click();
+    await page.waitForTimeout(100);
+  }
+  await page.click('button[data-testid="add-brush-mask"]');
+  await page.waitForTimeout(150);
+
+  // Ensure brush is active (button[data-testid="brush-paint"] has aria-pressed="true")
+  const isBrushActive = await page.getAttribute('button[data-testid="brush-paint"]', 'aria-pressed');
+  if (isBrushActive !== 'true') {
+    await page.click('button[data-testid="brush-paint"]');
+    await page.waitForTimeout(50);
+  }
+
+  const beforeDblClick = await page.evaluate(() => {
+    const readout = document.querySelector('.canvas-viewport__zoom-readout')?.textContent?.trim();
+    const stage = document.querySelector('.canvas-viewport__stage');
+    const sRect = stage ? stage.getBoundingClientRect() : null;
+    return {
+      zoomText: readout,
+      left: sRect?.left,
+      top: sRect?.top,
+      width: sRect?.width,
+      height: sRect?.height,
+    };
+  });
+
+  // Double-click on the stage with brush active
+  await page.evaluate(() => {
+    const stage = document.querySelector('.canvas-viewport__stage');
+    stage?.dispatchEvent(new MouseEvent('dblclick', { clientX: 450, clientY: 450, bubbles: true }));
+  });
+  await page.waitForTimeout(150);
+
+  const afterDblClick = await page.evaluate(() => {
+    const readout = document.querySelector('.canvas-viewport__zoom-readout')?.textContent?.trim();
+    const stage = document.querySelector('.canvas-viewport__stage');
+    const sRect = stage ? stage.getBoundingClientRect() : null;
+    return {
+      zoomText: readout,
+      left: sRect?.left,
+      top: sRect?.top,
+      width: sRect?.width,
+      height: sRect?.height,
+    };
+  });
+
+  if (afterDblClick.zoomText !== beforeDblClick.zoomText || afterDblClick.width !== beforeDblClick.width || afterDblClick.height !== beforeDblClick.height) {
+    failures.push(`Requirement 18 failed: double-click with brush active changed zoom (${beforeDblClick.zoomText} -> ${afterDblClick.zoomText})`);
+  }
+  if (afterDblClick.left !== beforeDblClick.left || afterDblClick.top !== beforeDblClick.top) {
+    failures.push(`Requirement 18 failed: double-click with brush active changed pan position`);
+  }
+  console.log(`  With brush active: zoom stayed "${afterDblClick.zoomText}", pan position stayed (${afterDblClick.left}, ${afterDblClick.top})`);
+
 } catch (err) {
   failures.push(`Unexpected error in section "${currentSection}": ${err.message}\n${err.stack}`);
 } finally {
@@ -663,5 +978,5 @@ if (failures.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log('PASSED all 13 viewing requirements successfully.');
+  console.log('PASSED all 18 viewing requirements successfully.');
 }

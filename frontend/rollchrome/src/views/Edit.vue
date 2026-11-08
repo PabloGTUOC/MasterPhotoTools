@@ -238,6 +238,7 @@ const splitDivider = ref(50);
 const loadingFull = ref(false);
 const spaceHeld = ref(false);
 const isPanning = ref(false);
+const paintedStage = ref<PreviewStage>('Settle');
 const beforeCanvasRef = ref<HTMLCanvasElement | null>(null);
 const sideBySideBeforeCanvasRef = ref<HTMLCanvasElement | null>(null);
 
@@ -288,81 +289,78 @@ const canvasTransform = computed(() => {
   }
 });
 
-// Sizing so rotated canvas fits inside viewport container without overflowing or clipping
-const displayedDimensions = computed(() => {
+// Visual dimensions at 100% zoom (1 source px per device px, upright)
+const visual100Dimensions = computed(() => {
+  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+  const fw = frameWidth.value || 1280;
+  const fh = frameHeight.value || 854;
+
+  const fullLongEdge = Math.max(fullWidth.value, fullHeight.value) || 6000;
+  let proxyLongEdge: number;
+  if (paintedStage.value === 'Full') {
+    proxyLongEdge = fullLongEdge;
+  } else if (paintedStage.value === 'Drag') {
+    proxyLongEdge = 1280;
+  } else {
+    proxyLongEdge = Math.max(settleWidth.value, settleHeight.value) || 2560;
+  }
+
+  const multiplier = paintedStage.value === 'Full' ? 1.0 : fullLongEdge / proxyLongEdge;
+  const fullContentW = fw * multiplier;
+  const fullContentH = fh * multiplier;
+
+  if (swapsAxes.value) {
+    return {
+      width: Math.round(fullContentH / dpr),
+      height: Math.round(fullContentW / dpr),
+    };
+  }
+  return {
+    width: Math.round(fullContentW / dpr),
+    height: Math.round(fullContentH / dpr),
+  };
+});
+
+// Sizing so upright visual photograph fits inside viewport container without overflowing or clipping
+const visualFitDimensions = computed(() => {
   const cw = compareMode.value === 'side-by-side'
     ? Math.floor(containerWidth.value / 2)
     : containerWidth.value;
   const ch = containerHeight.value;
-  const fw = frameWidth.value || 1280;
-  const fh = frameHeight.value || 854;
 
-  if (cw <= 0 || ch <= 0) {
-    return { width: fw, height: fh };
+  const vis100W = visual100Dimensions.value.width;
+  const vis100H = visual100Dimensions.value.height;
+
+  if (cw <= 0 || ch <= 0 || vis100W <= 0 || vis100H <= 0) {
+    return { width: vis100W || 1280, height: vis100H || 854 };
   }
 
-  if (swapsAxes.value) {
-    const aVis = fh / fw;
-    let vW: number;
-    let vH: number;
-    if (cw / ch > aVis) {
-      vH = ch;
-      vW = ch * aVis;
-    } else {
-      vW = cw;
-      vH = cw / aVis;
-    }
-    return { width: Math.round(vH), height: Math.round(vW) };
+  const aVis = vis100W / vis100H;
+  let vW: number;
+  let vH: number;
+  if (cw / ch > aVis) {
+    vH = ch;
+    vW = ch * aVis;
   } else {
-    const a = fw / fh;
-    let lW: number;
-    let lH: number;
-    if (cw / ch > a) {
-      lH = ch;
-      lW = ch * a;
-    } else {
-      lW = cw;
-      lH = cw / a;
-    }
-    return { width: Math.round(lW), height: Math.round(lH) };
+    vW = cw;
+    vH = cw / aVis;
   }
-});
-
-// Dimensions at 100% zoom (1 source px per device px, scaled by crop if active)
-const zoom100Dimensions = computed(() => {
-  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-  const fw = fullWidth.value || 6000;
-  const fh = fullHeight.value || 4000;
-  const crop = recipe.value.geometry?.crop;
-  const cropW = crop ? crop.width : 1.0;
-  const cropH = crop ? crop.height : 1.0;
-
-  const w = (fw * cropW) / dpr;
-  const h = (fh * cropH) / dpr;
-
-  if (swapsAxes.value) {
-    return {
-      width: Math.round(h),
-      height: Math.round(w),
-    };
-  }
-  return {
-    width: Math.round(w),
-    height: Math.round(h),
-  };
+  return { width: Math.round(vW), height: Math.round(vH) };
 });
 
 // Stage dimensions multiplied directly (no CSS scale) so 40px overlay handles remain 40px
 const stageDimensions = computed(() => {
   if (zoom.value === 'fit') {
-    return displayedDimensions.value;
+    return visualFitDimensions.value;
   }
   const z = typeof zoom.value === 'number' ? zoom.value : 1.0;
   return {
-    width: Math.round(zoom100Dimensions.value.width * z),
-    height: Math.round(zoom100Dimensions.value.height * z),
+    width: Math.round(visual100Dimensions.value.width * z),
+    height: Math.round(visual100Dimensions.value.height * z),
   };
 });
+
+const displayedDimensions = stageDimensions;
 
 function clampPan(
   x: number,
@@ -415,21 +413,38 @@ const stageStyle = computed(() => {
 });
 
 const canvasStyle = computed(() => {
-  const { width, height } = stageDimensions.value;
+  const { width: sw, height: sh } = stageDimensions.value;
+  if (swapsAxes.value) {
+    const left = (sw - sh) / 2;
+    const top = (sh - sw) / 2;
+    return {
+      width: `${sh}px`,
+      height: `${sw}px`,
+      position: 'absolute' as const,
+      left: `${left}px`,
+      top: `${top}px`,
+      transform: canvasTransform.value,
+      transformOrigin: 'center center',
+      zIndex: 'var(--z-canvas)',
+    };
+  }
   return {
-    width: `${width}px`,
-    height: `${height}px`,
+    width: `${sw}px`,
+    height: `${sh}px`,
+    position: 'absolute' as const,
+    left: '0px',
+    top: '0px',
     transform: canvasTransform.value,
-    position: 'relative' as const,
+    transformOrigin: 'center center',
     zIndex: 'var(--z-canvas)',
   };
 });
 
 const zoomReadoutText = computed(() => {
   if (zoom.value === 'fit') {
-    const sw = zoom100Dimensions.value.width;
+    const sw = visual100Dimensions.value.width;
     if (sw <= 0) return 'Fit';
-    const pct = Math.round((displayedDimensions.value.width / sw) * 100);
+    const pct = Math.round((stageDimensions.value.width / sw) * 100);
     return `${pct}%`;
   }
   return `${Math.round((zoom.value as number) * 100)}%`;
@@ -531,6 +546,7 @@ function paintPixels(
     deliveredOrientation.value = frame.orientation;
   }
 
+  paintedStage.value = stage;
   frameWidth.value = frame.width;
   frameHeight.value = frame.height;
 
@@ -594,9 +610,31 @@ function settleStageForCurrentZoom(): PreviewStage {
   const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
   const neededW = stageDimensions.value.width * dpr;
   const neededH = stageDimensions.value.height * dpr;
-  const sw = swapsAxes.value ? (settleHeight.value || 1708) : (settleWidth.value || 2560);
-  const sh = swapsAxes.value ? (settleWidth.value || 2560) : (settleHeight.value || 1708);
-  if (neededW > sw || neededH > sh) {
+
+  const fw = frameWidth.value || 1280;
+  const fh = frameHeight.value || 854;
+  const fullLongEdge = Math.max(fullWidth.value, fullHeight.value) || 6000;
+  let proxyLongEdge: number;
+  if (paintedStage.value === 'Full') {
+    proxyLongEdge = fullLongEdge;
+  } else if (paintedStage.value === 'Drag') {
+    proxyLongEdge = 1280;
+  } else {
+    proxyLongEdge = Math.max(settleWidth.value, settleHeight.value) || 2560;
+  }
+  const multiplier = paintedStage.value === 'Full' ? 1.0 : fullLongEdge / proxyLongEdge;
+  const fullContentW = fw * multiplier;
+  const fullContentH = fh * multiplier;
+
+  const settleLongEdge = Math.max(settleWidth.value, settleHeight.value) || 2560;
+  const settleScale = settleLongEdge / fullLongEdge;
+  const settleContentW = fullContentW * settleScale;
+  const settleContentH = fullContentH * settleScale;
+
+  const visualSettleW = swapsAxes.value ? settleContentH : settleContentW;
+  const visualSettleH = swapsAxes.value ? settleContentW : settleContentH;
+
+  if (neededW > visualSettleW || neededH > visualSettleH) {
     return 'Full';
   }
   return 'Settle';
@@ -732,8 +770,8 @@ function setZoom(newZoom: 'fit' | number) {
       ? Math.floor(containerWidth.value / 2)
       : containerWidth.value;
     const ch = containerHeight.value;
-    const sw = Math.round(zoom100Dimensions.value.width * zoom.value);
-    const sh = Math.round(zoom100Dimensions.value.height * zoom.value);
+    const sw = Math.round(visual100Dimensions.value.width * zoom.value);
+    const sh = Math.round(visual100Dimensions.value.height * zoom.value);
     pan.value = clampPan(Math.round((cw - sw) / 2), Math.round((ch - sh) / 2), sw, sh, cw, ch);
   }
   checkStageOnZoomChange();
@@ -741,7 +779,7 @@ function setZoom(newZoom: 'fit' | number) {
 
 function stepZoom(direction: 1 | -1) {
   if (isCropMode.value) return;
-  const fitScale = displayedDimensions.value.width / zoom100Dimensions.value.width;
+  const fitScale = visualFitDimensions.value.width / visual100Dimensions.value.width;
   const currentScale = typeof zoom.value === 'number' ? zoom.value : fitScale;
 
   if (direction === 1) {
@@ -766,8 +804,8 @@ function zoomAboutPoint(targetScale: number, cx: number, cy: number) {
   const u = (cx - oldPan.x) / oldW;
   const v = (cy - oldPan.y) / oldH;
 
-  const newW = Math.round(zoom100Dimensions.value.width * targetScale);
-  const newH = Math.round(zoom100Dimensions.value.height * targetScale);
+  const newW = Math.round(visual100Dimensions.value.width * targetScale);
+  const newH = Math.round(visual100Dimensions.value.height * targetScale);
 
   const desiredPanX = cx - u * newW;
   const desiredPanY = cy - v * newH;
@@ -881,7 +919,7 @@ function onViewportWheel(e: WheelEvent) {
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
 
-    const fitScale = displayedDimensions.value.width / zoom100Dimensions.value.width;
+    const fitScale = visualFitDimensions.value.width / visual100Dimensions.value.width;
     const curScale = typeof zoom.value === 'number' ? zoom.value : fitScale;
     const factor = Math.exp(-e.deltaY * 0.005);
     const targetScale = Math.max(fitScale, Math.min(4.0, curScale * factor));
@@ -908,7 +946,7 @@ function onViewportWheel(e: WheelEvent) {
 }
 
 function onStageDoubleClick(e: MouseEvent) {
-  if (isCropMode.value) return;
+  if (isCropMode.value || selectedMaskId.value || painting.value) return;
   if (zoom.value === 'fit') {
     const container = viewportContainerRef.value;
     if (!container) {
@@ -2099,6 +2137,10 @@ function calculatePresetCrop(preset: string): NormalizedCrop {
 
 function toggleCropMode() {
   if (isCropMode.value) {
+    if (cropModel.value) {
+      const g = ensureGeometry();
+      g.crop = { ...cropModel.value };
+    }
     isCropMode.value = false;
     requestRender('Settle');
     scheduleSave();

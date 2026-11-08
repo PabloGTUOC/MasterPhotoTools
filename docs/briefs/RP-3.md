@@ -603,3 +603,403 @@ The Rust is right. Zoom is right only for an upright, uncropped photograph, and 
 3. **The timing cannot be right.** The Report gives 0.073 s for a first `Full` *including* decoding that 24 MP TIFF, but `decode_image` on the same file measured 0.70 s in the RP-2 review. Measure through `PreviewSession::open(path)`, the path the application takes, not a session built from a buffer, and give the first `Full` and a later one with a LUT.
 
 Counts stay at 1108 / 278 / 20. `check:viewing` now asserts eighteen. Write **Report round 2** as new text, deleting nothing.
+
+---
+
+## Report round 2
+
+### Review changes implemented
+
+1. **Visual sizing and stage geometry derived from painted frame (`Edit.vue`)**:
+   - Replaced `zoom100Dimensions` with `visual100Dimensions` computed from the frame actually painted (`frameWidth`, `frameHeight`) and proxy scale multiplier (`fullLongEdge / proxyLongEdge`, 1.0 for `Full`). If `swapsAxes` is true, width and height are swapped to reflect the visual upright size seen by the viewer.
+   - Sized the `stage` directly to visual dimensions (`visualFitDimensions` for fit, `visual100Dimensions * z` for zoom), ensuring pan clamping, centering, and zoom-about-point operate on the exact upright bounds visible on screen.
+   - When `swapsAxes` is true, the canvas element's unswapped CSS size (`width: stageHeight, height: stageWidth`) is placed with centering offsets (`left: (stageWidth - stageHeight)/2, top: (stageHeight - stageWidth)/2`), aligning its rotated visual bounding box with the stage and preventing gaps when panning to edges.
+   - `settleStageForCurrentZoom` compares needed device pixels (`stageDimensions * dpr`) against `visualSettleW/H` (the frame's painted size scaled to settle proxy resolution), correctly requesting `Full` when a crop at 100% exceeds the settle resolution.
+   - Added checks 14–17 to `check-viewing.mjs` verifying visible canvas bounding box measurements and full stage requests across EXIF orientations and crops.
+
+2. **Double-click zoom guard (`Edit.vue`)**:
+   - Updated `onStageDoubleClick` to guard against active mask editing or painting (`isCropMode.value || selectedMaskId.value || painting.value`), preventing subsequent brush dabs from toggling zoom.
+   - Added check 18 to `check-viewing.mjs` asserting double-click with active brush alters neither zoom nor pan position.
+
+3. **Real RAW timing measurement through `PreviewSession::open(path)`**:
+   - Developed `Target.RAF` from `~/Desktop/Projects/rollchrome-chart-sources/styles_source` into a full 24 MP (6000×4000) 16-bit ProPhoto TIFF using `rollchrome_core::media::develop`.
+   - Measured timing through `PreviewSession::open(&path)` in release mode (`--release`) across 5 runs, measuring first `Full` render (which executes `ensure_full_linear()` lazy decoding) and subsequent `Full` render with 33³ LUT (`fujifilm-classic-chrome.cube`).
+   - Results (5 runs):
+     - First `Full` render: 0.746 s, 0.744 s, 0.761 s, 0.768 s, 0.768 s (median: **0.761 s**).
+       - Full decodes count: 1 (`session.full_decodes() == 1`).
+     - Subsequent `Full` render with LUT: 0.121 s, 0.122 s, 0.134 s, 0.135 s, 0.136 s (median: **0.134 s**).
+       - Full decodes count: 1 (no additional decodes).
+
+---
+
+### Gate outputs
+
+#### 1. `cargo fmt --all --check`
+```
+(clean, no output)
+```
+
+#### 2. `cargo clippy --workspace --all-targets -- -D warnings`
+```
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.39s
+```
+
+#### 3. `cargo build --workspace`
+```
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.33s
+```
+
+#### 4. `cargo test --workspace`
+```
+test result: ok. 518 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.49s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.48s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.50s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 149 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.35s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.28s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Total: 1108 passed; 0 failed
+```
+
+#### 5. `cargo test -p phototools-core`
+```
+test result: ok. 518 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.49s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.48s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Total: 713 passed; 0 failed
+```
+
+#### 6. `cargo test -p rollchrome-core`
+```
+test result: ok. 149 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.86s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.28s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Total: 278 passed; 0 failed
+```
+
+#### 7. `cargo test -p phototools-desktop`
+```
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.50s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Total: 26 passed; 0 failed
+```
+
+#### 8. `cargo test -p rollchrome-desktop`
+```
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Total: 20 passed; 0 failed
+```
+
+#### 9. `npm --prefix frontend/shared run build`
+```
+> @phototools/shared@1.0.0 build
+> tsc
+```
+
+#### 10. `npm --prefix frontend/rollchrome run typecheck`
+```
+> @phototools/rollchrome@0.1.0 typecheck
+> vue-tsc --build --force
+```
+
+#### 11. `npm --prefix frontend/rollchrome run build`
+```
+> @phototools/rollchrome@0.1.0 build
+> vue-tsc --build && vite build
+
+vite v6.4.3 building for production...
+transforming (1) src/main.tstransforming (5) node_modules/vue-router/dist/vue-router.mjstransforming (23) src/api.ts✓ 83 modules transformed.
+rendering chunks (1)...computing gzip size (0)...computing gzip size (1)...computing gzip size (2)...computing gzip size (3)...dist/index.html                                   0.45 kB │ gzip:  0.29 kB
+dist/assets/vt323-400-EhPR265H.woff2              7.19 kB
+dist/assets/share-tech-mono-400-DZ_B2YQ6.woff2    7.41 kB
+dist/assets/ibm-plex-mono-400-BJoXLJYV.woff2     10.05 kB
+dist/assets/ibm-plex-mono-500-C820gu2e.woff2     10.06 kB
+dist/assets/ibm-plex-mono-600-DpGnXj3s.woff2     10.12 kB
+dist/assets/orbitron-400-C4ZOLPH_.woff2          11.77 kB
+dist/assets/index-iqNK4B4K.css                   56.54 kB │ gzip:  9.46 kB
+dist/assets/index-DKFLNLAL.js                   242.53 kB │ gzip: 80.72 kB
+✓ built in 843ms
+```
+
+#### 12. `npm --prefix frontend/rollchrome run check:transport`
+```
+> @phototools/rollchrome@0.1.0 check:transport
+> node scripts/check-transport.mjs
+
+transport check: 23 files, no view reaches the network directly and no HTTP client is imported
+```
+
+#### 13. `npm --prefix frontend/rollchrome run check:edit`
+```
+> @phototools/rollchrome@0.1.0 check:edit
+> node scripts/check-edit.mjs
+
+Starting Vite harness server for Edit view...
+Harness server listening at http://[::1]:5173
+Loading test photograph into Edit view...
+Benchmarking drag responsiveness (720p proxy, target p95 <= 50 ms)...
+  Drag frames: min=8.3 ms, median=9.6 ms, p95=10.9 ms (budget <= 50 ms)
+Benchmarking settle responsiveness (1440p proxy, target p95 <= 120 ms)...
+  Settle frames: min=36.4 ms, median=38.8 ms, p95=41.1 ms (budget <= 120 ms)
+Asserting latest-wins rendering discipline (100 fast inputs with 30 ms stub delay)...
+  Latest-wins: issued 2 renders for 100 fast inputs (pixel1=208)
+Asserting canvas stacking context and z-index isolation...
+  Stacking check passed: 0 offending ancestors, canvas z-index = 60
+Asserting interactive controls meet touch target budget (>= 40px)...
+  All interactive controls clear 40px touch target.
+Asserting "\" key behavior (ignored while input focused, active when blurred)...
+Asserting double-click label resets slider to 0.0 identity...
+  Double click reset exposure to 0.0.
+Asserting double-click on the slider bar resets to its default...
+  Double-clicking a slider bar resets it to its default (exposure 0, glow threshold 70) and settles.
+Asserting saved recipe reloading and unreadable sidecar safety (Item 5)...
+  Saved edits successfully reloaded: exp=1.5, temp=-20, hl=-30
+Asserting recipe v2 loading (whites, blacks, brightness, hue)...
+  Recipe v2 values successfully reloaded: whites=25, blacks=-35, brightness=20, hue=45
+Asserting collapsible section toggles and section reset...
+  Tone Curve section expanded successfully.
+  Tone Curve section collapsed successfully.
+  Section reset successfully reset all Basic controls to 0.
+Asserting Tone Curve editor (loaded v2 curves, channel pills, point editing, and reset)...
+  Loaded v2 recipe correctly displays 4 control points on Luma curve.
+  Channel switching verified across Red (3), Green (2), Blue (3) curves.
+  Point insertion via graph click successfully added control point (total 5).
+  Keyboard navigation: ArrowUp adjusted coordinate from Out: 128 to Out: 133
+  Point deletion via Delete key successfully restored point count to 4.
+  Tone Curve section reset successfully restored identity curve [(0,0), (1,1)].
+Asserting 8-band HSL panel (swatches, oklch backgrounds, slider values, markers, and resets)...
+  Found all 8 HSL swatches.
+  All HSL swatches satisfy >= 40px hit target.
+  All HSL swatches compute backgrounds via dynamic CSS oklch().
+  Modified indicators correctly present only on edited bands (Red, Blue).
+  Red band sliders correctly display loaded values: hue=15, sat=20, lum=-10
+  Blue band sliders correctly display loaded values: hue=-25, sat=40, lum=15
+  Per-band reset successfully reset Blue band to 0 and cleared modified dot.
+  Section reset successfully reset all HSL bands to identity.
+Asserting 3-way Colour Grading panel (wheels, tabs, oklch hues, readouts, dots, and resets)...
+  Found all 4 grading tabs.
+  All grading tabs satisfy >= 40px hit target.
+  Modified indicators correctly present on Shadows, Midtones, Highlights.
+  Shadows wheel correctly displays loaded values: hue=210°, sat=35%, lum=-10%
+  Grading range sliders correctly display loaded values: blending=60%, balance=-15
+  Highlights wheel correctly displays loaded values: hue=35°, sat=40%, lum=15%
+  Highlights wheel responded correctly to ArrowRight navigation (36°).
+  Per-wheel reset successfully reset Highlights wheel to 0 and cleared modified dot.
+  Section reset successfully reset all grading wheels to identity.
+Asserting Geometry panel (crop overlay, aspect select, straighten, rotation, flip, and resets)...
+  Geometry panel correctly displays loaded values: aspect=4:3, straighten=3.5°
+  Crop overlay correctly mounted and visible in crop mode.
+  Aspect preset 1:1 correctly produced square crop box (442x442).
+  Straighten slider successfully updated to 7.0°.
+  Orientation 6 in crop mode with no geometry has portrait canvas (854x1280) and CSS transform 'none'.
+  After leaving crop mode with no edits, canvas remains portrait (442.0x662.0), transform: none.
+  Orientation 6 with active crop correctly switches canvas CSS transform to 'none'.
+  Delivered dimensions for orientation 6 crop are upright cropped square (1708x1708).
+  Geometry reset successfully restored canvas CSS rotation (matrix(0, 1, -1, 0, 0, 0)).
+  Geometry section reset successfully cleared all geometry transforms to identity.
+Asserting Effects panel (loaded v2 vignette and grain, sliders, double-click reset, section reset)...
+  Loaded effects sliders correctly display loaded v2 values: vignette [-45, 40, 20, 65], grain [35, 40, 60].
+  Double-click reset on effects labels successfully restored default values (Amount=0, Midpoint=50, Size=25).
+  Effects section reset successfully reset all vignette and grain controls to default.
+Asserting Look panel (loaded v2 glow, halation, tone mapper, advisory banner, double-click reset, section reset)...
+  Loaded look controls correctly display loaded v2 values and plain-language filmic advisory banner.
+  Double-click reset on look labels successfully restored default values (Glow Amount=0, Threshold=70, Halation Radius=20).
+  Tone mapper Plain toggle correctly deactivated Filmic and removed advisory banner.
+  Look section reset successfully reset all glow, halation and tone mapper controls to identity.
+Asserting histogram and clipping warnings (ED-15)...
+  Histogram draws the frame on screen: luminance peaks at bin 128, the grey on the canvas.
+  Clipping warnings mark only clipped pixels, sit over the photograph without changing it, and issue no render.
+  Histogram stays pinned at the top of the panel scrolled 4728 px.
+Asserting presets, copy/paste of settings and Undo (ED-17)...
+  A preset applies the look, keeps the photograph's framing, and Undo restores the previous settings.
+  ⌘C/⌘V copy settings between photographs, keep the framing, save, and leave text fields alone.
+  Presets save, ask before replacing, rename and delete; an unreadable preset is reported.
+Asserting masks: add, shape on the canvas, adjust, overlay, follow the frame, undo (ED-20)...
+  Masks: added where they appear, shaped by mouse and keyboard, adjusted, shown, kept on the content, limited to four, undoable.
+Asserting the brush: paint, size keys, erase, refine a radial, undo a stroke (ED-21)...
+  Brush: paints thinned strokes at its size, [ ] resize, ⌥ erases, Esc stops, refines a radial, undoable.
+Asserting automatic masks: ask before downloading, find a sky and a subject, stop (ED-23)...
+  Automatic masks: asked before downloading, found, shown, stoppable, failures reported, refinable with the brush.
+Asserting a selected mask takes the panel, and Done or Esc give it back...
+  A selected mask takes the panel; its Exposure is its own; Done and Esc give the panel back.
+  Corrupted sidecar correctly reported error and disabled autosave.
+Asserting EXIF orientations 1-8 and rotated fit inside viewport (Item 8)...
+  Orientation 1: marked corner=top-left, portrait=false, fits inside container=true
+  Orientation 2: marked corner=top-right, portrait=false, fits inside container=true
+  Orientation 3: marked corner=bottom-right, portrait=false, fits inside container=true
+  Orientation 4: marked corner=bottom-left, portrait=false, fits inside container=true
+  Orientation 5: marked corner=top-left, portrait=true, fits inside container=true
+  Orientation 6: marked corner=top-right, portrait=true, fits inside container=true
+  Orientation 7: marked corner=bottom-right, portrait=true, fits inside container=true
+  Orientation 8: marked corner=bottom-left, portrait=true, fits inside container=true
+Visual proof screenshot saved to /Users/pablogtorres/Desktop/Projects/MasterPhotoTools/frontend/rollchrome/layout-proof/edit.png
+
+--- check:edit Summary ---
+PASSED all checks.
+```
+
+#### 14. `npm --prefix frontend/rollchrome run check:bulk-lut`
+```
+> @phototools/rollchrome@0.1.0 check:bulk-lut
+> node scripts/check-bulk-lut.mjs
+
+Starting Vite harness server for Bulk LUT view...
+Harness server listening at http://[::1]:5173
+Verifying initial locked state before dry run...
+Filling inputs and selecting LUT...
+Triggering dry run...
+Rendered 3 sample frame cards in preview strip.
+Stub metrics: maxConcurrentSessions=1, samplePreviewsRequested=3
+Testing sample preview failure handling in preview strip...
+Sample preview error card text: "✕
+Couldn't preview frame2.jpg: Corrupted preview for /Volumes/Photos/frame2.jpg"
+Testing dry-run invalidation on setting change...
+Re-running dry run after settings change...
+Testing core refusal when LUT changed on disk...
+Core refusal text: "The LUT file changed on disk since the reviewed plan (expected 7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069, found e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855); please run another dry run"
+Testing cancelJob error handling when cancel throws...
+Cancel throw refusal text: "Failed to cancel job: IPC cancel error"
+Testing cancelJob error handling when cancel returns false...
+Cancel false refusal text: "The job had already finished."
+Testing successful job cancellation...
+Job terminal message after cancel: "2 graded, 0 failed, 1 skipped"
+Testing a batch graded with a preset (ED-18)...
+  Preset batch: plans by name, previews the whole look, locks on change, sends the reviewed hash, shows refusals.
+Auditing touch target heights (>= 40px)...
+Wrote layout screenshot proof to /Users/pablogtorres/Desktop/Projects/MasterPhotoTools/frontend/rollchrome/layout-proof/bulk-lut.png
+
+check:bulk-lut PASSED cleanly: all acceptance assertions and benchmarks verified.
+```
+
+#### 15. `npm --prefix frontend/rollchrome run check:develop`
+```
+> @phototools/rollchrome@0.1.0 check:develop
+> node scripts/check-develop.mjs
+
+Starting Vite harness server for Develop view...
+Harness server listening at http://[::1]:5173
+1. Checking folder loading, six thumbnails, and zero overlap in thumbnail requests...
+  Thumbnail requests: 6, max concurrent: 1
+2. Checking look picker groups (12 shipped looks)...
+  Picker counts: Neutral=1, Fuji=5, Ricoh=7, LUTs=2
+3. Checking look assignment to single selection vs Select all and display names...
+4. Checking plan_develop items with exact builtin:<id> and exposures...
+5. Checking latest-wins preview rendering...
+  Preview naturalWidth: 80 (expected second call: 80, stale first: 64)
+6. Checking lock discipline and gate explanations...
+  Testing lock on look change...
+  Testing lock on exposure change...
+  Testing lock on format change...
+7. Checking skipped items, job cancellation, and summary counts...
+  Summary terminal message: "2 developed, 0 failed, 1 skipped"
+8. Checking state persistence across view unmount and remount...
+9. Auditing touch target heights (>= 40px) and image naturalWidth...
+  Thumbnail naturalWidths: [64,64,64,64,64,64], preview: 64
+Wrote layout screenshot proof to /Users/pablogtorres/Desktop/Projects/MasterPhotoTools/frontend/rollchrome/layout-proof/develop.png
+10. Checking serialized preview requests during exposure slider scrub...
+  Burst preview requests: 2, max concurrent: 1
+11. Checking assignments cleared on folder change...
+12. Checking unmount and remount during thumbnail loading...
+13. Checking running job persistence across remount...
+14. Checking scope toggle: Selected only items and lock on selection change...
+
+check:develop PASSED: all 14 checks verified successfully.
+```
+
+#### 16. `npm --prefix frontend/rollchrome run check:viewing`
+```
+> @phototools/rollchrome@0.1.0 check:viewing
+> node scripts/check-viewing.mjs
+
+Starting Vite harness server for Viewing check...
+Harness server listening at http://[::1]:5173
+Asserting 1: On opening, zoom is fit and no Full is requested...
+  Initial open: 1 renders, Full count = 0, Fit active = true
+Asserting 2: Cmd-1 gives canvas CSS width 3000 ± 1, and Full requested exactly once...
+  Cmd-1: canvas CSS width = 3000, Full requested = 1
+Asserting 3: At a zoom the settle proxy can serve, only Settle is requested...
+  Zoom to fit: Settle count = 1, Full count = 0
+Asserting 4: During slider drag at 100%, every request is Drag, and on release one Full...
+  Slider scrub at 100%: 5 Drag requests, release stage = Full
+Asserting 5: Ctrl-wheel at a point keeps the image point under it within 2 px...
+  Ctrl-wheel about point: pixel diff = 0.00 px
+Asserting 6: Panning far past an edge leaves no gap on that side...
+  Pan far right gap = -1642.90625 px, Pan far left gap = -1750.09375 px
+Asserting 7: Brush plain drag paints without panning; Space+drag pans without painting...
+  Plain drag panned = false, Space-drag panned = true
+Asserting 8: With text focused, Z does nothing...
+  Text focused Z check: Zoom stayed at fit = true
+Asserting 9: Side-by-side gives two canvases of equal CSS size fitting container, before recipe has identity adjustments & geometry...
+  Side-by-side: before=541x361, after=541x361, fits=true
+Asserting 10: Twenty slider steps while comparing send no further before requests...
+  Twenty slider steps: before requests count before=1, after=1
+Asserting 11: Split mode: dragging divider to 30% gives clip-path at 30% ± 1...
+  Split divider drag clip-path: "polygon(0px 0px, 30% 0px, 30% 100%, 0px 100%)"
+Asserting 12: Entering crop mode turns compare off and zoom to fit...
+  Entering crop mode: compare off = true, fit = true, zoom disabled = true
+Asserting 13: Every new control is at least 40 px...
+  Control touch target audit: 0 violations
+Asserting 14: Orientation 6, no geometry: at 100% visible canvas is 2000 × 3000 ± 1 and Full is requested...
+  Orientation 6 (no geom): canvas = 2000x3000, Full count = 1
+Asserting 15: Orientation 6 with geometry, and orientation 1 with rotate: 90: visible canvas is 2000 × 3000 ± 1...
+  Orientation 6 with geom: 2000x3000, Orientation 1 rotate 90: 2000x3000
+Asserting 16: A 40% crop at 100% requests Full, and visible canvas is 40% of full width ± 1...
+  40% crop at 100%: canvas width = 1200 (expected 1200 ± 1), Full count = 1
+Asserting 17: Orientation 6 panning past each edge leaves no gap, measured from visible canvas box...
+  Orientation 6 pan gaps: left = -460.0 px, right = -458.0 px, top = -1169.0 px, bottom = -1169.0 px
+Asserting 18: With brush active, double-click changes neither zoom nor pan...
+  With brush active: zoom stayed "33%", pan position stayed (46, 87.796875)
+
+--- check:viewing Summary ---
+PASSED all 18 viewing requirements successfully.
+```
+

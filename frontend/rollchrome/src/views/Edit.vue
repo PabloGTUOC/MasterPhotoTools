@@ -107,7 +107,7 @@ const BRUSH_MIN = 0.5;
 // ED-23: automatic masks. A model is downloaded once, with the person's say-so; a mask is
 // a few seconds' work, which can be stopped (its result is then discarded).
 const autoBusy = ref<AutoTarget | null>(null);
-const autoDownload = ref<{ target: AutoTarget; name: string; jobId: string | null } | null>(null);
+const autoDownload = ref<{ target: AutoTarget; name: string; jobId: string | null; asBackground?: boolean; componentForMaskId?: string } | null>(null);
 let autoSeq = 0;
 const AUTO_LABEL: Record<AutoTarget, string> = { subject: 'Subject', sky: 'Sky' };
 const BRUSH_MAX = 25;
@@ -2635,9 +2635,9 @@ function addLuminanceMask() {
     name: `Luminance ${count}`,
     kind: {
       type: 'luminance_range',
-      low: 25,
-      high: 75,
-      feather: 20,
+      low: 0.25,
+      high: 0.75,
+      feather: 0.2,
     },
     invert: false,
     opacity: 1,
@@ -2658,7 +2658,7 @@ async function addBackgroundMask() {
     const model = (await desktop.autoMaskModels()).find((m) => m.target === 'subject');
     if (!model) throw new Error('No model is known for Subject');
     if (!model.present) {
-      autoDownload.value = { target: 'subject', name: model.name, jobId: null };
+      autoDownload.value = { target: 'subject', name: model.name, jobId: null, asBackground: true };
       return;
     }
     await runAutoMask('subject', true);
@@ -2787,7 +2787,13 @@ async function onModelDownloaded() {
   const model = (await desktop.autoMaskModels()).find((m) => m.target === d.target);
   if (model?.present) {
     autoDownload.value = null;
-    await runAutoMask(d.target);
+    if (d.componentForMaskId) {
+      await finishAddAutoComponent(d.target, d.componentForMaskId);
+    } else if (d.asBackground) {
+      await runAutoMask('subject', true);
+    } else {
+      await runAutoMask(d.target);
+    }
   }
 }
 
@@ -2883,14 +2889,14 @@ function setComponentOp(index: number, op: MaskOp) {
   const m = selectedMask.value;
   if (!m?.components?.[index]) return;
   m.components[index].op = op;
-  onRecipeValueChange();
+  commitRecipeChange('Masks');
 }
 
 function toggleComponentInvert(index: number) {
   const m = selectedMask.value;
   if (!m?.components?.[index]) return;
   m.components[index].invert = !m.components[index].invert;
-  onRecipeValueChange();
+  commitRecipeChange('Masks');
 }
 
 function deleteComponent(index: number) {
@@ -2905,7 +2911,7 @@ function deleteComponent(index: number) {
   } else if (selectedComponentIndex.value !== null && selectedComponentIndex.value > index) {
     selectedComponentIndex.value -= 1;
   }
-  onRecipeValueChange();
+  commitRecipeChange('Masks');
 }
 
 function addComponent(type: 'linear' | 'radial' | 'luminance_range' | 'colour_range' | 'subject' | 'sky') {
@@ -2951,16 +2957,40 @@ function addComponent(type: 'linear' | 'radial' | 'luminance_range' | 'colour_ra
       op: 'intersect',
       kind: {
         type: 'luminance_range',
-        low: 25,
-        high: 75,
-        feather: 20,
+        low: 0.25,
+        high: 0.75,
+        feather: 0.2,
       },
       invert: false,
     };
   }
   m.components.push(comp);
   selectedComponentIndex.value = m.components.length - 1;
-  onRecipeValueChange();
+  commitRecipeChange('Masks');
+}
+
+async function finishAddAutoComponent(target: AutoTarget, maskId: string) {
+  if (!sessionId.value || autoBusy.value) return;
+  const m = masks.value.find((x) => x.id === maskId);
+  if (!m) return;
+  const seq = ++autoSeq;
+  const session = sessionId.value;
+  autoBusy.value = target;
+  try {
+    const raster = await desktop.makeAutoMask(session, target);
+    if (seq !== autoSeq || session !== sessionId.value) return;
+    if (!m.components) m.components = [];
+    m.components.push({
+      op: 'add',
+      kind: { type: 'auto', target, mask: raster },
+      invert: false,
+    });
+    selectedMaskId.value = m.id;
+    selectedComponentIndex.value = m.components.length - 1;
+    commitRecipeChange('Masks');
+  } finally {
+    if (seq === autoSeq) autoBusy.value = null;
+  }
 }
 
 async function addAutoComponent(target: AutoTarget) {
@@ -2972,26 +3002,10 @@ async function addAutoComponent(target: AutoTarget) {
     const model = (await desktop.autoMaskModels()).find((md) => md.target === target);
     if (!model) throw new Error(`No model is known for ${AUTO_LABEL[target]}`);
     if (!model.present) {
-      autoDownload.value = { target, name: model.name, jobId: null };
+      autoDownload.value = { target, name: model.name, jobId: null, componentForMaskId: m.id };
       return;
     }
-    const seq = ++autoSeq;
-    const session = sessionId.value;
-    autoBusy.value = target;
-    try {
-      const raster = await desktop.makeAutoMask(session, target);
-      if (seq !== autoSeq || session !== sessionId.value) return;
-      if (!m.components) m.components = [];
-      m.components.push({
-        op: 'add',
-        kind: { type: 'auto', target, mask: raster },
-        invert: false,
-      });
-      selectedComponentIndex.value = m.components.length - 1;
-      onRecipeValueChange();
-    } finally {
-      if (seq === autoSeq) autoBusy.value = null;
-    }
+    await finishAddAutoComponent(target, m.id);
   } catch (err: unknown) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -2999,21 +3013,23 @@ async function addAutoComponent(target: AutoTarget) {
 
 function setLuminanceRangeField(field: 'low' | 'high' | 'feather', val: number, settle: boolean) {
   if (!activeEditingKind.value || activeEditingKind.value.type !== 'luminance_range') return;
-  activeEditingKind.value[field] = val;
-  if (settle) onRecipeValueChange();
+  activeEditingKind.value[field] = Math.round(val) / 100;
+  if (settle) commitRecipeChange('Masks');
   else requestRender('Drag');
 }
 
 function setColourRangeField(field: 'range', val: number, settle: boolean) {
   if (!activeEditingKind.value || activeEditingKind.value.type !== 'colour_range') return;
   activeEditingKind.value[field] = val;
-  if (settle) onRecipeValueChange();
+  if (settle) commitRecipeChange('Masks');
   else requestRender('Drag');
 }
 
 function componentSummary(comp: MaskComponent): string {
   if (comp.kind.type === 'luminance_range') {
-    return `Luminance ${comp.kind.low ?? 0}–${comp.kind.high ?? 100}%`;
+    const low = Math.round((comp.kind.low ?? 0.25) * 100);
+    const high = Math.round((comp.kind.high ?? 0.75) * 100);
+    return `Luminance ${low}–${high}%`;
   }
   if (comp.kind.type === 'colour_range') {
     return `Colour (range ${comp.kind.range ?? 50}%)`;
@@ -3031,7 +3047,9 @@ function baseShapeSummary(mask: Mask): string {
   if (mask.kind.type === 'brush') return 'Brush';
   if (mask.kind.type === 'auto') return AUTO_LABEL[mask.kind.target] || 'Auto';
   if (mask.kind.type === 'luminance_range') {
-    return `Luminance ${mask.kind.low ?? 0}–${mask.kind.high ?? 100}%`;
+    const low = Math.round((mask.kind.low ?? 0.25) * 100);
+    const high = Math.round((mask.kind.high ?? 0.75) * 100);
+    return `Luminance ${low}–${high}%`;
   }
   if (mask.kind.type === 'colour_range') {
     return `Colour (range ${mask.kind.range ?? 50}%)`;
@@ -3056,7 +3074,7 @@ function updateMaskKind(id: string, kind: { type: string }) {
 }
 
 function onMaskCommit() {
-  onRecipeValueChange();
+  commitRecipeChange('Masks');
 }
 
 function deleteMask(id: string) {
@@ -3065,7 +3083,7 @@ function deleteMask(id: string) {
   const before = cloneRecipe(recipe.value);
   recipe.value.masks = masks.value.filter((x) => x.id !== id);
   if (selectedMaskId.value === id) selectedMaskId.value = null;
-  onRecipeValueChange();
+  commitRecipeChange('Masks');
   showNotice(`Deleted mask ${m.name}.`, before);
 }
 
@@ -4213,7 +4231,7 @@ onUnmounted(() => {
             <span class="effects-group-title">Luminance Range</span>
             <AdjustmentSlider
               label="Low"
-              :model-value="activeEditingKind.low"
+              :model-value="Math.round((activeEditingKind.low ?? 0.25) * 100)"
               :min="0"
               :max="100"
               :step="1"
@@ -4225,7 +4243,7 @@ onUnmounted(() => {
             />
             <AdjustmentSlider
               label="High"
-              :model-value="activeEditingKind.high"
+              :model-value="Math.round((activeEditingKind.high ?? 0.75) * 100)"
               :min="0"
               :max="100"
               :step="1"
@@ -4237,7 +4255,7 @@ onUnmounted(() => {
             />
             <AdjustmentSlider
               label="Feather"
-              :model-value="activeEditingKind.feather"
+              :model-value="Math.round((activeEditingKind.feather ?? 0.2) * 100)"
               :min="0"
               :max="100"
               :step="1"

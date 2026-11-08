@@ -36,7 +36,6 @@ fn a_mask_without_components_renders_exactly_as_before() {
         px[1] = v * 0.8;
         px[2] = (1.0 - v).max(0.0);
     }
-    let orig = buf.data.clone();
 
     let mask = test_mask(
         MaskKind::Linear {
@@ -61,25 +60,78 @@ fn a_mask_without_components_renders_exactly_as_before() {
 
     let mut buf_applied = buf.clone();
     buf_applied.apply_adjustments_masked(&recipe, Some(&compiled));
-    assert_ne!(
-        buf_applied.data, orig,
-        "active mask without components adjusts pixels"
+
+    #[rustfmt::skip]
+    const EXPECTED_BYTES: [f32; 192] = [
+        0.03053064, 0.024424514, 1.953961, 0.059732646, 0.047786117, 1.8815783, 0.08658792, 0.069270335, 1.7894837, 0.11044364, 0.08835491, 1.6842655, 0.13099891, 0.10479913, 1.5719869, 0.14825867, 0.11860694, 1.4578769, 0.1624704, 0.12997633, 1.3461834, 0.17405705, 0.13924564, 1.2401565,
+        0.26879692, 0.21503754, 1.6725141, 0.2886264, 0.23090114, 1.5874451, 0.30372, 0.24297601, 1.4909891, 0.31439736, 0.2515179, 1.3885884, 0.32122713, 0.2569817, 1.2849085, 0.3249408, 0.25995266, 1.183713, 0.32635698, 0.26108557, 1.0878565, 0.32632253, 0.26105803, 0.99936277,
+        0.4906649, 0.39253193, 1.3854066, 0.49699637, 0.3975971, 1.2977128, 0.49779585, 0.3982367, 1.2051898, 0.49419558, 0.39535648, 1.11194, 0.48741123, 0.38992903, 1.0212425, 0.47865692, 0.3829255, 0.93555665, 0.46908864, 0.37527093, 0.8565966, 0.45977533, 0.36782026, 0.78544956,
+        0.69027275, 0.5522182, 1.1044363, 0.6811943, 0.5449555, 1.0217915, 0.667164, 0.5337312, 0.9389715, 0.6498816, 0.5199053, 0.85877216, 0.6309568, 0.50476545, 0.7832567, 0.61185473, 0.4894838, 0.7138306, 0.5938765, 0.4751012, 0.65134835, 0.57817006, 0.46253607, 0.5962379,
+        0.86459285, 0.6916743, 0.8383929, 0.84013253, 0.672106, 0.7660031, 0.81235206, 0.64988166, 0.6963017, 0.78325677, 0.6266054, 0.63095677, 0.75462085, 0.6036967, 0.5710644, 0.72797763, 0.58238214, 0.5172472, 0.7046448, 0.5637158, 0.46976316, 0.68577653, 0.54862124, 0.4286103,
+        1.013101, 0.81048083, 0.5930346, 0.97482246, 0.77985805, 0.5338313, 0.93555665, 0.74844533, 0.47865686, 0.89738697, 0.7179096, 0.4282983, 0.8620787, 0.689663, 0.38314608, 0.8311195, 0.66489565, 0.34328845, 0.8057874, 0.64462996, 0.3085994, 0.7872424, 0.62979394, 0.278815,
+        1.1372929, 0.90983427, 0.3713609, 1.0878565, 0.8702853, 0.32635695, 1.040153, 0.8321225, 0.2855322, 0.9961799, 0.79694396, 0.24904495, 0.9575942, 0.7660753, 0.21681376, 0.9257983, 0.7406386, 0.18858853, 0.9020486, 0.7216389, 0.16400883, 0.88758415, 0.71006733, 0.14264745,
+        1.2401565, 0.9921253, 0.17405704, 1.1829191, 0.9463353, 0.1427661, 1.130281, 0.9042248, 0.114943825, 1.0840689, 0.86725515, 0.09033907, 1.0458091, 0.83664733, 0.06857765, 1.0168548, 0.8134839, 0.049202647, 0.9985322, 0.79882574, 0.03169943, 0.9923099, 0.7938479, 0.015504842,
+    ];
+    assert_eq!(
+        buf_applied.data, EXPECTED_BYTES,
+        "a mask without components renders exactly as on main"
     );
+
+    // Also assert that "components": [] and an absent components field deserialize and render identically
+    let json_absent = r#"{
+        "id": "test_mask",
+        "name": "Test Mask",
+        "kind": { "type": "linear", "start": [0.0, 0.0], "end": [1.0, 1.0] },
+        "invert": false,
+        "opacity": 1.0,
+        "enabled": true,
+        "adjustments": { "exposure": 1.0 }
+    }"#;
+    let json_empty = r#"{
+        "id": "test_mask",
+        "name": "Test Mask",
+        "kind": { "type": "linear", "start": [0.0, 0.0], "end": [1.0, 1.0] },
+        "invert": false,
+        "opacity": 1.0,
+        "enabled": true,
+        "adjustments": { "exposure": 1.0 },
+        "components": []
+    }"#;
+    let mask_absent: Mask = serde_json::from_str(json_absent).unwrap();
+    let mask_empty: Mask = serde_json::from_str(json_empty).unwrap();
+
+    let recipe_absent = AdjustmentRecipe {
+        masks: vec![mask_absent],
+        ..Default::default()
+    };
+    let compiled_absent = CompiledMasks::compile(&recipe_absent.masks, None, 8, 8, 1)
+        .unwrap()
+        .unwrap();
+    let mut buf_absent = buf.clone();
+    buf_absent.apply_adjustments_masked(&recipe_absent, Some(&compiled_absent));
+    assert_eq!(buf_absent.data, EXPECTED_BYTES);
+
+    let recipe_empty = AdjustmentRecipe {
+        masks: vec![mask_empty],
+        ..Default::default()
+    };
+    let compiled_empty = CompiledMasks::compile(&recipe_empty.masks, None, 8, 8, 1)
+        .unwrap()
+        .unwrap();
+    let mut buf_empty = buf.clone();
+    buf_empty.apply_adjustments_masked(&recipe_empty, Some(&compiled_empty));
+    assert_eq!(buf_empty.data, EXPECTED_BYTES);
 }
 
 #[test]
 fn add_takes_the_larger_coverage() {
     let mut mask = test_mask(
         MaskKind::Linear {
-            start: [0.3, 0.0],
-            end: [0.3, 1.0], // constant across x=0.3
+            start: [0.0, 0.0],
+            end: [1.0, 0.0],
         },
         1.0,
     );
-    // At x=0.3, base coverage is 1.0 for x <= 0.3, 0.0 for x >= 0.3
-    // Use two linear gradients along x:
-    // Base: start=[0.0, 0.0], end=[1.0, 0.0] -> at x=0.3, coverage is 1.0 - smoothstep(0.3)
-    // Component: start=[1.0, 0.0], end=[0.0, 0.0] -> at x=0.3, coverage is 1.0 - smoothstep(0.7)
     let comp = MaskComponent {
         op: MaskOp::Add,
         kind: MaskKind::Linear {
@@ -88,20 +140,12 @@ fn add_takes_the_larger_coverage() {
         },
         invert: false,
     };
-    mask.kind = MaskKind::Linear {
-        start: [0.0, 0.0],
-        end: [1.0, 0.0],
-    };
     mask.components = vec![comp];
 
     let compiled = CompiledMasks::compile(&[mask], None, 100, 100, 1)
         .unwrap()
         .unwrap();
 
-    // At x=0.3:
-    // c_base = 1.0 - smoothstep(0.3) = 1.0 - (0.3^2 * (3 - 2*0.3)) = 1.0 - 0.09 * 2.4 = 1.0 - 0.216 = 0.784
-    // c_comp = 1.0 - smoothstep((1.0 - 0.3)) = 1.0 - smoothstep(0.7) = 1.0 - 0.49 * 1.6 = 1.0 - 0.784 = 0.216
-    // Add: max(0.784, 0.216) = 0.784
     let adj_03 = compiled.local_at(0.3 * compiled.ax, 0.5 * compiled.ay, 0.5, 0.5, 0.5);
     assert!(
         (adj_03.exposure - 0.784).abs() < 1e-4,
@@ -109,8 +153,6 @@ fn add_takes_the_larger_coverage() {
         adj_03.exposure
     );
 
-    // At x=0.7:
-    // c_base = 0.216, c_comp = 0.784 -> Add: max(0.216, 0.784) = 0.784
     let adj_07 = compiled.local_at(0.7 * compiled.ax, 0.5 * compiled.ay, 0.5, 0.5, 0.5);
     assert!(
         (adj_07.exposure - 0.784).abs() < 1e-4,
@@ -212,43 +254,14 @@ fn intersect_limits_coverage() {
 
 #[test]
 fn components_apply_in_order() {
-    // Base: c0 = 0.2
-    // If order is Comp1 (Add 0.8) then Comp2 (Intersect 0.5):
-    // step 1: max(0.2, 0.8) = 0.8
-    // step 2: 0.8 * 0.5 = 0.4
-    // If order were reversed:
-    // step 1: 0.2 * 0.5 = 0.1
-    // step 2: max(0.1, 0.8) = 0.8
-    // We construct this using linear gradients where at x=0.5:
-    // base has 0.2, comp1 has 0.8, comp2 has 0.5.
-    // In our linear formula: c = 1.0 - smoothstep(t).
-    // smoothstep(0.5) = 0.5.
-    // For exact 0.2: smoothstep(t) = 0.8.
-    // But even simpler: evaluate using ranges or invert!
     let mut mask = test_mask(
         MaskKind::LuminanceRange {
-            low: 0.0,
-            high: 0.2,
+            low: 0.4,
+            high: 0.6,
             feather: 0.0,
         },
         1.0,
     );
-    // At y_sqrt = 0.1:
-    // base LuminanceRange [0, 0.2] gives 1.0. With opacity 0.2, weight would scale, but let's test component ops directly:
-    // Base gives 0.0 at y_sqrt = 0.5.
-    // Let base give 1.0 at y_sqrt = 0.5 (range [0.4, 0.6]).
-    // Comp 1 (Subtract range [0.4, 0.6]): 1.0 * (1 - 1.0) = 0.0.
-    // Comp 2 (Add range [0.4, 0.6]): max(0.0, 1.0) = 1.0.
-    // Result is 1.0.
-    // If evaluated in reverse order:
-    // Comp 2 (Add): max(1.0, 1.0) = 1.0.
-    // Comp 1 (Subtract): 1.0 * (1 - 1.0) = 0.0.
-    // The two orders give 1.0 vs 0.0!
-    mask.kind = MaskKind::LuminanceRange {
-        low: 0.4,
-        high: 0.6,
-        feather: 0.0,
-    };
     mask.components = vec![
         MaskComponent {
             op: MaskOp::Subtract,
@@ -383,7 +396,18 @@ fn a_colour_range_selects_only_its_colour() {
 
 #[test]
 fn a_range_mask_reads_the_pixel_before_the_adjustments() {
-    // A luminance range selecting midtones [0.4, 0.6]
+    // 1. Export pipeline: through apply_adjustments_masked
+    // Create an 8x8 buffer with two alternating pixel tones:
+    // Even pixels: midtones (v = 0.25 -> y_sqrt = 0.5, covered by [0.4, 0.6])
+    // Odd pixels: shadows (v = 0.04 -> y_sqrt = 0.2, outside [0.4, 0.6])
+    let mut buf = LinearBuffer::new(8, 8);
+    for (i, px) in buf.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+        let v = if i % 2 == 0 { 0.25 } else { 0.04 };
+        px[0] = v;
+        px[1] = v;
+        px[2] = v;
+    }
+
     let mask = test_mask(
         MaskKind::LuminanceRange {
             low: 0.4,
@@ -398,29 +422,111 @@ fn a_range_mask_reads_the_pixel_before_the_adjustments() {
         masks: vec![mask.clone()],
         ..Default::default()
     };
-
     let recipe_boosted = AdjustmentRecipe {
         exposure: 2.0, // +2 EV global exposure shift
-        masks: vec![mask],
+        masks: vec![mask.clone()],
         ..Default::default()
     };
 
-    let compiled_flat = CompiledMasks::compile(&recipe_flat.masks, None, 10, 10, 1)
+    let compiled_flat = CompiledMasks::compile(&recipe_flat.masks, None, 8, 8, 1)
         .unwrap()
         .unwrap();
-    let compiled_boosted = CompiledMasks::compile(&recipe_boosted.masks, None, 10, 10, 1)
+    let compiled_boosted = CompiledMasks::compile(&recipe_boosted.masks, None, 8, 8, 1)
         .unwrap()
         .unwrap();
 
-    // Check across multiple pixel values: incoming linear pixel values are read before exposure
-    for v in [0.04, 0.16, 0.25, 0.36, 0.49, 0.64, 0.81] {
-        let adj_flat = compiled_flat.local_at(0.0, 0.0, v, v, v);
-        let adj_boosted = compiled_boosted.local_at(0.0, 0.0, v, v, v);
-        assert_eq!(
-            adj_flat.exposure, adj_boosted.exposure,
-            "mask boundary must not move with global exposure: v={v}"
+    let mut buf_flat = buf.clone();
+    buf_flat.apply_adjustments_masked(&recipe_flat, Some(&compiled_flat));
+
+    let mut buf_boosted = buf.clone();
+    buf_boosted.apply_adjustments_masked(&recipe_boosted, Some(&compiled_boosted));
+
+    // Assert that the exact same pixels receive the local adjustment in both flat and boosted renders.
+    // If the pipeline incorrectly evaluated the mask on post-exposure pixels, midtones at +2 EV
+    // would be pushed to v = 1.0 (y_sqrt = 1.0 > 0.6), losing their mask coverage, while shadows
+    // at +2 EV would become v = 0.16 (y_sqrt = 0.4), gaining spurious mask coverage.
+    for i in 0..(8 * 8) {
+        let initial = if i % 2 == 0 { 0.25 } else { 0.04 };
+        let flat_ratio = buf_flat.data[i * 3] / (initial * 1.0);
+        let boosted_ratio = buf_boosted.data[i * 3] / (initial * 4.0);
+
+        assert!(
+            (flat_ratio - boosted_ratio).abs() < 1e-4,
+            "Pixel {i}: apply_adjustments_masked mask selection must not move with global exposure"
         );
+        if i % 2 == 0 {
+            assert!(
+                flat_ratio > 1.9,
+                "midtones must receive +1.0 EV local adjustment"
+            );
+        } else {
+            assert!(
+                (flat_ratio - 1.0).abs() < 1e-4,
+                "shadows must receive no local adjustment"
+            );
+        }
     }
+
+    // 2. Preview pipeline: through PreviewSession::render
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("preview_range_test.jpg");
+    let img = image::RgbImage::from_fn(32, 32, |x, _y| {
+        if x < 16 {
+            // Midtones (sRGB 128 -> linear ~0.21 -> y_sqrt ~0.46, inside [0.4, 0.6])
+            image::Rgb([128, 128, 128])
+        } else {
+            // Dark shadows (sRGB 10 -> linear ~0.003 -> y_sqrt ~0.05, outside [0.4, 0.6])
+            image::Rgb([10, 10, 10])
+        }
+    });
+    img.save(&path).unwrap();
+
+    let session = PreviewSession::open(&path).unwrap();
+
+    let recipe_flat_nomask = AdjustmentRecipe {
+        exposure: 0.0,
+        ..Default::default()
+    };
+    let recipe_boosted_nomask = AdjustmentRecipe {
+        exposure: 2.0,
+        ..Default::default()
+    };
+
+    let frame_flat = session
+        .render(&recipe_flat, None, PreviewStage::Drag)
+        .unwrap();
+    let frame_flat_nomask = session
+        .render(&recipe_flat_nomask, None, PreviewStage::Drag)
+        .unwrap();
+    let frame_boosted = session
+        .render(&recipe_boosted, None, PreviewStage::Drag)
+        .unwrap();
+    let frame_boosted_nomask = session
+        .render(&recipe_boosted_nomask, None, PreviewStage::Drag)
+        .unwrap();
+
+    let mut flat_mask_count = 0;
+    let mut boosted_mask_count = 0;
+    for i in 0..(frame_flat.width * frame_flat.height) as usize {
+        let idx = i * 4;
+        let flat_affected = frame_flat.bytes[idx] != frame_flat_nomask.bytes[idx];
+        let boosted_affected = frame_boosted.bytes[idx] != frame_boosted_nomask.bytes[idx];
+        assert_eq!(
+            flat_affected, boosted_affected,
+            "Pixel {i}: preview mask coverage must be identical between 0 EV and +2 EV"
+        );
+        if flat_affected {
+            flat_mask_count += 1;
+        }
+        if boosted_affected {
+            boosted_mask_count += 1;
+        }
+    }
+    assert!(
+        flat_mask_count > 0,
+        "midtones must be covered by mask in flat render"
+    );
+    assert_eq!(flat_mask_count, boosted_mask_count);
 }
 
 #[test]
@@ -591,9 +697,9 @@ fn two_auto_components_in_one_mask_keep_their_own_rasters() {
 
     let session = PreviewSession::open(&path).unwrap();
 
-    // Create two distinct rasters: raster 1 is 50, raster 2 is 200
-    let data1 = vec![50u8; 16 * 16];
-    let data2 = vec![200u8; 16 * 16];
+    // Create two distinct rasters: raster 1 is 200, raster 2 is 50
+    let data1 = vec![200u8; 16 * 16];
+    let data2 = vec![50u8; 16 * 16];
     let raster1 = StoredRaster::encode(16, 16, &data1, "model_sha_1").unwrap();
     let raster2 = StoredRaster::encode(16, 16, &data2, "model_sha_2").unwrap();
 
@@ -619,7 +725,7 @@ fn two_auto_components_in_one_mask_keep_their_own_rasters() {
                 invert: false,
             },
             MaskComponent {
-                op: MaskOp::Add,
+                op: MaskOp::Intersect,
                 kind: MaskKind::Auto {
                     target: AutoTarget::Sky,
                     mask: raster2,
@@ -634,17 +740,28 @@ fn two_auto_components_in_one_mask_keep_their_own_rasters() {
         ..Default::default()
     };
 
-    // Render to trigger raster decoding and caching
+    // Render twice to trigger raster decoding and caching
     let _ = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    let _ = session.render(&recipe, None, PreviewStage::Settle).unwrap();
 
-    // Verify mask coverage successfully resolves both rasters
+    // Assert the session holds two cached rasters after two renders
+    assert_eq!(
+        session.cached_raster_count(),
+        2,
+        "session must hold two cached rasters for two auto components"
+    );
+
+    // Verify mask coverage: Add at 200 then Intersect at 50 gives 200/255 * 50/255 * 255 = ~39.2
     let (w, h, cov) = session
         .mask_coverage(&recipe, "multi_auto", PreviewStage::Drag)
         .unwrap();
     assert!(w > 0 && h > 0);
     assert!(!cov.is_empty());
-    // Since both rasters are Add, coverage combines both without crashing or colliding
-    assert!(cov.iter().any(|&c| c > 0));
+    assert!(
+        (cov[0] as i32 - 39).abs() <= 1,
+        "combined coverage should be about 39, got {}",
+        cov[0]
+    );
 }
 
 #[test]

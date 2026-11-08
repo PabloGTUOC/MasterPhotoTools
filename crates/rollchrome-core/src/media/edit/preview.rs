@@ -37,7 +37,7 @@
 use super::brush::{BrushCache, BrushRaster};
 use super::curves::ToneCurvesTable;
 use super::lut::Lut;
-use super::masks::{CompiledMasks, LocalAdjustments, Mask, MaskRasters};
+use super::masks::{CompiledMasks, LocalAdjustments, Mask, MaskKind, MaskRasters};
 use super::pipeline::{linear_to_srgb, validate_lut, AdjustmentRecipe, ImageBuffer, LinearBuffer};
 use super::raster::{CoverageRaster, StoredRaster};
 use crate::media::histogram::{histogram, Histogram};
@@ -233,6 +233,13 @@ pub struct PreviewSession {
     brushes: Mutex<HashMap<(String, PreviewStage), BrushCache>>,
     /// Decoded automatic masks per (mask, component), with a hash of the PNG they came from (ED-23, RP-11).
     stored: Mutex<HashMap<StoredMaskKey, StoredMaskEntry>>,
+}
+
+impl PreviewSession {
+    /// Number of auto mask rasters currently held in the session's raster cache (RP-11).
+    pub fn cached_raster_count(&self) -> usize {
+        self.stored.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
 }
 
 /// A session's caches, offered to mask compilation for one stage.
@@ -647,18 +654,36 @@ impl PreviewSession {
             .ok_or_else(|| Error::Refused(format!("No mask {mask_id} in this recipe")))?;
         let input = self.stage_linear(stage, recipe.detail.as_ref())?;
         let (stored_w, stored_h) = (input.width, input.height);
+        let has_range = matches!(
+            mask.kind,
+            MaskKind::LuminanceRange { .. } | MaskKind::ColourRange { .. }
+        ) || mask.components.iter().any(|c| {
+            matches!(
+                c.kind,
+                MaskKind::LuminanceRange { .. } | MaskKind::ColourRange { .. }
+            )
+        });
         let transformed_buf;
         let (out_w, out_h, affine, pixels_ref): (u32, u32, [f32; 6], &[f32]) =
             match recipe.geometry.as_ref() {
                 Some(g) => {
                     let plan = g.plan(stored_w, stored_h, self.orientation)?;
-                    transformed_buf = g.apply_to_linear(&input, self.orientation)?;
-                    (
-                        plan.out_w,
-                        plan.out_h,
-                        plan.normalised_affine(),
-                        &transformed_buf.data,
-                    )
+                    if has_range {
+                        transformed_buf = g.apply_to_linear(&input, self.orientation)?;
+                        (
+                            plan.out_w,
+                            plan.out_h,
+                            plan.normalised_affine(),
+                            &transformed_buf.data,
+                        )
+                    } else {
+                        (
+                            plan.out_w,
+                            plan.out_h,
+                            plan.normalised_affine(),
+                            &input.data,
+                        )
+                    }
                 }
                 None => (
                     stored_w,

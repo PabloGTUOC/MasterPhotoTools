@@ -357,6 +357,7 @@ export class StubDesktopApiClient {
   }
 
   /** A disc or band of full coverage, in frame coordinates through the identity map. */
+  /** A disc or band of full coverage, in frame coordinates through the identity map. */
   async renderMaskCoverage(
     _sessionId: string,
     recipe: AdjustmentRecipe,
@@ -371,7 +372,7 @@ export class StubDesktopApiClient {
     const coverage = new Uint8Array(width * height);
     const long = Math.max(width, height);
 
-    function evalShape(kind: any, u: number, v: number, strokes?: any[]): number {
+    function evalShape(kind: any, u: number, v: number): number {
       if (kind.type === 'auto') {
         return u < 0.5 ? 1.0 : 0.0;
       }
@@ -385,49 +386,69 @@ export class StubDesktopApiClient {
         return Math.hypot(dx / kind.radius_x, dy / kind.radius_y) <= 1 ? 1.0 : 0.0;
       }
       if (kind.type === 'luminance_range') {
-        const low = (kind.low ?? 0) / 100;
-        const high = (kind.high ?? 100) / 100;
-        return u >= low && u <= Math.min(1.0, 0.1 + high) ? 1.0 : 0.0;
+        const low = kind.low ?? 0.0;
+        const high = kind.high ?? 1.0;
+        return u >= low && u <= high ? 1.0 : 0.0;
       }
       if (kind.type === 'colour_range') {
         const rng = (kind.range ?? 50) / 100;
         return u >= 0.5 - rng / 2 && u <= 0.5 + rng / 2 ? 1.0 : 0.0;
       }
-      if (kind.type === 'brush') {
-        for (const st of strokes ?? []) {
-          if (st.erase) continue;
-          const r = st.radius * long;
-          for (const [pu, pv] of st.points) {
-            const cx = pu * width;
-            const cy = pv * height;
-            if (Math.hypot(u * width - cx, v * height - cy) <= r) return 1.0;
-          }
-        }
-        return 0.0;
-      }
       return 1.0;
     }
 
-    for (let y = 0; y < height; y++) {
-      const v = (y + 0.5) / height;
-      for (let x = 0; x < width; x++) {
-        const u = (x + 0.5) / width;
-        let cov = evalShape(m.kind, u, v, m.strokes);
-        if (m.invert) cov = 1.0 - cov;
-        for (const comp of m.components ?? []) {
-          let compCov = evalShape(comp.kind, u, v);
-          if (comp.invert) compCov = 1.0 - compCov;
-          if (comp.op === 'add') {
-            cov = Math.max(cov, compCov);
-          } else if (comp.op === 'subtract') {
-            cov = cov * (1.0 - compCov);
-          } else if (comp.op === 'intersect') {
-            cov = cov * compCov;
+    if (m.kind.type === 'brush') {
+      // Discs around the stroke points, filled directly: a per-pixel test against every
+      // point is far too slow for a stub asked for coverage on every frame.
+      for (const st of m.strokes ?? []) {
+        if (st.erase) continue;
+        const r = st.radius * long;
+        for (const [pu, pv] of st.points) {
+          const [cx, cy] = [pu * width, pv * height];
+          for (let y = Math.max(0, Math.floor(cy - r)); y < Math.min(height, Math.ceil(cy + r)); y++) {
+            for (let x = Math.max(0, Math.floor(cx - r)); x < Math.min(width, Math.ceil(cx + r)); x++) {
+              if (Math.hypot(x + 0.5 - cx, y + 0.5 - cy) <= r) coverage[y * width + x] = 255;
+            }
           }
         }
-        coverage[y * width + x] = Math.round(cov * 255);
+      }
+      if (m.invert) {
+        for (let i = 0; i < coverage.length; i++) coverage[i] = 255 - coverage[i];
+      }
+    } else {
+      for (let y = 0; y < height; y++) {
+        const v = (y + 0.5) / height;
+        for (let x = 0; x < width; x++) {
+          const u = (x + 0.5) / width;
+          let cov = evalShape(m.kind, u, v);
+          if (m.invert) cov = 1.0 - cov;
+          coverage[y * width + x] = Math.round(cov * 255);
+        }
       }
     }
+
+    for (const comp of m.components ?? []) {
+      for (let y = 0; y < height; y++) {
+        const v = (y + 0.5) / height;
+        const row = y * width;
+        for (let x = 0; x < width; x++) {
+          const u = (x + 0.5) / width;
+          let compCov = evalShape(comp.kind, u, v);
+          if (comp.invert) compCov = 1.0 - compCov;
+          const idx = row + x;
+          let cur = coverage[idx] / 255.0;
+          if (comp.op === 'add') {
+            cur = Math.max(cur, compCov);
+          } else if (comp.op === 'subtract') {
+            cur = cur * (1.0 - compCov);
+          } else if (comp.op === 'intersect') {
+            cur = cur * compCov;
+          }
+          coverage[idx] = Math.round(cur * 255);
+        }
+      }
+    }
+
     return { width, height, coverage };
   }
 

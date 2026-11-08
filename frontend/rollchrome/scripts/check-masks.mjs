@@ -1,18 +1,21 @@
 /**
  * RP-11 Masks: Ranges and Combining acceptance & verification in a real headless browser.
  *
- * Asserts all 11 requirements as numbered in the brief:
- * 1. Add Linear mask creates base mask with handles.
- * 2. Add Luminance component (intersect) displays component row with op selector intersect.
- * 3. Change component op to subtract, verify coverage canvas updates (pixel coverage diminishes).
- * 4. Component invert toggle inverts the component's effect.
- * 5. Component delete removes the component.
- * 6. Add Luminance range mask directly via + Luminance range button.
- * 7. Add Colour range mask directly via + Colour range button (eyedropper click).
- * 8. Add Background mask directly via + Background button (inverts subject auto mask).
- * 9. Serialization round-trip: components persist in recipe JSON; older recipes without components load cleanly; mask without components does not serialize components: [].
- * 10. Mask limit (4) still enforced: adding a mask disabled at 4; components within a mask are not counted against the 4-mask limit.
- * 11. Touch targets for all interactive controls (buttons, selects, rows) at least 40px.
+ * Asserts all eleven requirements from the brief plus model download intent retention (RP-11 Review 1):
+ * 1. Luminance range adds a mask of that kind, selected, and it is in the save payload (low=0.25, high=0.75, feather=0.2).
+ * 2. Moving Low sends Drag renders carrying it; release sends Settle (moving Low to 40 sends 0.4).
+ * 3. Colour range enters picking; a click sends colour_at and creates the mask with the picked values.
+ * 4. Background calls the auto mask for Subject and sets invert: true, named Background.
+ * 5. Add component adds one; its op, invert and kind reach the save payload.
+ * 6. Changing the op is one undo step, labelled Masks (Cmd-Z reverts it).
+ * 7. Selecting a radial component shows its handles; dragging one changes the component and not the base shape.
+ * 8. Deleting a component removes it from the save payload.
+ * 9. A mask without components sends none (and older recipes without components load cleanly).
+ * 10. Esc while picking leaves the mode and changes nothing.
+ * 11. Touch targets for all interactive controls at least 40px (fails if control missing; screenshot to layout-proof/).
+ * Extra: Mask limit (4) still enforced: adding a mask disabled at 4; components within a mask are not counted against the 4-mask limit.
+ * 12. Model download for Background retains user intent (creates inverted mask named Background when modelsPresent is false).
+ * 13. Model download for Add component retains user intent (adds component to selected mask, not separate mask, when modelsPresent is false).
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -85,9 +88,6 @@ const page = await browser.newPage({
 });
 page.setDefaultTimeout(20000);
 page.on('pageerror', (err) => console.error('PAGE ERROR:', err.message));
-page.on('console', (msg) => {
-  if (msg.text().includes('[DEBUG')) console.log('BROWSER:', msg.text());
-});
 
 const failures = [];
 let assertionsRun = 0;
@@ -116,29 +116,15 @@ try {
     }
   };
 
-  // Helper to count non-zero pixels on mask coverage canvas
-  const getCoveragePixelCount = async () => {
-    return await page.evaluate(() => {
-      const canvas = document.querySelector('canvas[data-testid="mask-coverage"]');
-      if (!canvas) return 0;
-      const ctx = canvas.getContext('2d');
-      if (!ctx || canvas.width === 0 || canvas.height === 0) return 0;
-      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-      let count = 0;
-      for (let i = 3; i < data.length; i += 4) {
-        if (data[i] > 0) count++;
-      }
-      return count;
-    });
-  };
-
-  // Load photograph
+  // Load photograph with clean state
   await page.evaluate(() => {
     window.__STUB__.orientation = 1;
     window.__STUB__.toStoredOverride = null;
     window.__STUB__.renders = [];
     window.__STUB__.lastSavedRecipe = null;
     window.__STUB__.modelsPresent = { subject: true, sky: true };
+    window.__STUB__.autoMaskCalls = [];
+    window.__STUB__.colourAtCalls = [];
   });
   await pathInput.fill('/Volumes/Photos/masks_test.jpg');
   await pathInput.press('Enter');
@@ -148,318 +134,364 @@ try {
   await ensureMasksSectionOpen();
 
   // -------------------------------------------------------------------------
-  // 1. Add Linear mask creates base mask with handles.
+  // 1. Luminance range adds a mask of that kind, selected, and it is in the save payload.
   // -------------------------------------------------------------------------
   assertionsRun += 1;
-  console.log('Asserting 1: Add Linear mask creates base mask with handles...');
-  const addLinearBtn = page.locator('button[data-testid="add-linear-mask"]');
-  await addLinearBtn.waitFor({ state: 'visible' });
-  await addLinearBtn.click();
+  console.log('Asserting 1: Luminance range adds a mask of that kind, selected, and it is in the save payload...');
+  const addLumBtn = page.locator('button[data-testid="add-luminance-mask"]');
+  await addLumBtn.waitFor({ state: 'visible' });
+  await addLumBtn.click();
   await page.waitForTimeout(200);
 
   const maskEditing = page.locator('[data-testid="mask-editing"]');
   await maskEditing.waitFor({ state: 'visible' });
 
   const maskEditingName = page.locator('[data-testid="mask-editing-name"]');
-  const nameText = await maskEditingName.textContent();
-  if (!nameText || !nameText.includes('Linear 1')) {
-    failures.push(`Assertion 1: Expected mask editing title to contain 'Linear 1', got '${nameText}'`);
-  }
-
-  // Check that handles overlay exists
-  const handles = page.locator('svg line, svg circle');
-  const handleCount = await handles.count();
-  if (handleCount === 0) {
-    failures.push('Assertion 1: MaskOverlay handles (line/circle) not found on photograph');
-  }
-
-  // -------------------------------------------------------------------------
-  // 2. Add Luminance component (intersect) displays component row with op selector intersect.
-  // -------------------------------------------------------------------------
-  assertionsRun += 1;
-  console.log('Asserting 2: Add Luminance component (intersect) displays component row with op selector intersect...');
-  const addCompLumBtn = page.locator('button[data-testid="add-component-luminance"]');
-  await addCompLumBtn.waitFor({ state: 'visible' });
-  await addCompLumBtn.click();
-  await page.waitForTimeout(250);
-
-  const compRow0 = page.locator('[data-testid="component-row-0"]');
-  await compRow0.waitFor({ state: 'visible' });
-
-  const opSelect0 = page.locator('select[data-testid="component-op-0"]');
-  await opSelect0.waitFor({ state: 'visible' });
-  const opVal = await opSelect0.inputValue();
-  if (opVal !== 'intersect') {
-    failures.push(`Assertion 2: Expected default component op to be 'intersect', got '${opVal}'`);
-  }
-
-  const compSelect0 = page.locator('button[data-testid="component-select-0"]');
-  const compLabel = await compSelect0.textContent();
-  if (!compLabel || !compLabel.includes('Luminance 25–75%')) {
-    failures.push(`Assertion 2: Expected component label 'Luminance 25–75%', got '${compLabel}'`);
-  }
-
-  // -------------------------------------------------------------------------
-  // 3. Change component op to subtract, verify coverage canvas updates (pixel coverage diminishes).
-  // -------------------------------------------------------------------------
-  assertionsRun += 1;
-  console.log('Asserting 3: Change component op to subtract, verify coverage canvas updates (pixel coverage diminishes)...');
-  // Make sure overlay is visible
-  const overlayBtn = page.locator('button[data-testid="mask-show-overlay"]');
-  const isOverlayOn = await overlayBtn.evaluate((el) => el.classList.contains('active'));
-  if (!isOverlayOn) {
-    await overlayBtn.click();
-    await page.waitForTimeout(200);
-  }
-
-  const covIntersect = await getCoveragePixelCount();
-
-  // Change to subtract
-  await opSelect0.selectOption('subtract');
-  await page.waitForTimeout(300);
-
-  const covSubtract = await getCoveragePixelCount();
-  if (covSubtract >= covIntersect) {
-    failures.push(`Assertion 3: Expected coverage to diminish with subtract: intersect=${covIntersect}, subtract=${covSubtract}`);
-  }
-
-  // -------------------------------------------------------------------------
-  // 4. Component invert toggle inverts the component's effect.
-  // -------------------------------------------------------------------------
-  assertionsRun += 1;
-  console.log('Asserting 4: Component invert toggle inverts component effect...');
-  const invertBtn = page.locator('button[data-testid="component-invert-0"]');
-  await invertBtn.waitFor({ state: 'visible' });
-  await invertBtn.click();
-  await page.waitForTimeout(300);
-
-  const isInverted = await invertBtn.evaluate((el) => el.classList.contains('active'));
-  if (!isInverted) {
-    failures.push('Assertion 4: Invert button did not show active state');
-  }
-
-  const covInverted = await getCoveragePixelCount();
-  if (covInverted <= covSubtract) {
-    failures.push(`Assertion 4: Inverting subtract component expected coverage to increase/change: before=${covSubtract}, after=${covInverted}`);
-  }
-
-  // -------------------------------------------------------------------------
-  // 5. Component delete removes the component.
-  // -------------------------------------------------------------------------
-  assertionsRun += 1;
-  console.log('Asserting 5: Component delete removes the component...');
-  const deleteBtn = page.locator('button[data-testid="component-delete-0"]');
-  await deleteBtn.waitFor({ state: 'visible' });
-  await deleteBtn.click();
-  await page.waitForTimeout(200);
-
-  const rowCountAfterDelete = await page.locator('[data-testid="component-row-0"]').count();
-  if (rowCountAfterDelete !== 0) {
-    failures.push('Assertion 5: Component row 0 was not removed after clicking delete');
-  }
-
-  // Finish editing Linear 1
-  await page.locator('button[data-testid="mask-done"]').click();
-  await page.waitForTimeout(200);
-
-  // -------------------------------------------------------------------------
-  // 6. Add Luminance range mask directly via + Luminance range button.
-  // -------------------------------------------------------------------------
-  assertionsRun += 1;
-  console.log('Asserting 6: Add Luminance range mask directly via + Luminance range button...');
-  const addLumMaskBtn = page.locator('button[data-testid="add-luminance-mask"]');
-  await addLumMaskBtn.waitFor({ state: 'visible' });
-  await addLumMaskBtn.click();
-  await page.waitForTimeout(200);
-
-  const lumName = await page.locator('[data-testid="mask-editing-name"]').textContent();
+  const lumName = await maskEditingName.textContent();
   if (!lumName || !lumName.includes('Luminance 1')) {
-    failures.push(`Assertion 6: Expected mask name 'Luminance 1', got '${lumName}'`);
+    failures.push(`Assertion 1: Expected mask editing title to contain 'Luminance 1', got '${lumName}'`);
   }
 
-  const lumLow = page.locator('input[data-testid="mask-range-low-number"]');
-  const lumHigh = page.locator('input[data-testid="mask-range-high-number"]');
-  const lumFeather = page.locator('input[data-testid="mask-range-feather-number"]');
-  await lumLow.waitFor({ state: 'visible' });
-  await lumHigh.waitFor({ state: 'visible' });
-  await lumFeather.waitFor({ state: 'visible' });
-
-  const lowVal = await lumLow.inputValue();
-  const highVal = await lumHigh.inputValue();
-  const featherVal = await lumFeather.inputValue();
-
-  if (lowVal !== '25' || highVal !== '75' || featherVal !== '20') {
-    failures.push(`Assertion 6: Luminance defaults expected 25/75/20, got low=${lowVal}, high=${highVal}, feather=${featherVal}`);
+  // Check controls show percentage defaults 25, 75, 20
+  const lowInput = page.locator('input[data-testid="mask-range-low-number"]');
+  const highInput = page.locator('input[data-testid="mask-range-high-number"]');
+  const featherInput = page.locator('input[data-testid="mask-range-feather-number"]');
+  await lowInput.waitFor({ state: 'visible' });
+  const lowValStr = await lowInput.inputValue();
+  const highValStr = await highInput.inputValue();
+  const featherValStr = await featherInput.inputValue();
+  if (lowValStr !== '25' || highValStr !== '75' || featherValStr !== '20') {
+    failures.push(`Assertion 1: Expected slider inputs 25, 75, 20; got ${lowValStr}, ${highValStr}, ${featherValStr}`);
   }
 
+  // Verify save payload has low=0.25, high=0.75, feather=0.2 on 0..1 scale
+  await page.waitForFunction(() => {
+    const m = window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name === 'Luminance 1');
+    return m && m.kind?.type === 'luminance_range';
+  }, { timeout: 4000 });
+
+  const savedLum1 = await page.evaluate(() => {
+    return window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name === 'Luminance 1');
+  });
+  if (!savedLum1) {
+    failures.push('Assertion 1: Luminance 1 mask not found in save payload');
+  } else {
+    if (savedLum1.kind.low !== 0.25 || savedLum1.kind.high !== 0.75 || savedLum1.kind.feather !== 0.2) {
+      failures.push(`Assertion 1: Expected payload low=0.25, high=0.75, feather=0.2; got low=${savedLum1.kind.low}, high=${savedLum1.kind.high}, feather=${savedLum1.kind.feather}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 2. Moving Low sends Drag renders carrying it; release sends Settle (moving Low to 40 sends 0.4).
+  // -------------------------------------------------------------------------
+  assertionsRun += 1;
+  console.log('Asserting 2: Moving Low sends Drag renders carrying it; release sends Settle (moving Low to 40 sends 0.4)...');
+  await page.evaluate(() => {
+    window.__STUB__.renders = [];
+  });
+
+  const lowSlider = page.locator('input[data-testid="mask-range-low-slider"]');
+  await lowSlider.waitFor({ state: 'visible' });
+  const lowBox = await lowSlider.boundingBox();
+  if (!lowBox) {
+    failures.push('Assertion 2: Low slider bounding box not found');
+  } else {
+    // Current value is 25%, move to 40%
+    const startX = lowBox.x + lowBox.width * 0.25;
+    const targetX = lowBox.x + lowBox.width * 0.40;
+    const midY = lowBox.y + lowBox.height / 2;
+
+    await page.mouse.move(startX, midY);
+    await page.mouse.down();
+    await page.mouse.move(targetX, midY, { steps: 5 });
+    await page.waitForTimeout(100);
+
+    const dragRenders = await page.evaluate(() => {
+      return window.__STUB__.renders.filter((r) => r.stage === 'Drag');
+    });
+    if (dragRenders.length === 0) {
+      failures.push('Assertion 2: No Drag renders issued during Low slider movement');
+    }
+
+    await page.mouse.up();
+
+    await page.waitForFunction(() => {
+      const m = window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name === 'Luminance 1');
+      return m && Math.abs((m.kind?.low ?? 0) - 0.4) < 0.05;
+    }, { timeout: 4000 });
+
+    const settleRenders = await page.evaluate(() => {
+      return window.__STUB__.renders.filter((r) => r.stage === 'Settle');
+    });
+    if (settleRenders.length === 0) {
+      failures.push('Assertion 2: No Settle render issued on Low slider release');
+    }
+  }
+
+  // Done editing Luminance 1
   await page.locator('button[data-testid="mask-done"]').click();
   await page.waitForTimeout(200);
 
   // -------------------------------------------------------------------------
-  // 7. Add Colour range mask directly via + Colour range button (eyedropper click).
+  // 3. Colour range enters picking; a click sends colour_at and creates the mask with the picked values.
   // -------------------------------------------------------------------------
   assertionsRun += 1;
-  console.log('Asserting 7: Add Colour range mask directly via + Colour range button (eyedropper click)...');
+  console.log('Asserting 3: Colour range enters picking; a click sends colour_at and creates the mask with the picked values...');
   await page.evaluate(() => {
     window.__STUB__.colourAtCalls = [];
-    window.__STUB__.colourAtResult = { hue: 120.0, chroma: 0.25, lightness: 0.5 };
+    window.__STUB__.colourAtResult = { hue: 135.5, chroma: 0.16, lightness: 0.58 };
   });
 
-  const addColourMaskBtn = page.locator('button[data-testid="add-colour-mask"]');
-  await addColourMaskBtn.waitFor({ state: 'visible' });
-  await addColourMaskBtn.click();
-  await page.waitForTimeout(100);
+  const addColourBtn = page.locator('button[data-testid="add-colour-mask"]');
+  await addColourBtn.waitFor({ state: 'visible' });
+  await addColourBtn.click();
+  await page.waitForTimeout(150);
 
-  const isEyedropperActive = await page.evaluate(() => {
+  const isPicking = await page.evaluate(() => {
     return document.querySelector('.canvas-viewport__container')?.classList.contains('is-eyedropper');
   });
-  if (!isEyedropperActive) {
-    failures.push('Assertion 7: Clicking + Colour range did not activate eyedropper');
+  if (!isPicking) {
+    failures.push('Assertion 3: + Colour range did not enter eyedropper picking mode');
   }
 
   const canvas = page.locator('canvas[data-testid="edit-canvas"]');
   const cbox = await canvas.boundingBox();
   if (cbox) {
     await page.mouse.click(cbox.x + cbox.width * 0.5, cbox.y + cbox.height * 0.5);
-    await page.waitForTimeout(300);
+  }
+
+  await page.waitForFunction(() => {
+    return window.__STUB__.lastSavedRecipe?.masks?.some((x) => x.kind?.type === 'colour_range');
+  }, { timeout: 4000 });
+
+  const colourCalls = await page.evaluate(() => window.__STUB__.colourAtCalls);
+  if (!colourCalls || colourCalls.length === 0) {
+    failures.push('Assertion 3: Canvas click did not trigger colour_at');
+  }
+
+  const savedColourMask = await page.evaluate(() => {
+    return window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.kind?.type === 'colour_range');
+  });
+  if (!savedColourMask) {
+    failures.push('Assertion 3: Colour range mask not found in save payload');
   } else {
-    failures.push('Assertion 7: Canvas bounding box not found for click');
-  }
-
-  const colourMaskName = await page.locator('[data-testid="mask-editing-name"]').textContent();
-  if (!colourMaskName || !colourMaskName.includes('Colour Range 1')) {
-    failures.push(`Assertion 7: Expected mask name 'Colour Range 1', got '${colourMaskName}'`);
-  }
-
-  const colourRangeInput = page.locator('input[data-testid="mask-colour-range-number"]');
-  await colourRangeInput.waitFor({ state: 'visible' });
-  const colourRangeVal = await colourRangeInput.inputValue();
-  if (colourRangeVal !== '50') {
-    failures.push(`Assertion 7: Expected colour range slider default 50, got '${colourRangeVal}'`);
-  }
-
-  const repickBtn = page.locator('button[data-testid="mask-colour-repick"]');
-  if (!(await repickBtn.isVisible())) {
-    failures.push('Assertion 7: Re-pick colour button not visible');
+    if (Math.abs(savedColourMask.kind.hue - 135.5) > 0.1 || Math.abs(savedColourMask.kind.chroma - 0.16) > 0.05) {
+      failures.push(`Assertion 3: Expected picked hue ~135.5, chroma ~0.16; got hue=${savedColourMask.kind.hue}, chroma=${savedColourMask.kind.chroma}`);
+    }
   }
 
   await page.locator('button[data-testid="mask-done"]').click();
   await page.waitForTimeout(200);
 
   // -------------------------------------------------------------------------
-  // 8. Add Background mask directly via + Background button (inverts subject auto mask).
+  // 4. Background calls the auto mask for Subject and sets invert: true, named Background.
   // -------------------------------------------------------------------------
   assertionsRun += 1;
-  console.log('Asserting 8: Add Background mask directly via + Background button (inverts subject auto mask)...');
+  console.log('Asserting 4: Background calls the auto mask for Subject and sets invert: true, named Background...');
+  await page.evaluate(() => {
+    window.__STUB__.autoMaskCalls = [];
+  });
+
   const addBgBtn = page.locator('button[data-testid="add-background-mask"]');
   await addBgBtn.waitFor({ state: 'visible' });
   await addBgBtn.click();
-  await page.waitForTimeout(300);
 
-  const bgMaskName = await page.locator('[data-testid="mask-editing-name"]').textContent();
-  if (!bgMaskName || !bgMaskName.includes('Background')) {
-    failures.push(`Assertion 8: Expected mask name 'Background', got '${bgMaskName}'`);
+  await page.waitForFunction(() => {
+    const bg = window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name === 'Background');
+    return bg && bg.invert && bg.kind?.type === 'auto';
+  }, { timeout: 4000 });
+
+  const autoCalls = await page.evaluate(() => window.__STUB__.autoMaskCalls);
+  if (!autoCalls || !autoCalls.includes('subject')) {
+    failures.push(`Assertion 4: Background button did not call makeAutoMask('subject'): got ${JSON.stringify(autoCalls)}`);
   }
 
-  // Done with Background editing for now to check the 4-mask limit
+  const bgMask = await page.evaluate(() => {
+    return window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name === 'Background');
+  });
+  if (!bgMask) {
+    failures.push('Assertion 4: No mask named Background found in save payload');
+  } else {
+    if (!bgMask.invert) {
+      failures.push('Assertion 4: Expected Background mask to have invert: true');
+    }
+    if (bgMask.kind?.type !== 'auto' || bgMask.kind?.target !== 'subject') {
+      failures.push(`Assertion 4: Expected Background mask kind auto:subject, got ${JSON.stringify(bgMask.kind)}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 5. Add component adds one; its op, invert and kind reach the save payload.
+  // -------------------------------------------------------------------------
+  assertionsRun += 1;
+  console.log('Asserting 5: Add component adds one; its op, invert and kind reach the save payload...');
+  // Background mask is currently selected. Add a luminance component to it.
+  const addCompLumBtn = page.locator('button[data-testid="add-component-luminance"]');
+  await addCompLumBtn.waitFor({ state: 'visible' });
+  await addCompLumBtn.click();
+
+  const compRow0 = page.locator('[data-testid="component-row-0"]');
+  await compRow0.waitFor({ state: 'visible' });
+
+  // Toggle invert on component 0
+  const compInvertBtn = page.locator('button[data-testid="component-invert-0"]');
+  await compInvertBtn.waitFor({ state: 'visible' });
+  await compInvertBtn.click();
+
+  await page.waitForFunction(() => {
+    const bg = window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name === 'Background');
+    return bg?.components?.[0]?.invert === true;
+  }, { timeout: 4000 });
+
+  const bgWithComp = await page.evaluate(() => {
+    return window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name === 'Background');
+  });
+  if (!bgWithComp?.components || bgWithComp.components.length === 0) {
+    failures.push('Assertion 5: Background mask components missing from save payload');
+  } else {
+    const comp0 = bgWithComp.components[0];
+    if (comp0.op !== 'intersect' || !comp0.invert || comp0.kind?.type !== 'luminance_range') {
+      failures.push(`Assertion 5: Component op/invert/kind did not match: got ${JSON.stringify(comp0)}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 6. Changing the op is one undo step, labelled Masks.
+  // -------------------------------------------------------------------------
+  assertionsRun += 1;
+  console.log('Asserting 6: Changing the op is one undo step, labelled Masks...');
+  const opSelect0 = page.locator('select[data-testid="component-op-0"]');
+  await opSelect0.waitFor({ state: 'visible' });
+  await opSelect0.selectOption('subtract');
+
+  await page.waitForFunction(() => {
+    const bg = window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name === 'Background');
+    return bg?.components?.[0]?.op === 'subtract';
+  }, { timeout: 4000 });
+
+  // Trigger Cmd-Z / Ctrl-Z
+  await page.keyboard.down(process.platform === 'darwin' ? 'Meta' : 'Control');
+  await page.keyboard.press('z');
+  await page.keyboard.up(process.platform === 'darwin' ? 'Meta' : 'Control');
+
+  await page.waitForFunction(() => {
+    const bg = window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name === 'Background');
+    return bg?.components?.[0]?.op === 'intersect';
+  }, { timeout: 4000 });
+
+  const opAfterUndo = await opSelect0.inputValue();
+  if (opAfterUndo !== 'intersect') {
+    failures.push(`Assertion 6: Undo did not revert component op to 'intersect': got '${opAfterUndo}'`);
+  }
+
+  // Delete component 0 so Background is clean
+  await page.locator('button[data-testid="component-delete-0"]').click();
+  await page.waitForFunction(() => {
+    const bg = window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name === 'Background');
+    return !bg?.components || bg.components.length === 0;
+  }, { timeout: 4000 });
   await page.locator('button[data-testid="mask-done"]').click();
   await page.waitForTimeout(200);
 
   // -------------------------------------------------------------------------
-  // 10. Mask limit (4) still enforced: adding a mask disabled at 4; components
-  //     within a mask are not counted against the 4-mask limit.
+  // 7. Selecting a radial component shows its handles; dragging one changes the component and not the base shape.
   // -------------------------------------------------------------------------
   assertionsRun += 1;
-  console.log('Asserting 10: Mask limit (4) still enforced; components not counted against 4-mask limit...');
-  // We now have 4 masks: Linear 1, Luminance 1, Colour Range 1, Background.
-  const addMaskButtons = [
-    'add-linear-mask',
-    'add-radial-mask',
-    'add-brush-mask',
-    'add-luminance-mask',
-    'add-colour-mask',
-    'add-subject-mask',
-    'add-sky-mask',
-    'add-background-mask',
-  ];
-  for (const btnId of addMaskButtons) {
-    const btn = page.locator(`button[data-testid="${btnId}"]`);
-    const isDisabled = await btn.isDisabled();
-    if (!isDisabled) {
-      failures.push(`Assertion 10: Mask button ${btnId} is not disabled when at limit of 4 masks`);
-    }
-  }
-
-  // Select Background mask to edit it
-  const selectBgMask = page.locator('button[data-testid^="mask-select-"]').last();
-  await selectBgMask.click();
+  console.log('Asserting 7: Selecting a radial component shows its handles; dragging one changes the component and not the base shape...');
+  // Add a Linear mask as the test mask
+  const addLinearBtn = page.locator('button[data-testid="add-linear-mask"]');
+  await addLinearBtn.click();
   await page.waitForTimeout(200);
 
-  // Component add buttons must NOT be disabled by the 4-mask limit
-  const addCompLinear = page.locator('button[data-testid="add-component-linear"]');
+  // Base mask is Linear. Record its original start and end coordinates.
+  const linearStart = await page.evaluate(() => {
+    const m = window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.kind?.type === 'linear');
+    return m?.kind?.start ? [...m.kind.start] : null;
+  });
+
+  // Add a Radial component to this linear mask
   const addCompRadial = page.locator('button[data-testid="add-component-radial"]');
-  const addCompLum = page.locator('button[data-testid="add-component-luminance"]');
+  await addCompRadial.waitFor({ state: 'visible' });
+  await addCompRadial.click();
+  await page.waitForTimeout(250);
 
-  const linDisabled = await addCompLinear.isDisabled();
-  const radDisabled = await addCompRadial.isDisabled();
-  const lumDisabled = await addCompLum.isDisabled();
+  // Select radial component row
+  const compSelectRadial = page.locator('button[data-testid="component-select-0"]');
+  await compSelectRadial.waitFor({ state: 'visible' });
+  await compSelectRadial.click();
+  await page.waitForTimeout(200);
 
-  if (linDisabled || radDisabled || lumDisabled) {
-    failures.push('Assertion 10: Adding components inside a mask was incorrectly disabled by the 4-mask limit');
+  // Check radial handles appear on SVG
+  const radialHandles = page.locator('svg circle');
+  const countHandles = await radialHandles.count();
+  if (countHandles === 0) {
+    failures.push('Assertion 7: Radial component handles did not appear on canvas');
   }
 
-  // Add a component to verify it succeeds
-  await addCompLum.click();
-  await page.waitForTimeout(200);
-  const compRows = await page.locator('[data-testid^="component-row-"]').count();
-  if (compRows === 0) {
-    failures.push('Assertion 10: Component could not be added when at 4-mask limit');
+  // Drag a radial handle
+  const firstHandle = radialHandles.first();
+  const handleBox = await firstHandle.boundingBox();
+  if (handleBox) {
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x + 30, handleBox.y + 30, { steps: 5 });
+    await page.mouse.up();
+  }
+
+  await page.waitForFunction(() => {
+    const m = window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name?.startsWith('Linear'));
+    return m?.components?.[0]?.kind?.type === 'radial';
+  }, { timeout: 4000 });
+
+  const recipeAfterHandleDrag = await page.evaluate(() => window.__STUB__.lastSavedRecipe);
+  const testMaskAfterDrag = recipeAfterHandleDrag?.masks?.find((m) => m.name?.startsWith('Linear'));
+  if (!testMaskAfterDrag) {
+    failures.push('Assertion 7: Linear mask not found after handle drag');
+  } else {
+    // Base mask kind must still be linear with identical start
+    if (testMaskAfterDrag.kind?.type !== 'linear') {
+      failures.push(`Assertion 7: Base mask kind was mutated: ${JSON.stringify(testMaskAfterDrag.kind)}`);
+    } else if (linearStart && (testMaskAfterDrag.kind.start[0] !== linearStart[0] || testMaskAfterDrag.kind.start[1] !== linearStart[1])) {
+      failures.push(`Assertion 7: Base mask start was mutated by component drag: was ${JSON.stringify(linearStart)}, now ${JSON.stringify(testMaskAfterDrag.kind.start)}`);
+    }
+
+    // Component kind must be radial
+    const comp0 = testMaskAfterDrag.components?.[0];
+    if (comp0?.kind?.type !== 'radial') {
+      failures.push(`Assertion 7: Component kind is not radial: ${JSON.stringify(comp0?.kind)}`);
+    }
   }
 
   // -------------------------------------------------------------------------
-  // 9. Serialization round-trip: components persist in recipe JSON; older recipes without
-  //    components load cleanly; mask without components does not serialize components: [].
+  // 8. Deleting a component removes it from the save payload.
   // -------------------------------------------------------------------------
   assertionsRun += 1;
-  console.log('Asserting 9: Serialization round-trip of components and clean omission when absent...');
-  // Set component op to subtract on Background mask
-  const bgCompOp = page.locator('select[data-testid="component-op-0"]');
-  await bgCompOp.selectOption('subtract');
-  try {
-    await page.waitForFunction(
-      () => {
-        const bg = window.__STUB__.lastSavedRecipe?.masks?.find((m) => m.name === 'Background');
-        return bg?.components?.[0]?.op === 'subtract';
-      },
-      { timeout: 3000 },
-    );
-  } catch {
-    // Timeout will be handled by following assertion check
+  console.log('Asserting 8: Deleting a component removes it from the save payload...');
+  const compDeleteBtn = page.locator('button[data-testid="component-delete-0"]');
+  await compDeleteBtn.waitFor({ state: 'visible' });
+  await compDeleteBtn.click();
+
+  await page.waitForFunction(() => {
+    const m = window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name?.startsWith('Linear'));
+    return m && (!m.components || m.components.length === 0);
+  }, { timeout: 4000 });
+
+  const recipeAfterCompDelete = await page.evaluate(() => window.__STUB__.lastSavedRecipe);
+  const testMaskAfterCompDelete = recipeAfterCompDelete?.masks?.find((m) => m.name?.startsWith('Linear'));
+  if (testMaskAfterCompDelete?.components && testMaskAfterCompDelete.components.length > 0) {
+    failures.push(`Assertion 8: Component was not removed from save payload: ${JSON.stringify(testMaskAfterCompDelete.components)}`);
   }
 
-  const savedRecipe = await page.evaluate(() => window.__STUB__.lastSavedRecipe);
-  if (!savedRecipe || !savedRecipe.masks) {
-    failures.push('Assertion 9: No saved recipe found in stub');
-  } else {
-    // Check linear mask (index 0) has NO components property
-    const linearMask = savedRecipe.masks[0];
-    if ('components' in linearMask && linearMask.components !== undefined) {
-      failures.push(`Assertion 9: Mask without components serialized 'components' (${JSON.stringify(linearMask.components)}) instead of omitting it`);
-    }
-
-    // Check background mask (index 3) has components array with subtract luminance
-    const bgMask = savedRecipe.masks.find((m) => m.name === 'Background');
-    if (!bgMask || !bgMask.components || bgMask.components.length !== 1) {
-      failures.push(`Assertion 9: Background mask components array missing or length != 1: ${JSON.stringify(bgMask?.components)}`);
-    } else {
-      const comp = bgMask.components[0];
-      if (comp.op !== 'subtract' || comp.kind.type !== 'luminance_range') {
-        failures.push(`Assertion 9: Expected component { op: 'subtract', kind: { type: 'luminance_range' } }, got ${JSON.stringify(comp)}`);
-      }
-    }
+  // -------------------------------------------------------------------------
+  // 9. A mask without components sends none.
+  // -------------------------------------------------------------------------
+  assertionsRun += 1;
+  console.log('Asserting 9: A mask without components sends none...');
+  if (testMaskAfterCompDelete && 'components' in testMaskAfterCompDelete && testMaskAfterCompDelete.components !== undefined) {
+    failures.push(`Assertion 9: Mask without components serialized 'components' (${JSON.stringify(testMaskAfterCompDelete.components)}) instead of omitting it`);
   }
 
-  // Verify older recipe without components loads cleanly
+  // Older recipes without components load cleanly
   await page.evaluate(() => {
     const oldRecipe = {
       version: 2,
@@ -491,15 +523,52 @@ try {
   }
 
   // -------------------------------------------------------------------------
+  // 10. Esc while picking leaves the mode and changes nothing.
+  // -------------------------------------------------------------------------
+  assertionsRun += 1;
+  console.log('Asserting 10: Esc while picking leaves the mode and changes nothing...');
+  const countBeforePick = await page.evaluate(() => window.__STUB__.lastSavedRecipe?.masks?.length ?? 1);
+  const addColourEscBtn = page.locator('button[data-testid="add-colour-mask"]');
+  await addColourEscBtn.waitFor({ state: 'visible' });
+  await addColourEscBtn.click();
+  await page.waitForTimeout(150);
+
+  const isPickingBeforeEsc = await page.evaluate(() => {
+    return document.querySelector('.canvas-viewport__container')?.classList.contains('is-eyedropper');
+  });
+  if (!isPickingBeforeEsc) {
+    failures.push('Assertion 10: Did not enter picking mode');
+  }
+
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+
+  const isPickingAfterEsc = await page.evaluate(() => {
+    return document.querySelector('.canvas-viewport__container')?.classList.contains('is-eyedropper');
+  });
+  if (isPickingAfterEsc) {
+    failures.push('Assertion 10: Pressing Esc did not exit eyedropper mode');
+  }
+
+  const countAfterEsc = await page.evaluate(() => window.__STUB__.lastSavedRecipe?.masks?.length ?? 1);
+  if (countAfterEsc !== countBeforePick) {
+    failures.push(`Assertion 10: Pressing Esc while picking created a mask (count changed from ${countBeforePick} to ${countAfterEsc})`);
+  }
+
+  // -------------------------------------------------------------------------
   // 11. Touch targets for all interactive controls (buttons, selects, rows) at least 40px.
   // -------------------------------------------------------------------------
   assertionsRun += 1;
   console.log('Asserting 11: Touch targets for all interactive controls at least 40px...');
-  // Open old_linear for editing
+  // Edit the existing mask 'old_linear'
   await page.locator('button[data-testid="mask-select-old_linear"]').click();
   await page.waitForTimeout(200);
 
-  const interactiveTestIds = [
+  // Add a luminance component to expose component row controls
+  await page.locator('button[data-testid="add-component-luminance"]').click();
+  await page.waitForTimeout(200);
+
+  const requiredControls = [
     'add-linear-mask',
     'add-radial-mask',
     'add-brush-mask',
@@ -514,43 +583,165 @@ try {
     'add-component-colour',
     'add-component-subject',
     'add-component-sky',
-    'mask-done',
-  ];
-
-  for (const tid of interactiveTestIds) {
-    const loc = page.locator(`button[data-testid="${tid}"]`).first();
-    if (await loc.isVisible()) {
-      const box = await loc.boundingBox();
-      if (!box || box.width < 39.5 || box.height < 39.5) {
-        failures.push(`Assertion 11: Control ${tid} touch target is under 40px (${box?.width?.toFixed(1)}x${box?.height?.toFixed(1)})`);
-      }
-    }
-  }
-
-  // Add a component to check component row controls size
-  await page.locator('button[data-testid="add-component-luminance"]').click();
-  await page.waitForTimeout(200);
-
-  const compTestIds = [
     'component-row-0',
     'component-select-0',
     'component-op-0',
     'component-invert-0',
     'component-delete-0',
+    'mask-done',
   ];
-  for (const tid of compTestIds) {
+
+  for (const tid of requiredControls) {
     const loc = page.locator(`[data-testid="${tid}"]`).first();
-    if (await loc.isVisible()) {
-      const box = await loc.boundingBox();
-      if (!box || box.width < 39.5 || box.height < 39.5) {
-        failures.push(`Assertion 11: Control ${tid} touch target is under 40px (${box?.width?.toFixed(1)}x${box?.height?.toFixed(1)})`);
-      }
+    const visible = await loc.isVisible();
+    if (!visible) {
+      failures.push(`Assertion 11: Required control ${tid} is missing or not visible`);
+      continue;
+    }
+    const box = await loc.boundingBox();
+    if (!box || box.width < 39.5 || box.height < 39.5) {
+      failures.push(`Assertion 11: Control ${tid} touch target is under 40px (${box?.width?.toFixed(1)}x${box?.height?.toFixed(1)})`);
     }
   }
 
   const proofPath = join(OUT, 'mask-components.png');
   await page.screenshot({ path: proofPath, fullPage: true });
   console.log(`  Proof screenshot saved to ${proofPath}`);
+
+  // Clean up editing
+  await page.locator('button[data-testid="mask-done"]').click();
+  await page.waitForTimeout(200);
+
+  // -------------------------------------------------------------------------
+  // Extra: Mask limit (4) still enforced; components not counted against 4-mask limit.
+  // -------------------------------------------------------------------------
+  console.log('Asserting extra: Mask limit (4) still enforced; components not counted against 4-mask limit...');
+  // We currently have 1 mask (old_linear). Add 3 more to reach 4.
+  await page.locator('button[data-testid="add-radial-mask"]').click();
+  await page.waitForTimeout(200);
+  await page.locator('button[data-testid="mask-done"]').click();
+  await page.waitForTimeout(200);
+
+  await page.locator('button[data-testid="add-brush-mask"]').click();
+  await page.waitForTimeout(200);
+  await page.locator('button[data-testid="mask-done"]').click();
+  await page.waitForTimeout(200);
+
+  await page.locator('button[data-testid="add-luminance-mask"]').click();
+  await page.waitForTimeout(200);
+  await page.locator('button[data-testid="mask-done"]').click();
+  await page.waitForTimeout(200);
+
+  // All 8 mask add buttons must be disabled
+  for (const btnId of ['add-linear-mask', 'add-radial-mask', 'add-brush-mask', 'add-luminance-mask', 'add-colour-mask', 'add-background-mask', 'add-subject-mask', 'add-sky-mask']) {
+    const btn = page.locator(`button[data-testid="${btnId}"]`);
+    const dis = await btn.isDisabled();
+    if (!dis) {
+      failures.push(`Extra: Mask button ${btnId} not disabled at limit of 4 masks`);
+    }
+  }
+
+  // Select mask 0 to edit components; adding components must NOT be disabled
+  await page.locator('[data-testid^="mask-select-"]').first().click();
+  await page.waitForTimeout(200);
+
+  const addCompLinear = page.locator('button[data-testid="add-component-linear"]');
+  const isCompLinDis = await addCompLinear.isDisabled();
+  if (isCompLinDis) {
+    failures.push('Extra: Adding component incorrectly disabled by 4-mask limit');
+  }
+  await page.locator('button[data-testid="mask-done"]').click();
+  await page.waitForTimeout(200);
+
+  // -------------------------------------------------------------------------
+  // 12. Model download for Background retains intent (creates inverted named Background with modelsPresent=false).
+  // -------------------------------------------------------------------------
+  assertionsRun += 1;
+  console.log('Asserting 12: Model download for Background retains intent (creates inverted named Background with modelsPresent=false)...');
+  // Load a new image to start with clean masks
+  await page.evaluate(() => {
+    window.__STUB__.modelsPresent = { subject: false, sky: false };
+    window.__STUB__.autoMaskCalls = [];
+  });
+  await pathInput.fill('/Volumes/Photos/download_bg_test.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(250);
+  await blurAll();
+  await ensureMasksSectionOpen();
+
+  // Click + Background when model is not present
+  const bgBtnDl = page.locator('button[data-testid="add-background-mask"]');
+  await bgBtnDl.waitFor({ state: 'visible' });
+  await bgBtnDl.click();
+  await page.waitForTimeout(200);
+
+  // Auto-download banner should appear
+  const autoDlCard = page.locator('[data-testid="auto-download"]');
+  await autoDlCard.waitFor({ state: 'visible' });
+
+  // Start download
+  const dlStartBtn = page.locator('button[data-testid="auto-download-start"]');
+  await dlStartBtn.click();
+
+  // Wait for model download and auto-mask completion (watchJob runs for 300ms + makeAutoMask + save debounce)
+  await page.waitForFunction(() => {
+    const m = window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name === 'Background');
+    return m && m.invert && m.kind?.type === 'auto' && m.kind?.target === 'subject';
+  }, { timeout: 8000 });
+
+  const savedBgAfterDl = await page.evaluate(() => {
+    return window.__STUB__.lastSavedRecipe?.masks?.find((m) => m.name === 'Background');
+  });
+  if (!savedBgAfterDl) {
+    failures.push('Assertion 12: After model download, mask named Background was not created');
+  } else {
+    if (!savedBgAfterDl.invert) {
+      failures.push('Assertion 12: Mask created after Background download was not inverted');
+    }
+    if (savedBgAfterDl.kind?.type !== 'auto' || savedBgAfterDl.kind?.target !== 'subject') {
+      failures.push(`Assertion 12: Expected auto:subject mask after Background download, got ${JSON.stringify(savedBgAfterDl.kind)}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 13. Model download for Add component retains intent (adds component to selected mask, not separate mask).
+  // -------------------------------------------------------------------------
+  assertionsRun += 1;
+  console.log('Asserting 13: Model download for Add component retains intent (adds component to selected mask, not separate mask)...');
+  // Background mask is currently selected. Reset sky model to present=false.
+  await page.evaluate(() => {
+    window.__STUB__.modelsPresent.sky = false;
+  });
+
+  const maskCountBeforeSky = await page.evaluate(() => window.__STUB__.lastSavedRecipe?.masks?.length ?? 1);
+
+  // Click Add component -> + Sky
+  const addCompSkyBtn = page.locator('button[data-testid="add-component-sky"]');
+  await addCompSkyBtn.waitFor({ state: 'visible' });
+  await addCompSkyBtn.click();
+  await page.waitForTimeout(200);
+
+  // Auto-download card appears for sky
+  const dlSkyStartBtn = page.locator('button[data-testid="auto-download-start"]');
+  await dlSkyStartBtn.waitFor({ state: 'visible' });
+  await dlSkyStartBtn.click();
+
+  await page.waitForFunction(() => {
+    const m = window.__STUB__.lastSavedRecipe?.masks?.find((x) => x.name === 'Background');
+    return m?.components?.some((c) => c.kind?.type === 'auto' && c.kind?.target === 'sky');
+  }, { timeout: 8000 });
+
+  const recipeAfterSkyDl = await page.evaluate(() => window.__STUB__.lastSavedRecipe);
+  const maskCountAfterSky = recipeAfterSkyDl?.masks?.length ?? 0;
+  if (maskCountAfterSky !== maskCountBeforeSky) {
+    failures.push(`Assertion 13: Model download for component added a separate mask instead of a component (mask count went from ${maskCountBeforeSky} to ${maskCountAfterSky})`);
+  }
+
+  const bgMaskWithSkyComp = recipeAfterSkyDl?.masks?.find((m) => m.name === 'Background');
+  const skyComp = bgMaskWithSkyComp?.components?.find((c) => c.kind?.type === 'auto' && c.kind?.target === 'sky');
+  if (!skyComp) {
+    failures.push(`Assertion 13: Expected Sky auto component inside Background mask, got components: ${JSON.stringify(bgMaskWithSkyComp?.components)}`);
+  }
 
 } catch (err) {
   failures.push(`Unexpected error during check:masks execution: ${err.message}\n${err.stack}`);
@@ -560,9 +751,9 @@ try {
 }
 
 console.log('\n--- check:masks Summary ---');
-console.log(`Assertions executed: ${assertionsRun}/11`);
+console.log(`Assertions executed: ${assertionsRun}/13`);
 if (failures.length === 0) {
-  console.log('ALL 11 ASSERTIONS PASSED');
+  console.log('ALL 13 ASSERTIONS PASSED');
   process.exit(0);
 } else {
   console.error(`FAILURES (${failures.length}):`);

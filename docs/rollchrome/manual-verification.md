@@ -5,7 +5,7 @@ from [`../manual-verification.md`](../manual-verification.md) when the editor le
 (RC-3), and **their ids are unchanged**, so anything that names MV-20.4 still finds it.
 
 How to work through them — tick the box, replace **Result:** with what actually happened, and a
-failed check is a result — is as described at the top of that file. **41 checks**, none done yet
+failed check is a result — is as described at the top of that file. **49 checks**, none done yet
 (2026-11-06). They all need a Mac with real photographs, and MV-20.7 also a card and a mounted
 share.
 
@@ -304,13 +304,33 @@ the automated check drives the screen against a stub.
 
 [`../briefs/RP-11.md`](../briefs/RP-11.md). Real photographs in the real application.
 
-- [ ] **MV-33.1 — Mask combinations: colour and luminance ranges with shapes.**
-      **Run:** in Edit, open a real photograph with a subject and background (e.g. portrait against foliage or sky).
-      1. Click `+ Background` to create an inverted subject mask, adjust exposure and contrast, verify the background is isolated without fringing.
-      2. Click `+ Luminance range` to create a mid-tones mask, inspect low/high/feather adjustments, verify that changing exposure on the mask affects only mid-tones.
-      3. Add a Linear gradient mask, add a `Luminance range` component set to `intersect` or `subtract`, drag the linear gradient handles and observe interactive coverage updates without affecting the component's range settings.
-      4. Click `+ Colour range`, sample a dominant hue on the image, shift its exposure, then click `Re-pick colour` to select a different hue.
-      5. Export the photograph across formats and verify that masked adjustments match the on-screen preview.
-      **Pass:** range masks cleanly isolate tones and colours without noise or harsh boundaries; combining operations (`add`, `subtract`, `intersect`) and component inverting accurately compose complex selection areas; gradient handles remain fully interactive for both base and components; exported renders match the interactive display preview.
+- [ ] **MV-33.1 — Add.**
+      **Run:** in Edit, create a base Linear gradient mask covering the top half. Add a Radial gradient component with `Add` operation covering a subject in the bottom half. Boost exposure on the mask (+1.5 EV).
+      **Pass:** both regions receive the boost (the union of the two shapes); dragging the radial component handles adjusts its coverage without altering the base linear gradient.
+      **Result:**
+
+- [ ] **MV-33.2 — Subtract.**
+      **Run:** in Edit, create a base Linear gradient mask covering an entire landscape. Add a Radial gradient or Luminance range component with `Subtract` operation over a foreground rock or subject. Apply an exposure adjustment (-1.0 EV).
+      **Pass:** the subtracted region is cleanly punched out and remains unadjusted, with smooth falloff at the boundary.
+      **Result:**
+
+- [ ] **MV-33.3 — Intersect.**
+      **Run:** in Edit, create a base Linear gradient mask over the sky/top region. Add a Luminance range component with `Intersect` operation targeting bright tones (Low 0.60, High 1.0, Feather 0.2). Adjust temperature/tint or exposure.
+      **Pass:** only pixels that are both in the top linear gradient and in the bright luminance range receive the adjustment; darker areas in the top region and bright areas outside the top region are excluded.
+      **Result:**
+
+- [ ] **MV-33.4 — Luminance range.**
+      **Run:** in Edit, click `+ Luminance range` to add a standalone luminance range mask. Adjust Low, High, and Feather sliders to target mid-tones (e.g. Low 0.25, High 0.75, Feather 0.2). Apply exposure (+1.0 EV) and contrast adjustments.
+      **Pass:** shadows below Low and highlights above High remain untouched; mid-tones transition smoothly according to Feather; changing global exposure does not shift the mask's boundary.
+      **Result:**
+
+- [ ] **MV-33.5 — Colour range.**
+      **Run:** in Edit, click `+ Colour range`, entering eyedropper picking mode. Click on a distinct coloured object (e.g. foliage, clothing, or blue sky). Inspect the picked Hue, Chroma, and Lightness values. Adjust the Range slider and boost saturation (+40) or shift exposure on the mask. Re-pick another colour using `Re-pick colour`.
+      **Pass:** only the chosen colour range is affected with smooth OkLCh falloff; nearby neutrals and different hues remain unadjusted; re-picking updates the target colour accurately.
+      **Result:**
+
+- [ ] **MV-33.6 — Background.**
+      **Run:** in Edit on a portrait or subject photo, click `+ Background`. If the subject model is not cached, verify download intent and auto-generation create an inverted subject mask named "Background". Adjust exposure and saturation on the mask.
+      **Pass:** the subject remains untouched while the entire surround/background is adjusted cleanly without haloing around edges.
       **Result:**
 

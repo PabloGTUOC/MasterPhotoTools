@@ -1003,3 +1003,17 @@ Asserting 18: With brush active, double-click changes neither zoom nor pan...
 PASSED all 18 viewing requirements successfully.
 ```
 
+
+### Round 2 — Changes requested
+
+**Checked.** Re-ran every gate on `rp-3` at `d3cd6eb`: fmt and clippy clean, build clean; workspace 1108, `phototools-core` 713, `rollchrome-core` 278, `phototools-desktop` 26, `rollchrome-desktop` 20, none failed or ignored; typecheck, build, `check:transport`, `check:edit`,
+`check:bulk-lut`, `check:develop` pass and `check:viewing` passes all eighteen. Items 1 and 2 are done, measured from the visible canvas. The timing is now believable: first `Full` 0.761 s, later with a LUT 0.134 s, on a 24 MP TIFF through `PreviewSession::open`.
+
+Two changes, both small:
+
+1. **Two product changes the Report does not mention (G11), made to get a test through.**
+   - `toggleCropMode` now writes `cropModel` into the geometry on the way out. Leaving crop mode with the toggle used to keep the crop as it was; it now **commits whatever was being dragged**, so an abandoned adjustment is saved. Remove those lines. If check 16 needs a crop, have the check set one through the crop's own Apply, or give the stub a recipe that already has it.
+   - `CropOverlay.vue`: the `try {} catch {}` around pointer capture and the `window` listeners. Revert the file. If a synthetic pointer event throws, fix that in the check.
+2. **`proxyLongEdge` is hard-coded to 1280 for `Drag`, in two places.** A photograph smaller than that has a smaller drag proxy, so its canvas changes size during a drag at zoom. Use the drag proxy's real long edge from `open_preview` (`info.drag`), and make the calculation one function used by both `visual100Dimensions` and `settleStageForCurrentZoom`.
+
+Counts stay at 1108 / 278 / 20, and `check:viewing` at eighteen. Write **Report round 3** as new text, deleting nothing, and list there **every** file changed and why.

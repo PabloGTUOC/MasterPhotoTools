@@ -8,6 +8,7 @@
 //! into a recipe with `tools::load_preset` and hands the recipe over. This module
 //! only knows recipes.
 
+use crate::media::edit::icc::srgb_metadata_corrections;
 use crate::media::edit::lut::Lut;
 use crate::media::edit::pipeline::AdjustmentRecipe;
 use crate::tools::edit::{
@@ -20,7 +21,7 @@ use crate::tools::lut_library::resolve_recipe_lut;
 use phototools_core::error::Error;
 use phototools_core::ingest::scanner;
 use phototools_core::jobs::{Outcome, Progress, ToolResult};
-use phototools_core::tools::{carry_metadata_with, expand_inputs, Derived, Plan, Skip, Tool};
+use phototools_core::tools::{carry_metadata_correcting, expand_inputs, Derived, Plan, Skip, Tool};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -291,7 +292,9 @@ impl BulkEditTool {
 
         // Single exiftool process for the entire batch (G4).
         // upright is false: decoder reads orientation as stored; orientation tag is preserved.
-        summary.metadata_skipped = carry_metadata_with(&derived, false, exiftool_program);
+        let corrections = srgb_metadata_corrections();
+        summary.metadata_skipped =
+            carry_metadata_correcting(&derived, false, exiftool_program, &corrections);
 
         progress.report(total, total, "done");
         Ok(Outcome { data: summary })

@@ -5,11 +5,12 @@
 //!
 //! Drives `media::edit` and never touches pixels itself.
 
+use crate::media::edit::icc::srgb_metadata_corrections;
 use crate::media::edit::{
     apply_recipe_with_orientation, decode_image, validate_lut, AdjustmentRecipe, ImageBuffer, Lut,
 };
 use phototools_core::error::Error;
-use phototools_core::tools::{carry_metadata, Derived, Skip};
+use phototools_core::tools::{carry_metadata_correcting, Derived, Skip};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -448,7 +449,13 @@ where
     // No geometry -> keep the tag (`upright: false`);
     // Identity recipe -> byte copy, as handled above.
     let geometry_active = recipe.geometry.is_some();
-    let skipped = carry_metadata(std::slice::from_ref(&derived), geometry_active);
+    let corrections = srgb_metadata_corrections();
+    let skipped = carry_metadata_correcting(
+        std::slice::from_ref(&derived),
+        geometry_active,
+        None,
+        &corrections,
+    );
     let metadata_skipped = skipped.into_iter().next();
 
     Ok(ExportResult {

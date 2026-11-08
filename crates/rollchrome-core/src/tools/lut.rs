@@ -6,6 +6,7 @@
 //!
 //! Follows F8 as the tool template.
 
+use crate::media::edit::icc::srgb_metadata_corrections;
 use crate::media::edit::lut::Lut;
 use crate::media::edit::pipeline::{AdjustmentRecipe, LutRef};
 use crate::tools::edit::{
@@ -13,7 +14,7 @@ use crate::tools::edit::{
 };
 use phototools_core::error::Error;
 use phototools_core::jobs::{Outcome, Progress, ToolResult};
-use phototools_core::tools::{carry_metadata_with, expand_inputs, Derived, Plan, Skip, Tool};
+use phototools_core::tools::{carry_metadata_correcting, expand_inputs, Derived, Plan, Skip, Tool};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -225,7 +226,9 @@ impl BulkLutTool {
 
         // Single exiftool process for the entire batch (G4).
         // upright is false: decoder reads orientation as stored; orientation tag is preserved.
-        summary.metadata_skipped = carry_metadata_with(&derived, false, exiftool_program);
+        let corrections = srgb_metadata_corrections();
+        summary.metadata_skipped =
+            carry_metadata_correcting(&derived, false, exiftool_program, &corrections);
 
         progress.report(total, total, "done");
         Ok(Outcome { data: summary })

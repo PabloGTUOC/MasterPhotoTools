@@ -129,6 +129,17 @@ pub fn carry_metadata(derived: &[Derived], upright: bool) -> Vec<Skip> {
 
 /// Carry metadata across a batch of derivatives, optionally specifying a custom `exiftool` program.
 pub fn carry_metadata_with(derived: &[Derived], upright: bool, program: Option<&str>) -> Vec<Skip> {
+    carry_metadata_correcting(derived, upright, program, &[])
+}
+
+/// Carry metadata across a batch of derivatives, optionally specifying a custom `exiftool` program
+/// and applying a set of tag corrections on each output in the same `ExifWriter` process (G4).
+pub fn carry_metadata_correcting(
+    derived: &[Derived],
+    upright: bool,
+    program: Option<&str>,
+    corrections: &[String],
+) -> Vec<Skip> {
     if derived.is_empty() {
         return Vec::new();
     }
@@ -168,6 +179,16 @@ pub fn carry_metadata_with(derived: &[Derived], upright: bool, program: Option<&
                 file: item.output.to_string_lossy().to_string(),
                 reason: format!("metadata could not be carried over: {e}"),
             });
+            continue;
+        }
+
+        if !corrections.is_empty() {
+            if let Err(e) = writer.set_tags(&item.output, corrections) {
+                skipped.push(Skip {
+                    file: item.output.to_string_lossy().to_string(),
+                    reason: format!("metadata could not be carried over: {e}"),
+                });
+            }
         }
     }
 

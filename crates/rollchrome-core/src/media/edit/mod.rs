@@ -7,6 +7,7 @@ pub mod geometry;
 pub mod grading;
 pub mod grain;
 pub mod hsl;
+pub mod icc;
 pub mod looks;
 pub mod lut;
 pub mod masks;

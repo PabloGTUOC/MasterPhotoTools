@@ -17,3 +17,6 @@ export const moduleAssignments = ref<Record<string, PhotoAssignment>>({});
 export const moduleSelection = ref<string[]>([]);
 export const moduleLastClicked = ref<string | null>(null);
 export const moduleFormat = ref<OutputFormat>({ kind: 'jpeg', quality: 95 });
+export const moduleScope = ref<'all' | 'selected'>('all');
+export const moduleJobId = ref<string | null>(null);
+export const moduleIsDeveloping = ref(false);

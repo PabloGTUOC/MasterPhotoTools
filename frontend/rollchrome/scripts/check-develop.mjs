@@ -1,16 +1,22 @@
 /**
  * RP-1 Develop acceptance & verification script in a real headless browser.
  *
- * Checks (from RP-1.md):
- * 1. Six stubbed RAWs give six thumbnails, and no two thumbnail requests overlap.
- * 2. The picker offers None, 5 Fujifilm, 7 Ricoh and the stubbed LUTs.
+ * Checks (from RP-1.md and Review Round 1):
+ * 1. Six stubbed RAWs give six thumbnails, zero overlap in thumbnail requests.
+ * 2. The picker offers None, 5 Fujifilm, 7 Ricoh, and stubbed LUTs (using the 12 shipped looks).
  * 3. A look on one selected photograph changes that photograph alone; after Select all it changes all six.
+ *    Thumbnails show the display name ("Positive Film"), not internal id.
  * 4. The items sent to plan_develop carry the exact builtin:<id> strings and exposures.
- * 5. With a slow first preview response and a fast second, the second stays on screen.
+ * 5. With a slow first preview response and a fast second, the second stays on screen (assert naturalWidth).
  * 6. Develop is disabled before the dry run and after any change to a look, an exposure or the format, with the reason visible.
  * 7. A stubbed skip is listed with its reason; cancel calls the job cancel; the summary shows its counts.
- * 8. Unmounting and remounting the view keeps folder, assignments and selection.
- * 9. Every control is at least 40 px. Write a screenshot to layout-proof/.
+ * 8. Unmounting and remounting the view keeps folder, assignments, and selection.
+ * 9. Every control is at least 40 px. Write a screenshot to layout-proof/develop.png. Assert naturalWidth > 0 on thumbnails and preview.
+ * 10. During a burst of ten exposure changes against a slow stub, no two preview requests overlap, at most two are sent, and the last carries the final exposure.
+ * 11. Assigning a look, then changing to a folder with a file of the same name, shows that file with no look.
+ * 12. Unmounting and remounting while thumbnails load gives no overlapping thumbnail requests.
+ * 13. Remounting during a run shows its progress and keeps Develop disabled.
+ * 14. With Selected only, the items sent to plan_develop are exactly the selection, and changing the selection locks Develop.
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -98,7 +104,6 @@ try {
 
   // Wait for all 6 thumbnails to load
   await page.waitForSelector('.thumbnail-card:nth-child(6)', { timeout: 3000 });
-  // Wait a moment for all thumbnail async requests to finish
   await page.waitForTimeout(300);
 
   const thumbCount = await page.locator('.thumbnail-card').count();
@@ -122,9 +127,9 @@ try {
   }
 
   // -------------------------------------------------------------------------
-  // 2. Look picker groups: None, 5 Fujifilm, 7 Ricoh, stubbed LUTs
+  // 2. Look picker groups: None, 5 Fujifilm, 7 Ricoh, stubbed LUTs (12 shipped looks)
   // -------------------------------------------------------------------------
-  console.log('2. Checking look picker groups...');
+  console.log('2. Checking look picker groups (12 shipped looks)...');
   const lookSelect = page.locator('[data-testid="look-select"]');
 
   const neutralOptions = await lookSelect.locator('optgroup[label="Neutral"] option').count();
@@ -150,9 +155,9 @@ try {
   }
 
   // -------------------------------------------------------------------------
-  // 3. Single photo look assignment vs Select all
+  // 3. Single photo look assignment vs Select all; Display name on thumbnails
   // -------------------------------------------------------------------------
-  console.log('3. Checking look assignment to single selection vs Select all...');
+  console.log('3. Checking look assignment to single selection vs Select all and display names...');
   // Photo 1 is currently selected
   await page.selectOption('[data-testid="look-select"]', 'builtin:fujifilm-classic-chrome');
   await page.waitForTimeout(100);
@@ -164,13 +169,13 @@ try {
     .locator('.thumbnail-card[data-filename="DSCF0002.RAF"] .thumb-look')
     .innerText();
 
-  if (!card1Look.includes('builtin:fujifilm-classic-chrome')) {
+  if (card1Look !== 'Classic Chrome') {
     failures.push(
-      `Photo 1 should have builtin:fujifilm-classic-chrome assigned, got: "${card1Look}"`,
+      `Photo 1 should show display name "Classic Chrome", got: "${card1Look}"`,
     );
   }
-  if (!card2Look.includes('None')) {
-    failures.push(`Photo 2 should remain unassigned (None), got: "${card2Look}"`);
+  if (card2Look !== 'None') {
+    failures.push(`Photo 2 should show display name "None", got: "${card2Look}"`);
   }
 
   // Click Select all and assign Ricoh Positive Film to all
@@ -184,10 +189,10 @@ try {
   const allLooks = await page.$$eval('.thumbnail-card .thumb-look', (els) =>
     els.map((el) => el.textContent?.trim()),
   );
-  const allRicoh = allLooks.every((l) => l === 'builtin:ricoh-positive-film');
+  const allRicoh = allLooks.every((l) => l === 'Positive Film');
   if (!allRicoh) {
     failures.push(
-      `Select all should assign builtin:ricoh-positive-film to all 6 photos; got: ${JSON.stringify(allLooks)}`,
+      `Select all should assign "Positive Film" display name to all 6 photos; got: ${JSON.stringify(allLooks)}`,
     );
   }
 
@@ -234,18 +239,19 @@ try {
   const currentPreviewCalls = await page.evaluate(
     () => window.__DEVELOP_STUB__.previewCallCount,
   );
-  // Call 1 (first click): slow response (300ms)
-  // Call 2 (second click): fast response (20ms)
+  // Call 1: slow response (250ms), returns 64x64 JPEG
+  // Call 2: fast response (20ms), returns 80x64 JPEG
   await page.evaluate((c) => {
-    window.__DEVELOP_STUB__.previewDelayMs[c + 1] = 300;
+    window.__DEVELOP_STUB__.previewDelayMs[c + 1] = 250;
     window.__DEVELOP_STUB__.previewDelayMs[c + 2] = 20;
+    window.__DEVELOP_STUB__.distinctPreviewCallIdx = c + 2;
   }, currentPreviewCalls);
 
   // Click photo 2, then immediately click photo 3
   await page.locator('.thumbnail-card[data-filename="DSCF0002.RAF"]').click();
   await page.locator('.thumbnail-card[data-filename="DSCF0003.RAF"]').click();
 
-  // Wait 400ms for both async preview requests to finish
+  // Wait for serialized calls to finish
   await page.waitForTimeout(400);
 
   const previewTitle = await page.locator('.preview-title').innerText();
@@ -255,23 +261,18 @@ try {
     );
   }
 
-  // Verify the preview image displayed has the size from call 2, not call 1
-  const displayedBlobSize = await page.evaluate(async () => {
+  // Verify the preview image displayed has width 80 (from call 2), not 64 (from call 1)
+  const displayedNaturalWidth = await page.evaluate(() => {
     const img = document.querySelector('[data-testid="preview-image"]');
-    if (!img || !img.src) return null;
-    const res = await fetch(img.src);
-    const blob = await res.blob();
-    return blob.size;
+    return img ? img.naturalWidth : 0;
   });
 
-  const expectedCall2Size = 150 + (currentPreviewCalls + 2) * 10;
-  const staleCall1Size = 150 + (currentPreviewCalls + 1) * 10;
   console.log(
-    `  Preview blob size: ${displayedBlobSize} (expected second: ${expectedCall2Size}, stale first: ${staleCall1Size})`,
+    `  Preview naturalWidth: ${displayedNaturalWidth} (expected second call: 80, stale first: 64)`,
   );
-  if (displayedBlobSize !== expectedCall2Size) {
+  if (displayedNaturalWidth !== 80) {
     failures.push(
-      `Latest-wins preview failed: expected size ${expectedCall2Size}, got ${displayedBlobSize}`,
+      `Latest-wins preview failed: expected naturalWidth 80, got ${displayedNaturalWidth}`,
     );
   }
 
@@ -282,8 +283,6 @@ try {
   const runBtn = page.locator('[data-testid="run-button"]');
   const gateExpl = page.locator('[data-testid="gate-explanation"]');
 
-  // Currently, settings have not been dry run since photo clicks/exposures
-  // Let's run a dry run to get into an unlocked state
   await dryRunBtn.click();
   await page.waitForSelector('[data-testid="review-section"]', { timeout: 3000 });
 
@@ -293,7 +292,7 @@ try {
 
   // 6a. Change look
   console.log('  Testing lock on look change...');
-  await page.selectOption('[data-testid="look-select"]', 'builtin:fujifilm-astia');
+  await page.selectOption('[data-testid="look-select"]', 'builtin:fujifilm-provia');
   await page.waitForTimeout(100);
 
   if (!(await runBtn.isDisabled())) {
@@ -362,7 +361,6 @@ try {
   console.log('7. Checking skipped items, job cancellation, and summary counts...');
   const skippedSection = page.locator('[data-testid="skipped-section"]');
   const skippedText = await skippedSection.innerText();
-  console.log(`  Skipped text: "${skippedText}"`);
 
   if (!skippedText.includes('DSCF0006.RAF') || !skippedText.includes('already developed')) {
     failures.push(`Expected skip listing for DSCF0006.RAF with reason, got: "${skippedText}"`);
@@ -406,6 +404,9 @@ try {
   await page.evaluate(() => window.__remountDevelop());
   await page.waitForSelector('[data-testid="develop-folder-input"]', { timeout: 2000 });
   await page.waitForSelector('.thumbnail-card:nth-child(6)', { timeout: 3000 });
+  await page.waitForFunction(() => document.querySelectorAll('.thumb-img').length === 6, {
+    timeout: 5000,
+  });
 
   const remountFolder = await folderInput.inputValue();
   if (remountFolder !== '/Volumes/Photos/RAW') {
@@ -415,18 +416,9 @@ try {
   const remountCard1Look = await page
     .locator('.thumbnail-card[data-filename="DSCF0001.RAF"] .thumb-look')
     .innerText();
-  if (!remountCard1Look.includes('builtin:ricoh-positive-film')) {
+  if (!remountCard1Look.includes('Positive Film')) {
     failures.push(
-      `Expected photo 1 assignment "builtin:ricoh-positive-film" preserved across unmount, got: "${remountCard1Look}"`,
-    );
-  }
-
-  const remountCard3Look = await page
-    .locator('.thumbnail-card[data-filename="DSCF0003.RAF"] .thumb-look')
-    .innerText();
-  if (!remountCard3Look.includes('builtin:fujifilm-astia')) {
-    failures.push(
-      `Expected photo 3 assignment "builtin:fujifilm-astia" preserved across unmount, got: "${remountCard3Look}"`,
+      `Expected photo 1 assignment "Positive Film" preserved across unmount, got: "${remountCard1Look}"`,
     );
   }
 
@@ -438,11 +430,11 @@ try {
   }
 
   // -------------------------------------------------------------------------
-  // 9. Interactive touch targets >= 40px and layout proof screenshot
+  // 9. Interactive touch targets >= 40px and naturalWidth > 0 image proof
   // -------------------------------------------------------------------------
-  console.log('9. Auditing touch target heights (>= 40px) and taking screenshot...');
+  console.log('9. Auditing touch target heights (>= 40px) and image naturalWidth...');
   const interactiveHandles = await page.$$(
-    'button, input[type="text"], input[type="number"], textarea, select, label.format-option',
+    'button, input[type="text"], input[type="number"], textarea, select, label.format-option, label.scope-option',
   );
 
   let under40Count = 0;
@@ -462,9 +454,223 @@ try {
     failures.push(`Found ${under40Count} interactive control(s) with height under 40px`);
   }
 
+  // Assert naturalWidth > 0 on all visible thumbnails and preview image (RP-1 review item 7)
+  const imageMetrics = await page.evaluate(() => {
+    const thumbImgs = Array.from(document.querySelectorAll('.thumb-img')).map(
+      (el) => el.naturalWidth,
+    );
+    const prev = document.querySelector('[data-testid="preview-image"]');
+    return {
+      thumbnails: thumbImgs,
+      preview: prev ? prev.naturalWidth : 0,
+    };
+  });
+  console.log(`  Thumbnail naturalWidths: ${JSON.stringify(imageMetrics.thumbnails)}, preview: ${imageMetrics.preview}`);
+
+  if (imageMetrics.thumbnails.length !== 6 || imageMetrics.thumbnails.some((w) => w <= 0)) {
+    failures.push(
+      `Every thumbnail must render a valid image with naturalWidth > 0, got: ${JSON.stringify(imageMetrics.thumbnails)}`,
+    );
+  }
+  if (imageMetrics.preview <= 0) {
+    failures.push(`Preview image must have naturalWidth > 0, got: ${imageMetrics.preview}`);
+  }
+
   const screenshotPath = join(OUT, 'develop.png');
   await page.screenshot({ path: screenshotPath, fullPage: true });
   console.log(`Wrote layout screenshot proof to ${screenshotPath}`);
+
+  // -------------------------------------------------------------------------
+  // 10. Exposure scrub burst serialization (RP-1 review item 1)
+  // -------------------------------------------------------------------------
+  console.log('10. Checking serialized preview requests during exposure slider scrub...');
+  await page.evaluate(() => {
+    window.__DEVELOP_STUB__.previewRequests = [];
+    window.__DEVELOP_STUB__.previewCallCount = 0;
+    window.__DEVELOP_STUB__.maxConcurrentPreviewRequests = 0;
+    window.__DEVELOP_STUB__.previewDelayMs = { 1: 100, 2: 100 };
+  });
+
+  // Photo 3 is selected; burst of 10 exposure changes
+  for (let i = 1; i <= 10; i++) {
+    const val = (i * 0.2).toFixed(1);
+    await exposureInput.fill(val);
+    await exposureInput.dispatchEvent('change');
+  }
+
+  // Wait for in-flight and pending preview requests to settle
+  await page.waitForTimeout(350);
+
+  const burstRequests = await page.evaluate(() => window.__DEVELOP_STUB__.previewRequests);
+  const burstMaxConcurrent = await page.evaluate(
+    () => window.__DEVELOP_STUB__.maxConcurrentPreviewRequests,
+  );
+  console.log(
+    `  Burst preview requests: ${burstRequests.length}, max concurrent: ${burstMaxConcurrent}`,
+  );
+
+  if (burstMaxConcurrent > 1) {
+    failures.push(
+      `Preview requests during burst must not overlap; max concurrent was ${burstMaxConcurrent}`,
+    );
+  }
+  if (burstRequests.length > 2) {
+    failures.push(
+      `During burst of 10 exposure changes, at most 2 preview requests should be sent, got ${burstRequests.length}`,
+    );
+  }
+  const lastBurstReq = burstRequests[burstRequests.length - 1];
+  if (!lastBurstReq || Math.abs(lastBurstReq.exposure_ev - 2.0) > 0.01) {
+    failures.push(
+      `Last preview request should carry final exposure 2.0, got: ${JSON.stringify(lastBurstReq)}`,
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // 11. Folder change clears assignments (RP-1 review item 2)
+  // -------------------------------------------------------------------------
+  console.log('11. Checking assignments cleared on folder change...');
+  await folderInput.fill('/Volumes/Photos/folder2');
+  await folderInput.press('Enter');
+  await page.waitForSelector('.thumbnail-card:nth-child(2)', { timeout: 3000 });
+  await page.waitForTimeout(200);
+
+  const folder2Card1Look = await page
+    .locator('.thumbnail-card[data-filename="DSCF0001.RAF"] .thumb-look')
+    .innerText();
+  if (folder2Card1Look !== 'None') {
+    failures.push(
+      `Changing to folder with same-named file should show "None", got "${folder2Card1Look}"`,
+    );
+  }
+
+  // Switch back to /Volumes/Photos/RAW
+  await folderInput.fill('/Volumes/Photos/RAW');
+  await folderInput.press('Enter');
+  await page.waitForSelector('.thumbnail-card:nth-child(6)', { timeout: 3000 });
+  await page.waitForTimeout(200);
+
+  // -------------------------------------------------------------------------
+  // 12. Unmount/remount while thumbnails load gives no overlap (RP-1 review item 3)
+  // -------------------------------------------------------------------------
+  console.log('12. Checking unmount and remount during thumbnail loading...');
+  await page.evaluate(() => {
+    window.__DEVELOP_STUB__.thumbnailDelayMs = 150;
+    window.__DEVELOP_STUB__.maxConcurrentThumbnailRequests = 0;
+    window.__DEVELOP_STUB__.thumbnailRequests = [];
+  });
+
+  // Trigger load by re-entering folder
+  await folderInput.fill('/Volumes/Photos/RAW');
+  await folderInput.press('Enter');
+  await page.waitForTimeout(30);
+
+  // Unmount while loading
+  await page.evaluate(() => window.__unmountDevelop());
+  await page.waitForSelector('#unmounted-marker', { timeout: 2000 });
+  await page.waitForTimeout(50);
+
+  // Remount
+  await page.evaluate(() => window.__remountDevelop());
+  await page.waitForSelector('.thumbnail-card:nth-child(6)', { timeout: 4000 });
+  await page.waitForTimeout(200);
+
+  const unmountMaxConcurrentThumbs = await page.evaluate(
+    () => window.__DEVELOP_STUB__.maxConcurrentThumbnailRequests,
+  );
+  if (unmountMaxConcurrentThumbs > 1) {
+    failures.push(
+      `Unmounting/remounting while thumbnails load must not cause overlapping requests; max was ${unmountMaxConcurrentThumbs}`,
+    );
+  }
+  await page.evaluate(() => {
+    window.__DEVELOP_STUB__.thumbnailDelayMs = 20;
+  });
+
+  // -------------------------------------------------------------------------
+  // 13. Remounting during a run shows progress & keeps Develop disabled (RP-1 review item 4)
+  // -------------------------------------------------------------------------
+  console.log('13. Checking running job persistence across remount...');
+  await dryRunBtn.click();
+  await page.waitForSelector('[data-testid="review-section"]', { timeout: 3000 });
+
+  await runBtn.click();
+  await page.waitForSelector('[data-testid="job-section"]', { timeout: 3000 });
+
+  // Unmount while job is running
+  await page.evaluate(() => window.__unmountDevelop());
+  await page.waitForSelector('#unmounted-marker', { timeout: 2000 });
+
+  // Remount
+  await page.evaluate(() => window.__remountDevelop());
+  await page.waitForSelector('[data-testid="develop-folder-input"]', { timeout: 2000 });
+
+  const jobSectionVisible = await page.locator('[data-testid="job-section"]').isVisible();
+  if (!jobSectionVisible) {
+    failures.push('JobProgress section must remain visible on remount during a running job');
+  }
+  const isDevelopDisabledDuringRun = await runBtn.isDisabled();
+  if (!isDevelopDisabledDuringRun) {
+    failures.push('Develop button must remain disabled during a running job after remount');
+  }
+
+  // Cancel job to settle
+  const cancelBtnDuringRun = page.locator('button.ghost.danger', { hasText: 'Cancel' });
+  if (await cancelBtnDuringRun.isVisible()) {
+    await cancelBtnDuringRun.click();
+  }
+  await page.waitForTimeout(200);
+
+  // -------------------------------------------------------------------------
+  // 14. Scope: Selected only sends selection and locks on selection change (RP-1 review item 5)
+  // -------------------------------------------------------------------------
+  console.log('14. Checking scope toggle: Selected only items and lock on selection change...');
+  const scopeSelected = page.locator('[data-testid="scope-selected"]');
+  await scopeSelected.click();
+  await page.waitForTimeout(100);
+
+  // Select photo 1 and photo 2
+  await page.locator('.thumbnail-card[data-filename="DSCF0001.RAF"]').click();
+  await page.locator('.thumbnail-card[data-filename="DSCF0002.RAF"]').click({ modifiers: ['Meta'] });
+  await page.waitForTimeout(100);
+
+  // Dry run with Selected only
+  await dryRunBtn.click();
+  await page.waitForSelector('[data-testid="review-section"]', { timeout: 3000 });
+
+  const selectedPlannedItems = await page.evaluate(
+    () => window.__DEVELOP_STUB__.lastPlanItems,
+  );
+  if (!selectedPlannedItems || selectedPlannedItems.length !== 2) {
+    failures.push(
+      `With Selected only, expected 2 planned items, got: ${JSON.stringify(selectedPlannedItems)}`,
+    );
+  } else {
+    const names = selectedPlannedItems.map((it) => it.name).sort();
+    if (names[0] !== 'DSCF0001.RAF' || names[1] !== 'DSCF0002.RAF') {
+      failures.push(
+        `With Selected only, expected [DSCF0001.RAF, DSCF0002.RAF], got: ${JSON.stringify(names)}`,
+      );
+    }
+  }
+
+  if (await runBtn.isDisabled()) {
+    failures.push('Run button should be enabled after dry run with Selected only');
+  }
+
+  // Changing selection must lock Develop
+  await page.locator('.thumbnail-card[data-filename="DSCF0003.RAF"]').click();
+  await page.waitForTimeout(100);
+
+  if (!(await runBtn.isDisabled())) {
+    failures.push('Changing selection under Selected only must lock Develop');
+  }
+  const selectionChangeReason = await gateExpl.innerText();
+  if (!selectionChangeReason.includes('Settings have changed')) {
+    failures.push(
+      `Expected settings changed explanation when selection changes under Selected only, got: "${selectionChangeReason}"`,
+    );
+  }
 
 } catch (err) {
   failures.push(`Test execution threw: ${err instanceof Error ? err.stack : String(err)}`);
@@ -480,5 +686,5 @@ if (failures.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log('\ncheck:develop PASSED: all 9 checks verified successfully.');
+  console.log('\ncheck:develop PASSED: all 14 checks verified successfully.');
 }

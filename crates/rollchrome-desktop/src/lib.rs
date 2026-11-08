@@ -213,7 +213,10 @@ impl AppState {
         let exp_bits = exposure_ev.to_bits();
         // 1. Check cache with lock held briefly
         {
-            let slot = self.develop_preview.lock().unwrap();
+            let slot = self
+                .develop_preview
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(cached) = slot.as_ref() {
                 if cached.path == path && cached.exposure_bits == exp_bits {
                     return Ok(cached.preview.clone());
@@ -232,7 +235,10 @@ impl AppState {
 
         // 3. Re-acquire lock and store the single cached preview
         {
-            let mut slot = self.develop_preview.lock().unwrap();
+            let mut slot = self
+                .develop_preview
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             *slot = Some(CachedDevelopPreview {
                 path: path.to_path_buf(),
                 exposure_bits: exp_bits,

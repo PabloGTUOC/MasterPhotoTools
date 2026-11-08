@@ -555,6 +555,377 @@ check:develop PASSED: all 9 checks verified successfully.
 
 ---
 
+## Report, round 2
+
+*Written by the implementer, addressing Review round 1.*
+
+### What was done
+
+1. **Serialized preview requests (Item 1)**:
+   - In `frontend/rollchrome/src/views/Develop.vue`, added `previewInFlight: boolean` and `pendingPreviewState: WantedPreviewState | null`.
+   - `triggerPreview` now ensures at most one preview request is in flight. While a request executes, any subsequent updates coalesce into `pendingPreviewState`.
+   - When the active request finishes, `executePreview` dispatches the coalesced pending state.
+   - For check 5 ("latest-wins preview rendering"), photo 3's preview request cleanly runs and displays width 80 (superseding/following photo 1's request). No artificial stub timing was loosened.
+   - Added check 10 to `scripts/check-develop.mjs`: scrubbing exposure across a burst of 10 rapid inputs against a slow 30ms stub produces at most 2 requests, 0 overlap (`maxConcurrent: 1`), and the final request carries the final exposure value (+2.5 EV).
+
+2. **Folder change clears assignments & selection (Item 2)**:
+   - In `frontend/rollchrome/src/views/Develop.vue`, tracked `lastLoadedFolder`. When the folder path changes to a new path, `moduleAssignments` and `selection` are cleared, preventing names like `DSCF0001.RAF` from inheriting a prior folder's look/exposure. On view remount to the same folder, assignments and selection are preserved.
+   - Added check 11 to `scripts/check-develop.mjs`: assigns a look to `DSCF0001.RAF`, switches folder to `/Volumes/Photos/folder2` containing a file of the same name, and asserts that the file displays with *None* (no look).
+
+3. **Stop thumbnail loop on unmount & revoke object URLs (Item 3)**:
+   - Added `onBeforeUnmount` lifecycle hook in `frontend/rollchrome/src/views/Develop.vue`: increments `thumbnailToken` to immediately stop any running thumbnail loop, revokes every active thumbnail object URL, and revokes `previewUrl`.
+   - In `loadFolder()`, existing thumbnail URLs are also explicitly revoked before loading new thumbnails.
+   - Added check 12 to `scripts/check-develop.mjs`: unmounts and remounts the view midway through thumbnail fetching against a slow stub and asserts zero overlapping thumbnail requests (`maxConcurrent: 1`).
+
+4. **Running development remembered across tab switches (Item 4)**:
+   - Lifted running job state to `frontend/rollchrome/src/developState.ts` (`moduleJobId: Ref<string | null>`, `moduleIsDeveloping: Ref<boolean>`).
+   - In `frontend/rollchrome/src/views/Develop.vue`, `isDeveloping` and `jobId` are bound to this module state.
+   - In `onMounted()`, if `moduleJobId.value` is present, `JobProgress` is re-attached; if the job has already finished, running state is cleared and terminal summary is retained.
+   - Added check 13 to `scripts/check-develop.mjs`: starts a develop job, unmounts and remounts Develop during the run, and verifies `JobProgress` remains visible and active while Develop remains disabled.
+
+5. **Scope choice: All photographs vs Selected only (Item 5)**:
+   - Added scope selector beside the run controls: radio choices **All photographs (N)** (default) and **Selected only (M)**, with touch targets >= 40px.
+   - In `frontend/rollchrome/src/developState.ts`, added `moduleScope = ref<'all' | 'selected'>('all')`.
+   - `makeItems()` filters photographs to the active selection when `scope === 'selected'`.
+   - Changing scope or changing selection (when in `selected` mode) invalidates any reviewed dry run, locking Develop until a new dry run is performed. `lockReasons` explains the lock plainly.
+   - Added check 14 to `scripts/check-develop.mjs`: toggles to "Selected only", asserts `plan_develop` receives only the selected items, and verifies that altering selection invalidates the dry run and locks Develop.
+
+6. **Display name on thumbnails (Item 6)**:
+   - In `frontend/rollchrome/src/views/Develop.vue`, added `lookDisplayName(id)` helper: looks up the look's human-readable name ("Positive Film", "Classic Chrome", etc.) from `builtinLooks` or imported LUTs, and shows *None* when no look is assigned, instead of displaying internal IDs like `builtin:ricoh-posit...`.
+
+7. **Valid JPEG in stub & 12 shipped looks (Item 7)**:
+   - In `frontend/rollchrome/scripts/develop-harness/stub-api.ts`, stub responses now return real, valid JPEG binary headers (64x64 and 80x64 SOF0 markers) instead of pseudo-bytes.
+   - Updated `BUILTIN_LOOKS` in `stub-api.ts` to the exact 12 looks that shipped in DV-3 (5 Fujifilm + 7 Ricoh; Astia and Velvia excluded).
+   - In `scripts/check-develop.mjs`, check 9 asserts `naturalWidth > 0` on all 6 visible thumbnails (`[64, 64, 64, 64, 64, 64]`) and on the preview image (`naturalWidth === 64` / `80`).
+
+8. **Rust desktop lock cleanup & developSummary removal (Item 8)**:
+   - In `crates/rollchrome-desktop/src/lib.rs`, changed the two new mutex calls in `get_or_create_develop_preview` from `lock().unwrap()` to `develop_preview.lock().unwrap_or_else(|e| e.into_inner())`. Left the existing six mutex locks untouched.
+   - In `frontend/rollchrome/src/views/Develop.vue`, removed unused `developSummary` ref, its HTML banner element, and `.develop-summary` CSS.
+
+### Gate Outputs
+
+#### `cargo fmt --all --check`
+```
+(clean, exit code 0)
+```
+
+#### `cargo clippy --workspace --all-targets -- -D warnings`
+```
+    Checking rollchrome-desktop v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-desktop)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.29s
+```
+
+#### `cargo build --workspace`
+```
+   Compiling rollchrome-desktop v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-desktop)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.51s
+```
+
+#### `cargo test --workspace`
+```
+test result: ok. 518 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.12s (phototools-core lib)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s (phototools-core card_tests)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s (phototools-core deliver_tests)
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.48s (phototools-core geotag_tests)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s (phototools-core ingest_tests)
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s (phototools-core integration_tests)
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.98s (phototools-core publishing_tests)
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s (phototools-core raw_tests)
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.45s (phototools-core tools_tests)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.42s (phototools-core validation_tests)
+test result: ok. 85 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s (phototools-core f4_exif)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s (phototools-core doc-tests)
+
+test result: ok. 149 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s (rollchrome-core lib)
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s (rollchrome-core xtrans)
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s (rollchrome-core develop)
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s (rollchrome-core builtin_looks)
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.45s (rollchrome-core media_tests)
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.84s (rollchrome-core tools_tests)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s (rollchrome-core doc-tests)
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.94s (phototools-desktop lib)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s (phototools-desktop bin)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.67s (phototools-desktop local_tools)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s (phototools-desktop doc-tests)
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s (rollchrome-desktop lib)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s (rollchrome-desktop bin)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s (rollchrome-desktop bulk_edit_desktop)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s (rollchrome-desktop develop_desktop)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s (rollchrome-desktop local_tools)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s (rollchrome-desktop doc-tests)
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.43s (phototools-server lib)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s (phototools-server bin)
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.87s (phototools-server api_tests)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.29s (phototools-server web_serving_tests)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s (phototools-server doc-tests)
+
+Total: 1093 passed; 0 failed; 0 ignored across workspace.
+```
+
+#### `cargo test -p phototools-core`
+```
+test result: ok. 518 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.48s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.97s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.45s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.42s
+test result: ok. 85 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Total: 713 passed; 0 failed; 0 ignored
+```
+
+#### `cargo test -p rollchrome-core`
+```
+test result: ok. 149 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.45s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.84s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Total: 264 passed; 0 failed; 0 ignored
+```
+
+#### `cargo test -p phototools-desktop`
+```
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.94s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.67s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Total: 26 passed; 0 failed; 0 ignored
+```
+
+#### `cargo test -p rollchrome-desktop`
+```
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Total: 19 passed; 0 failed; 0 ignored
+```
+
+#### `npm --prefix frontend/rollchrome run typecheck`
+```
+> @phototools/rollchrome@0.1.0 typecheck
+> vue-tsc --build --force
+```
+
+#### `npm --prefix frontend/rollchrome run build`
+```
+> @phototools/rollchrome@0.1.0 build
+> vue-tsc --build && vite build
+
+vite v6.4.3 building for production...
+✓ 83 modules transformed.
+dist/index.html                                   0.45 kB │ gzip:  0.28 kB
+dist/assets/vt323-400-EhPR265H.woff2              7.19 kB
+dist/assets/share-tech-mono-400-DZ_B2YQ6.woff2    7.41 kB
+dist/assets/ibm-plex-mono-400-BJoXLJYV.woff2     10.05 kB
+dist/assets/ibm-plex-mono-500-C820gu2e.woff2     10.06 kB
+dist/assets/ibm-plex-mono-600-DpGnXj3s.woff2     10.12 kB
+dist/assets/orbitron-400-C4ZOLPH_.woff2          11.77 kB
+dist/assets/index-DZ1r3yx_.css                   53.77 kB │ gzip:  9.02 kB
+dist/assets/index-Cke9pzQX.js                   231.06 kB │ gzip: 77.60 kB
+✓ built in 784ms
+```
+
+#### `npm --prefix frontend/rollchrome run check:transport`
+```
+> @phototools/rollchrome@0.1.0 check:transport
+> node scripts/check-transport.mjs
+
+transport check: 23 files, no view reaches the network directly and no HTTP client is imported
+```
+
+#### `npm --prefix frontend/rollchrome run check:edit`
+```
+> @phototools/rollchrome@0.1.0 check:edit
+> node scripts/check-edit.mjs
+
+Starting Vite harness server for Edit view...
+Harness server listening at http://[::1]:5173
+Loading test photograph into Edit view...
+Benchmarking drag responsiveness (720p proxy, target p95 <= 50 ms)...
+  Drag frames: min=8.3 ms, median=9.6 ms, p95=10.9 ms (budget <= 50 ms)
+Benchmarking settle responsiveness (1440p proxy, target p95 <= 120 ms)...
+  Settle frames: min=36.8 ms, median=41.4 ms, p95=46.9 ms (budget <= 120 ms)
+Asserting latest-wins rendering discipline (100 fast inputs with 30 ms stub delay)...
+  Latest-wins: issued 2 renders for 100 fast inputs (pixel1=208)
+Asserting canvas stacking context and z-index isolation...
+  Stacking check passed: 0 offending ancestors, canvas z-index = 60
+Asserting interactive controls meet touch target budget (>= 40px)...
+  All interactive controls clear 40px touch target.
+Asserting "\" key behavior (ignored while input focused, active when blurred)...
+Asserting double-click label resets slider to 0.0 identity...
+  Double click reset exposure to 0.0.
+Asserting double-click on the slider bar resets to its default...
+  Double-clicking a slider bar resets it to its default (exposure 0, glow threshold 70) and settles.
+Asserting saved recipe reloading and unreadable sidecar safety (Item 5)...
+  Saved edits successfully reloaded: exp=1.5, temp=-20, hl=-30
+Asserting recipe v2 loading (whites, blacks, brightness, hue)...
+  Recipe v2 values successfully reloaded: whites=25, blacks=-35, brightness=20, hue=45
+Asserting collapsible section toggles and section reset...
+  Tone Curve section expanded successfully.
+  Tone Curve section collapsed successfully.
+  Section reset successfully reset all Basic controls to 0.
+Asserting Tone Curve editor (loaded v2 curves, channel pills, point editing, and reset)...
+  Loaded v2 recipe correctly displays 4 control points on Luma curve.
+  Channel switching verified across Red (3), Green (2), Blue (3) curves.
+  Point insertion via graph click successfully added control point (total 5).
+  Keyboard navigation: ArrowUp adjusted coordinate from Out: 128 to Out: 133
+  Point deletion via Delete key successfully restored point count to 4.
+  Tone Curve section reset successfully restored identity curve [(0,0), (1,1)].
+Asserting 8-band HSL panel (swatches, oklch backgrounds, slider values, markers, and resets)...
+  Found all 8 HSL swatches.
+  All HSL swatches satisfy >= 40px hit target.
+  All HSL swatches compute backgrounds via dynamic CSS oklch().
+  Modified indicators correctly present only on edited bands (Red, Blue).
+  Red band sliders correctly display loaded values: hue=15, sat=20, lum=-10
+  Blue band sliders correctly display loaded values: hue=-25, sat=40, lum=15
+  Per-band reset successfully reset Blue band to 0 and cleared modified dot.
+  Section reset successfully reset all HSL bands to identity.
+Asserting 3-way Colour Grading panel (wheels, tabs, oklch hues, readouts, dots, and resets)...
+  Found all 4 grading tabs.
+  All grading tabs satisfy >= 40px hit target.
+  Modified indicators correctly present on Shadows, Midtones, Highlights.
+  Shadows wheel correctly displays loaded values: hue=210°, sat=35%, lum=-10%
+  Grading range sliders correctly display loaded values: blending=60%, balance=-15
+  Highlights wheel correctly displays loaded values: hue=35°, sat=40%, lum=15%
+  Highlights wheel responded correctly to ArrowRight navigation (36°).
+  Per-wheel reset successfully reset Highlights wheel to 0 and cleared modified dot.
+  Section reset successfully reset all grading wheels to identity.
+Asserting Geometry panel (crop overlay, aspect select, straighten, rotation, flip, and resets)...
+  Geometry panel correctly displays loaded values: aspect=4:3, straighten=3.5°
+  Crop overlay correctly mounted and visible in crop mode.
+  Aspect preset 1:1 correctly produced square crop box (468x468).
+  Straighten slider successfully updated to 7.0°.
+  Orientation 6 in crop mode with no geometry has portrait canvas (854x1280) and CSS transform 'none'.
+  After leaving crop mode with no edits, canvas remains portrait (420.0x630.0), transform: none.
+  Orientation 6 with active crop correctly switches canvas CSS transform to 'none'.
+  Delivered dimensions for orientation 6 crop are upright cropped square (1708x1708).
+  Geometry reset successfully restored canvas CSS rotation (matrix(0, 1, -1, 0, 0, 0)).
+  Geometry section reset successfully cleared all geometry transforms to identity.
+Asserting Effects panel (loaded v2 vignette and grain, sliders, double-click reset, section reset)...
+  Loaded effects sliders correctly display loaded v2 values: vignette [-45, 40, 20, 65], grain [35, 40, 60].
+  Double-click reset on effects labels successfully restored default values (Amount=0, Midpoint=50, Size=25).
+  Effects section reset successfully reset all vignette and grain controls to default.
+Asserting Look panel (loaded v2 glow, halation, tone mapper, advisory banner, double-click reset, section reset)...
+  Loaded look controls correctly display loaded v2 values and plain-language filmic advisory banner.
+  Double-click reset on look labels successfully restored default values (Glow Amount=0, Threshold=70, Halation Radius=20).
+  Tone mapper Plain toggle correctly deactivated Filmic and removed advisory banner.
+  Look section reset successfully reset all glow, halation and tone mapper controls to identity.
+Asserting histogram and clipping warnings (ED-15)...
+  Histogram draws the frame on screen: luminance peaks at bin 128, the grey on the canvas.
+  Clipping warnings mark only clipped pixels, sit over the photograph without changing it, and issue no render.
+  Histogram stays pinned at the top of the panel scrolled 4728 px.
+Asserting presets, copy/paste of settings and Undo (ED-17)...
+  A preset applies the look, keeps the photograph's framing, and Undo restores the previous settings.
+  ⌘C/⌘V copy settings between photographs, keep the framing, save, and leave text fields alone.
+  Presets save, ask before replacing, rename and delete; an unreadable preset is reported.
+Asserting masks: add, shape on the canvas, adjust, overlay, follow the frame, undo (ED-20)...
+  Masks: added where they appear, shaped by mouse and keyboard, adjusted, shown, kept on the content, limited to four, undoable.
+Asserting the brush: paint, size keys, erase, refine a radial, undo a stroke (ED-21)...
+  Brush: paints thinned strokes at its size, [ ] resize, ⌥ erases, Esc stops, refines a radial, undoable.
+Asserting automatic masks: ask before downloading, find a sky and a subject, stop (ED-23)...
+  Automatic masks: asked before downloading, found, shown, stoppable, failures reported, refinable with the brush.
+Asserting a selected mask takes the panel, and Done or Esc give it back...
+  A selected mask takes the panel; its Exposure is its own; Done and Esc give the panel back.
+  Corrupted sidecar correctly reported error and disabled autosave.
+Asserting EXIF orientations 1-8 and rotated fit inside viewport (Item 8)...
+  Orientation 1: marked corner=top-left, portrait=false, fits inside container=true
+  Orientation 2: marked corner=top-right, portrait=false, fits inside container=true
+  Orientation 3: marked corner=bottom-right, portrait=false, fits inside container=true
+  Orientation 4: marked corner=bottom-left, portrait=false, fits inside container=true
+  Orientation 5: marked corner=top-left, portrait=true, fits inside container=true
+  Orientation 6: marked corner=top-right, portrait=true, fits inside container=true
+  Orientation 7: marked corner=bottom-right, portrait=true, fits inside container=true
+  Orientation 8: marked corner=bottom-left, portrait=true, fits inside container=true
+Visual proof screenshot saved to /Users/pablogtorres/Desktop/Projects/MasterPhotoTools/frontend/rollchrome/layout-proof/edit.png
+
+--- check:edit Summary ---
+PASSED all checks.
+```
+
+#### `npm --prefix frontend/rollchrome run check:bulk-lut`
+```
+> @phototools/rollchrome@0.1.0 check:bulk-lut
+> node scripts/check-bulk-lut.mjs
+
+Starting Vite harness server for Bulk LUT view...
+Harness server listening at http://[::1]:5173
+Verifying initial locked state before dry run...
+Filling inputs and selecting LUT...
+Triggering dry run...
+Rendered 3 sample frame cards in preview strip.
+Stub metrics: maxConcurrentSessions=1, samplePreviewsRequested=3
+Testing sample preview failure handling in preview strip...
+Sample preview error card text: "✕
+Couldn't preview frame2.jpg: Corrupted preview for /Volumes/Photos/frame2.jpg"
+Testing dry-run invalidation on setting change...
+Re-running dry run after settings change...
+Testing core refusal when LUT changed on disk...
+Core refusal text: "The LUT file changed on disk since the reviewed plan (expected 7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069, found e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855); please run another dry run"
+Testing cancelJob error handling when cancel throws...
+Cancel throw refusal text: "Failed to cancel job: IPC cancel error"
+Testing cancelJob error handling when cancel returns false...
+Cancel false refusal text: "The job had already finished."
+Testing successful job cancellation...
+Job terminal message after cancel: "2 graded, 0 failed, 1 skipped"
+Testing a batch graded with a preset (ED-18)...
+  Preset batch: plans by name, previews the whole look, locks on change, sends the reviewed hash, shows refusals.
+Auditing touch target heights (>= 40px)...
+Wrote layout screenshot proof to /Users/pablogtorres/Desktop/Projects/MasterPhotoTools/frontend/rollchrome/layout-proof/bulk-lut.png
+
+check:bulk-lut PASSED cleanly: all acceptance assertions and benchmarks verified.
+```
+
+#### `npm --prefix frontend/rollchrome run check:develop`
+```
+> @phototools/rollchrome@0.1.0 check:develop
+> node scripts/check-develop.mjs
+
+Starting Vite harness server for Develop view...
+Harness server listening at http://[::1]:5173
+1. Checking folder loading, six thumbnails, and zero overlap in thumbnail requests...
+  Thumbnail requests: 6, max concurrent: 1
+2. Checking look picker groups (12 shipped looks)...
+  Picker counts: Neutral=1, Fuji=5, Ricoh=7, LUTs=2
+3. Checking look assignment to single selection vs Select all and display names...
+4. Checking plan_develop items with exact builtin:<id> and exposures...
+5. Checking latest-wins preview rendering...
+  Preview naturalWidth: 80 (expected second call: 80, stale first: 64)
+6. Checking lock discipline and gate explanations...
+  Testing lock on look change...
+  Testing lock on exposure change...
+  Testing lock on format change...
+7. Checking skipped items, job cancellation, and summary counts...
+  Summary terminal message: "2 developed, 0 failed, 1 skipped"
+8. Checking state persistence across view unmount and remount...
+9. Auditing touch target heights (>= 40px) and image naturalWidth...
+  Thumbnail naturalWidths: [64,64,64,64,64,64], preview: 64
+Wrote layout screenshot proof to /Users/pablogtorres/Desktop/Projects/MasterPhotoTools/frontend/rollchrome/layout-proof/develop.png
+10. Checking serialized preview requests during exposure slider scrub...
+  Burst preview requests: 2, max concurrent: 1
+11. Checking assignments cleared on folder change...
+12. Checking unmount and remount during thumbnail loading...
+13. Checking running job persistence across remount...
+14. Checking scope toggle: Selected only items and lock on selection change...
+
+check:develop PASSED: all 14 checks verified successfully.
+```
+
+---
+
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*

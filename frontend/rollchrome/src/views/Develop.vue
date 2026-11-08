@@ -16,7 +16,7 @@
  *   Any change invalidates the dry run. Skipped items listed with reasons. JobProgress with cancel.
  * - State persistence: Module-level state preserves folder, assignments, and selection across tab switches.
  */
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { BrowserEntry } from '@phototools/shared';
 import type {
   BuiltinLookInfo,
@@ -41,6 +41,9 @@ import {
   moduleSelection,
   moduleLastClicked,
   moduleFormat,
+  moduleScope,
+  moduleJobId,
+  moduleIsDeveloping,
 } from '../developState';
 
 // ---------------------------------------------------------------------------
@@ -65,6 +68,12 @@ let thumbnailToken = 0;
 const selection = ref<string[]>([...moduleSelection.value]);
 const lastClicked = ref<string | null>(moduleLastClicked.value);
 
+// Scope: All photographs vs Selected only (RP-1 review item 5)
+const scope = ref<'all' | 'selected'>(moduleScope.value);
+watch(scope, (s) => {
+  moduleScope.value = s;
+});
+
 // Looks library
 const builtinLooks = ref<BuiltinLookInfo[]>([]);
 const lutLibrary = ref<LutLibraryList>({ luts: [], errors: [] });
@@ -74,6 +83,15 @@ const previewUrl = ref<string | null>(null);
 const isPreviewLoading = ref(false);
 const previewError = ref<string | null>(null);
 let previewSeq = 0;
+
+interface WantedPreviewState {
+  folder: string;
+  name: string;
+  look: string | null;
+  exposure_ev: number;
+}
+let previewInFlight = false;
+let pendingPreviewState: WantedPreviewState | null = null;
 
 // Output format
 const outputType = ref<'jpeg' | 'tiff'>(moduleFormat.value.kind === 'tiff' ? 'tiff' : 'jpeg');
@@ -90,16 +108,45 @@ const reviewedPlan = ref<DevelopPlan | null>(null);
 const isPlanning = ref(false);
 const planError = ref<string | null>(null);
 
-// Job execution
-const jobId = ref<string | null>(null);
-const isDeveloping = ref(false);
-const developSummary = ref<string | null>(null);
+// Job execution (RP-1 review item 4)
+const jobId = ref<string | null>(moduleJobId.value);
+const isDeveloping = ref(moduleIsDeveloping.value);
 
-// Sync with module state
-watch(folder, (f) => {
-  moduleFolder.value = f;
+watch(jobId, (id) => {
+  moduleJobId.value = id;
+});
+watch(isDeveloping, (d) => {
+  moduleIsDeveloping.value = d;
+});
+
+// Sync with module state and handle folder changes (RP-1 review item 2)
+let lastLoadedFolder = moduleFolder.value;
+
+watch(folder, (newFolder) => {
+  const trimmed = newFolder.trim();
+  if (lastLoadedFolder && trimmed !== lastLoadedFolder) {
+    // Clear assignments and selection when folder changes, but not on remount
+    moduleAssignments.value = {};
+    moduleSelection.value = [];
+    moduleLastClicked.value = null;
+    selection.value = [];
+    lastClicked.value = null;
+    reviewed.value = null;
+    reviewedPlan.value = null;
+    for (const u of Object.values(thumbnailUrls.value)) {
+      URL.revokeObjectURL(u);
+    }
+    thumbnailUrls.value = {};
+    if (previewUrl.value) {
+      URL.revokeObjectURL(previewUrl.value);
+      previewUrl.value = null;
+    }
+  }
+  lastLoadedFolder = trimmed;
+  moduleFolder.value = newFolder;
   loadFolder();
 });
+
 watch(selection, (s) => {
   moduleSelection.value = [...s];
 }, { deep: true });
@@ -155,6 +202,23 @@ const selectedExposure = computed(() => {
 // Actions: folder scan & sequential thumbnail loading
 // ---------------------------------------------------------------------------
 
+// Helper: look display name on thumbnails (RP-1 review item 6)
+function lookDisplayName(lookId: string | null | undefined): string {
+  if (!lookId) return 'None';
+  const builtin = builtinLooks.value.find((b) => b.id === lookId);
+  if (builtin) return builtin.name;
+  const lut = lutLibrary.value.luts.find((l) => l.name === lookId);
+  if (lut) return lut.name;
+  if (lookId.startsWith('builtin:')) {
+    return lookId.slice('builtin:'.length);
+  }
+  return lookId;
+}
+
+// ---------------------------------------------------------------------------
+// Actions: folder scan & sequential thumbnail loading
+// ---------------------------------------------------------------------------
+
 async function loadFolder() {
   const currentPath = folder.value.trim();
   if (!currentPath) {
@@ -165,6 +229,9 @@ async function loadFolder() {
 
   isFolderLoading.value = true;
   folderError.value = null;
+  for (const u of Object.values(thumbnailUrls.value)) {
+    URL.revokeObjectURL(u);
+  }
   thumbnailUrls.value = {};
   thumbnailErrors.value = {};
   const currentToken = ++thumbnailToken;
@@ -291,52 +358,86 @@ function onExposureChange(exposure_ev: number) {
 }
 
 // ---------------------------------------------------------------------------
-// Actions: Latest-wins preview rendering
+// Actions: Serialized at-most-one-in-flight preview rendering (RP-1 review item 1)
 // ---------------------------------------------------------------------------
 
 async function triggerPreview() {
   const targetPhoto = lastClicked.value;
   const currentPath = folder.value.trim();
   if (!targetPhoto || !currentPath || !photos.value.includes(targetPhoto)) {
-    previewUrl.value = null;
+    if (previewUrl.value) {
+      URL.revokeObjectURL(previewUrl.value);
+      previewUrl.value = null;
+    }
     previewError.value = null;
+    pendingPreviewState = null;
     return;
   }
 
   const assignment = moduleAssignments.value[targetPhoto] ?? { look: null, exposure_ev: 0.0 };
+  const wanted: WantedPreviewState = {
+    folder: currentPath,
+    name: targetPhoto,
+    look: assignment.look,
+    exposure_ev: assignment.exposure_ev,
+  };
+
+  if (previewInFlight) {
+    pendingPreviewState = wanted;
+    return;
+  }
+
+  await executePreview(wanted);
+}
+
+async function executePreview(wanted: WantedPreviewState) {
+  previewInFlight = true;
+  pendingPreviewState = null;
   const seq = ++previewSeq;
   isPreviewLoading.value = true;
   previewError.value = null;
 
   try {
     const bytes = await desktop.previewDevelop(
-      currentPath,
-      targetPhoto,
-      assignment.look,
-      assignment.exposure_ev,
+      wanted.folder,
+      wanted.name,
+      wanted.look,
+      wanted.exposure_ev,
     );
-    if (seq !== previewSeq) return; // Discard stale response
-    if (previewUrl.value) {
-      URL.revokeObjectURL(previewUrl.value);
-    }
-    const blob = new Blob([bytes], { type: 'image/jpeg' });
-    previewUrl.value = URL.createObjectURL(blob);
-  } catch (err: unknown) {
-    if (seq !== previewSeq) return;
-    previewError.value = err instanceof Error ? err.message : String(err);
-  } finally {
     if (seq === previewSeq) {
+      if (previewUrl.value) {
+        URL.revokeObjectURL(previewUrl.value);
+      }
+      const blob = new Blob([bytes], { type: 'image/jpeg' });
+      previewUrl.value = URL.createObjectURL(blob);
+    }
+  } catch (err: unknown) {
+    if (seq === previewSeq) {
+      previewError.value = err instanceof Error ? err.message : String(err);
+    }
+  } finally {
+    previewInFlight = false;
+    if (pendingPreviewState !== null) {
+      const next = pendingPreviewState;
+      pendingPreviewState = null;
+      executePreview(next);
+    } else if (seq === previewSeq) {
       isPreviewLoading.value = false;
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Actions: Dry run & Lock discipline
+// Actions: Dry run & Lock discipline (RP-1 review item 5)
 // ---------------------------------------------------------------------------
 
 function makeItems(): DevelopItem[] {
-  return photos.value.map((name) => {
+  const targetPhotos =
+    scope.value === 'selected'
+      ? photos.value.filter((name) => selection.value.includes(name))
+      : photos.value;
+
+  return targetPhotos.map((name) => {
     const a = moduleAssignments.value[name] ?? { look: null, exposure_ev: 0.0 };
     return {
       name,
@@ -346,7 +447,12 @@ function makeItems(): DevelopItem[] {
   });
 }
 
-const currentItemsJson = computed(() => JSON.stringify(makeItems()));
+const currentItemsJson = computed(() =>
+  JSON.stringify({
+    scope: scope.value,
+    items: makeItems(),
+  })
+);
 const currentFormatJson = computed(() => JSON.stringify(currentFormat.value));
 
 const settingsChanged = computed(() => {
@@ -359,12 +465,10 @@ const settingsChanged = computed(() => {
 });
 
 const canPlan = computed(() => {
-  return (
-    !isPlanning.value &&
-    !isDeveloping.value &&
-    folder.value.trim().length > 0 &&
-    photos.value.length > 0
-  );
+  if (isPlanning.value || isDeveloping.value) return false;
+  if (!folder.value.trim() || photos.value.length === 0) return false;
+  if (scope.value === 'selected' && selection.value.length === 0) return false;
+  return true;
 });
 
 const canRun = computed(() => {
@@ -389,6 +493,8 @@ const lockReasons = computed(() => {
     reasons.push('Choose a folder of RAW files.');
   } else if (photos.value.length === 0) {
     reasons.push('The selected folder contains no RAW files.');
+  } else if (scope.value === 'selected' && selection.value.length === 0) {
+    reasons.push('Select at least one photograph to develop.');
   }
   if (settingsChanged.value) {
     reasons.push(
@@ -428,7 +534,6 @@ async function runDryRun() {
 async function runDevelop() {
   if (!canRun.value) return;
   isDeveloping.value = true;
-  developSummary.value = null;
   planError.value = null;
 
   try {
@@ -455,8 +560,20 @@ function handleJobDone() {
 }
 
 // ---------------------------------------------------------------------------
-// Lifecycle & initialization
+// Lifecycle & initialization (RP-1 review items 3, 4)
 // ---------------------------------------------------------------------------
+
+onBeforeUnmount(() => {
+  thumbnailToken++;
+  for (const u of Object.values(thumbnailUrls.value)) {
+    URL.revokeObjectURL(u);
+  }
+  thumbnailUrls.value = {};
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value);
+    previewUrl.value = null;
+  }
+});
 
 onMounted(async () => {
   try {
@@ -468,6 +585,22 @@ onMounted(async () => {
     lutLibrary.value = luts;
   } catch (err) {
     console.error('Failed to load looks:', err);
+  }
+
+  // Re-attach to existing job if running, or clear if finished
+  if (jobId.value) {
+    try {
+      const currentJob = await desktop.job(jobId.value);
+      if (
+        currentJob.status === 'completed' ||
+        currentJob.status === 'cancelled' ||
+        currentJob.status === 'failed'
+      ) {
+        isDeveloping.value = false;
+      }
+    } catch {
+      isDeveloping.value = false;
+    }
   }
 
   if (folder.value) {
@@ -549,7 +682,7 @@ onMounted(async () => {
             <div class="thumb-meta">
               <span class="thumb-name mono" :title="name">{{ name }}</span>
               <span class="thumb-look mono">
-                {{ moduleAssignments[name]?.look ?? 'None' }}
+                {{ lookDisplayName(moduleAssignments[name]?.look) }}
               </span>
             </div>
           </div>
@@ -704,6 +837,29 @@ onMounted(async () => {
 
         <!-- Run and Dry-run action buttons -->
         <div class="actions-box">
+          <div class="scope-toggle" role="radiogroup" aria-label="Develop scope">
+            <label class="scope-option">
+              <input
+                v-model="scope"
+                type="radio"
+                value="all"
+                :disabled="isDeveloping"
+                data-testid="scope-all"
+              />
+              <span>All photographs ({{ photos.length }})</span>
+            </label>
+            <label class="scope-option">
+              <input
+                v-model="scope"
+                type="radio"
+                value="selected"
+                :disabled="isDeveloping"
+                data-testid="scope-selected"
+              />
+              <span>Selected only ({{ selection.length }})</span>
+            </label>
+          </div>
+
           <div class="action-buttons">
             <button
               type="button"
@@ -787,10 +943,6 @@ onMounted(async () => {
     <!-- Errors and feedback -->
     <div v-if="planError" class="error-banner" role="alert">
       {{ planError }}
-    </div>
-
-    <div v-if="developSummary" class="summary-banner" data-testid="develop-summary">
-      {{ developSummary }}
     </div>
 
     <!-- Active Job Progress with Cancel -->
@@ -1180,19 +1332,26 @@ onMounted(async () => {
   color: var(--text-muted);
 }
 
+.scope-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.scope-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+}
+
 .error-banner,
 .error-line {
   color: var(--danger);
   font-size: 12px;
-}
-
-.summary-banner {
-  padding: var(--space-3);
-  background: var(--bg-surface);
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: 13px;
 }
 
 .cursor {

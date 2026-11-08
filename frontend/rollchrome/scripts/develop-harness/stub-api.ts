@@ -16,9 +16,12 @@ export interface StubDevelopState {
   activeThumbnailRequests: number;
   maxConcurrentThumbnailRequests: number;
   thumbnailRequests: string[];
+  activePreviewRequests: number;
+  maxConcurrentPreviewRequests: number;
   previewRequests: Array<{ name: string; look: string | null; exposure_ev: number }>;
-  previewDelayMs: Record<number, number>; // delay by preview request index
+  previewDelayMs: Record<number, number>;
   previewCallCount: number;
+  distinctPreviewCallIdx: number | null;
   lastPlanFolder: string | null;
   lastPlanItems: DevelopItem[] | null;
   lastPlanFormat: OutputFormat | null;
@@ -27,15 +30,19 @@ export interface StubDevelopState {
   lastApplyFormat: OutputFormat | null;
   cancelledJobIds: string[];
   activeJobListeners: Array<(event: JobEvent) => void>;
+  thumbnailDelayMs: number;
 }
 
 const stubState: StubDevelopState = {
   activeThumbnailRequests: 0,
   maxConcurrentThumbnailRequests: 0,
   thumbnailRequests: [],
+  activePreviewRequests: 0,
+  maxConcurrentPreviewRequests: 0,
   previewRequests: [],
   previewDelayMs: {},
   previewCallCount: 0,
+  distinctPreviewCallIdx: null,
   lastPlanFolder: null,
   lastPlanItems: null,
   lastPlanFormat: null,
@@ -44,6 +51,7 @@ const stubState: StubDevelopState = {
   lastApplyFormat: null,
   cancelledJobIds: [],
   activeJobListeners: [],
+  thumbnailDelayMs: 20,
 };
 
 declare global {
@@ -55,17 +63,14 @@ if (typeof window !== 'undefined') {
   window.__DEVELOP_STUB__ = stubState;
 }
 
-// 1x1 valid JPEG image bytes
-const DUMMY_JPEG_BASE64 =
-  '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
-const DUMMY_JPEG_BYTES = Uint8Array.from(atob(DUMMY_JPEG_BASE64), (c) => c.charCodeAt(0));
+// Valid 64x64 and 80x64 JPEG images (RP-1 review item 7)
+const VALID_JPEG_64_B64 =
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCABAAEADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDPooor7g+JCiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKAP//Z';
+const VALID_JPEG_64_BYTES = Uint8Array.from(atob(VALID_JPEG_64_B64), (c) => c.charCodeAt(0));
 
-// Distinct JPEG bytes (different lengths) so test 5 can distinguish responses
-function makeDummyJpeg(length: number): Uint8Array {
-  const bytes = new Uint8Array(length);
-  bytes.set(DUMMY_JPEG_BYTES.subarray(0, Math.min(DUMMY_JPEG_BYTES.length, length)));
-  return bytes;
-}
+const VALID_JPEG_80_B64 =
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCABAAFADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwClRRRXyR+hhRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQB//2Q==';
+const VALID_JPEG_80_BYTES = Uint8Array.from(atob(VALID_JPEG_80_B64), (c) => c.charCodeAt(0));
 
 const STUB_RAW_FILES = [
   'DSCF0001.RAF',
@@ -76,21 +81,22 @@ const STUB_RAW_FILES = [
   'DSCF0006.RAF',
 ];
 
+// The twelve shipped looks (RP-1 review item 7)
 const BUILTIN_LOOKS: BuiltinLookInfo[] = [
   // 5 Fujifilm
-  { id: 'builtin:fujifilm-astia', name: 'Astia / Soft', maker: 'Fujifilm' },
   { id: 'builtin:fujifilm-classic-chrome', name: 'Classic Chrome', maker: 'Fujifilm' },
-  { id: 'builtin:fujifilm-provia', name: 'Provia / Standard', maker: 'Fujifilm' },
-  { id: 'builtin:fujifilm-velvia', name: 'Velvia / Vivid', maker: 'Fujifilm' },
-  { id: 'builtin:fujifilm-acros', name: 'Acros (B&W)', maker: 'Fujifilm' },
+  { id: 'builtin:fujifilm-eterna', name: 'Eterna', maker: 'Fujifilm' },
+  { id: 'builtin:fujifilm-pro-neg-high', name: 'Pro Neg High', maker: 'Fujifilm' },
+  { id: 'builtin:fujifilm-pro-neg-std', name: 'Pro Neg Std', maker: 'Fujifilm' },
+  { id: 'builtin:fujifilm-provia', name: 'Provia', maker: 'Fujifilm' },
   // 7 Ricoh
+  { id: 'builtin:ricoh-bleach-bypass', name: 'Bleach Bypass', maker: 'Ricoh' },
+  { id: 'builtin:ricoh-negative-film', name: 'Negative Film', maker: 'Ricoh' },
+  { id: 'builtin:ricoh-positive-film', name: 'Positive Film', maker: 'Ricoh' },
+  { id: 'builtin:ricoh-retro', name: 'Retro', maker: 'Ricoh' },
   { id: 'builtin:ricoh-standard', name: 'Standard', maker: 'Ricoh' },
   { id: 'builtin:ricoh-vivid', name: 'Vivid', maker: 'Ricoh' },
-  { id: 'builtin:ricoh-monotone', name: 'Monotone', maker: 'Ricoh' },
-  { id: 'builtin:ricoh-soft-monochrome', name: 'Soft Monotone', maker: 'Ricoh' },
-  { id: 'builtin:ricoh-hard-monochrome', name: 'Hard Monotone', maker: 'Ricoh' },
-  { id: 'builtin:ricoh-high-contrast-bw', name: 'Hi-Contrast B&W', maker: 'Ricoh' },
-  { id: 'builtin:ricoh-positive-film', name: 'Positive Film', maker: 'Ricoh' },
+  { id: 'builtin:ricoh-cross-processing', name: 'Cross Processing', maker: 'Ricoh' },
 ];
 
 export class StubDesktopApiClient {
@@ -106,6 +112,7 @@ export class StubDesktopApiClient {
     return [
       { name: 'DCIM', is_dir: true, path: `${path}/DCIM` },
       { name: 'RAW', is_dir: true, path: `${path}/RAW` },
+      { name: 'folder2', is_dir: true, path: `${path}/folder2` },
       { name: 'DSCF0001.RAF', is_dir: false, path: `${path}/DSCF0001.RAF` },
     ];
   }
@@ -124,7 +131,10 @@ export class StubDesktopApiClient {
     };
   }
 
-  async listDevelopFolder(_folder: string): Promise<string[]> {
+  async listDevelopFolder(folder: string): Promise<string[]> {
+    if (folder.includes('folder2')) {
+      return ['DSCF0001.RAF', 'DSCF0002.RAF'];
+    }
     return STUB_RAW_FILES;
   }
 
@@ -135,34 +145,40 @@ export class StubDesktopApiClient {
       stubState.maxConcurrentThumbnailRequests = stubState.activeThumbnailRequests;
     }
 
-    // Small delay to detect any concurrent overlap
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    const delay = stubState.thumbnailDelayMs;
+    if (delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
 
     stubState.activeThumbnailRequests--;
-    return DUMMY_JPEG_BYTES;
+    return VALID_JPEG_64_BYTES;
   }
 
-  async previewDevelop(req: {
-    folder: string;
-    name: string;
-    look: string | null;
-    exposure_ev: number;
-  }): Promise<Uint8Array> {
+  async previewDevelop(
+    _folder: string,
+    name: string,
+    look: string | null,
+    exposure_ev: number,
+  ): Promise<Uint8Array> {
+    stubState.activePreviewRequests++;
+    if (stubState.activePreviewRequests > stubState.maxConcurrentPreviewRequests) {
+      stubState.maxConcurrentPreviewRequests = stubState.activePreviewRequests;
+    }
+
     const callIdx = ++stubState.previewCallCount;
-    stubState.previewRequests.push({
-      name: req.name,
-      look: req.look,
-      exposure_ev: req.exposure_ev,
-    });
+    stubState.previewRequests.push({ name, look, exposure_ev });
 
     const delay = stubState.previewDelayMs[callIdx] ?? 10;
     if (delay > 0) {
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
 
-    // Distinguish preview responses by size so test 5 can assert latest-wins
-    const size = 150 + callIdx * 10;
-    return makeDummyJpeg(size);
+    stubState.activePreviewRequests--;
+
+    if (stubState.distinctPreviewCallIdx === callIdx) {
+      return VALID_JPEG_80_BYTES;
+    }
+    return VALID_JPEG_64_BYTES;
   }
 
   async planDevelop(
@@ -177,24 +193,31 @@ export class StubDesktopApiClient {
     const ext = format.kind === 'tiff' ? 'tif' : 'jpg';
     const dest = `${folder.replace(/\/+$/, '')}/Developed`;
 
-    // Stub 5 actions and 1 skip (requirement 7)
-    const actions = items.slice(0, 5).map((it) => ({
+    // If 6 items, stub 5 actions and 1 skip for requirement 7
+    if (items.length >= 6) {
+      const actions = items.slice(0, 5).map((it) => ({
+        file: it.name,
+        look: it.look,
+        exposure_ev: it.exposure_ev,
+        output: `${dest}/${it.name.replace(/\.[^.]+$/, '')}.${ext}`,
+      }));
+
+      const skipped = items.slice(5).map((it) => ({
+        file: it.name,
+        reason: `already developed into ${dest}/${it.name.replace(/\.[^.]+$/, '')}.${ext}`,
+      }));
+
+      return { actions, skipped, format };
+    }
+
+    const actions = items.map((it) => ({
       file: it.name,
       look: it.look,
       exposure_ev: it.exposure_ev,
       output: `${dest}/${it.name.replace(/\.[^.]+$/, '')}.${ext}`,
     }));
 
-    const skipped = items.slice(5).map((it) => ({
-      file: it.name,
-      reason: `already developed into ${dest}/${it.name.replace(/\.[^.]+$/, '')}.${ext}`,
-    }));
-
-    return {
-      actions,
-      skipped,
-      format,
-    };
+    return { actions, skipped: [], format };
   }
 
   async applyDevelop(

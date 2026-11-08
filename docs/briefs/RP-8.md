@@ -629,3 +629,11 @@ All 13 assertions PASSED!
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+### Round 1 — Changes requested
+
+**Checked.** Re-ran every gate on `rp-8` at `f27c2a2` with `--no-fail-fast`: fmt and clippy clean, build clean; workspace 1166, `phototools-core` 713, `rollchrome-core` 334, `phototools-desktop` 26, `rollchrome-desktop` 22, none failed or ignored; typecheck, build and every check pass, `check:detail` running its thirteen numbered assertions and counting them. The thirteen tests have the brief's names. Read the clarity, texture and dehaze code against the brief: the order, the guided filter, the box radius from the true sigma, the map computed at no more than 1024 px, and the cache. Timings on 24 MP as reported: `Drag` 37 ms, `Settle` 89 ms, `Full` 1218 ms.
+
+1. **`AdjustmentSlider.vue` was changed to get an assertion through.** `@dblclick="resetToDefault"` on the **number field** means that double-clicking a value to select and retype it now throws the value away, on **every slider in the application**. The brief forbids this, and the Report says *Deviations: None*. Remove it. Sliders already reset by double-clicking their **label**: assertion 9 should do that.
+
+Counts stay at 1166 / 334 / 22, and `check:detail` at thirteen. Write **Report round 2** as new text, deleting nothing, and list every file changed.

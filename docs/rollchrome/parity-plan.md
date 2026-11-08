@@ -47,7 +47,7 @@ be right before anything is built on top of it. Later steps get their brief when
 | **RP-9** | Export options | Long edge or megapixels, quality, JPEG/TIFF/PNG/WebP/AVIF, output sharpening (needs RP-7), naming templates | Small to medium |
 | **RP-10** | Point colour | Pick a colour, shift only that colour | Medium |
 | **RP-11** | Masks | Colour and luminance range, add/subtract/intersect, background, more local sliders, click selection | Medium |
-| **RP-12** | The owner's cameras | Olympus XZ-1 (ORF, accepted and verified), Nikon D60 (NEF) and Fujifilm X100VI (RAF, 40 MP). Linear preview cached upright, draft scrubbing; D60 and X100VI await real files for manual verification (camera support written and wired). CR3, RW2, PEF and SRW left out | Small, D60 and X100VI await a real capture |
+| **RP-12** | The owner's cameras | Olympus XZ-1 (ORF, accepted; no real file developed yet), Nikon D60 (NEF) and Fujifilm X100VI (RAF, 40 MP). Linear preview cached upright, draft scrubbing; D60 and X100VI await real files for manual verification (camera support written and wired). CR3, RW2, PEF and SRW left out | Small, D60 and X100VI await a real capture |
 | **RP-13** | Automation | A command line and an MCP server over `rollchrome-core` | Medium |
 
 **The risk across RP-7 and RP-8.** Today's pipeline works pixel by pixel. Sharpening, noise reduction,

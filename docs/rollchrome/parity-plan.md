@@ -47,7 +47,7 @@ be right before anything is built on top of it. Later steps get their brief when
 | **RP-9** | Export options | Long edge or megapixels, quality, JPEG/TIFF/PNG/WebP/AVIF, output sharpening (needs RP-7), naming templates | Small to medium |
 | **RP-10** | Point colour | Pick a colour, shift only that colour | Medium |
 | **RP-11** | Masks | Colour and luminance range, add/subtract/intersect, background, more local sliders, click selection | Medium |
-| **RP-12** | More RAW formats | CR3, RW2, ORF, PEF, SRW. Only what `rawler` decodes, and each format only once a real file has been developed. Sized medium to large because that is unknown until tried | Medium to large |
+| **RP-12** | The owner's cameras | Olympus XZ-1 (ORF, not accepted yet), Nikon D60 (NEF) and Fujifilm X100VI (RAF, 40 MP). `rawler` lists all three. Add ORF, then develop a real file from each. CR3, RW2, PEF and SRW are left out: the owner has no camera that writes them | Small, needs one real RAW and its JPEG from each camera |
 | **RP-13** | Automation | A command line and an MCP server over `rollchrome-core` | Medium |
 
 **The risk across RP-7 and RP-8.** Today's pipeline works pixel by pixel. Sharpening, noise reduction,

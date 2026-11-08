@@ -640,3 +640,72 @@ fn a_sharpened_photograph_is_not_identity() {
     assert!(!recipe.is_identity());
     assert!(!recipe.detail.as_ref().unwrap().is_identity());
 }
+
+#[test]
+fn sharpening_radius_changes_the_result_and_narrows_below_a_pixel() {
+    let w = 64;
+    let h = 64;
+    let mut data = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let val = if x < 32 { 0.2f32 } else { 0.8f32 };
+            for c in 0..3 {
+                data[(y * w + x) * 3 + c] = val;
+            }
+        }
+    }
+    let lin = LinearBuffer {
+        width: w as u32,
+        height: h as u32,
+        data,
+    };
+
+    // 1. Radii 0.6 and 1.2 give different results at scale 1.0
+    let d06 = Detail {
+        sharpen_amount: 100.0,
+        sharpen_radius: 0.6,
+        sharpen_masking: 0.0,
+        ..Detail::default()
+    };
+    let d12 = Detail {
+        sharpen_amount: 100.0,
+        sharpen_radius: 1.2,
+        sharpen_masking: 0.0,
+        ..Detail::default()
+    };
+    let res06 = apply_detail(&lin, &d06, 1.0);
+    let res12 = apply_detail(&lin, &d12, 1.0);
+    assert_ne!(
+        res06.data, res12.data,
+        "radii 0.6 and 1.2 must give different results at scale 1.0"
+    );
+
+    // 2. At scale 0.25 with radius 1.0 the sharpening reaches no further than 2 pixels from an edge
+    let d10 = Detail {
+        sharpen_amount: 100.0,
+        sharpen_radius: 1.0,
+        sharpen_masking: 0.0,
+        ..Detail::default()
+    };
+    let res_scale_025 = apply_detail(&lin, &d10, 0.25);
+    // Edge transition is between x = 31 and x = 32.
+    // Pixels at distance > 2 from the boundary are x <= 29 and x >= 34.
+    for y in 0..h {
+        for x in 0..=29 {
+            let orig = lin.data[(y * w + x) * 3];
+            let sharp = res_scale_025.data[(y * w + x) * 3];
+            assert!(
+                (sharp - orig).abs() < 1e-5,
+                "sharpening at scale 0.25 must reach no further than 2 pixels from edge: x={x}, orig={orig}, sharp={sharp}"
+            );
+        }
+        for x in 34..w {
+            let orig = lin.data[(y * w + x) * 3];
+            let sharp = res_scale_025.data[(y * w + x) * 3];
+            assert!(
+                (sharp - orig).abs() < 1e-5,
+                "sharpening at scale 0.25 must reach no further than 2 pixels from edge: x={x}, orig={orig}, sharp={sharp}"
+            );
+        }
+    }
+}

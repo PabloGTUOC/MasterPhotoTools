@@ -146,16 +146,11 @@ pub fn apply_detail(src: &LinearBuffer, detail: &Detail, scale: f32) -> LinearBu
     }
 
     // -------------------------------------------------------------------------
-    // 5. Sharpening: D = Y - gaussian(Y), 3 box passes approximating sigma
+    // 5. Sharpening: D = Y - gaussian(Y), real separable Gaussian blur with sigma
     // -------------------------------------------------------------------------
     if detail.sharpen_amount > 0.0 {
         let sigma = (detail.sharpen_radius * scale_eff).max(0.35);
-        let r_sharp = sigma.round().max(1.0) as usize;
-
-        // Three box passes approximate a Gaussian blur with sigma proportional to r_sharp
-        let b1 = box_filter_2d(&y_plane, w, h, r_sharp);
-        let b2 = box_filter_2d(&b1, w, h, r_sharp);
-        let blurred_y = box_filter_2d(&b2, w, h, r_sharp);
+        let blurred_y = gaussian_blur_2d(&y_plane, w, h, sigma);
 
         let amount_factor = detail.sharpen_amount / 100.0;
         let has_masking = detail.sharpen_masking > 0.0;
@@ -288,6 +283,59 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     }
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+/// Separable Gaussian blur with a normalized kernel of radius `ceil(3 * sigma)`.
+/// `sigma` is at most 3.0, so the kernel is small and direct 1D convolution
+/// is fast, exact, and scales smoothly down to sub-pixel radii.
+#[allow(clippy::needless_range_loop)]
+fn gaussian_blur_2d(src: &[f32], w: usize, h: usize, sigma: f32) -> Vec<f32> {
+    if w == 0 || h == 0 {
+        return src.to_vec();
+    }
+    let r = (3.0 * sigma).ceil().max(1.0) as usize;
+    let mut kernel = Vec::with_capacity(2 * r + 1);
+    let two_sigma_sq = 2.0 * sigma * sigma;
+    let mut sum = 0.0f32;
+    for k in -(r as isize)..=(r as isize) {
+        let weight = (-(k * k) as f32 / two_sigma_sq).exp();
+        kernel.push(weight);
+        sum += weight;
+    }
+    let inv_sum = 1.0 / sum;
+    for w_val in &mut kernel {
+        *w_val *= inv_sum;
+    }
+
+    // Horizontal pass: src -> tmp
+    let mut tmp = vec![0.0f32; w * h];
+    tmp.par_chunks_mut(w).enumerate().for_each(|(y, tmp_row)| {
+        let src_row = &src[y * w..(y + 1) * w];
+        for x in 0..w {
+            let mut acc = 0.0f32;
+            for (k_idx, &weight) in kernel.iter().enumerate() {
+                let k = k_idx as isize - r as isize;
+                let nx = (x as isize + k).clamp(0, (w - 1) as isize) as usize;
+                acc += src_row[nx] * weight;
+            }
+            tmp_row[x] = acc;
+        }
+    });
+
+    // Vertical pass: tmp -> dst
+    let mut dst = vec![0.0f32; w * h];
+    dst.par_chunks_mut(w).enumerate().for_each(|(y, dst_row)| {
+        for (k_idx, &weight) in kernel.iter().enumerate() {
+            let k = k_idx as isize - r as isize;
+            let ny = (y as isize + k).clamp(0, (h - 1) as isize) as usize;
+            let tmp_row = &tmp[ny * w..(ny + 1) * w];
+            for x in 0..w {
+                dst_row[x] += tmp_row[x] * weight;
+            }
+        }
+    });
+
+    dst
 }
 
 /// 2D box filter by separable sliding sum with edge replication. O(1) per pixel.

@@ -635,3 +635,15 @@ All 8 assertions PASSED!
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+### Round 1 — Changes requested
+
+**Checked.** Re-ran every gate on `rp-7` at `5d39e95` with `--no-fail-fast`: fmt and clippy clean, build clean; workspace 1152, `phototools-core` 713, `rollchrome-core` 320, `phototools-desktop` 26, `rollchrome-desktop` 22, none failed or ignored; typecheck, build and every check pass, `check:detail` running its eight numbered assertions and counting them. The thirteen tests have the brief's names. Read `detail.rs` and the cache: the stage runs once, keyed properly, on the stored frame before geometry; hot pixels, guided filters and the rebuild are as specified. Stripping an identity `detail` on save is reported and is the right way to keep untouched sidecars clean.
+
+1. **The sharpening radius does not do what the slider says.** `r_sharp = sigma.round().max(1.0)` is used as the radius of three box passes, and the sigma of three passes of radius `r` is `sqrt(r(r + 1))`: 1.41 for `r = 1`, 2.45 for `r = 2`. So:
+   - every radius from 0.5 to 1.49 gives **exactly the same result**, at a sigma of 1.41, so a third of the slider does nothing, and the default is 40% wider than it says;
+   - at a proxy, `radius × scale` is below one pixel and rounds up to the same `r = 1`, a sigma of 1.41 *proxy* pixels. At `Drag` (scale 0.2 on a 6000 px file) that is about 7 source pixels, so the halo on screen at fit is nothing like the export's. *A radius means the same at every stage* is the brief's requirement, and `the_radius_scales_with_the_proxy` passes without proving it.
+
+   For this step use a real separable Gaussian: a normalised kernel of radius `ceil(3σ)`, with σ `max(0.35, radius × scale)`. σ is at most 3, so the kernel is small and a sliding sum buys nothing here. The guided filters keep their box filters. Add a test, `sharpening_radius_changes_the_result_and_narrows_below_a_pixel`: radii 0.6 and 1.2 give different results at scale 1.0, and at scale 0.25 with radius 1.0 the sharpening reaches no further than 2 pixels from an edge.
+
+Then re-measure, as the brief asked, the milliseconds at `Drag`, `Settle` and `Full`, and the later `Full`. Counts: workspace 1153, `rollchrome-core` 321. Update `CLAUDE.md`. Write **Report round 2** as new text, deleting nothing, and list every file changed.

@@ -1,6 +1,6 @@
 # `RP-9` · Export options
 
-> **Status:** briefed
+> **Status:** **approved**
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-9` · **Branch:** `rp-9`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -78,7 +78,7 @@ and `pub fn export_edited_image_with_options(source, recipe, lut, out_dir, optio
 
 ### Acceptance
 
-- [ ] `rollchrome-core` gains exactly these thirteen tests, in a new `crates/rollchrome-core/tests/export_tests.rs`:
+- [x] `rollchrome-core` gains exactly these thirteen tests, in a new `crates/rollchrome-core/tests/export_tests.rs`:
   `the_default_options_export_exactly_as_before` (byte-identical to `export_edited_image`, and the identity copy still a copy),
   `a_sixteen_bit_source_exports_a_jpeg_and_a_higher_quality_is_larger`,
   `an_eight_bit_source_exports_a_sixteen_bit_tiff`,
@@ -92,9 +92,9 @@ and `pub fn export_edited_image_with_options(source, recipe, lut, out_dir, optio
   `a_name_template_cannot_leave_the_folder` (`../../x`, `/etc/x`, and one that comes out empty),
   `a_second_export_of_the_same_name_gets_a_number`,
   `the_metadata_policy_keeps_removes_or_drops` (real exiftool: GPS present, GPS gone with other tags kept, nothing carried).
-- [ ] Counts: workspace 1166 → 1179, `rollchrome-core` 334 → 347; `phototools-core` 713, `phototools-desktop` 26, `rollchrome-desktop` 22 unchanged. Every existing test still there, none weakened (G7).
-- [ ] `check:export` asserts all eleven, as numbered here, and passes; all the other checks unchanged and passing.
-- [ ] No `todo!()`, bare lock `unwrap()` or swallowed error on a shipped path (G10).
+- [x] Counts: workspace 1166 → 1179, `rollchrome-core` 334 → 347; `phototools-core` 713, `phototools-desktop` 26, `rollchrome-desktop` 22 unchanged. Every existing test still there, none weakened (G7).
+- [x] `check:export` asserts all eleven, as numbered here, and passes; all the other checks unchanged and passing.
+- [x] No `todo!()`, bare lock `unwrap()` or swallowed error on a shipped path (G10).
 
 ### Gates
 
@@ -718,3 +718,9 @@ All 11 assertions PASSED.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+### Round 1 — **Approved**
+
+**Checked.** Re-ran every gate on `rp-9` at `8f9f543` with `--no-fail-fast`: fmt and clippy clean, build clean; workspace 1179, `phototools-core` 713, `rollchrome-core` 347, `phototools-desktop` 26, `rollchrome-desktop` 22, none failed or ignored; typecheck, build and every check pass, `check:export` running its eleven numbered assertions and counting them. The thirteen tests have the brief's names. Read the option types, the encoders, the template sanitising and the order of operations. The default path still goes through the same encode, and no shared component changed. Reducing 16 bits to 8 by shifting is a floor rather than a rounding, a difference of at most one level: recorded, not worth a round.
+
+**Not verified.** Each format opened in another application: `MV-30`.

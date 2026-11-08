@@ -279,6 +279,11 @@ export class RollchromeClient {
     return invoke<WhiteBalancePick>('white_balance_at', { sessionId, x, y });
   }
 
+  /** Samples a 5×5 box on unadjusted linear settle proxy to measure OkLCh color (RP-10). */
+  colourAt(sessionId: string, x: number, y: number): Promise<PickedColour> {
+    return invoke<PickedColour>('colour_at', { sessionId, x, y });
+  }
+
   /** Evaluates exposure, whites, and blacks via bisection on the drag proxy (RP-4). */
   autoTone(sessionId: string): Promise<AutoTone> {
     return invoke<AutoTone>('auto_tone', { sessionId });
@@ -567,6 +572,24 @@ export interface WhiteBalancePick {
   clamped: boolean;
 }
 
+/** Point colour target and adjustments in OkLCh (RP-10). */
+export interface PointColour {
+  hue: number;
+  chroma: number;
+  lightness: number;
+  range?: number;
+  hue_shift?: number;
+  saturation?: number;
+  luminance?: number;
+}
+
+/** Result of sampling a 5×5 box on the unadjusted settle proxy (RP-10). */
+export interface PickedColour {
+  hue: number;
+  chroma: number;
+  lightness: number;
+}
+
 /** Auto tone determination result (RP-4). */
 export interface AutoTone {
   exposure: number;
@@ -636,6 +659,8 @@ export interface AdjustmentRecipe {
   version_name?: string | null;
   /** Other versions of this photograph (RP-6). */
   versions?: Version[];
+  /** Optional point colour adjustments evaluated in OkLCh (RP-10). */
+  point_colours?: PointColour[];
 }
 
 /** A named virtual copy of an adjustment recipe (RP-6). */

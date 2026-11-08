@@ -114,6 +114,11 @@ pub struct AdjustmentRecipe {
     /// Alternate virtual copies of adjustments for this photograph.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub versions: Vec<Version>,
+
+    // RP-10 point colour:
+    /// Optional point colour adjustments evaluated in OkLCh color space.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub point_colours: Vec<super::point_colour::PointColour>,
 }
 
 /// A named snapshot of an adjustment recipe (RP-5).
@@ -162,6 +167,7 @@ impl Default for AdjustmentRecipe {
             snapshots: Vec::new(),
             version_name: None,
             versions: Vec::new(),
+            point_colours: Vec::new(),
         }
     }
 }
@@ -192,6 +198,7 @@ impl AdjustmentRecipe {
             && self.looks.as_ref().is_none_or(|l| l.is_identity())
             && self.detail.as_ref().is_none_or(|d| d.is_identity())
             && self.masks.iter().all(|m| m.is_identity())
+            && self.point_colours.iter().all(|p| p.is_identity())
     }
 }
 
@@ -648,7 +655,13 @@ impl LinearBuffer {
             recipe.hue,
             recipe.black_and_white.as_ref(),
         );
-        let has_oklab = !compiled_hsl.is_identity;
+        let compiled_points = if recipe.black_and_white.is_some() {
+            super::point_colour::CompiledPointColours::identity()
+        } else {
+            super::point_colour::CompiledPointColours::compile(&recipe.point_colours)
+        };
+        let has_points = !compiled_points.is_identity();
+        let has_oklab = !compiled_hsl.is_identity || has_points;
         let (w, h) = (self.width, self.height);
 
         self.data
@@ -673,12 +686,30 @@ impl LinearBuffer {
                     };
                     let (mut r, mut g, mut b) = p.apply(px[0], px[1], px[2], &flags);
 
-                    // Oklab stage: Global Hue rotation and 8-band HSL in ONE pass
+                    // Oklab stage: Point colour, Global Hue rotation, and 8-band HSL in ONE pass
                     if has_oklab {
-                        let (hr, hg, hb) = compiled_hsl.apply_linear_srgb(r, g, b);
-                        r = hr;
-                        g = hg;
-                        b = hb;
+                        if !has_points {
+                            let (hr, hg, hb) = compiled_hsl.apply_linear_srgb(r, g, b);
+                            r = hr;
+                            g = hg;
+                            b = hb;
+                        } else {
+                            let (l, a, b_val) =
+                                crate::media::edit::color::linear_srgb_to_oklab(r, g, b);
+                            let (l_pt, a_pt, b_pt) = compiled_points.apply(l, a, b_val);
+                            let (final_l, final_a, final_b) = if !compiled_hsl.is_identity {
+                                let c_sq = a_pt * a_pt + b_pt * b_pt;
+                                compiled_hsl.apply_with_c_sq(l_pt, a_pt, b_pt, c_sq)
+                            } else {
+                                (l_pt, a_pt, b_pt)
+                            };
+                            let (hr, hg, hb) = crate::media::edit::color::oklab_to_linear_srgb(
+                                final_l, final_a, final_b,
+                            );
+                            r = hr.max(0.0);
+                            g = hg.max(0.0);
+                            b = hb.max(0.0);
+                        }
                     }
 
                     px[0] = r;

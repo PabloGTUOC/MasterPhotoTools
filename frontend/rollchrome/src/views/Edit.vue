@@ -27,6 +27,7 @@ import type {
   Mask,
   MaskKind,
   NormalizedCrop,
+  PointColour,
   PresetList,
   OpenPreviewResult,
   PreviewHistogram,
@@ -242,6 +243,7 @@ function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
     looks: null,
     detail: createDefaultDetail(),
     black_and_white: null,
+    point_colours: [],
     masks: [],
     snapshots: [],
     versions: [],
@@ -308,18 +310,64 @@ function suggestVersionName(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Colour tools: Eyedropper, Auto Tone, Black & White (RP-4)
+// Colour tools: Eyedropper, Auto Tone, Black & White (RP-4), Point Colour (RP-10)
 // ---------------------------------------------------------------------------
 
-const isEyedropperActive = ref(false);
+type EyedropperTarget = 'white-balance' | 'point-colour' | null;
+const eyedropperTarget = ref<EyedropperTarget>(null);
+const isEyedropperActive = computed(() => eyedropperTarget.value !== null);
 
 function toggleEyedropper() {
   if (isCropMode.value || isBefore.value || compareMode.value !== 'off' || !sessionId.value) return;
-  isEyedropperActive.value = !isEyedropperActive.value;
+  eyedropperTarget.value = eyedropperTarget.value === 'white-balance' ? null : 'white-balance';
+}
+
+function togglePointColourEyedropper() {
+  if (isCropMode.value || isBefore.value || compareMode.value !== 'off' || !sessionId.value) return;
+  if ((recipe.value.point_colours?.length ?? 0) >= 8) return;
+  eyedropperTarget.value = eyedropperTarget.value === 'point-colour' ? null : 'point-colour';
 }
 
 function exitEyedropper() {
-  isEyedropperActive.value = false;
+  eyedropperTarget.value = null;
+}
+
+const selectedPointIndex = ref<number>(-1);
+
+const selectedPoint = computed(() => {
+  const points = recipe.value.point_colours;
+  if (!points || selectedPointIndex.value < 0 || selectedPointIndex.value >= points.length) {
+    return null;
+  }
+  return points[selectedPointIndex.value];
+});
+
+function selectPoint(idx: number) {
+  selectedPointIndex.value = idx;
+}
+
+function deleteSelectedPoint() {
+  const points = recipe.value.point_colours;
+  if (!points || selectedPointIndex.value < 0 || selectedPointIndex.value >= points.length) return;
+  points.splice(selectedPointIndex.value, 1);
+  if (points.length === 0) {
+    selectedPointIndex.value = -1;
+  } else if (selectedPointIndex.value >= points.length) {
+    selectedPointIndex.value = points.length - 1;
+  }
+  commitRecipeChange('Point colour');
+}
+
+function onPointColourSliderInput(prop: 'hue_shift' | 'saturation' | 'luminance' | 'range', val: number) {
+  if (!selectedPoint.value) return;
+  selectedPoint.value[prop] = val;
+  onRecipeValueInput();
+}
+
+function onPointColourSliderChange(prop: 'hue_shift' | 'saturation' | 'luminance' | 'range', val: number) {
+  if (!selectedPoint.value) return;
+  selectedPoint.value[prop] = val;
+  onRecipeValueChange();
 }
 
 function displayToFrameCoords(
@@ -352,7 +400,7 @@ function displayToFrameCoords(
 }
 
 async function onEyedropperSample(e: MouseEvent | PointerEvent) {
-  if (!isEyedropperActive.value || !sessionId.value) return;
+  if (!eyedropperTarget.value || !sessionId.value) return;
   const canvas = canvasRef.value;
   if (!canvas) return;
   const rect = canvas.getBoundingClientRect();
@@ -373,24 +421,53 @@ async function onEyedropperSample(e: MouseEvent | PointerEvent) {
   const [a, b, c, d, ee, f] = frameToStored.value;
   const storedX = a * uFrame + b * vFrame + c;
   const storedY = d * uFrame + ee * vFrame + f;
+  const target = eyedropperTarget.value;
   exitEyedropper();
 
-  try {
-    const pick = await desktop.whiteBalanceAt(sessionId.value, storedX, storedY);
-    const before = JSON.parse(JSON.stringify(recipe.value));
-    recipe.value.temperature = Math.round(pick.temperature);
-    recipe.value.tint = Math.round(pick.tint);
-    commitRecipeChange('White balance');
-    const tempSign = pick.temperature > 0 ? '+' : '';
-    const tintSign = pick.tint > 0 ? '+' : '';
-    const clampedNote = pick.clamped ? ' (slider range reached)' : '';
-    showNotice(
-      `WB: Temp ${tempSign}${Math.round(pick.temperature)}, Tint ${tintSign}${Math.round(pick.tint)}${clampedNote}`,
-      before,
-    );
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    showNotice(`Cannot balance here: ${msg}`);
+  if (target === 'white-balance') {
+    try {
+      const pick = await desktop.whiteBalanceAt(sessionId.value, storedX, storedY);
+      const before = JSON.parse(JSON.stringify(recipe.value));
+      recipe.value.temperature = Math.round(pick.temperature);
+      recipe.value.tint = Math.round(pick.tint);
+      commitRecipeChange('White balance');
+      const tempSign = pick.temperature > 0 ? '+' : '';
+      const tintSign = pick.tint > 0 ? '+' : '';
+      const clampedNote = pick.clamped ? ' (slider range reached)' : '';
+      showNotice(
+        `WB: Temp ${tempSign}${Math.round(pick.temperature)}, Tint ${tintSign}${Math.round(pick.tint)}${clampedNote}`,
+        before,
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showNotice(`Cannot balance here: ${msg}`);
+    }
+  } else if (target === 'point-colour') {
+    try {
+      const pick = await desktop.colourAt(sessionId.value, storedX, storedY);
+      if (!recipe.value.point_colours) {
+        recipe.value.point_colours = [];
+      }
+      if (recipe.value.point_colours.length >= 8) {
+        showNotice('Cannot add more than 8 point colours');
+        return;
+      }
+      const newPoint: PointColour = {
+        hue: pick.hue,
+        chroma: pick.chroma,
+        lightness: pick.lightness,
+        range: 50,
+        hue_shift: 0,
+        saturation: 0,
+        luminance: 0,
+      };
+      recipe.value.point_colours.push(newPoint);
+      selectedPointIndex.value = recipe.value.point_colours.length - 1;
+      commitRecipeChange('Point colour');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showNotice(`Cannot pick colour: ${msg}`);
+    }
   }
 }
 
@@ -1323,6 +1400,9 @@ function deriveLabel(before: AdjustmentRecipe | null, after: AdjustmentRecipe): 
       changed.push('Masks');
     }
   }
+  if (JSON.stringify(before.point_colours ?? []) !== JSON.stringify(after.point_colours ?? [])) {
+    changed.push('Point colour');
+  }
 
   if (changed.length === 0) return 'Edit';
   if (changed.length === 1) return changed[0];
@@ -1938,6 +2018,7 @@ function normaliseRecipe(existing: AdjustmentRecipe, sourceSha: string): Adjustm
           dehaze: existing.detail.dehaze ?? 0,
         }
       : createDefaultDetail(),
+    point_colours: (existing.point_colours ?? []).map((p) => ({ ...p })),
     masks: (existing.masks ?? []).map(normaliseMask),
     snapshots: (existing.snapshots ?? []).map((s) => ({
       name: s.name,
@@ -3861,7 +3942,7 @@ onUnmounted(() => {
               <button
                 type="button"
                 class="ghost eyedropper-btn"
-                :class="{ active: isEyedropperActive }"
+                :class="{ active: eyedropperTarget === 'white-balance' }"
                 :disabled="isCropMode || isBefore || compareMode !== 'off' || !sessionId"
                 title="White Balance Eyedropper (W)"
                 data-testid="eyedropper-btn"
@@ -4286,6 +4367,126 @@ onUnmounted(() => {
                   @update:model-value="(v) => onHslSliderInput('luminance', v)"
                   @change="(v) => onHslSliderChange('luminance', v)"
                 />
+              </div>
+            </div>
+
+            <!-- Point Colour Group (RP-10) -->
+            <div v-if="!isBwActive" class="point-colour-panel" data-testid="point-colour-panel">
+              <div class="point-colour-header">
+                <span class="point-colour-title">Point colour</span>
+                <button
+                  type="button"
+                  class="ghost point-colour-pick-btn"
+                  :class="{ active: eyedropperTarget === 'point-colour' }"
+                  :disabled="loading || isReadOnly || (recipe.point_colours?.length ?? 0) >= 8"
+                  data-testid="point-colour-pick-btn"
+                  :title="(recipe.point_colours?.length ?? 0) >= 8 ? 'Maximum 8 points reached' : 'Pick a colour'"
+                  @click="togglePointColourEyedropper"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2a2 2 0 0 0-2.83 0L9.41 3.76l2.83 2.83L14 4.83A2 2 0 0 0 14 2z"/>
+                    <path d="M8 5.17L2.34 10.83a2 2 0 0 0-.54.97L1 15l3.2-.8a2 2 0 0 0 .97-.54L10.83 8"/>
+                  </svg>
+                  Pick a colour
+                </button>
+              </div>
+
+              <div
+                v-if="(recipe.point_colours?.length ?? 0) >= 8"
+                class="point-colour-limit-msg"
+                data-testid="point-colour-limit-msg"
+              >
+                Maximum 8 points reached
+              </div>
+
+              <!-- Swatches list -->
+              <div
+                v-if="(recipe.point_colours?.length ?? 0) > 0"
+                class="point-colour-swatches"
+                role="tablist"
+                aria-label="Point Colours"
+              >
+                <button
+                  v-for="(pt, idx) in recipe.point_colours"
+                  :key="idx"
+                  type="button"
+                  class="point-colour-swatch"
+                  :class="{ active: selectedPointIndex === idx }"
+                  :style="{ backgroundColor: `oklch(${pt.lightness} ${pt.chroma} ${pt.hue}deg)` }"
+                  :title="`Point colour ${idx + 1}`"
+                  :aria-label="`Point colour ${idx + 1}`"
+                  :aria-selected="selectedPointIndex === idx"
+                  role="tab"
+                  tabindex="0"
+                  :data-testid="`point-colour-swatch-${idx}`"
+                  @click="selectPoint(idx)"
+                />
+              </div>
+
+              <!-- Selected point controls -->
+              <div v-if="selectedPoint" class="point-colour-controls" data-testid="point-colour-controls">
+                <AdjustmentSlider
+                  label="Hue"
+                  :model-value="selectedPoint.hue_shift"
+                  :min="-100"
+                  :max="100"
+                  :step="1"
+                  unit="°"
+                  :disabled="loading || isReadOnly"
+                  test-id="point-colour-hue"
+                  @update:model-value="(v) => onPointColourSliderInput('hue_shift', v)"
+                  @change="(v) => onPointColourSliderChange('hue_shift', v)"
+                />
+
+                <AdjustmentSlider
+                  label="Saturation"
+                  :model-value="selectedPoint.saturation"
+                  :min="-100"
+                  :max="100"
+                  :step="1"
+                  unit="%"
+                  :disabled="loading || isReadOnly"
+                  test-id="point-colour-sat"
+                  @update:model-value="(v) => onPointColourSliderInput('saturation', v)"
+                  @change="(v) => onPointColourSliderChange('saturation', v)"
+                />
+
+                <AdjustmentSlider
+                  label="Luminance"
+                  :model-value="selectedPoint.luminance"
+                  :min="-100"
+                  :max="100"
+                  :step="1"
+                  unit="%"
+                  :disabled="loading || isReadOnly"
+                  test-id="point-colour-lum"
+                  @update:model-value="(v) => onPointColourSliderInput('luminance', v)"
+                  @change="(v) => onPointColourSliderChange('luminance', v)"
+                />
+
+                <AdjustmentSlider
+                  label="Range"
+                  :model-value="selectedPoint.range"
+                  :min="0"
+                  :max="100"
+                  :step="1"
+                  :disabled="loading || isReadOnly"
+                  test-id="point-colour-range"
+                  @update:model-value="(v) => onPointColourSliderInput('range', v)"
+                  @change="(v) => onPointColourSliderChange('range', v)"
+                />
+
+                <div class="point-colour-actions">
+                  <button
+                    type="button"
+                    class="ghost point-colour-delete-btn"
+                    data-testid="point-colour-delete-btn"
+                    :disabled="loading || isReadOnly"
+                    @click="deleteSelectedPoint"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
             </div>
           </CollapsibleSection>
@@ -5878,6 +6079,124 @@ onUnmounted(() => {
 .hsl-reset-band-btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.point-colour-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: var(--border-hair);
+}
+
+.point-colour-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+}
+
+.point-colour-title {
+  font-family: var(--font-label);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.point-colour-pick-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  min-width: 40px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-label);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.point-colour-pick-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.point-colour-pick-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.point-colour-limit-msg {
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: var(--space-1) 0;
+}
+
+.point-colour-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.point-colour-swatch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.point-colour-swatch:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+}
+
+.point-colour-swatch.active {
+  border: var(--border-active);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.point-colour-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-1);
+}
+
+.point-colour-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-1);
+}
+
+.point-colour-delete-btn {
+  min-height: 40px;
+  min-width: 80px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.point-colour-delete-btn:hover:not(:disabled) {
+  color: var(--text-heading);
+}
+
+.point-colour-delete-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .grading-panel {

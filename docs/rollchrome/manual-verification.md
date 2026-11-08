@@ -290,3 +290,13 @@ the automated check drives the screen against a stub.
       **Run:** in Develop, point the folder input at a directory containing real RAW captures from Olympus XZ-1 (.ORF), Nikon D60 (.NEF), and Fujifilm X100VI (.RAF, 40 MP). Verify that .ORF files are listed alongside .NEF and .RAF. Select an image, assign a look, adjust the exposure slider (noting fast draft rendering during dragging and full resolution on release), and develop each file. Compare the resulting developed image with the in-camera JPEG. Note: Olympus XZ-1 is verified with the real file; Nikon D60 and Fujifilm X100VI camera support is written and wired in rawler, and manual visual comparison awaits real captures.
       **Pass:** .ORF, .NEF, and .RAF are discovered and listed; thumbnails load upright without distortion; dragging exposure shows instant draft previews; releasing exposure settles to full preview; development produces clean JPEG/TIFF without artifacts; colors and tone curve match expectations; Olympus XZ-1 matches camera JPEG rendering.
       **Result:**
+
+## MV-32 — Point colour (RP-10)
+
+[`../briefs/RP-10.md`](../briefs/RP-10.md). Real photographs in the real application.
+
+- [ ] **MV-32.1 — Single colour changed on a real photograph.**
+      **Run:** in Edit, open a real photograph containing a distinct, saturated subject against contrasting surroundings (e.g. a red car, a yellow flower, a blue jacket, or a model in a vibrant dress). Open the Colour / HSL section and click "Pick a colour". Sample the subject by clicking directly on its surface. Observe that a new swatch appears, selected, with Hue, Saturation, Luminance, and Range sliders at their defaults. Adjust the Hue slider to shift the color (e.g. from red to purple or blue), increase Saturation (+40), and adjust Luminance (+20) and Range. Toggle Black & White on and off, and verify the point colour is bypassed in B&W and restored when returning to colour. Export the edited image.
+      **Pass:** only the picked subject's colour changes smoothly; adjacent colors, skin tones, neutrals, and skies remain untouched; the transition at the edge of the range falloff is smooth without blotchy haloing or chromatic noise in near-neutrals; the exported photograph exactly matches the preview.
+      **Result:**
+

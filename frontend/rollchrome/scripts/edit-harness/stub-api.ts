@@ -15,6 +15,7 @@ import type {
   LutEntry,
   LutLibraryList,
   OpenPreviewResult,
+  PickedColour,
   PreviewStage,
   WhiteBalancePick,
 } from '../../src/api';
@@ -46,6 +47,10 @@ export interface StubState {
   whiteBalanceCalls: Array<{ sessionId: string; x: number; y: number }>;
   whiteBalanceResult: WhiteBalancePick | null;
   whiteBalanceError: string | null;
+  /** RP-10 point colour tracking */
+  colourAtCalls: Array<{ sessionId: string; x: number; y: number }>;
+  colourAtResult: PickedColour | null;
+  colourAtError: string | null;
   autoToneCalls: string[];
   autoToneResult: AutoTone | null;
   autoToneError: string | null;
@@ -80,6 +85,9 @@ const stubState: StubState = {
   whiteBalanceCalls: [],
   whiteBalanceResult: null,
   whiteBalanceError: null,
+  colourAtCalls: [],
+  colourAtResult: null,
+  colourAtError: null,
   autoToneCalls: [],
   autoToneResult: null,
   autoToneError: null,
@@ -460,6 +468,17 @@ export class StubDesktopApiClient {
       throw new Error(`Sample point (${x.toFixed(3)}, ${y.toFixed(3)}) is outside stored frame bounds 0.0..=1.0`);
     }
     return stubState.whiteBalanceResult ?? { temperature: 12, tint: -4, clamped: false };
+  }
+
+  async colourAt(sessionId: string, x: number, y: number): Promise<PickedColour> {
+    stubState.colourAtCalls.push({ sessionId, x, y });
+    if (stubState.colourAtError) {
+      throw new Error(stubState.colourAtError);
+    }
+    if (x < 0 || x > 1 || y < 0 || y > 1) {
+      throw new Error(`Sample point (${x.toFixed(3)}, ${y.toFixed(3)}) is outside stored frame bounds 0.0..=1.0`);
+    }
+    return stubState.colourAtResult ?? { hue: 35.0, chroma: 0.15, lightness: 0.6 };
   }
 
   async autoTone(sessionId: string): Promise<AutoTone> {

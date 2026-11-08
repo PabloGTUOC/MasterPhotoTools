@@ -415,6 +415,25 @@ pub fn white_balance_at_impl(
 }
 
 #[tauri::command]
+pub async fn colour_at(
+    session_id: String,
+    x: f32,
+    y: f32,
+    state: State<'_, AppState>,
+) -> CommandResult<rollchrome_core::media::edit::point_colour::PickedColour> {
+    colour_at_impl(&state, session_id, x, y)
+}
+
+pub fn colour_at_impl(
+    state: &AppState,
+    session_id: String,
+    x: f32,
+    y: f32,
+) -> CommandResult<rollchrome_core::media::edit::point_colour::PickedColour> {
+    state.colour_at(&session_id, x, y).map_err(describe)
+}
+
+#[tauri::command]
 pub fn auto_tone(session_id: String, state: State<'_, AppState>) -> CommandResult<AutoTone> {
     auto_tone_impl(&state, session_id)
 }

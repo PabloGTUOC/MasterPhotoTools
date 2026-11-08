@@ -13,6 +13,7 @@ pub mod looks;
 pub mod lut;
 pub mod masks;
 pub mod pipeline;
+pub mod point_colour;
 pub mod preview;
 pub mod raster;
 pub mod vignette;
@@ -39,6 +40,7 @@ pub use pipeline::{
     white_black_weights, AdjustmentRecipe, ImageBuffer, LinearBuffer, LutRef, Snapshot, Version,
     SRGB_TO_LINEAR_U16, SRGB_TO_LINEAR_U8,
 };
+pub use point_colour::{CompiledPointColours, PickedColour, PointColour};
 pub use preview::{
     downscale_image_buffer, encode_preview_frame, fit_full_edge, render_rgba_frame, AutoTone,
     PreviewSession, PreviewStage, RgbaFrame, WhiteBalancePick, DRAG_MAX_EDGE, FULL_MAX_EDGE,

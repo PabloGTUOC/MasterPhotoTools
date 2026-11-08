@@ -85,6 +85,7 @@ fn main() {
             commands::make_auto_mask,
             commands::close_preview,
             commands::white_balance_at,
+            commands::colour_at,
             commands::auto_tone,
             commands::list_luts,
             commands::import_lut,

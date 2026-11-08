@@ -207,3 +207,8 @@ the automated check drives the screen against a stub.
       **Run:** develop one photograph to both JPEG and TIFF. Open the TIFF in Edit, beside the JPEG in Preview.
       **Pass:** the same colours, not muted. Export it from Edit without changes to a slider and with one change: both look right in Preview.
       **Result:**
+
+- [ ] **MV-24.4 — Zoom and compare (RP-3).**
+      **Run:** in Edit, a landscape and a portrait photograph, one of them cropped: Cmd-1, pinch, drag to pan, then `Y` and Shift-Y.
+      **Pass:** at 100% the picture is sharp and the right shape, it cannot be dragged out of view, and the before lines up with the after.
+      **Result:**

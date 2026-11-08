@@ -1,6 +1,6 @@
 # `RP-3` · Viewing: zoom, pan and before/after compare
 
-> **Status:** briefed
+> **Status:** **approved**
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-3` · **Branch:** `rp-3`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -94,15 +94,15 @@ mask tool or a mask handle takes the pointer; holding **Space** and dragging alw
 
 ### Acceptance
 
-- [ ] `rollchrome-core` gains exactly these five tests: `the_full_stage_renders_every_source_pixel`,
+- [x] `rollchrome-core` gains exactly these five tests: `the_full_stage_renders_every_source_pixel`,
   `the_full_stage_fits_the_canvas_limit` (on `fit_full_edge`),
   `opening_a_session_and_rendering_drag_and_settle_decodes_nothing_more` (`full_decodes() == 0`),
   `the_full_buffer_is_decoded_once` (two renders, `full_decodes() == 1`),
   `the_full_stage_applies_crop_and_masks_as_settle_does` (uniform patches, a crop and a radial mask; within two levels at corresponding positions).
-- [ ] `rollchrome-desktop` gains exactly one: `open_preview_reports_the_full_and_settle_dimensions`.
-- [ ] Counts: workspace 1102 → 1108, `rollchrome-core` 273 → 278, `rollchrome-desktop` 19 → 20, `phototools-core` 713, `phototools-desktop` 26 unchanged. Every existing test still there, none weakened (G7).
-- [ ] `check:viewing` asserts all thirteen and passes; `check:edit`, `check:bulk-lut`, `check:develop` unchanged and passing.
-- [ ] No `todo!()` or swallowed error on a shipped path (G10); no logic in the binary (G1).
+- [x] `rollchrome-desktop` gains exactly one: `open_preview_reports_the_full_and_settle_dimensions`.
+- [x] Counts: workspace 1102 → 1108, `rollchrome-core` 273 → 278, `rollchrome-desktop` 19 → 20, `phototools-core` 713, `phototools-desktop` 26 unchanged. Every existing test still there, none weakened (G7).
+- [x] `check:viewing` asserts all thirteen and passes; `check:edit`, `check:bulk-lut`, `check:develop` unchanged and passing.
+- [x] No `todo!()` or swallowed error on a shipped path (G10); no logic in the binary (G1).
 
 ### Gates
 
@@ -1411,3 +1411,8 @@ Asserting 18: With brush active, double-click changes neither zoom nor pan...
 PASSED all 18 viewing requirements successfully.
 ```
 
+### Round 3 — **Approved**
+
+**Checked.** Re-ran every gate on `rp-3` at `3057b0a`: fmt and clippy clean, build clean; workspace 1108, `phototools-core` 713, `rollchrome-core` 278, `phototools-desktop` 26, `rollchrome-desktop` 20, none failed or ignored; typecheck, build, `check:transport`, `check:edit`, `check:bulk-lut`, `check:develop` pass and `check:viewing` passes all eighteen. `toggleCropMode` no longer commits, `CropOverlay.vue` is back to what it was, the drag proxy's size comes from `open_preview`, and the calculation is one function. Check 16 now gets its crop from the stub's recipe, as the review offered.
+
+**Not verified.** Nobody has zoomed a real photograph in the real application. Pinch on a trackpad in particular is only simulated as Ctrl-wheel. This goes to the owner with MV-24.

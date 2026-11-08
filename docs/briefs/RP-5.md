@@ -1,6 +1,6 @@
 # `RP-5` · Undo, history and snapshots
 
-> **Status:** briefed
+> **Status:** **approved**
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-5` · **Branch:** `rp-5`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -92,15 +92,15 @@ export class EditHistory {
 
 ### Acceptance
 
-- [ ] `rollchrome-core` gains exactly these five tests, in `crates/rollchrome-core/tests/tools_tests.rs`:
+- [x] `rollchrome-core` gains exactly these five tests, in `crates/rollchrome-core/tests/tools_tests.rs`:
   `a_snapshot_survives_a_save_and_a_load`,
   `a_saved_snapshot_never_holds_snapshots_of_its_own`,
   `a_preset_saved_from_a_recipe_with_snapshots_carries_none`,
   `a_recipe_without_snapshots_is_written_without_the_field`,
   `a_recipe_with_only_snapshots_is_still_identity`.
-- [ ] Counts: workspace 1127 → 1132, `rollchrome-core` 295 → 300; `phototools-core` 713, `phototools-desktop` 26, `rollchrome-desktop` 22 unchanged. Every existing test still there, none weakened (G7).
-- [ ] `check:history` asserts all sixteen, as numbered here, and passes; all the other checks unchanged and passing.
-- [ ] No `todo!()` or swallowed error on a shipped path (G10).
+- [x] Counts: workspace 1127 → 1132, `rollchrome-core` 295 → 300; `phototools-core` 713, `phototools-desktop` 26, `rollchrome-desktop` 22 unchanged. Every existing test still there, none weakened (G7).
+- [x] `check:history` asserts all sixteen, as numbered here, and passes; all the other checks unchanged and passing.
+- [x] No `todo!()` or swallowed error on a shipped path (G10).
 
 ### Gates
 
@@ -415,3 +415,11 @@ All 16 browser assertions and all 5 backend integration tests were verified end-
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+### Round 1 — **Approved**
+
+**Checked.** Re-ran every gate on `rp-5` at `9400ecb` with `--no-fail-fast`: fmt and clippy clean, build clean; workspace 1132, `phototools-core` 713, `rollchrome-core` 300, `phototools-desktop` 26, `rollchrome-desktop` 22, none failed or ignored; typecheck, build, `check:transport`, `check:edit`, `check:bulk-lut`, `check:develop`, `check:viewing`, `check:colour` pass and `check:history` runs its sixteen numbered assertions and counts them. The five tests have the brief's names. Read `EditHistory`, the save path, and every commit point: recording happens before the read-only return, eviction keeps the current state, snapshots stay out of the undo stack.
+
+**One thing carried to RP-6.** `undoReplace` now calls `undoStep`, which the Report does not list as a change. It is the right behaviour while the notice is the newest step, but the notice stays up for a few seconds: apply a preset, move a slider, click the notice's Undo, and it takes back the slider instead. RP-6 dismisses the notice on any new step.
+
+**Not verified.** A real editing session, and a snapshot surviving a restart: `MV-26`.

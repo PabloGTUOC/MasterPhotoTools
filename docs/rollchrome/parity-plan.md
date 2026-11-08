@@ -1,6 +1,6 @@
 # Rollchrome towards a Lightroom replacement — plan
 
-> **Status (2026-11-08):** RP-1 to RP-5 and RP-2b done (MV-24 and MV-25 await real files; MV-26 awaits Mac Studio); RP-6 next. Steps have stable ids (`RP-4`), each built from a
+> **Status (2026-11-08):** RP-1 to RP-5 and RP-2b done (MV-24 to MV-26 await real files); RP-6 briefed. Steps have stable ids (`RP-4`), each built from a
 > brief in [`docs/briefs/`](../briefs/).
 
 **The owner's goal is to stop paying for a Lightroom subscription.** The list comes from comparing

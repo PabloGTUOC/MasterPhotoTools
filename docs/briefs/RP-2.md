@@ -443,3 +443,26 @@ check:bulk-lut PASSED cleanly: all acceptance assertions and benchmarks verified
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+### Round 1 — Changes requested
+
+**Checked.** Re-ran every gate on `rp-2`: fmt and clippy clean, build clean; workspace 1102, `phototools-core` 713,
+`rollchrome-core` 273, `phototools-desktop` 26, `rollchrome-desktop` 19, none failed or ignored; typecheck, `check:edit` and
+`check:bulk-lut` pass. Read the diff and the nine tests. `carry_metadata_with` still behaves as before. The TIFF tag workaround
+and `prefer_fixed_point: false` are declared and reasoned. No `Cargo.toml` changed.
+
+**On a real file.** `Target.RAF` developed, then the TIFF through `decode_image`, compared with the JPEG from the same development,
+6000×4000, sampled: mean difference **0.48** levels, largest 4. Without the conversion the mean is **9.03**. `decode_image` took 0.70 to
+0.72 s. The fix does what the brief claimed.
+
+One thing to change, in `decode_image`:
+
+1. **The decoding is no longer the same call as before.** Two changes the Report does not mention (G11):
+   - `reader.no_limits()` removes the `image` crate's allocation limit for JPEGs and everything else except TIFF. Nothing here asks for
+     that. Delete it.
+   - The TIFF branch decodes with `image::open(path)`, which picks the format from the **extension**, whereas the code it replaced used
+     the guessed format from the file's content. A TIFF named `.jpg` opened before and now fails. Use the `reader` that is already
+     open: `reader.decode()`, which is the call this branch had before.
+
+   If deleting `no_limits` makes something fail, do not put it back: say what failed in the Report. Test counts stay at 1102 / 273. Write
+   **Report round 2** as new text, deleting nothing.

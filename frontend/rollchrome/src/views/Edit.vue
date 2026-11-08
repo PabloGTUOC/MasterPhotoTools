@@ -15,6 +15,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type {
   AdjustmentRecipe,
   AutoTarget,
+  BlackAndWhite,
   ColorWheel as ColorWheelType,
   FilmGrain,
   Geometry,
@@ -220,11 +221,174 @@ function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
     vignette: null,
     grain: null,
     looks: null,
+    black_and_white: null,
     masks: [],
   };
 }
 
 const recipe = ref<AdjustmentRecipe>(createIdentityRecipe());
+
+// ---------------------------------------------------------------------------
+// Colour tools: Eyedropper, Auto Tone, Black & White (RP-4)
+// ---------------------------------------------------------------------------
+
+const isEyedropperActive = ref(false);
+
+function toggleEyedropper() {
+  if (isCropMode.value || isBefore.value || compareMode.value !== 'off' || !sessionId.value) return;
+  isEyedropperActive.value = !isEyedropperActive.value;
+}
+
+function exitEyedropper() {
+  isEyedropperActive.value = false;
+}
+
+async function onEyedropperSample(e: MouseEvent | PointerEvent) {
+  if (!isEyedropperActive.value || !sessionId.value) return;
+  const canvas = canvasRef.value;
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  const u = (e.clientX - rect.left) / rect.width;
+  const v = (e.clientY - rect.top) / rect.height;
+  if (u < 0 || u > 1 || v < 0 || v > 1) {
+    exitEyedropper();
+    return;
+  }
+  const [a, b, c, d, ee, f] = frameToStored.value;
+  const storedX = a * u + b * v + c;
+  const storedY = d * u + ee * v + f;
+  exitEyedropper();
+
+  try {
+    const pick = await desktop.whiteBalanceAt(sessionId.value, storedX, storedY);
+    const before = JSON.parse(JSON.stringify(recipe.value));
+    recipe.value.temperature = Math.round(pick.temperature);
+    recipe.value.tint = Math.round(pick.tint);
+    onRecipeValueChange();
+    const tempSign = pick.temperature > 0 ? '+' : '';
+    const tintSign = pick.tint > 0 ? '+' : '';
+    showNotice(
+      `WB: Temp ${tempSign}${Math.round(pick.temperature)}, Tint ${tintSign}${Math.round(pick.tint)}${pick.clamped ? ' (clamped)' : ''}`,
+      before,
+    );
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    showNotice(`Cannot balance here: ${msg}`);
+  }
+}
+
+async function triggerAutoTone() {
+  if (!sessionId.value || loading.value) return;
+  try {
+    const res = await desktop.autoTone(sessionId.value);
+    const before = JSON.parse(JSON.stringify(recipe.value));
+    recipe.value.exposure = res.exposure;
+    recipe.value.whites = res.whites;
+    recipe.value.blacks = res.blacks;
+    onRecipeValueChange();
+    const expSign = res.exposure > 0 ? '+' : '';
+    const wSign = res.whites > 0 ? '+' : '';
+    const bSign = res.blacks > 0 ? '+' : '';
+    showNotice(
+      `Auto Tone: Exp ${expSign}${res.exposure.toFixed(2)} EV, Whites ${wSign}${res.whites.toFixed(1)}, Blacks ${bSign}${res.blacks.toFixed(1)}`,
+      before,
+    );
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    showNotice(`Auto Tone failed: ${msg}`);
+  }
+}
+
+const BW_BANDS = [
+  { key: 'red', label: 'Red' },
+  { key: 'orange', label: 'Orange' },
+  { key: 'yellow', label: 'Yellow' },
+  { key: 'green', label: 'Green' },
+  { key: 'aqua', label: 'Aqua' },
+  { key: 'blue', label: 'Blue' },
+  { key: 'purple', label: 'Purple' },
+  { key: 'magenta', label: 'Magenta' },
+] as const;
+
+type BwBandKey = (typeof BW_BANDS)[number]['key'];
+
+const isBwActive = computed(() => !!recipe.value.black_and_white);
+
+const lastBwMix = ref<BlackAndWhite>({
+  red: 0,
+  orange: 0,
+  yellow: 0,
+  green: 0,
+  aqua: 0,
+  blue: 0,
+  purple: 0,
+  magenta: 0,
+});
+
+function toggleBlackAndWhite() {
+  if (recipe.value.black_and_white) {
+    lastBwMix.value = { ...recipe.value.black_and_white };
+    recipe.value.black_and_white = null;
+  } else {
+    recipe.value.black_and_white = { ...lastBwMix.value };
+  }
+  onRecipeValueChange();
+}
+
+function getBwBand(key: BwBandKey): number {
+  return recipe.value.black_and_white?.[key] ?? 0;
+}
+
+function onBwSliderInput(key: BwBandKey, val: number) {
+  if (!recipe.value.black_and_white) {
+    recipe.value.black_and_white = { ...lastBwMix.value };
+  }
+  recipe.value.black_and_white[key] = val;
+  lastBwMix.value[key] = val;
+  onRecipeValueInput();
+}
+
+function onBwSliderChange(key: BwBandKey, val: number) {
+  if (!recipe.value.black_and_white) {
+    recipe.value.black_and_white = { ...lastBwMix.value };
+  }
+  recipe.value.black_and_white[key] = val;
+  lastBwMix.value[key] = val;
+  onRecipeValueChange();
+}
+
+const isBwMixDefault = computed(() => {
+  if (!recipe.value.black_and_white) return true;
+  const bw = recipe.value.black_and_white;
+  return (
+    bw.red === 0 &&
+    bw.orange === 0 &&
+    bw.yellow === 0 &&
+    bw.green === 0 &&
+    bw.aqua === 0 &&
+    bw.blue === 0 &&
+    bw.purple === 0 &&
+    bw.magenta === 0
+  );
+});
+
+function resetBwMix() {
+  if (recipe.value.black_and_white) {
+    recipe.value.black_and_white = {
+      red: 0,
+      orange: 0,
+      yellow: 0,
+      green: 0,
+      aqua: 0,
+      blue: 0,
+      purple: 0,
+      magenta: 0,
+    };
+    lastBwMix.value = { ...recipe.value.black_and_white };
+    onRecipeValueChange();
+  }
+}
 
 // Viewing & zoom state (RP-3)
 const zoom = ref<'fit' | number>('fit');
@@ -861,6 +1025,12 @@ let panStartPointer = { x: 0, y: 0 };
 let panStartOffset = { x: 0, y: 0 };
 
 function onViewportPointerDown(e: PointerEvent) {
+  if (isEyedropperActive.value) {
+    e.preventDefault();
+    e.stopPropagation();
+    onEyedropperSample(e);
+    return;
+  }
   if ((e.target as HTMLElement)?.closest('button, .canvas-viewport__split-divider, input')) {
     return;
   }
@@ -1083,6 +1253,27 @@ function handleKeyDown(e: KeyboardEvent) {
     } else {
       toggleCompare('side-by-side');
     }
+    return;
+  }
+
+  // W toggles white balance eyedropper (RP-4)
+  if ((e.key === 'w' || e.key === 'W') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    toggleEyedropper();
+    return;
+  }
+
+  // V toggles Black & White (RP-4)
+  if ((e.key === 'v' || e.key === 'V') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    toggleBlackAndWhite();
+    return;
+  }
+
+  // Esc exits eyedropper mode
+  if (e.key === 'Escape' && isEyedropperActive.value) {
+    e.preventDefault();
+    exitEyedropper();
     return;
   }
 
@@ -1876,6 +2067,10 @@ function resetCurrentHslBand() {
 }
 
 function resetHsl() {
+  if (isBwActive.value) {
+    resetBwMix();
+    return;
+  }
   recipe.value.hsl = {
     red: { hue: 0, saturation: 0, luminance: 0 },
     orange: { hue: 0, saturation: 0, luminance: 0 },
@@ -2008,6 +2203,11 @@ function resetLook() {
 
 // Geometry state & methods (ED-13)
 const isCropMode = ref(false);
+watch([isCropMode, isBefore, compareMode], () => {
+  if (isCropMode.value || isBefore.value || compareMode.value !== 'off') {
+    exitEyedropper();
+  }
+});
 watch(isCropMode, (active) => {
   if (active) {
     compareMode.value = 'off';
@@ -2365,6 +2565,7 @@ onUnmounted(() => {
             'is-space-held': spaceHeld,
             'is-panning': isPanning,
             'is-side-by-side': compareMode === 'side-by-side',
+            'is-eyedropper': isEyedropperActive,
           }"
           @pointerdown="onViewportPointerDown"
           @wheel="onViewportWheel"
@@ -2421,6 +2622,7 @@ onUnmounted(() => {
               <canvas
                 ref="canvasRef"
                 class="canvas-viewport__canvas"
+                :class="{ 'cursor-crosshair': isEyedropperActive }"
                 data-testid="edit-canvas"
                 :style="canvasStyle"
               ></canvas>
@@ -2502,7 +2704,7 @@ onUnmounted(() => {
                   ...canvasStyle,
                   position: 'absolute',
                   zIndex: 'calc(var(--z-canvas) + 2)',
-                  pointerEvents: spaceHeld ? 'none' : 'auto',
+                  pointerEvents: isEyedropperActive ? 'none' : (spaceHeld ? 'none' : 'auto'),
                 }"
                 @select="(id) => (selectedMaskId = id)"
                 @update="updateMaskKind"
@@ -2825,6 +3027,18 @@ onUnmounted(() => {
             :default-open="true"
             @reset="resetBasic"
           >
+            <template #actions>
+              <button
+                type="button"
+                class="ghost auto-tone-btn"
+                data-testid="auto-tone-btn"
+                :disabled="!sessionId || loading"
+                title="Auto Tone: Exposure, Whites, Blacks"
+                @click.stop="triggerAutoTone"
+              >
+                Auto
+              </button>
+            </template>
             <AdjustmentSlider
               v-model="recipe.exposure"
               label="Exposure"
@@ -2903,16 +3117,32 @@ onUnmounted(() => {
               @change="onRecipeValueChange"
             />
 
-            <AdjustmentSlider
-              v-model="recipe.temperature"
-              label="Temperature"
-              :min="-100"
-              :max="100"
-              :step="1"
-              test-id="temperature"
-              @update:model-value="onRecipeValueInput"
-              @change="onRecipeValueChange"
-            />
+            <div class="wb-slider-row">
+              <AdjustmentSlider
+                v-model="recipe.temperature"
+                label="Temperature"
+                :min="-100"
+                :max="100"
+                :step="1"
+                test-id="temperature"
+                @update:model-value="onRecipeValueInput"
+                @change="onRecipeValueChange"
+              />
+              <button
+                type="button"
+                class="ghost eyedropper-btn"
+                :class="{ active: isEyedropperActive }"
+                :disabled="isCropMode || isBefore || compareMode !== 'off' || !sessionId"
+                title="White Balance Eyedropper (W)"
+                data-testid="eyedropper-btn"
+                @click="toggleEyedropper"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2a2 2 0 0 0-2.83 0L9.41 3.76l2.83 2.83L14 4.83A2 2 0 0 0 14 2z"/>
+                  <path d="M8 5.17L2.34 10.83a2 2 0 0 0-.54.97L1 15l3.2-.8a2 2 0 0 0 .97-.54L10.83 8"/>
+                </svg>
+              </button>
+            </div>
 
             <AdjustmentSlider
               v-model="recipe.tint"
@@ -2931,6 +3161,7 @@ onUnmounted(() => {
               :min="-100"
               :max="100"
               :step="1"
+              :disabled="isBwActive"
               test-id="saturation"
               @update:model-value="onRecipeValueInput"
               @change="onRecipeValueChange"
@@ -2942,6 +3173,7 @@ onUnmounted(() => {
               :min="-100"
               :max="100"
               :step="1"
+              :disabled="isBwActive"
               test-id="vibrance"
               @update:model-value="onRecipeValueInput"
               @change="onRecipeValueChange"
@@ -3150,7 +3382,53 @@ onUnmounted(() => {
             :default-open="false"
             @reset="resetHsl"
           >
-            <div class="hsl-panel" data-testid="hsl-panel">
+            <div class="colour-mode-bar">
+              <button
+                type="button"
+                class="ghost bw-toggle-btn"
+                data-testid="bw-toggle-btn"
+                :class="{ active: isBwActive }"
+                title="Toggle Black & White (V)"
+                @click="toggleBlackAndWhite"
+              >
+                Black & White
+              </button>
+            </div>
+
+            <!-- B&W Mix Panel (RP-4) -->
+            <div v-if="isBwActive" class="bw-mix-panel" data-testid="bw-mix-panel">
+              <div class="bw-mix-header">
+                <span class="bw-mix-title">B&W Mix</span>
+                <button
+                  type="button"
+                  class="ghost bw-mix-reset-btn"
+                  data-testid="bw-mix-reset-btn"
+                  :disabled="isBwMixDefault || loading || isReadOnly"
+                  @click="resetBwMix"
+                >
+                  Reset Mix
+                </button>
+              </div>
+
+              <div class="bw-mix-sliders">
+                <AdjustmentSlider
+                  v-for="band in BW_BANDS"
+                  :key="band.key"
+                  :label="band.label"
+                  :model-value="getBwBand(band.key)"
+                  :min="-100"
+                  :max="100"
+                  :step="1"
+                  :disabled="loading || isReadOnly"
+                  :test-id="`bw-slider-${band.key}`"
+                  @update:model-value="(v) => onBwSliderInput(band.key, v)"
+                  @change="(v) => onBwSliderChange(band.key, v)"
+                />
+              </div>
+            </div>
+
+            <!-- HSL Panel -->
+            <div v-else class="hsl-panel" data-testid="hsl-panel">
               <div class="hsl-swatches" role="tablist" aria-label="HSL Colour Bands">
                 <button
                   v-for="band in HSL_BANDS"
@@ -3192,7 +3470,7 @@ onUnmounted(() => {
                   </button>
                 </div>
 
-          <AdjustmentSlider
+                <AdjustmentSlider
                   label="Hue"
                   :model-value="recipe.hsl?.[selectedHslBand]?.hue ?? 0"
                   :min="-180"
@@ -3205,7 +3483,7 @@ onUnmounted(() => {
                   @change="(v) => onHslSliderChange('hue', v)"
                 />
 
-          <AdjustmentSlider
+                <AdjustmentSlider
                   label="Saturation"
                   :model-value="recipe.hsl?.[selectedHslBand]?.saturation ?? 0"
                   :min="-100"
@@ -3218,7 +3496,7 @@ onUnmounted(() => {
                   @change="(v) => onHslSliderChange('saturation', v)"
                 />
 
-          <AdjustmentSlider
+                <AdjustmentSlider
                   label="Luminance"
                   :model-value="recipe.hsl?.[selectedHslBand]?.luminance ?? 0"
                   :min="-100"
@@ -4643,5 +4921,168 @@ onUnmounted(() => {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+/* Eyedropper and WB row (RP-4) */
+.wb-slider-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.wb-slider-row :deep(.adjustment-slider) {
+  flex: 1;
+}
+
+.eyedropper-btn {
+  min-height: 44px;
+  min-width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.eyedropper-btn:hover:not(:disabled) {
+  color: var(--text-heading);
+  border-color: var(--accent);
+}
+
+.eyedropper-btn.active {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+}
+
+.eyedropper-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.canvas-viewport__container.is-eyedropper,
+.canvas-viewport__container.is-eyedropper canvas,
+.cursor-crosshair {
+  cursor: crosshair !important;
+}
+
+/* Auto Tone button (RP-4) */
+.auto-tone-btn {
+  min-height: 40px;
+  min-width: 44px;
+  padding: 0 var(--space-2);
+  font-family: var(--font-label);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  background: var(--bg-panel);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.auto-tone-btn:hover:not(:disabled) {
+  color: var(--text-heading);
+  border-color: var(--accent);
+}
+
+.auto-tone-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Colour mode bar and Black & White mix (RP-4) */
+.colour-mode-bar {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.bw-toggle-btn {
+  flex: 1;
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  background: var(--bg-panel);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.bw-toggle-btn:hover:not(:disabled) {
+  color: var(--text-heading);
+  border-color: var(--accent);
+}
+
+.bw-toggle-btn.active {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+}
+
+.bw-mix-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.bw-mix-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.bw-mix-title {
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-heading);
+}
+
+.bw-mix-reset-btn {
+  font-family: var(--font-label);
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  min-height: 40px;
+  min-width: 40px;
+  border-radius: var(--radius-none);
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.bw-mix-reset-btn:hover:not(:disabled) {
+  color: var(--text-heading);
+}
+
+.bw-mix-reset-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.bw-mix-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 </style>

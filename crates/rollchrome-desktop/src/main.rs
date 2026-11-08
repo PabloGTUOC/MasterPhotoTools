@@ -84,6 +84,8 @@ fn main() {
             commands::download_mask_model,
             commands::make_auto_mask,
             commands::close_preview,
+            commands::white_balance_at,
+            commands::auto_tone,
             commands::list_luts,
             commands::import_lut,
             commands::list_presets,

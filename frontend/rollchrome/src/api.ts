@@ -272,6 +272,16 @@ export class RollchromeClient {
     return invoke<void>('close_preview', { sessionId });
   }
 
+  /** Samples a 5×5 box on unadjusted linear settle proxy to compute WB shifts (RP-4). */
+  whiteBalanceAt(sessionId: string, x: number, y: number): Promise<WhiteBalancePick> {
+    return invoke<WhiteBalancePick>('white_balance_at', { sessionId, x, y });
+  }
+
+  /** Evaluates exposure, whites, and blacks via bisection on the drag proxy (RP-4). */
+  autoTone(sessionId: string): Promise<AutoTone> {
+    return invoke<AutoTone>('auto_tone', { sessionId });
+  }
+
   listLuts(): Promise<LutLibraryList> {
     return invoke<LutLibraryList>('list_luts');
   }
@@ -546,7 +556,33 @@ export interface LookEffects {
   tone_mapper?: string | null;
 }
 
-/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11, ED-12, ED-13, ED-14, ED-16). */
+/** Eyedropper white balance pick result (RP-4). */
+export interface WhiteBalancePick {
+  temperature: number;
+  tint: number;
+  clamped: boolean;
+}
+
+/** Auto tone determination result (RP-4). */
+export interface AutoTone {
+  exposure: number;
+  whites: number;
+  blacks: number;
+}
+
+/** 8-band black & white mixer in OkLCh (RP-4). */
+export interface BlackAndWhite {
+  red: number;
+  orange: number;
+  yellow: number;
+  green: number;
+  aqua: number;
+  blue: number;
+  purple: number;
+  magenta: number;
+}
+
+/** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11, ED-12, ED-13, ED-14, ED-16, RP-4). */
 export interface AdjustmentRecipe {
   version?: number;
   source_sha256?: string;
@@ -566,6 +602,8 @@ export interface AdjustmentRecipe {
   hue?: number;
   curves?: ToneCurves | null;
   hsl?: HslAdjustments | null;
+  /** Optional 8-band black & white mixer evaluated in OkLCh (RP-4). */
+  black_and_white?: BlackAndWhite | null;
   grading?: ColorGrading | null;
   geometry?: Geometry | null;
   vignette?: Vignette | null;

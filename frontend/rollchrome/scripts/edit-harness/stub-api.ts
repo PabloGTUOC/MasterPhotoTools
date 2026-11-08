@@ -7,12 +7,14 @@
  */
 import type {
   AdjustmentRecipe,
+  AutoTone,
   BrowserEntry,
   ExportResult,
   LutEntry,
   LutLibraryList,
   OpenPreviewResult,
   PreviewStage,
+  WhiteBalancePick,
 } from '../../src/api';
 
 export interface StubState {
@@ -402,6 +404,17 @@ export class StubDesktopApiClient {
   }
 
   async closePreview(_sessionId: string): Promise<void> {}
+
+  async whiteBalanceAt(_sessionId: string, x: number, y: number): Promise<WhiteBalancePick> {
+    if (x < 0 || x > 1 || y < 0 || y > 1) {
+      throw new Error(`Sample point (${x.toFixed(3)}, ${y.toFixed(3)}) is outside stored frame bounds 0.0..=1.0`);
+    }
+    return { temperature: 12, tint: -4, clamped: false };
+  }
+
+  async autoTone(_sessionId: string): Promise<AutoTone> {
+    return { exposure: 0.35, whites: 15.0, blacks: -8.0 };
+  }
 
   async loadRecipe(path: string): Promise<AdjustmentRecipe | null> {
     if (path.includes('v2_edits')) {

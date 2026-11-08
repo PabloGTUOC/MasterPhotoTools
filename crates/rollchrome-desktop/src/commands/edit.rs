@@ -8,7 +8,9 @@ use super::{describe, resolve_input, resolve_inputs, resolve_output, CommandResu
 use crate::AppState;
 use phototools_core::tools::{Skip, Tool};
 use rollchrome_core::media::edit::pipeline::AdjustmentRecipe;
-use rollchrome_core::media::edit::preview::{encode_preview_frame, PreviewStage};
+use rollchrome_core::media::edit::preview::{
+    encode_preview_frame, AutoTone, PreviewStage, WhiteBalancePick,
+};
 use rollchrome_core::tools::edit::ExportResult;
 use rollchrome_core::tools::lut::{BulkLutParams, BulkLutTool};
 use rollchrome_core::tools::lut_library::{
@@ -378,6 +380,34 @@ pub fn close_preview(session_id: String, state: State<'_, AppState>) -> CommandR
 pub fn close_preview_impl(state: &AppState, session_id: String) -> CommandResult<()> {
     state.close_preview(&session_id);
     Ok(())
+}
+
+#[tauri::command]
+pub fn white_balance_at(
+    session_id: String,
+    x: f32,
+    y: f32,
+    state: State<'_, AppState>,
+) -> CommandResult<WhiteBalancePick> {
+    white_balance_at_impl(&state, session_id, x, y)
+}
+
+pub fn white_balance_at_impl(
+    state: &AppState,
+    session_id: String,
+    x: f32,
+    y: f32,
+) -> CommandResult<WhiteBalancePick> {
+    state.white_balance_at(&session_id, x, y).map_err(describe)
+}
+
+#[tauri::command]
+pub fn auto_tone(session_id: String, state: State<'_, AppState>) -> CommandResult<AutoTone> {
+    auto_tone_impl(&state, session_id)
+}
+
+pub fn auto_tone_impl(state: &AppState, session_id: String) -> CommandResult<AutoTone> {
+    state.auto_tone(&session_id).map_err(describe)
 }
 
 // ---------------------------------------------------------------------------

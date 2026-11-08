@@ -13,7 +13,9 @@ use phototools_core::jobs::JobRunner;
 use phototools_core::ledger::Ledger;
 use rollchrome_core::media::edit::lut::Lut;
 use rollchrome_core::media::edit::pipeline::AdjustmentRecipe;
-use rollchrome_core::media::edit::preview::{PreviewSession, PreviewStage, RgbaFrame};
+use rollchrome_core::media::edit::preview::{
+    AutoTone, PreviewSession, PreviewStage, RgbaFrame, WhiteBalancePick,
+};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -216,6 +218,45 @@ impl AppState {
             ));
         }
         active.session.mask_coverage(recipe, mask_id, stage)
+    }
+
+    /// Measures unadjusted linear light in a 5×5 box on `settle_linear` and returns white balance shifts.
+    pub fn white_balance_at(
+        &self,
+        session_id: &str,
+        x: f32,
+        y: f32,
+    ) -> Result<WhiteBalancePick, Error> {
+        let slot = self
+            .active_preview
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let active = slot
+            .as_ref()
+            .ok_or_else(|| Error::Refused("No active preview session is open".into()))?;
+        if active.session_id != session_id {
+            return Err(Error::Refused(
+                "The preview session has been closed or replaced by another preview".into(),
+            ));
+        }
+        active.session.white_balance_at(x, y)
+    }
+
+    /// Calculates optimal exposure, whites, and blacks via bisection on the drag proxy.
+    pub fn auto_tone(&self, session_id: &str) -> Result<AutoTone, Error> {
+        let slot = self
+            .active_preview
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let active = slot
+            .as_ref()
+            .ok_or_else(|| Error::Refused("No active preview session is open".into()))?;
+        if active.session_id != session_id {
+            return Err(Error::Refused(
+                "The preview session has been closed or replaced by another preview".into(),
+            ));
+        }
+        active.session.auto_tone()
     }
 
     /// Number of actual RAW developments performed for develop preview (RP-1).

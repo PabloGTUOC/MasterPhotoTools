@@ -136,6 +136,55 @@ impl HslAdjustments {
     }
 }
 
+/// 8-band black & white channel mixer in OkLCh (ED-11 / RP-4).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct BlackAndWhite {
+    #[serde(default)]
+    pub red: f32,
+    #[serde(default)]
+    pub orange: f32,
+    #[serde(default)]
+    pub yellow: f32,
+    #[serde(default)]
+    pub green: f32,
+    #[serde(default)]
+    pub aqua: f32,
+    #[serde(default)]
+    pub blue: f32,
+    #[serde(default)]
+    pub purple: f32,
+    #[serde(default)]
+    pub magenta: f32,
+}
+
+impl BlackAndWhite {
+    /// Array of band values in canonical order: Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta.
+    pub fn bands(&self) -> [f32; BAND_COUNT] {
+        [
+            self.red,
+            self.orange,
+            self.yellow,
+            self.green,
+            self.aqua,
+            self.blue,
+            self.purple,
+            self.magenta,
+        ]
+    }
+
+    /// True if all 8 bands are at rest (0.0 identity).
+    pub fn is_identity(&self) -> bool {
+        self.red == 0.0
+            && self.orange == 0.0
+            && self.yellow == 0.0
+            && self.green == 0.0
+            && self.aqua == 0.0
+            && self.blue == 0.0
+            && self.purple == 0.0
+            && self.magenta == 0.0
+    }
+}
+
 /// Computes the 8 band weights for any hue angle in degrees with exact partition of unity.
 ///
 /// Returns an 8-element array summing identically to 1.0. At each band's reference knot,
@@ -212,6 +261,7 @@ pub struct CompiledHslTable {
     pub global_sin: f32,
     pub has_hsl: bool,
     pub has_hue: bool,
+    pub is_black_and_white: bool,
     pub is_identity: bool,
 }
 
@@ -231,6 +281,7 @@ impl Default for CompiledHslTable {
             global_sin: 0.0,
             has_hsl: false,
             has_hue: false,
+            is_black_and_white: false,
             is_identity: true,
         }
     }
@@ -314,6 +365,57 @@ pub fn fast_atan2_lut_idx(y: f32, x: f32) -> usize {
 impl CompiledHslTable {
     /// Compiles `HslAdjustments` and global hue into a 3600-entry lookup table.
     pub fn from_recipe(hsl: Option<&HslAdjustments>, global_hue_deg: f32) -> Self {
+        Self::from_recipe_with_bw(hsl, global_hue_deg, None)
+    }
+
+    /// Compiles HSL adjustments, global hue, or black & white mix into a 3600-entry lookup table.
+    ///
+    /// When black & white is active (`bw.is_some()`), HSL adjustments and hue rotation are ignored,
+    /// lightness moves by the band-weighted mix at pixel hue, and chroma is set to 0.0.
+    pub fn from_recipe_with_bw(
+        hsl: Option<&HslAdjustments>,
+        global_hue_deg: f32,
+        bw: Option<&BlackAndWhite>,
+    ) -> Self {
+        if let Some(bw) = bw {
+            let bands = bw.bands();
+            let mut entries = Box::new([HslLutEntry::default(); HSL_LUT_SIZE]);
+
+            for (i, entry) in entries.iter_mut().enumerate() {
+                let hue_deg = i as f32 * 0.1;
+                let w = band_weights_deg(hue_deg);
+                let mut mix = 0.0f32;
+                for (k, &band_val) in bands.iter().enumerate() {
+                    let weight = w[k];
+                    if weight > 0.0 {
+                        mix += weight * (band_val / 100.0);
+                    }
+                }
+
+                // Lightness moves by band-weighted mix (same scale as HSL luminance)
+                if mix >= 0.0 {
+                    entry.lum_scale = 1.0 - mix;
+                    entry.lum_bias = mix;
+                } else {
+                    entry.lum_scale = 1.0 + mix;
+                    entry.lum_bias = 0.0;
+                }
+                entry.cos_sat = 0.0;
+                entry.sin_sat = 0.0;
+            }
+
+            return Self {
+                table: entries,
+                global_hue_deg: 0.0,
+                global_cos: 1.0,
+                global_sin: 0.0,
+                has_hsl: false,
+                has_hue: false,
+                is_black_and_white: true,
+                is_identity: false,
+            };
+        }
+
         let has_hsl = hsl.is_some_and(|h| !h.is_identity());
         let has_hue = global_hue_deg != 0.0;
 
@@ -365,6 +467,7 @@ impl CompiledHslTable {
             global_sin,
             has_hsl,
             has_hue,
+            is_black_and_white: false,
             is_identity: false,
         }
     }
@@ -378,6 +481,25 @@ impl CompiledHslTable {
 
         const C_FADE_MIN_SQ: f32 = CHROMA_FADE_MIN * CHROMA_FADE_MIN;
         const C_FADE_MAX_SQ: f32 = CHROMA_FADE_MAX * CHROMA_FADE_MAX;
+
+        if self.is_black_and_white {
+            if c_sq <= C_FADE_MIN_SQ {
+                return (l, 0.0, 0.0);
+            } else if c_sq >= C_FADE_MAX_SQ {
+                let lut_idx = fast_atan2_lut_idx(b, a);
+                let entry = self.table[lut_idx.min(HSL_LUT_SIZE - 1)];
+                let final_l = (l * entry.lum_scale + entry.lum_bias).clamp(0.0, 1.0);
+                return (final_l, 0.0, 0.0);
+            } else {
+                let c = c_sq.sqrt();
+                let fade = chroma_fade(c);
+                let lut_idx = fast_atan2_lut_idx(b, a);
+                let entry = self.table[lut_idx.min(HSL_LUT_SIZE - 1)];
+                let full_l = l * entry.lum_scale + entry.lum_bias;
+                let final_l = (l + fade * (full_l - l)).clamp(0.0, 1.0);
+                return (final_l, 0.0, 0.0);
+            }
+        }
 
         // If only global hue is active: rotates at full strength at every chroma
         if !self.has_hsl {
@@ -447,6 +569,15 @@ impl CompiledHslTable {
     pub fn apply_linear_srgb(&self, r: f32, g: f32, b: f32) -> (f32, f32, f32) {
         if self.is_identity {
             return (r, g, b);
+        }
+
+        if self.is_black_and_white {
+            let (l, a, b_val) = crate::media::edit::color::linear_srgb_to_oklab(r, g, b);
+            let c_sq = a * a + b_val * b_val;
+            let (final_l, final_a, final_b) = self.apply_with_c_sq(l, a, b_val, c_sq);
+            let (hr, hg, hb) =
+                crate::media::edit::color::oklab_to_linear_srgb(final_l, final_a, final_b);
+            return (hr.max(0.0), hg.max(0.0), hb.max(0.0));
         }
 
         // Fast path for global hue only:

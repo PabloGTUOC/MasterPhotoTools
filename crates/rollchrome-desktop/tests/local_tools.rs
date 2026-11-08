@@ -446,3 +446,37 @@ fn an_unreadable_sidecar_is_reported_not_treated_as_no_edits() {
         "error must report the corrupted sidecar; got: {err}"
     );
 }
+
+#[test]
+fn white_balance_at_refuses_an_unknown_session() {
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = rollchrome_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let err = rollchrome_desktop::commands::edit::white_balance_at_impl(
+        &state,
+        "nonexistent-session".into(),
+        0.5,
+        0.5,
+    )
+    .expect_err("unknown session must error");
+    assert!(
+        err.contains("No active preview session") || err.contains("closed or replaced"),
+        "error must mention session failure; got: {err}"
+    );
+}
+
+#[test]
+fn auto_tone_refuses_an_unknown_session() {
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = rollchrome_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let err =
+        rollchrome_desktop::commands::edit::auto_tone_impl(&state, "nonexistent-session".into())
+            .expect_err("unknown session must error");
+    assert!(
+        err.contains("No active preview session") || err.contains("closed or replaced"),
+        "error must mention session failure; got: {err}"
+    );
+}

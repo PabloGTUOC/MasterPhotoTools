@@ -67,6 +67,9 @@ pub struct AdjustmentRecipe {
     /// Optional 8-band HSL adjustments evaluated in OkLCh color space.
     #[serde(default)]
     pub hsl: Option<super::hsl::HslAdjustments>,
+    /// Optional 8-band black & white channel mixer evaluated in OkLCh color space (RP-4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub black_and_white: Option<super::hsl::BlackAndWhite>,
     /// Optional 3-way colour grading wheels evaluated in display-encoded space.
     #[serde(default)]
     pub grading: Option<super::grading::ColorGrading>,
@@ -116,6 +119,7 @@ impl Default for AdjustmentRecipe {
             hue: 0.0,
             curves: None,
             hsl: None,
+            black_and_white: None,
             grading: None,
             geometry: None,
             vignette: None,
@@ -144,6 +148,7 @@ impl AdjustmentRecipe {
             && self.hue == 0.0
             && self.curves.as_ref().is_none_or(|c| c.is_identity())
             && self.hsl.as_ref().is_none_or(|h| h.is_identity())
+            && self.black_and_white.is_none()
             && self.grading.as_ref().is_none_or(|g| g.is_identity())
             && self.geometry.as_ref().is_none_or(|g| g.is_identity())
             && self.vignette.as_ref().is_none_or(|v| v.is_identity())
@@ -601,8 +606,11 @@ impl LinearBuffer {
             sat_vib: global.has_sat_vib || touches(|m| m.touches_saturation),
         };
 
-        let compiled_hsl =
-            super::hsl::CompiledHslTable::from_recipe(recipe.hsl.as_ref(), recipe.hue);
+        let compiled_hsl = super::hsl::CompiledHslTable::from_recipe_with_bw(
+            recipe.hsl.as_ref(),
+            recipe.hue,
+            recipe.black_and_white.as_ref(),
+        );
         let has_oklab = !compiled_hsl.is_identity;
         let (w, h) = (self.width, self.height);
 

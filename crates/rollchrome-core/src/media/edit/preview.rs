@@ -119,6 +119,22 @@ pub enum PreviewStage {
     Full,
 }
 
+/// White balance pick result from eyedropper tool (RP-4).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WhiteBalancePick {
+    pub temperature: f32,
+    pub tint: f32,
+    pub clamped: bool,
+}
+
+/// Auto tone calculation result (RP-4).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AutoTone {
+    pub exposure: f32,
+    pub whites: f32,
+    pub blacks: f32,
+}
+
 /// An uncompressed RGBA8 pixel frame ready for HTML5 Canvas ImageData or display.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RgbaFrame {
@@ -589,6 +605,248 @@ impl PreviewSession {
         )?;
         Ok((out_w, out_h, coverage))
     }
+
+    /// Measures the unadjusted linear light in a 5×5 box on `settle_linear` around normalized `(x, y)`
+    /// and calculates the temperature and tint shifts required to equalize R, G, and B.
+    ///
+    /// Refuses with descriptive error if coordinates are out of bounds (not 0.0..=1.0),
+    /// if any channel mean >= 0.98 (clipped highlight), or if luminance < 0.005 (deep shadow).
+    pub fn white_balance_at(&self, x: f32, y: f32) -> Result<WhiteBalancePick, Error> {
+        if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) || x.is_nan() || y.is_nan() {
+            return Err(Error::Refused(format!(
+                "Sample point ({x:.3}, {y:.3}) is outside stored frame bounds 0.0..=1.0"
+            )));
+        }
+
+        let w = self.settle_linear.width;
+        let h = self.settle_linear.height;
+        if w == 0 || h == 0 {
+            return Err(Error::Refused("Image buffer is empty".into()));
+        }
+
+        let cx = ((x * (w as f32 - 1.0)).round() as i32).clamp(0, w as i32 - 1);
+        let cy = ((y * (h as f32 - 1.0)).round() as i32).clamp(0, h as i32 - 1);
+
+        let mut sum_r = 0.0f32;
+        let mut sum_g = 0.0f32;
+        let mut sum_b = 0.0f32;
+        let mut count = 0usize;
+
+        for dy in -2..=2 {
+            let py = cy + dy;
+            if py < 0 || py >= h as i32 {
+                continue;
+            }
+            for dx in -2..=2 {
+                let px = cx + dx;
+                if px < 0 || px >= w as i32 {
+                    continue;
+                }
+                let idx = (py as usize * w as usize + px as usize) * 3;
+                sum_r += self.settle_linear.data[idx];
+                sum_g += self.settle_linear.data[idx + 1];
+                sum_b += self.settle_linear.data[idx + 2];
+                count += 1;
+            }
+        }
+
+        if count == 0 {
+            return Err(Error::Refused("No valid pixels in sample box".into()));
+        }
+
+        let r = sum_r / count as f32;
+        let g = sum_g / count as f32;
+        let b = sum_b / count as f32;
+
+        if r >= 0.98 || g >= 0.98 || b >= 0.98 {
+            return Err(Error::Refused(
+                "Cannot balance on clipped highlight (channel mean >= 0.98)".into(),
+            ));
+        }
+
+        let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        if luma < 0.005 {
+            return Err(Error::Refused(
+                "Cannot balance on deep shadow / noise floor (luminance < 0.005)".into(),
+            ));
+        }
+
+        if r <= 1e-6 || g <= 1e-6 || b <= 1e-6 {
+            return Err(Error::Refused(
+                "Cannot balance on near-zero channel value".into(),
+            ));
+        }
+
+        let t = (b / r).log2();
+        let g_tint = ((g * g) / (r * b)).log2();
+
+        let raw_temp = t * 100.0;
+        let raw_tint = g_tint * 100.0;
+
+        let clamped_temp = raw_temp.clamp(-100.0, 100.0);
+        let clamped_tint = raw_tint.clamp(-100.0, 100.0);
+        let clamped = clamped_temp != raw_temp || clamped_tint != raw_tint;
+
+        Ok(WhiteBalancePick {
+            temperature: clamped_temp,
+            tint: clamped_tint,
+            clamped,
+        })
+    }
+
+    /// Evaluates optimal tone sliders (exposure, whites, blacks) via bisection on the drag proxy
+    /// under an identity recipe.
+    ///
+    /// White balance is intentionally not touched: white balance is an artistic / perceptual
+    /// decision; auto-WB from a single scene frame frequently ruins intentional warm sunset
+    /// or cool dusk moods; auto-tone focuses strictly on exposure and dynamic range.
+    pub fn auto_tone(&self) -> Result<AutoTone, Error> {
+        let n_pixels = (self.drag_linear.width * self.drag_linear.height) as usize;
+        let mut lums = Vec::with_capacity(n_pixels);
+        let mut recipe = AdjustmentRecipe::default();
+
+        // Step 1: Exposure in [-2.0, +2.0]
+        let frame_zero = render_rgba_frame(&self.drag_linear, &recipe, None)?;
+        let med_zero = compute_median_luminance(&frame_zero.bytes, &mut lums);
+        let chosen_exposure = if (95.0..=135.0).contains(&med_zero) {
+            0.0
+        } else {
+            let target = med_zero.clamp(95.0, 135.0);
+            let mut low = -2.0f32;
+            let mut high = 2.0f32;
+            for _ in 0..12 {
+                let mid = (low + high) * 0.5;
+                recipe.exposure = mid;
+                let frame = render_rgba_frame(&self.drag_linear, &recipe, None)?;
+                let med = compute_median_luminance(&frame.bytes, &mut lums);
+                if med < target {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+            ((low + high) * 0.5 * 100.0).round() / 100.0
+        };
+        recipe.exposure = chosen_exposure;
+
+        // Step 2: Whites in [-50.0, +50.0]
+        let frame_exp = render_rgba_frame(&self.drag_linear, &recipe, None)?;
+        let p995_zero = compute_max_channel_percentile(&frame_exp.bytes, 0.995);
+        let chosen_whites = if p995_zero < 235.0 {
+            let target = 235.0;
+            let mut low = -50.0f32;
+            let mut high = 50.0f32;
+            for _ in 0..12 {
+                let mid = (low + high) * 0.5;
+                recipe.whites = mid;
+                let frame = render_rgba_frame(&self.drag_linear, &recipe, None)?;
+                let p = compute_max_channel_percentile(&frame.bytes, 0.995);
+                if p < target {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+            ((low + high) * 0.5 * 10.0).round() / 10.0
+        } else if p995_zero >= 254.0 {
+            let target = 250.0;
+            let mut low = -50.0f32;
+            let mut high = 50.0f32;
+            for _ in 0..12 {
+                let mid = (low + high) * 0.5;
+                recipe.whites = mid;
+                let frame = render_rgba_frame(&self.drag_linear, &recipe, None)?;
+                let p = compute_max_channel_percentile(&frame.bytes, 0.995);
+                if p < target {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+            ((low + high) * 0.5 * 10.0).round() / 10.0
+        } else {
+            0.0
+        };
+        recipe.whites = chosen_whites;
+
+        // Step 3: Blacks in [-50.0, +50.0]
+        let frame_whites = render_rgba_frame(&self.drag_linear, &recipe, None)?;
+        let p005_zero = compute_min_channel_percentile(&frame_whites.bytes, 0.005);
+        let chosen_blacks = if p005_zero > 12.0 {
+            let target = 12.0;
+            let mut low = -50.0f32;
+            let mut high = 50.0f32;
+            for _ in 0..12 {
+                let mid = (low + high) * 0.5;
+                recipe.blacks = mid;
+                let frame = render_rgba_frame(&self.drag_linear, &recipe, None)?;
+                let p = compute_min_channel_percentile(&frame.bytes, 0.005);
+                if p > target {
+                    high = mid;
+                } else {
+                    low = mid;
+                }
+            }
+            ((low + high) * 0.5 * 10.0).round() / 10.0
+        } else {
+            0.0
+        };
+
+        Ok(AutoTone {
+            exposure: chosen_exposure,
+            whites: chosen_whites,
+            blacks: chosen_blacks,
+        })
+    }
+}
+
+fn compute_median_luminance(bytes: &[u8], lums: &mut Vec<f32>) -> f32 {
+    lums.clear();
+    for px in bytes.as_chunks::<4>().0 {
+        lums.push(0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32);
+    }
+    if lums.is_empty() {
+        return 128.0;
+    }
+    let mid_idx = lums.len() / 2;
+    let (_, &mut med, _) = lums.select_nth_unstable_by(mid_idx, |a, b| a.total_cmp(b));
+    med
+}
+
+fn compute_max_channel_percentile(bytes: &[u8], percentile: f64) -> f32 {
+    let mut hist = [0u32; 256];
+    let n_pixels = bytes.len() / 4;
+    for px in bytes.as_chunks::<4>().0 {
+        let m = px[0].max(px[1]).max(px[2]) as usize;
+        hist[m] += 1;
+    }
+    let target_count = (n_pixels as f64 * percentile).ceil() as u32;
+    let mut acc = 0;
+    for (val, &cnt) in hist.iter().enumerate() {
+        acc += cnt;
+        if acc >= target_count {
+            return val as f32;
+        }
+    }
+    255.0
+}
+
+fn compute_min_channel_percentile(bytes: &[u8], percentile: f64) -> f32 {
+    let mut hist = [0u32; 256];
+    let n_pixels = bytes.len() / 4;
+    for px in bytes.as_chunks::<4>().0 {
+        let m = px[0].min(px[1]).min(px[2]) as usize;
+        hist[m] += 1;
+    }
+    let target_count = (n_pixels as f64 * percentile).ceil() as u32;
+    let mut acc = 0;
+    for (val, &cnt) in hist.iter().enumerate() {
+        acc += cnt;
+        if acc >= target_count {
+            return val as f32;
+        }
+    }
+    0.0
 }
 
 /// Calculates the dimensions (width, height) scaled down so the longest edge does not exceed `max_edge`.
@@ -813,7 +1071,11 @@ pub fn render_rgba_frame_masked(
     let has_tone_curve = has_tone_curve || masks.is_some_and(|m| m.touches_contrast);
     let has_sat_vib = has_sat_vib || masks.is_some_and(|m| m.touches_saturation);
 
-    let compiled_hsl = super::hsl::CompiledHslTable::from_recipe(recipe.hsl.as_ref(), recipe.hue);
+    let compiled_hsl = super::hsl::CompiledHslTable::from_recipe_with_bw(
+        recipe.hsl.as_ref(),
+        recipe.hue,
+        recipe.black_and_white.as_ref(),
+    );
     let has_oklab = !compiled_hsl.is_identity;
 
     let intensity = if recipe.lut.is_some() {

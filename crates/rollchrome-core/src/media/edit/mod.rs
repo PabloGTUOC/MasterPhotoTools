@@ -27,7 +27,7 @@ pub use geometry::{
 };
 pub use grading::{ColorGrading, ColorWheel, CompiledGradingTable};
 pub use grain::{CompiledGrain, FilmGrain};
-pub use hsl::{CompiledHslTable, HslAdjustments, HslBand};
+pub use hsl::{BlackAndWhite, CompiledHslTable, HslAdjustments, HslBand};
 pub use looks::{aces_narkowicz, apply_looks_linear, LookEffects, HALATION_TINT};
 pub use lut::{Lut, MAX_LUT_SIZE, MIN_LUT_SIZE};
 pub use masks::{AutoTarget, CompiledMasks, LocalAdjustments, Mask, MaskKind};
@@ -38,9 +38,9 @@ pub use pipeline::{
     SRGB_TO_LINEAR_U8,
 };
 pub use preview::{
-    downscale_image_buffer, encode_preview_frame, fit_full_edge, render_rgba_frame, PreviewSession,
-    PreviewStage, RgbaFrame, DRAG_MAX_EDGE, FULL_MAX_EDGE, PREVIEW_FRAME_HEADER_LEN,
-    SETTLE_MAX_EDGE,
+    downscale_image_buffer, encode_preview_frame, fit_full_edge, render_rgba_frame, AutoTone,
+    PreviewSession, PreviewStage, RgbaFrame, WhiteBalancePick, DRAG_MAX_EDGE, FULL_MAX_EDGE,
+    PREVIEW_FRAME_HEADER_LEN, SETTLE_MAX_EDGE,
 };
 pub use raster::{CoverageRaster, StoredRaster};
 pub use vignette::{CompiledVignette, Vignette};

@@ -701,14 +701,12 @@ impl PreviewSession {
     /// decision; auto-WB from a single scene frame frequently ruins intentional warm sunset
     /// or cool dusk moods; auto-tone focuses strictly on exposure and dynamic range.
     pub fn auto_tone(&self) -> Result<AutoTone, Error> {
-        let n_pixels = (self.drag_linear.width * self.drag_linear.height) as usize;
-        let mut lums = Vec::with_capacity(n_pixels);
         let mut recipe = AdjustmentRecipe::default();
 
         // Step 1: Exposure in [-2.0, +2.0]
         let frame_zero = render_rgba_frame(&self.drag_linear, &recipe, None)?;
-        let med_zero = compute_median_luminance(&frame_zero.bytes, &mut lums);
-        let chosen_exposure = if (95.0..=135.0).contains(&med_zero) {
+        let med_zero = compute_display_luma_percentile(&frame_zero.bytes, 0.5);
+        let mut chosen_exposure = if (95.0..=135.0).contains(&med_zero) {
             0.0
         } else {
             let target = med_zero.clamp(95.0, 135.0);
@@ -718,7 +716,7 @@ impl PreviewSession {
                 let mid = (low + high) * 0.5;
                 recipe.exposure = mid;
                 let frame = render_rgba_frame(&self.drag_linear, &recipe, None)?;
-                let med = compute_median_luminance(&frame.bytes, &mut lums);
+                let med = compute_display_luma_percentile(&frame.bytes, 0.5);
                 if med < target {
                     low = mid;
                 } else {
@@ -727,11 +725,37 @@ impl PreviewSession {
             }
             ((low + high) * 0.5 * 100.0).round() / 100.0
         };
+
+        // If exposure is positive, bisect in [0, exposure] for the 99.5th percentile
+        // of display luma at 250, and take the smaller exposure so dark frames with
+        // small bright areas do not blow their highlights.
+        if chosen_exposure > 0.0 {
+            recipe.exposure = chosen_exposure;
+            let frame = render_rgba_frame(&self.drag_linear, &recipe, None)?;
+            let p995 = compute_display_luma_percentile(&frame.bytes, 0.995);
+            if p995 > 250.0 {
+                let mut low = 0.0f32;
+                let mut high = chosen_exposure;
+                for _ in 0..12 {
+                    let mid = (low + high) * 0.5;
+                    recipe.exposure = mid;
+                    let frame = render_rgba_frame(&self.drag_linear, &recipe, None)?;
+                    let p = compute_display_luma_percentile(&frame.bytes, 0.995);
+                    if p < 250.0 {
+                        low = mid;
+                    } else {
+                        high = mid;
+                    }
+                }
+                let hl_limited_exp = ((low + high) * 0.5 * 100.0).round() / 100.0;
+                chosen_exposure = chosen_exposure.min(hl_limited_exp);
+            }
+        }
         recipe.exposure = chosen_exposure;
 
         // Step 2: Whites in [-50.0, +50.0]
         let frame_exp = render_rgba_frame(&self.drag_linear, &recipe, None)?;
-        let p995_zero = compute_max_channel_percentile(&frame_exp.bytes, 0.995);
+        let p995_zero = compute_display_luma_percentile(&frame_exp.bytes, 0.995);
         let chosen_whites = if p995_zero < 235.0 {
             let target = 235.0;
             let mut low = -50.0f32;
@@ -740,7 +764,7 @@ impl PreviewSession {
                 let mid = (low + high) * 0.5;
                 recipe.whites = mid;
                 let frame = render_rgba_frame(&self.drag_linear, &recipe, None)?;
-                let p = compute_max_channel_percentile(&frame.bytes, 0.995);
+                let p = compute_display_luma_percentile(&frame.bytes, 0.995);
                 if p < target {
                     low = mid;
                 } else {
@@ -756,7 +780,7 @@ impl PreviewSession {
                 let mid = (low + high) * 0.5;
                 recipe.whites = mid;
                 let frame = render_rgba_frame(&self.drag_linear, &recipe, None)?;
-                let p = compute_max_channel_percentile(&frame.bytes, 0.995);
+                let p = compute_display_luma_percentile(&frame.bytes, 0.995);
                 if p < target {
                     low = mid;
                 } else {
@@ -771,7 +795,7 @@ impl PreviewSession {
 
         // Step 3: Blacks in [-50.0, +50.0]
         let frame_whites = render_rgba_frame(&self.drag_linear, &recipe, None)?;
-        let p005_zero = compute_min_channel_percentile(&frame_whites.bytes, 0.005);
+        let p005_zero = compute_display_luma_percentile(&frame_whites.bytes, 0.005);
         let chosen_blacks = if p005_zero > 12.0 {
             let target = 12.0;
             let mut low = -50.0f32;
@@ -780,7 +804,7 @@ impl PreviewSession {
                 let mid = (low + high) * 0.5;
                 recipe.blacks = mid;
                 let frame = render_rgba_frame(&self.drag_linear, &recipe, None)?;
-                let p = compute_min_channel_percentile(&frame.bytes, 0.005);
+                let p = compute_display_luma_percentile(&frame.bytes, 0.005);
                 if p > target {
                     high = mid;
                 } else {
@@ -800,27 +824,16 @@ impl PreviewSession {
     }
 }
 
-fn compute_median_luminance(bytes: &[u8], lums: &mut Vec<f32>) -> f32 {
-    lums.clear();
-    for px in bytes.as_chunks::<4>().0 {
-        lums.push(0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32);
-    }
-    if lums.is_empty() {
-        return 128.0;
-    }
-    let mid_idx = lums.len() / 2;
-    let (_, &mut med, _) = lums.select_nth_unstable_by(mid_idx, |a, b| a.total_cmp(b));
-    med
-}
-
-fn compute_max_channel_percentile(bytes: &[u8], percentile: f64) -> f32 {
+fn compute_display_luma_percentile(bytes: &[u8], percentile: f64) -> f32 {
     let mut hist = [0u32; 256];
     let n_pixels = bytes.len() / 4;
     for px in bytes.as_chunks::<4>().0 {
-        let m = px[0].max(px[1]).max(px[2]) as usize;
-        hist[m] += 1;
+        let y = (0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32)
+            .round()
+            .clamp(0.0, 255.0) as usize;
+        hist[y] += 1;
     }
-    let target_count = (n_pixels as f64 * percentile).ceil() as u32;
+    let target_count = ((n_pixels as f64 * percentile).ceil() as u32).max(1);
     let mut acc = 0;
     for (val, &cnt) in hist.iter().enumerate() {
         acc += cnt;
@@ -829,24 +842,6 @@ fn compute_max_channel_percentile(bytes: &[u8], percentile: f64) -> f32 {
         }
     }
     255.0
-}
-
-fn compute_min_channel_percentile(bytes: &[u8], percentile: f64) -> f32 {
-    let mut hist = [0u32; 256];
-    let n_pixels = bytes.len() / 4;
-    for px in bytes.as_chunks::<4>().0 {
-        let m = px[0].min(px[1]).min(px[2]) as usize;
-        hist[m] += 1;
-    }
-    let target_count = (n_pixels as f64 * percentile).ceil() as u32;
-    let mut acc = 0;
-    for (val, &cnt) in hist.iter().enumerate() {
-        acc += cnt;
-        if acc >= target_count {
-            return val as f32;
-        }
-    }
-    0.0
 }
 
 /// Calculates the dimensions (width, height) scaled down so the longest edge does not exceed `max_edge`.

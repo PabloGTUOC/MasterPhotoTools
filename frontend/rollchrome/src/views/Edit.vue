@@ -243,21 +243,57 @@ function exitEyedropper() {
   isEyedropperActive.value = false;
 }
 
+function displayToFrameCoords(
+  uDisp: number,
+  vDisp: number,
+  orientation: number,
+  hasGeometry: boolean
+): [number, number] {
+  if (hasGeometry || orientation === 1) {
+    return [uDisp, vDisp];
+  }
+  switch (orientation) {
+    case 2:
+      return [1.0 - uDisp, vDisp];
+    case 3:
+      return [1.0 - uDisp, 1.0 - vDisp];
+    case 4:
+      return [uDisp, 1.0 - vDisp];
+    case 5:
+      return [vDisp, uDisp];
+    case 6:
+      return [vDisp, 1.0 - uDisp];
+    case 7:
+      return [1.0 - vDisp, 1.0 - uDisp];
+    case 8:
+      return [1.0 - vDisp, uDisp];
+    default:
+      return [uDisp, vDisp];
+  }
+}
+
 async function onEyedropperSample(e: MouseEvent | PointerEvent) {
   if (!isEyedropperActive.value || !sessionId.value) return;
   const canvas = canvasRef.value;
   if (!canvas) return;
   const rect = canvas.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return;
-  const u = (e.clientX - rect.left) / rect.width;
-  const v = (e.clientY - rect.top) / rect.height;
-  if (u < 0 || u > 1 || v < 0 || v > 1) {
+  const uDisp = (e.clientX - rect.left) / rect.width;
+  const vDisp = (e.clientY - rect.top) / rect.height;
+  if (uDisp < 0 || uDisp > 1 || vDisp < 0 || vDisp > 1) {
     exitEyedropper();
     return;
   }
+  const hasGeometry = Boolean(recipe.value.geometry);
+  const [uFrame, vFrame] = displayToFrameCoords(
+    uDisp,
+    vDisp,
+    effectiveOrientation.value,
+    hasGeometry
+  );
   const [a, b, c, d, ee, f] = frameToStored.value;
-  const storedX = a * u + b * v + c;
-  const storedY = d * u + ee * v + f;
+  const storedX = a * uFrame + b * vFrame + c;
+  const storedY = d * uFrame + ee * vFrame + f;
   exitEyedropper();
 
   try {
@@ -268,8 +304,9 @@ async function onEyedropperSample(e: MouseEvent | PointerEvent) {
     onRecipeValueChange();
     const tempSign = pick.temperature > 0 ? '+' : '';
     const tintSign = pick.tint > 0 ? '+' : '';
+    const clampedNote = pick.clamped ? ' (slider range reached)' : '';
     showNotice(
-      `WB: Temp ${tempSign}${Math.round(pick.temperature)}, Tint ${tintSign}${Math.round(pick.tint)}${pick.clamped ? ' (clamped)' : ''}`,
+      `WB: Temp ${tempSign}${Math.round(pick.temperature)}, Tint ${tintSign}${Math.round(pick.tint)}${clampedNote}`,
       before,
     );
   } catch (err: unknown) {

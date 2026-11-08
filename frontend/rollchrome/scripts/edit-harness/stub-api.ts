@@ -39,6 +39,13 @@ export interface StubState {
   autoMaskCalls: string[];
   autoMaskDelay: number;
   autoMaskFails: string | null;
+  /** RP-4 colour tools tracking */
+  whiteBalanceCalls: Array<{ sessionId: string; x: number; y: number }>;
+  whiteBalanceResult: WhiteBalancePick | null;
+  whiteBalanceError: string | null;
+  autoToneCalls: string[];
+  autoToneResult: AutoTone | null;
+  autoToneError: string | null;
 }
 
 const stubState: StubState = {
@@ -59,6 +66,12 @@ const stubState: StubState = {
   autoMaskCalls: [],
   autoMaskDelay: 150,
   autoMaskFails: null,
+  whiteBalanceCalls: [],
+  whiteBalanceResult: null,
+  whiteBalanceError: null,
+  autoToneCalls: [],
+  autoToneResult: null,
+  autoToneError: null,
 };
 
 interface StubHistogram {
@@ -405,15 +418,23 @@ export class StubDesktopApiClient {
 
   async closePreview(_sessionId: string): Promise<void> {}
 
-  async whiteBalanceAt(_sessionId: string, x: number, y: number): Promise<WhiteBalancePick> {
+  async whiteBalanceAt(sessionId: string, x: number, y: number): Promise<WhiteBalancePick> {
+    stubState.whiteBalanceCalls.push({ sessionId, x, y });
+    if (stubState.whiteBalanceError) {
+      throw new Error(stubState.whiteBalanceError);
+    }
     if (x < 0 || x > 1 || y < 0 || y > 1) {
       throw new Error(`Sample point (${x.toFixed(3)}, ${y.toFixed(3)}) is outside stored frame bounds 0.0..=1.0`);
     }
-    return { temperature: 12, tint: -4, clamped: false };
+    return stubState.whiteBalanceResult ?? { temperature: 12, tint: -4, clamped: false };
   }
 
-  async autoTone(_sessionId: string): Promise<AutoTone> {
-    return { exposure: 0.35, whites: 15.0, blacks: -8.0 };
+  async autoTone(sessionId: string): Promise<AutoTone> {
+    stubState.autoToneCalls.push(sessionId);
+    if (stubState.autoToneError) {
+      throw new Error(stubState.autoToneError);
+    }
+    return stubState.autoToneResult ?? { exposure: 0.35, whites: 15.0, blacks: -8.0 };
   }
 
   async loadRecipe(path: string): Promise<AdjustmentRecipe | null> {

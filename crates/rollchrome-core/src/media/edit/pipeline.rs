@@ -1011,12 +1011,11 @@ pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
 
     use image::ImageDecoder;
 
-    let mut reader = image::ImageReader::open(path)?
+    let reader = image::ImageReader::open(path)?
         .with_guessed_format()
         .map_err(|e| Error::Internal(format!("could not identify {}: {e}", path.display())))?;
-    reader.no_limits();
     let format = reader.format();
-    let icc = if format == Some(image::ImageFormat::Tiff) {
+    if format == Some(image::ImageFormat::Tiff) {
         // Read ICC profile directly using `tiff::decoder::Decoder` to avoid the
         // `image::codecs::tiff::TiffDecoder::set_limits` bug where decoding_buffer_size
         // is clamped to the total raw pixel buffer size (e.g. 48 bytes for small images),
@@ -1024,7 +1023,7 @@ pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
         let file = std::fs::File::open(path)?;
         let mut tiff_dec = tiff::decoder::Decoder::new(std::io::BufReader::new(file))
             .map_err(|e| Error::Internal(format!("could not read TIFF {}: {e}", path.display())))?;
-        match tiff_dec.get_tag_u8_vec(tiff::tags::Tag::IccProfile) {
+        let icc = match tiff_dec.get_tag_u8_vec(tiff::tags::Tag::IccProfile) {
             Ok(bytes) => Some(bytes),
             Err(tiff::TiffError::FormatError(tiff::TiffFormatError::RequiredTagNotFound(_))) => {
                 None
@@ -1035,7 +1034,12 @@ pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
                         .to_string(),
                 ));
             }
-        }
+        };
+        let dyn_img = reader
+            .decode()
+            .map_err(|e| Error::Internal(format!("failed to decode {}: {e}", path.display())))?;
+        let buffer = ImageBuffer::from(dyn_img);
+        super::icc::to_srgb(buffer, icc.as_deref())
     } else {
         let mut decoder = reader.into_decoder().map_err(|e| {
             Error::Internal(format!(
@@ -1055,13 +1059,8 @@ pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
         let dyn_img = image::DynamicImage::from_decoder(decoder)
             .map_err(|e| Error::Internal(format!("failed to decode {}: {e}", path.display())))?;
         let buffer = ImageBuffer::from(dyn_img);
-        return super::icc::to_srgb(buffer, icc.as_deref());
-    };
-
-    let dyn_img = image::open(path)
-        .map_err(|e| Error::Internal(format!("failed to decode {}: {e}", path.display())))?;
-    let buffer = ImageBuffer::from(dyn_img);
-    super::icc::to_srgb(buffer, icc.as_deref())
+        super::icc::to_srgb(buffer, icc.as_deref())
+    }
 }
 
 #[cfg(test)]

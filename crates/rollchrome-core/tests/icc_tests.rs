@@ -343,12 +343,21 @@ fn a_conversion_keeps_the_bit_depth_of_the_source() {
     let tiff_bytes =
         encode_tiff_with_icc_u16(&pixels_u16, 4, 4, Some(&prophoto_icc)).expect("encode tiff");
     let p_tiff = f.path().join("sixteen_bit.tif");
-    fs::write(&p_tiff, tiff_bytes).expect("write tiff");
+    fs::write(&p_tiff, &tiff_bytes).expect("write tiff");
 
     let dec_16 = decode_image(&p_tiff).expect("decode 16-bit");
     assert!(
         matches!(dec_16, ImageBuffer::Rgb16 { .. }),
         "16-bit TIFF must decode as ImageBuffer::Rgb16"
+    );
+
+    // A 16-bit TIFF named with a .jpg extension must decode via content guessing
+    let p_misnamed = f.path().join("misnamed_tiff.jpg");
+    fs::write(&p_misnamed, tiff_bytes).expect("write misnamed tiff");
+    let dec_misnamed = decode_image(&p_misnamed).expect("decode misnamed TIFF");
+    assert!(
+        matches!(dec_misnamed, ImageBuffer::Rgb16 { .. }),
+        "16-bit TIFF named .jpg must decode as ImageBuffer::Rgb16 via guessed format"
     );
 }
 

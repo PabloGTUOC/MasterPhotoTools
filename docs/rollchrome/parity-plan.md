@@ -1,6 +1,6 @@
 # Rollchrome towards a Lightroom replacement — plan
 
-> **Status (2026-11-08):** RP-1 to RP-9, RP-2b and RP-12 done (MV-24 to MV-31 await real files; XZ-1 verified, D60 and X100VI await real raw captures); RP-10 next. Steps have stable ids (`RP-4`), each built from a
+> **Status (2026-11-08):** RP-1 to RP-9, RP-2b and RP-12 done (MV-24 to MV-31 await real files: no real XZ-1, D60 or X100VI file has been developed yet); RP-10 briefed. Steps have stable ids (`RP-4`), each built from a
 > brief in [`docs/briefs/`](../briefs/).
 
 **The owner's goal is to stop paying for a Lightroom subscription.** The list comes from comparing

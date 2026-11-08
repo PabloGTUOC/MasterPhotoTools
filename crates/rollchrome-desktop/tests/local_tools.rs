@@ -225,7 +225,7 @@ fn open_preview_reports_the_full_and_settle_dimensions() {
     let ledger = Ledger::open(&f.config.database).unwrap();
     let state = rollchrome_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
 
-    let img_path = f.root.join("hires.png");
+    let img_path = f.root.join("hires.jpg");
     image::RgbImage::new(6000, 4000).save(&img_path).unwrap();
 
     let open_res = rollchrome_desktop::commands::edit::open_preview_impl(

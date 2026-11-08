@@ -2716,7 +2716,7 @@ fn the_full_stage_fits_the_canvas_limit() {
 fn opening_a_session_and_rendering_drag_and_settle_decodes_nothing_more() {
     use rollchrome_core::media::edit::{AdjustmentRecipe, PreviewSession, PreviewStage};
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("test.png");
+    let path = dir.path().join("test.jpg");
     image::RgbImage::new(400, 300).save(&path).unwrap();
 
     let session = PreviewSession::open(&path).unwrap();
@@ -2734,7 +2734,7 @@ fn opening_a_session_and_rendering_drag_and_settle_decodes_nothing_more() {
 fn the_full_buffer_is_decoded_once() {
     use rollchrome_core::media::edit::{AdjustmentRecipe, PreviewSession, PreviewStage};
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("test.png");
+    let path = dir.path().join("test.jpg");
     image::RgbImage::new(400, 300).save(&path).unwrap();
 
     let session = PreviewSession::open(&path).unwrap();

@@ -1,6 +1,6 @@
 # `RP-2` · Edit and Batch read developed files correctly
 
-> **Status:** briefed
+> **Status:** **approved**
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-2` · **Branch:** `rp-2`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -95,7 +95,7 @@ change: an untouched copy is still ProPhoto and still says so.
 
 ### Acceptance
 
-- [ ] `rollchrome-core` gains exactly these nine tests, in a new `crates/rollchrome-core/tests/icc_tests.rs` unless a helper forces
+- [x] `rollchrome-core` gains exactly these nine tests, in a new `crates/rollchrome-core/tests/icc_tests.rs` unless a helper forces
   otherwise:
   - `a_developed_tiff_opened_for_editing_matches_the_developed_jpeg_within_two_levels`: one `Developed` of uniform colour patches
     including saturated ones inside sRGB, rendered with `render` to TIFF and to JPEG, with no look and with `builtin:fujifilm-provia`. The TIFF
@@ -110,10 +110,10 @@ change: an untouched copy is still ProPhoto and still says so.
   - `a_batch_output_of_a_prophoto_tiff_says_srgb_and_carries_no_prophoto_profile`: the same through the bulk LUT tool.
   - `correcting_metadata_for_a_batch_uses_one_exiftool_process`: three outputs, a shim counting starts, as
     `develop_folder_tests.rs::one_exiftool_process_carries_the_whole_batch` does.
-- [ ] Counts: workspace 1093 → 1102, `rollchrome-core` 264 → 273; `phototools-core` 713, `phototools-desktop` 26 and
+- [x] Counts: workspace 1093 → 1102, `rollchrome-core` 264 → 273; `phototools-core` 713, `phototools-desktop` 26 and
   `rollchrome-desktop` 19 unchanged. Every existing test still there, none weakened (G7).
-- [ ] No `unwrap()`, `todo!()` or swallowed error on a shipped path (G10).
-- [ ] `CLAUDE.md` gate counts and the plan's status line describe the result.
+- [x] No `unwrap()`, `todo!()` or swallowed error on a shipped path (G10).
+- [x] `CLAUDE.md` gate counts and the plan's status line describe the result.
 
 ### Gates
 
@@ -737,3 +737,12 @@ Wrote layout screenshot proof to /Users/pablogtorres/Desktop/Projects/MasterPhot
 
 check:bulk-lut PASSED cleanly: all acceptance assertions and benchmarks verified.
 ```
+
+### Round 2 — **Approved**
+
+**Checked.** Re-ran every gate on `rp-2` at `09288cb`: fmt and clippy clean, build clean; workspace 1102, `phototools-core` 713,
+`rollchrome-core` 273, `phototools-desktop` 26, `rollchrome-desktop` 19, none failed or ignored; typecheck, `check:edit` and
+`check:bulk-lut` pass. `no_limits` is gone and the TIFF branch uses `reader.decode()`. The one test edited gained an assertion, a TIFF
+named `.jpg` still opens, and lost none. The real-file comparison from round 1 stands: nothing in the colour path changed.
+
+**Not verified.** How the result looks in the real application: MV-24.3.

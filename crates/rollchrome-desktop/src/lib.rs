@@ -28,6 +28,7 @@ pub struct PreviewSessionInfo {
     pub session_id: String,
     pub drag: PreviewDimensions,
     pub settle: PreviewDimensions,
+    pub full: PreviewDimensions,
     pub orientation: u32,
     pub read_only: bool,
     pub source_sha256: String,
@@ -93,6 +94,7 @@ impl AppState {
         let session = PreviewSession::open(&path)?;
         let drag = session.drag_dimensions();
         let settle = session.settle_dimensions();
+        let full = session.full_dimensions();
         let orientation = phototools_core::media::meta::read_meta(&path)
             .map(|m| m.orientation as u32)
             .unwrap_or(1);
@@ -102,7 +104,10 @@ impl AppState {
             NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed)
         );
         let session_source_sha256 = session.source_sha256.clone();
-        let mut slot = self.active_preview.lock().unwrap();
+        let mut slot = self
+            .active_preview
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *slot = Some(ActivePreview {
             session_id: session_id.clone(),
             path,
@@ -112,6 +117,7 @@ impl AppState {
             session_id,
             drag,
             settle,
+            full,
             orientation,
             read_only,
             source_sha256: session_source_sha256,
@@ -120,7 +126,10 @@ impl AppState {
 
     /// Explicitly closes the preview session matching `session_id`, releasing memory.
     pub fn close_preview(&self, session_id: &str) {
-        let mut slot = self.active_preview.lock().unwrap();
+        let mut slot = self
+            .active_preview
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(active) = slot.as_ref() {
             if active.session_id == session_id {
                 *slot = None;
@@ -130,7 +139,10 @@ impl AppState {
 
     /// Closes whatever preview session is open, if any (e.g. on window close).
     pub fn close_any_preview(&self) {
-        let mut slot = self.active_preview.lock().unwrap();
+        let mut slot = self
+            .active_preview
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *slot = None;
     }
 
@@ -144,7 +156,10 @@ impl AppState {
         lut: Option<&Lut>,
         stage: PreviewStage,
     ) -> Result<RgbaFrame, Error> {
-        let slot = self.active_preview.lock().unwrap();
+        let slot = self
+            .active_preview
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let active = slot
             .as_ref()
             .ok_or_else(|| Error::Refused("No active preview session is open".into()))?;
@@ -162,7 +177,10 @@ impl AppState {
         &self,
         session_id: &str,
     ) -> Result<(rollchrome_core::media::segment::RgbImage, u32), Error> {
-        let slot = self.active_preview.lock().unwrap();
+        let slot = self
+            .active_preview
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let active = slot
             .as_ref()
             .ok_or_else(|| Error::Refused("No active preview session is open".into()))?;
@@ -185,7 +203,10 @@ impl AppState {
         mask_id: &str,
         stage: PreviewStage,
     ) -> Result<(u32, u32, Vec<u8>), Error> {
-        let slot = self.active_preview.lock().unwrap();
+        let slot = self
+            .active_preview
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let active = slot
             .as_ref()
             .ok_or_else(|| Error::Refused("No active preview session is open".into()))?;

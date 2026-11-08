@@ -210,6 +210,10 @@ export class StubDesktopApiClient {
       session_id: `session_${Date.now()}_${Math.random()}`,
       drag: [SAMPLE_WIDTH, SAMPLE_HEIGHT],
       settle: [SAMPLE_WIDTH, SAMPLE_HEIGHT],
+      full_width: SAMPLE_WIDTH,
+      full_height: SAMPLE_HEIGHT,
+      settle_width: SAMPLE_WIDTH,
+      settle_height: SAMPLE_HEIGHT,
       orientation: 1,
       read_only: false,
     };

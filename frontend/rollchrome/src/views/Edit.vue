@@ -226,11 +226,33 @@ function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
 
 const recipe = ref<AdjustmentRecipe>(createIdentityRecipe());
 
-// Rendering discipline state
-let inFlight = false;
-let pending: { recipe: AdjustmentRecipe; stage: PreviewStage } | null = null;
-let saveDebounceTimer: number | undefined;
+// Viewing & zoom state (RP-3)
+const zoom = ref<'fit' | number>('fit');
+const pan = ref<{ x: number; y: number }>({ x: 0, y: 0 });
+const fullWidth = ref(0);
+const fullHeight = ref(0);
+const settleWidth = ref(2560);
+const settleHeight = ref(1707);
+const compareMode = ref<'off' | 'side-by-side' | 'split'>('off');
+const splitDivider = ref(50);
+const loadingFull = ref(false);
+const spaceHeld = ref(false);
+const isPanning = ref(false);
+const beforeCanvasRef = ref<HTMLCanvasElement | null>(null);
+const sideBySideBeforeCanvasRef = ref<HTMLCanvasElement | null>(null);
 
+// Rendering discipline state (RP-3 single queue for after and before)
+let inFlightTask: 'after' | 'before' | null = null;
+let pendingAfter: { recipe: AdjustmentRecipe; stage: PreviewStage } | null = null;
+let pendingBefore: { recipe: AdjustmentRecipe; stage: PreviewStage } | null = null;
+let lastBeforeRendered: { geometry: any; stage: PreviewStage } | null = null;
+let lastBeforeFrame: {
+  width: number;
+  height: number;
+  pixels: Uint8ClampedArray;
+  orientation?: number;
+} | null = null;
+let saveDebounceTimer: number | undefined;
 
 // In ED-13: The view rotates by the delivered orientation of the frame it is painting, and nothing else.
 const effectiveOrientation = computed(() => deliveredOrientation.value);
@@ -268,7 +290,9 @@ const canvasTransform = computed(() => {
 
 // Sizing so rotated canvas fits inside viewport container without overflowing or clipping
 const displayedDimensions = computed(() => {
-  const cw = containerWidth.value;
+  const cw = compareMode.value === 'side-by-side'
+    ? Math.floor(containerWidth.value / 2)
+    : containerWidth.value;
   const ch = containerHeight.value;
   const fw = frameWidth.value || 1280;
   const fh = frameHeight.value || 854;
@@ -304,8 +328,94 @@ const displayedDimensions = computed(() => {
   }
 });
 
+// Dimensions at 100% zoom (1 source px per device px, scaled by crop if active)
+const zoom100Dimensions = computed(() => {
+  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+  const fw = fullWidth.value || 6000;
+  const fh = fullHeight.value || 4000;
+  const crop = recipe.value.geometry?.crop;
+  const cropW = crop ? crop.width : 1.0;
+  const cropH = crop ? crop.height : 1.0;
+
+  const w = (fw * cropW) / dpr;
+  const h = (fh * cropH) / dpr;
+
+  if (swapsAxes.value) {
+    return {
+      width: Math.round(h),
+      height: Math.round(w),
+    };
+  }
+  return {
+    width: Math.round(w),
+    height: Math.round(h),
+  };
+});
+
+// Stage dimensions multiplied directly (no CSS scale) so 40px overlay handles remain 40px
+const stageDimensions = computed(() => {
+  if (zoom.value === 'fit') {
+    return displayedDimensions.value;
+  }
+  const z = typeof zoom.value === 'number' ? zoom.value : 1.0;
+  return {
+    width: Math.round(zoom100Dimensions.value.width * z),
+    height: Math.round(zoom100Dimensions.value.height * z),
+  };
+});
+
+function clampPan(
+  x: number,
+  y: number,
+  stageW: number,
+  stageH: number,
+  contW: number,
+  contH: number,
+): { x: number; y: number } {
+  let clampedX: number;
+  let clampedY: number;
+
+  if (stageW <= contW) {
+    clampedX = Math.round((contW - stageW) / 2);
+  } else {
+    clampedX = Math.min(0, Math.max(contW - stageW, x));
+  }
+
+  if (stageH <= contH) {
+    clampedY = Math.round((contH - stageH) / 2);
+  } else {
+    clampedY = Math.min(0, Math.max(contH - stageH, y));
+  }
+
+  return { x: clampedX, y: clampedY };
+}
+
+const clampedPan = computed(() => {
+  const cw = compareMode.value === 'side-by-side'
+    ? Math.floor(containerWidth.value / 2)
+    : containerWidth.value;
+  const ch = containerHeight.value;
+  const sw = stageDimensions.value.width;
+  const sh = stageDimensions.value.height;
+
+  if (cw <= 0 || ch <= 0) return { x: 0, y: 0 };
+  return clampPan(pan.value.x, pan.value.y, sw, sh, cw, ch);
+});
+
+const stageStyle = computed(() => {
+  const { width, height } = stageDimensions.value;
+  const { x, y } = clampedPan.value;
+  return {
+    width: `${width}px`,
+    height: `${height}px`,
+    left: `${x}px`,
+    top: `${y}px`,
+    position: 'absolute' as const,
+  };
+});
+
 const canvasStyle = computed(() => {
-  const { width, height } = displayedDimensions.value;
+  const { width, height } = stageDimensions.value;
   return {
     width: `${width}px`,
     height: `${height}px`,
@@ -313,6 +423,16 @@ const canvasStyle = computed(() => {
     position: 'relative' as const,
     zIndex: 'var(--z-canvas)',
   };
+});
+
+const zoomReadoutText = computed(() => {
+  if (zoom.value === 'fit') {
+    const sw = zoom100Dimensions.value.width;
+    if (sw <= 0) return 'Fit';
+    const pct = Math.round((displayedDimensions.value.width / sw) * 100);
+    return `${pct}%`;
+  }
+  return `${Math.round((zoom.value as number) * 100)}%`;
 });
 
 async function refreshLuts() {
@@ -431,6 +551,10 @@ function paintPixels(
   lastFrame = { width: frame.width, height: frame.height, pixels: frame.pixels };
   paintClipOverlay();
 
+  if (stage === 'Full') {
+    loadingFull.value = false;
+  }
+
   // Dispatch custom event for test harness and verification
   canvas.dispatchEvent(
     new CustomEvent('frame-painted', {
@@ -444,9 +568,50 @@ function paintPixels(
   );
 }
 
+function paintBeforePixels(frame: {
+  width: number;
+  height: number;
+  pixels: Uint8ClampedArray;
+  orientation?: number;
+}) {
+  const targets = [beforeCanvasRef.value, sideBySideBeforeCanvasRef.value].filter(
+    Boolean,
+  ) as HTMLCanvasElement[];
+  for (const canvas of targets) {
+    if (canvas.width !== frame.width || canvas.height !== frame.height) {
+      canvas.width = frame.width;
+      canvas.height = frame.height;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) continue;
+    const imgData = new ImageData(frame.pixels, frame.width, frame.height);
+    ctx.putImageData(imgData, 0, 0);
+  }
+}
+
+function settleStageForCurrentZoom(): PreviewStage {
+  if (zoom.value === 'fit') return 'Settle';
+  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+  const neededW = stageDimensions.value.width * dpr;
+  const neededH = stageDimensions.value.height * dpr;
+  const sw = swapsAxes.value ? (settleHeight.value || 1708) : (settleWidth.value || 2560);
+  const sh = swapsAxes.value ? (settleWidth.value || 2560) : (settleHeight.value || 1708);
+  if (neededW > sw || neededH > sh) {
+    return 'Full';
+  }
+  return 'Settle';
+}
+
+function beforeRecipe(): AdjustmentRecipe {
+  const id = createIdentityRecipe(recipe.value.source_sha256);
+  if (recipe.value.geometry) {
+    id.geometry = JSON.parse(JSON.stringify(recipe.value.geometry));
+  }
+  return id;
+}
+
 async function executeRender(r: AdjustmentRecipe, stage: PreviewStage) {
   if (!sessionId.value) return;
-  inFlight = true;
 
   // In crop mode, render the uncropped upright image under the crop overlay
   let renderRecipe = r;
@@ -468,27 +633,302 @@ async function executeRender(r: AdjustmentRecipe, stage: PreviewStage) {
     const msg = err instanceof Error ? err.message : String(err);
     error.value = `Preview render failed: ${msg}`;
     console.error('Preview render error:', err);
-  } finally {
-    inFlight = false;
-    if (pending) {
-      const next = pending;
-      pending = null;
-      executeRender(next.recipe, next.stage);
-    }
+  }
+}
+
+async function executeBeforeRender(r: AdjustmentRecipe, stage: PreviewStage) {
+  if (!sessionId.value) return;
+  try {
+    const frame = await desktop.renderPreview(sessionId.value, r, stage);
+    lastBeforeRendered = {
+      geometry: r.geometry ? JSON.parse(JSON.stringify(r.geometry)) : null,
+      stage,
+    };
+    lastBeforeFrame = {
+      width: frame.width,
+      height: frame.height,
+      pixels: frame.pixels,
+      orientation: frame.orientation,
+    };
+    paintBeforePixels(frame);
+  } catch (err: unknown) {
+    console.error('Before render error:', err);
+  }
+}
+
+async function processRenderQueue() {
+  if (inFlightTask !== null || !sessionId.value) return;
+
+  if (pendingBefore) {
+    const task = pendingBefore;
+    pendingBefore = null;
+    inFlightTask = 'before';
+    await executeBeforeRender(task.recipe, task.stage);
+    inFlightTask = null;
+    processRenderQueue();
+    return;
+  }
+
+  if (pendingAfter) {
+    const task = pendingAfter;
+    pendingAfter = null;
+    inFlightTask = 'after';
+    await executeRender(task.recipe, task.stage);
+    inFlightTask = null;
+    processRenderQueue();
   }
 }
 
 function requestRender(stage: PreviewStage) {
   if (!sessionId.value) return;
-  const current = isBefore.value ? createIdentityRecipe() : { ...recipe.value };
+  const effectiveStage = stage === 'Settle' ? settleStageForCurrentZoom() : stage;
+  const current = isBefore.value
+    ? createIdentityRecipe(recipe.value.source_sha256)
+    : { ...recipe.value };
+  pendingAfter = { recipe: current, stage: effectiveStage };
 
-  if (inFlight) {
-    // Latest wins: replace pending request
-    pending = { recipe: current, stage };
-  } else {
-    executeRender(current, stage);
+  if (compareMode.value !== 'off') {
+    const geomStr = recipe.value.geometry ? JSON.stringify(recipe.value.geometry) : null;
+    const lastGeomStr = lastBeforeRendered?.geometry
+      ? JSON.stringify(lastBeforeRendered.geometry)
+      : null;
+    const stageDowngrade =
+      effectiveStage === 'Drag' &&
+      (lastBeforeRendered?.stage === 'Settle' || lastBeforeRendered?.stage === 'Full');
+    const needsBefore =
+      !lastBeforeRendered ||
+      (!stageDowngrade && lastBeforeRendered.stage !== effectiveStage) ||
+      geomStr !== lastGeomStr;
+
+    if (needsBefore) {
+      pendingBefore = { recipe: beforeRecipe(), stage: effectiveStage };
+    }
+  }
+
+  if (effectiveStage === 'Full') {
+    loadingFull.value = true;
+  }
+
+  processRenderQueue();
+}
+
+const ZOOM_STEPS = [0.25, 0.5, 1.0, 2.0, 4.0];
+
+function checkStageOnZoomChange() {
+  const targetStage = settleStageForCurrentZoom();
+  if (targetStage !== lastRendered?.stage) {
+    requestRender(targetStage);
   }
 }
+
+function setZoom(newZoom: 'fit' | number) {
+  if (isCropMode.value) return;
+  if (newZoom === 'fit') {
+    zoom.value = 'fit';
+    pan.value = { x: 0, y: 0 };
+  } else {
+    zoom.value = Math.max(0.25, Math.min(4.0, newZoom));
+    const cw = compareMode.value === 'side-by-side'
+      ? Math.floor(containerWidth.value / 2)
+      : containerWidth.value;
+    const ch = containerHeight.value;
+    const sw = Math.round(zoom100Dimensions.value.width * zoom.value);
+    const sh = Math.round(zoom100Dimensions.value.height * zoom.value);
+    pan.value = clampPan(Math.round((cw - sw) / 2), Math.round((ch - sh) / 2), sw, sh, cw, ch);
+  }
+  checkStageOnZoomChange();
+}
+
+function stepZoom(direction: 1 | -1) {
+  if (isCropMode.value) return;
+  const fitScale = displayedDimensions.value.width / zoom100Dimensions.value.width;
+  const currentScale = typeof zoom.value === 'number' ? zoom.value : fitScale;
+
+  if (direction === 1) {
+    const next = ZOOM_STEPS.find((s) => s > currentScale + 0.01);
+    setZoom(next ?? 4.0);
+  } else {
+    const prev = [...ZOOM_STEPS].reverse().find((s) => s < currentScale - 0.01);
+    if (!prev || prev <= fitScale) {
+      setZoom('fit');
+    } else {
+      setZoom(prev);
+    }
+  }
+}
+
+function zoomAboutPoint(targetScale: number, cx: number, cy: number) {
+  if (isCropMode.value) return;
+  const oldW = stageDimensions.value.width;
+  const oldH = stageDimensions.value.height;
+  const oldPan = clampedPan.value;
+
+  const u = (cx - oldPan.x) / oldW;
+  const v = (cy - oldPan.y) / oldH;
+
+  const newW = Math.round(zoom100Dimensions.value.width * targetScale);
+  const newH = Math.round(zoom100Dimensions.value.height * targetScale);
+
+  const desiredPanX = cx - u * newW;
+  const desiredPanY = cy - v * newH;
+
+  const cw = compareMode.value === 'side-by-side'
+    ? Math.floor(containerWidth.value / 2)
+    : containerWidth.value;
+  const ch = containerHeight.value;
+
+  pan.value = clampPan(desiredPanX, desiredPanY, newW, newH, cw, ch);
+  zoom.value = targetScale;
+  checkStageOnZoomChange();
+}
+
+function toggleCompare(mode: 'side-by-side' | 'split') {
+  if (isCropMode.value) return;
+  if (compareMode.value === mode) {
+    compareMode.value = 'off';
+  } else {
+    compareMode.value = mode;
+    requestRender(settleStageForCurrentZoom());
+  }
+}
+
+let draggingDivider = false;
+
+function startDividerDrag(e: PointerEvent) {
+  e.preventDefault();
+  draggingDivider = true;
+  try {
+    (e.currentTarget as HTMLElement)?.setPointerCapture?.(e.pointerId);
+  } catch {}
+  window.addEventListener('pointermove', onDividerPointerMove);
+  window.addEventListener('pointerup', onDividerPointerUp);
+  window.addEventListener('pointercancel', onDividerPointerUp);
+}
+
+function onDividerPointerMove(e: PointerEvent) {
+  if (!draggingDivider) return;
+  const stageEl = viewportContainerRef.value?.querySelector('.canvas-viewport__stage');
+  if (!stageEl) return;
+  const rect = stageEl.getBoundingClientRect();
+  if (rect.width <= 0) return;
+  const pct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+  splitDivider.value = Math.round(pct * 10) / 10;
+}
+
+function onDividerPointerUp() {
+  draggingDivider = false;
+  window.removeEventListener('pointermove', onDividerPointerMove);
+  window.removeEventListener('pointerup', onDividerPointerUp);
+  window.removeEventListener('pointercancel', onDividerPointerUp);
+}
+
+let isDraggingPan = false;
+let panStartPointer = { x: 0, y: 0 };
+let panStartOffset = { x: 0, y: 0 };
+
+function onViewportPointerDown(e: PointerEvent) {
+  if ((e.target as HTMLElement)?.closest('button, .canvas-viewport__split-divider, input')) {
+    return;
+  }
+  const canPan = spaceHeld.value || (zoom.value !== 'fit' && !selectedMaskId.value && !painting.value);
+  if (!canPan) return;
+
+  isDraggingPan = true;
+  isPanning.value = true;
+  panStartPointer = { x: e.clientX, y: e.clientY };
+  panStartOffset = { ...clampedPan.value };
+
+  try {
+    (e.currentTarget as HTMLElement)?.setPointerCapture?.(e.pointerId);
+  } catch {}
+  window.addEventListener('pointermove', onViewportPointerMove);
+  window.addEventListener('pointerup', onViewportPointerUp);
+  window.addEventListener('pointercancel', onViewportPointerUp);
+}
+
+function onViewportPointerMove(e: PointerEvent) {
+  if (!isDraggingPan) return;
+  const dx = e.clientX - panStartPointer.x;
+  const dy = e.clientY - panStartPointer.y;
+  const rawX = panStartOffset.x + dx;
+  const rawY = panStartOffset.y + dy;
+
+  const cw = compareMode.value === 'side-by-side'
+    ? Math.floor(containerWidth.value / 2)
+    : containerWidth.value;
+  const ch = containerHeight.value;
+  const sw = stageDimensions.value.width;
+  const sh = stageDimensions.value.height;
+
+  pan.value = clampPan(rawX, rawY, sw, sh, cw, ch);
+}
+
+function onViewportPointerUp() {
+  if (!isDraggingPan) return;
+  isDraggingPan = false;
+  isPanning.value = false;
+  window.removeEventListener('pointermove', onViewportPointerMove);
+  window.removeEventListener('pointerup', onViewportPointerUp);
+  window.removeEventListener('pointercancel', onViewportPointerUp);
+}
+
+function onViewportWheel(e: WheelEvent) {
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    const container = viewportContainerRef.value;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+
+    const fitScale = displayedDimensions.value.width / zoom100Dimensions.value.width;
+    const curScale = typeof zoom.value === 'number' ? zoom.value : fitScale;
+    const factor = Math.exp(-e.deltaY * 0.005);
+    const targetScale = Math.max(fitScale, Math.min(4.0, curScale * factor));
+
+    if (Math.abs(targetScale - fitScale) < 0.001) {
+      setZoom('fit');
+    } else {
+      zoomAboutPoint(targetScale, cx, cy);
+    }
+    return;
+  }
+
+  if (zoom.value !== 'fit') {
+    e.preventDefault();
+    const cw = compareMode.value === 'side-by-side'
+      ? Math.floor(containerWidth.value / 2)
+      : containerWidth.value;
+    const ch = containerHeight.value;
+    const sw = stageDimensions.value.width;
+    const sh = stageDimensions.value.height;
+
+    pan.value = clampPan(pan.value.x - e.deltaX, pan.value.y - e.deltaY, sw, sh, cw, ch);
+  }
+}
+
+function onStageDoubleClick(e: MouseEvent) {
+  if (isCropMode.value) return;
+  if (zoom.value === 'fit') {
+    const container = viewportContainerRef.value;
+    if (!container) {
+      setZoom(1.0);
+      return;
+    }
+    const rect = container.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    zoomAboutPoint(1.0, cx, cy);
+  } else {
+    setZoom('fit');
+  }
+}
+
+watch(compareMode, async () => {
+  await nextTick();
+  if (lastFrame) paintPixels(lastFrame, lastRendered?.stage ?? 'Settle');
+  if (lastBeforeFrame) paintBeforePixels(lastBeforeFrame);
+});
 
 function scheduleSave() {
   if (isReadOnly.value) {
@@ -575,7 +1015,44 @@ function textIsInPlay(): boolean {
 
 function handleKeyDown(e: KeyboardEvent) {
   if (e.key === 'Alt') altHeld.value = true;
-  if (painting.value && !textIsInPlay() && !e.metaKey && !e.ctrlKey) {
+  if (e.code === 'Space' && !textIsInPlay() && !e.repeat) {
+    spaceHeld.value = true;
+    if (e.target === document.body || (e.target as HTMLElement)?.closest('.canvas-viewport')) {
+      e.preventDefault();
+    }
+  }
+
+  if (textIsInPlay()) {
+    if (e.key === '\\' && !isTextInputFocused()) {
+      e.preventDefault();
+      setBefore(true);
+    }
+    return;
+  }
+
+  // Z toggles fit and 100%
+  if ((e.key === 'z' || e.key === 'Z') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    if (zoom.value === 'fit') {
+      setZoom(1.0);
+    } else {
+      setZoom('fit');
+    }
+    return;
+  }
+
+  // Y toggles side-by-side (plain) or split (Shift-Y)
+  if ((e.key === 'y' || e.key === 'Y') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    if (e.shiftKey) {
+      toggleCompare('split');
+    } else {
+      toggleCompare('side-by-side');
+    }
+    return;
+  }
+
+  if (painting.value && !e.metaKey && !e.ctrlKey) {
     if (e.key === '[' || e.key === ']') {
       e.preventDefault();
       nudgeBrush(e.key === ']' ? 1 : -1);
@@ -587,17 +1064,39 @@ function handleKeyDown(e: KeyboardEvent) {
     }
   }
   // Esc leaves a mask's editing once painting is not in the way (painting stops first).
-  if (e.key === 'Escape' && selectedMaskId.value && !textIsInPlay() && !document.querySelector('[role="dialog"]')) {
+  if (e.key === 'Escape' && selectedMaskId.value && !document.querySelector('[role="dialog"]')) {
     finishMaskEditing();
     return;
   }
   const mod = e.metaKey || e.ctrlKey;
-  if (mod && !e.shiftKey && !e.altKey && (e.key === 'c' || e.key === 'v')) {
-    if (textIsInPlay() || !sessionId.value || document.querySelector('[role="dialog"]')) return;
-    e.preventDefault();
-    if (e.key === 'c') copySettings();
-    else pasteSettings();
-    return;
+  if (mod && !e.shiftKey && !e.altKey) {
+    if (e.key === 'c' || e.key === 'v') {
+      if (!sessionId.value || document.querySelector('[role="dialog"]')) return;
+      e.preventDefault();
+      if (e.key === 'c') copySettings();
+      else pasteSettings();
+      return;
+    }
+    if (e.key === '1') {
+      e.preventDefault();
+      setZoom(1.0);
+      return;
+    }
+    if (e.key === '0') {
+      e.preventDefault();
+      setZoom('fit');
+      return;
+    }
+    if (e.key === '=' || e.key === '+') {
+      e.preventDefault();
+      stepZoom(1);
+      return;
+    }
+    if (e.key === '-') {
+      e.preventDefault();
+      stepZoom(-1);
+      return;
+    }
   }
   if (e.key === '\\') {
     if (isTextInputFocused()) return;
@@ -608,6 +1107,7 @@ function handleKeyDown(e: KeyboardEvent) {
 
 function handleKeyUp(e: KeyboardEvent) {
   if (e.key === 'Alt') altHeld.value = false;
+  if (e.code === 'Space') spaceHeld.value = false;
   if (e.key === '\\') {
     if (isTextInputFocused()) return;
     e.preventDefault();
@@ -858,6 +1358,15 @@ async function openImage(path: string) {
     isReadOnly.value = info.read_only;
     baseProxyWidth.value = info.settle[0];
     baseProxyHeight.value = info.settle[1];
+    settleWidth.value = info.settle_width ?? info.settle[0];
+    settleHeight.value = info.settle_height ?? info.settle[1];
+    fullWidth.value = info.full_width ?? info.settle[0];
+    fullHeight.value = info.full_height ?? info.settle[1];
+    zoom.value = 'fit';
+    pan.value = { x: 0, y: 0 };
+    compareMode.value = 'off';
+    lastBeforeRendered = null;
+    lastBeforeFrame = null;
 
     // Load existing sidecar recipe if present, distinguishing between no sidecar and load failure
     let existing: AdjustmentRecipe | null = null;
@@ -1461,6 +1970,12 @@ function resetLook() {
 
 // Geometry state & methods (ED-13)
 const isCropMode = ref(false);
+watch(isCropMode, (active) => {
+  if (active) {
+    compareMode.value = 'off';
+    setZoom('fit');
+  }
+});
 let savedCropBeforeMode: NormalizedCrop | null = null;
 
 function ensureGeometry(): Geometry {
@@ -1805,67 +2320,173 @@ onUnmounted(() => {
     <div class="edit-screen__workspace">
       <!-- Photograph Canvas Viewport -->
       <div class="canvas-viewport" data-testid="canvas-viewport">
-        <div ref="viewportContainerRef" class="canvas-viewport__container">
+        <div
+          ref="viewportContainerRef"
+          class="canvas-viewport__container"
+          :class="{
+            'is-space-held': spaceHeld,
+            'is-panning': isPanning,
+            'is-side-by-side': compareMode === 'side-by-side',
+          }"
+          @pointerdown="onViewportPointerDown"
+          @wheel="onViewportWheel"
+        >
+          <!-- Loading full resolution quiet indicator -->
           <div
-            class="canvas-viewport__stage"
-            :style="{
-              width: `${displayedDimensions.width}px`,
-              height: `${displayedDimensions.height}px`,
-              position: 'relative',
-            }"
+            v-if="loadingFull"
+            class="canvas-viewport__loading-indicator"
+            data-testid="loading-full-indicator"
           >
-            <canvas
-              ref="canvasRef"
-              class="canvas-viewport__canvas"
-              data-testid="edit-canvas"
-              :style="canvasStyle"
-            ></canvas>
-            <canvas
-              v-show="clipOverlayActive"
-              ref="clipCanvasRef"
-              class="canvas-viewport__clip"
-              data-testid="clip-overlay"
-              aria-hidden="true"
-              :style="{ ...canvasStyle, position: 'absolute', zIndex: 'calc(var(--z-canvas) + 1)' }"
-            ></canvas>
-            <canvas
-              v-show="showMaskOverlay && selectedMask && !isCropMode && !isBefore"
-              ref="maskCanvasRef"
-              class="canvas-viewport__clip"
-              data-testid="mask-coverage"
-              aria-hidden="true"
-              :style="{ ...canvasStyle, position: 'absolute', zIndex: 'calc(var(--z-canvas) + 1)' }"
-            ></canvas>
-            <MaskOverlay
-              v-if="sessionId && masks.length && !isCropMode && !isBefore"
-              :masks="masks"
-              :selected-id="selectedMaskId"
-              :to-stored="frameToStored"
-              :aspect="storedAspect"
-              :frame-width="frameWidth"
-              :frame-height="frameHeight"
-              :paint="paintRadius"
-              :style="{ ...canvasStyle, position: 'absolute', zIndex: 'calc(var(--z-canvas) + 2)' }"
-              @select="(id) => (selectedMaskId = id)"
-              @update="updateMaskKind"
-              @commit="onMaskCommit"
-              @stroke-start="onStrokeStart"
-              @stroke-point="onStrokePoint"
-              @stroke-end="onStrokeEnd"
-            />
-            <CropOverlay
-              v-if="isCropMode"
-              v-model="cropModel"
-              :container-width="displayedDimensions.width"
-              :container-height="displayedDimensions.height"
-              :aspect-ratio="selectedAspectNumeric"
-              @apply="applyCrop"
-              @cancel="cancelCrop"
-            />
+            Loading full resolution…
+          </div>
+
+          <!-- Side-by-side compare mode -->
+          <template v-if="compareMode === 'side-by-side'">
+            <div class="canvas-viewport__half canvas-viewport__half--before">
+              <div class="canvas-viewport__half-pane" @dblclick="onStageDoubleClick">
+                <div class="canvas-viewport__stage" :style="stageStyle">
+                  <canvas
+                    ref="sideBySideBeforeCanvasRef"
+                    class="canvas-viewport__canvas canvas-viewport__before-canvas"
+                    data-testid="before-canvas"
+                    :style="canvasStyle"
+                  ></canvas>
+                </div>
+              </div>
+              <span class="canvas-viewport__badge">Before</span>
+            </div>
+            <div class="canvas-viewport__half canvas-viewport__half--after">
+              <div class="canvas-viewport__half-pane" @dblclick="onStageDoubleClick">
+                <div class="canvas-viewport__stage" :style="stageStyle">
+                  <canvas
+                    ref="canvasRef"
+                    class="canvas-viewport__canvas"
+                    data-testid="edit-canvas"
+                    :style="canvasStyle"
+                  ></canvas>
+                </div>
+              </div>
+              <span class="canvas-viewport__badge">After</span>
+            </div>
+          </template>
+
+          <!-- Single / Split mode -->
+          <div
+            v-else
+            class="canvas-viewport__single"
+            @dblclick="onStageDoubleClick"
+          >
+            <div
+              class="canvas-viewport__stage"
+              :style="stageStyle"
+            >
+              <canvas
+                ref="canvasRef"
+                class="canvas-viewport__canvas"
+                data-testid="edit-canvas"
+                :style="canvasStyle"
+              ></canvas>
+              <canvas
+                v-if="compareMode === 'split'"
+                ref="beforeCanvasRef"
+                class="canvas-viewport__canvas canvas-viewport__before-canvas"
+                data-testid="before-canvas"
+                :style="{
+                  ...canvasStyle,
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  clipPath: `polygon(0 0, ${splitDivider}% 0, ${splitDivider}% 100%, 0 100%)`,
+                  zIndex: 'calc(var(--z-canvas) + 1)',
+                }"
+              ></canvas>
+
+              <!-- Split divider -->
+              <div
+                v-if="compareMode === 'split'"
+                class="canvas-viewport__split-divider"
+                :style="{ left: `${splitDivider}%` }"
+                @pointerdown.stop="startDividerDrag"
+              >
+                <div class="canvas-viewport__split-line"></div>
+                <div
+                  class="canvas-viewport__split-handle"
+                  data-testid="split-divider-handle"
+                  title="Drag to split before / after"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M5 4l-4 4 4 4V4zm6 0v8l4-4-4-4z"/>
+                  </svg>
+                </div>
+              </div>
+
+              <!-- Badges for split mode -->
+              <span
+                v-if="compareMode === 'split'"
+                class="canvas-viewport__badge canvas-viewport__badge--split-before"
+              >
+                Before
+              </span>
+              <span
+                v-if="compareMode === 'split'"
+                class="canvas-viewport__badge canvas-viewport__badge--split-after"
+              >
+                After
+              </span>
+
+              <!-- Overlays (hidden during compare mode) -->
+              <canvas
+                v-show="clipOverlayActive && compareMode === 'off'"
+                ref="clipCanvasRef"
+                class="canvas-viewport__clip"
+                data-testid="clip-overlay"
+                aria-hidden="true"
+                :style="{ ...canvasStyle, position: 'absolute', zIndex: 'calc(var(--z-canvas) + 1)' }"
+              ></canvas>
+              <canvas
+                v-show="showMaskOverlay && selectedMask && !isCropMode && !isBefore && compareMode === 'off'"
+                ref="maskCanvasRef"
+                class="canvas-viewport__clip"
+                data-testid="mask-coverage"
+                aria-hidden="true"
+                :style="{ ...canvasStyle, position: 'absolute', zIndex: 'calc(var(--z-canvas) + 1)' }"
+              ></canvas>
+              <MaskOverlay
+                v-if="sessionId && masks.length && !isCropMode && !isBefore && compareMode === 'off'"
+                :masks="masks"
+                :selected-id="selectedMaskId"
+                :to-stored="frameToStored"
+                :aspect="storedAspect"
+                :frame-width="frameWidth"
+                :frame-height="frameHeight"
+                :paint="paintRadius"
+                :style="{
+                  ...canvasStyle,
+                  position: 'absolute',
+                  zIndex: 'calc(var(--z-canvas) + 2)',
+                  pointerEvents: spaceHeld ? 'none' : 'auto',
+                }"
+                @select="(id) => (selectedMaskId = id)"
+                @update="updateMaskKind"
+                @commit="onMaskCommit"
+                @stroke-start="onStrokeStart"
+                @stroke-point="onStrokePoint"
+                @stroke-end="onStrokeEnd"
+              />
+              <CropOverlay
+                v-if="isCropMode"
+                v-model="cropModel"
+                :container-width="displayedDimensions.width"
+                :container-height="displayedDimensions.height"
+                :aspect-ratio="selectedAspectNumeric"
+                @apply="applyCrop"
+                @cancel="cancelCrop"
+              />
+            </div>
           </div>
         </div>
 
-        <!-- Before / After toggle button -->
+        <!-- Before / After toggle button and viewport bar -->
         <div class="canvas-viewport__overlay">
           <button
             type="button"
@@ -1878,6 +2499,57 @@ onUnmounted(() => {
           >
             {{ isBefore ? 'Before (Original)' : 'Before / After (Hold or \\)' }}
           </button>
+          <button
+            type="button"
+            class="secondary canvas-viewport__view-btn"
+            data-testid="compare-side-by-side-btn"
+            :class="{ active: compareMode === 'side-by-side' }"
+            :disabled="isCropMode"
+            title="Side-by-side compare (Y)"
+            @click="toggleCompare('side-by-side')"
+          >
+            Side by Side
+          </button>
+          <button
+            type="button"
+            class="secondary canvas-viewport__view-btn"
+            data-testid="compare-split-btn"
+            :class="{ active: compareMode === 'split' }"
+            :disabled="isCropMode"
+            title="Split compare (Shift-Y)"
+            @click="toggleCompare('split')"
+          >
+            Split
+          </button>
+          <button
+            type="button"
+            class="secondary canvas-viewport__view-btn"
+            data-testid="zoom-fit-btn"
+            :class="{ active: zoom === 'fit' }"
+            :disabled="isCropMode"
+            title="Fit to view (Cmd-0)"
+            @click="setZoom('fit')"
+          >
+            Fit
+          </button>
+          <button
+            type="button"
+            class="secondary canvas-viewport__view-btn"
+            data-testid="zoom-100-btn"
+            :class="{ active: zoom === 1.0 }"
+            :disabled="isCropMode"
+            title="100% zoom (Cmd-1)"
+            @click="setZoom(1.0)"
+          >
+            100%
+          </button>
+          <span
+            class="canvas-viewport__zoom-readout"
+            data-testid="zoom-readout"
+            title="Current zoom"
+          >
+            {{ zoomReadoutText }}
+          </span>
           <button
             type="button"
             class="secondary canvas-viewport__clip-btn canvas-viewport__clip-btn--shadow"
@@ -3122,13 +3794,160 @@ onUnmounted(() => {
 }
 
 .canvas-viewport__container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
+  position: relative;
   width: 100%;
   height: 100%;
   overflow: hidden;
-  padding: var(--space-4);
+  user-select: none;
+}
+
+.canvas-viewport__container.is-side-by-side {
+  display: flex;
+  flex-direction: row;
+}
+
+.canvas-viewport__container.is-space-held {
+  cursor: grab !important;
+}
+
+.canvas-viewport__container.is-panning {
+  cursor: grabbing !important;
+}
+
+.canvas-viewport__single {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.canvas-viewport__half {
+  flex: 1;
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  border-right: 1px solid var(--border-hair);
+}
+
+.canvas-viewport__half:last-child {
+  border-right: none;
+}
+
+.canvas-viewport__half-pane {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.canvas-viewport__loading-indicator {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10, 10, 15, 0.85);
+  color: var(--text-muted);
+  border: var(--border-hair);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  font-size: 11px;
+  font-family: var(--font-sans);
+  pointer-events: none;
+  z-index: calc(var(--z-canvas) + 10);
+  backdrop-filter: blur(4px);
+}
+
+.canvas-viewport__badge {
+  position: absolute;
+  top: var(--space-3);
+  background: rgba(10, 10, 15, 0.7);
+  color: var(--text-muted);
+  border: var(--border-hair);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+  font-size: 11px;
+  font-family: var(--font-sans);
+  pointer-events: none;
+  z-index: calc(var(--z-canvas) + 5);
+}
+
+.canvas-viewport__half--before .canvas-viewport__badge {
+  left: var(--space-3);
+}
+
+.canvas-viewport__half--after .canvas-viewport__badge {
+  right: var(--space-3);
+}
+
+.canvas-viewport__badge--split-before {
+  left: var(--space-3);
+}
+
+.canvas-viewport__badge--split-after {
+  right: var(--space-3);
+}
+
+.canvas-viewport__split-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40px;
+  margin-left: -20px;
+  cursor: ew-resize;
+  z-index: calc(var(--z-canvas) + 6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas-viewport__split-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 19px;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.canvas-viewport__split-handle {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  border: var(--border-hair);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  cursor: ew-resize;
+}
+
+.canvas-viewport__view-btn {
+  min-height: 40px;
+  min-width: 40px;
+  padding: var(--space-2) var(--space-3);
+  font-size: 12px;
+}
+
+.canvas-viewport__view-btn.active {
+  background: var(--accent);
+  color: var(--void);
+}
+
+.canvas-viewport__zoom-readout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  min-width: 48px;
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .canvas-viewport__canvas {

@@ -17,7 +17,7 @@ use rollchrome_core::tools::lut_library::{
 };
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Response;
-use tauri::State;
+use tauri::{Manager, State};
 
 /// Result summary of a bulk LUT dry run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +34,10 @@ pub struct OpenPreviewResult {
     pub session_id: String,
     pub drag: (u32, u32),
     pub settle: (u32, u32),
+    pub full_width: u32,
+    pub full_height: u32,
+    pub settle_width: u32,
+    pub settle_height: u32,
     pub orientation: u32,
     pub read_only: bool,
     pub source_sha256: String,
@@ -281,6 +285,10 @@ pub fn open_preview_impl(state: &AppState, path: String) -> CommandResult<OpenPr
         session_id: info.session_id,
         drag: info.drag,
         settle: info.settle,
+        full_width: info.full.0,
+        full_height: info.full.1,
+        settle_width: info.settle.0,
+        settle_height: info.settle.1,
         orientation: info.orientation,
         read_only: info.read_only,
         source_sha256: info.source_sha256,
@@ -288,14 +296,19 @@ pub fn open_preview_impl(state: &AppState, path: String) -> CommandResult<OpenPr
 }
 
 #[tauri::command]
-pub fn render_preview(
+pub async fn render_preview(
     session_id: String,
     recipe: AdjustmentRecipe,
     stage: Option<PreviewStage>,
-    state: State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<Response, String> {
-    let bytes = render_preview_impl(&state, session_id, recipe, stage)?;
-    Ok(Response::new(bytes))
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        render_preview_impl(&state, session_id, recipe, stage)
+    })
+    .await
+    .map_err(|e| format!("render preview panicked: {e}"))?
+    .map(Response::new)
 }
 
 pub fn render_preview_impl(

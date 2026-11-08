@@ -219,6 +219,27 @@ fn render_preview_returns_width_height_and_rgba_of_that_size() {
     assert_eq!(shadow_clipped, 60 * 40);
 }
 
+#[test]
+fn open_preview_reports_the_full_and_settle_dimensions() {
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = rollchrome_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let img_path = f.root.join("hires.png");
+    image::RgbImage::new(6000, 4000).save(&img_path).unwrap();
+
+    let open_res = rollchrome_desktop::commands::edit::open_preview_impl(
+        &state,
+        img_path.to_string_lossy().to_string(),
+    )
+    .unwrap();
+
+    assert_eq!(open_res.full_width, 6000);
+    assert_eq!(open_res.full_height, 4000);
+    assert_eq!(open_res.settle_width, 2560);
+    assert_eq!(open_res.settle_height, 1706);
+}
+
 /// The overlay's coverage comes from the open session, frame-sized, and names a missing
 /// mask rather than returning nothing (ED-20, G10).
 #[test]

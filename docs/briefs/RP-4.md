@@ -1,6 +1,6 @@
 # `RP-4` · Colour tools: eyedropper, auto settings, black & white
 
-> **Status:** briefed
+> **Status:** **approved**
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-4` · **Branch:** `rp-4`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -84,7 +84,7 @@ It does not touch white balance, because a JPEG or a developed TIFF is already b
 
 ### Acceptance
 
-- [ ] `rollchrome-core` gains exactly these thirteen tests, in a new `crates/rollchrome-core/tests/colour_tools_tests.rs`:
+- [x] `rollchrome-core` gains exactly these thirteen tests, in a new `crates/rollchrome-core/tests/colour_tools_tests.rs`:
   `picking_a_grey_patch_with_a_cast_makes_it_neutral` (through the real render, channels within 2 levels),
   `picking_the_same_spot_again_gives_the_same_values_whatever_the_recipe`,
   `picking_beyond_the_slider_range_clamps_and_says_so`,
@@ -98,10 +98,10 @@ It does not touch white balance, because a JPEG or a developed TIFF is already b
   `colour_grading_still_tints_a_black_and_white_photograph`,
   `export_and_preview_agree_on_black_and_white` (within 2 levels),
   `a_recipe_written_before_black_and_white_still_loads`.
-- [ ] `rollchrome-desktop` gains exactly two: `white_balance_at_refuses_an_unknown_session`, `auto_tone_refuses_an_unknown_session`.
-- [ ] Counts: workspace 1111 → 1126, `rollchrome-core` 281 → 294, `rollchrome-desktop` 20 → 22, `phototools-core` 713, `phototools-desktop` 26 unchanged. Every existing test still there, none weakened (G7).
-- [ ] `check:colour` asserts all eleven and passes; all the other checks unchanged and passing.
-- [ ] No `todo!()`, bare lock `unwrap()` or swallowed error on a shipped path (G10); no logic in the binary (G1).
+- [x] `rollchrome-desktop` gains exactly two: `white_balance_at_refuses_an_unknown_session`, `auto_tone_refuses_an_unknown_session`.
+- [x] Counts: workspace 1111 → 1126, `rollchrome-core` 281 → 294, `rollchrome-desktop` 20 → 22, `phototools-core` 713, `phototools-desktop` 26 unchanged. Every existing test still there, none weakened (G7).
+- [x] `check:colour` asserts all eleven and passes; all the other checks unchanged and passing.
+- [x] No `todo!()`, bare lock `unwrap()` or swallowed error on a shipped path (G10); no logic in the binary (G1).
 
 ### Gates
 
@@ -1110,3 +1110,11 @@ Asserting 11: Every new control is at least 40 px. Screenshot to layout-proof/..
 --- check:colour Summary ---
 PASSED: all 11 colour tool checks passed cleanly.
 ```
+
+### Round 2 — **Approved**
+
+**Checked.** Re-ran every gate on `rp-4` at `0c7eaeb` with `--no-fail-fast`: fmt and clippy clean, build clean; workspace 1127, `phototools-core` 713, `rollchrome-core` 295, `phototools-desktop` 26, `rollchrome-desktop` 22, none failed or ignored; typecheck, build, `check:transport`, `check:edit`, `check:bulk-lut`, `check:develop`, `check:viewing` pass, and `check:colour` runs its eleven numbered assertions in the browser and counts them. The test file now has exactly the brief's names plus item 4's. I worked the display-to-frame mapping through for orientations 2 to 8 against `canvasTransform`, and each is the true inverse. Auto on the chart is now exposure +1.25, whites 0, blacks 0, down from +2.00 and -50.
+
+The count in `CLAUDE.md`'s acceptance read 1126 before round 1's added test; the figures here are the ones that stand: 1127 / 295 / 22.
+
+**Not verified.** How the tools feel on real photographs in the real application: `MV-25`.

@@ -212,3 +212,22 @@ the automated check drives the screen against a stub.
       **Run:** in Edit, a landscape and a portrait photograph, one of them cropped: Cmd-1, pinch, drag to pan, then `Y` and Shift-Y.
       **Pass:** at 100% the picture is sharp and the right shape, it cannot be dragged out of view, and the before lines up with the after.
       **Result:**
+
+## MV-25 — Colour tools (RP-4)
+
+[`../briefs/RP-4.md`](../briefs/RP-4.md). Real photographs in the real application, one of them portrait.
+
+- [ ] **MV-25.1 — Eyedropper.**
+      **Run:** press `W`, click something that should be neutral, on a landscape and on a portrait photograph.
+      **Pass:** that spot turns neutral, and Undo puts it back.
+      **Result:**
+
+- [ ] **MV-25.2 — Auto.**
+      **Run:** Auto on a dark, a bright and a well-exposed photograph.
+      **Pass:** better or unchanged, never worse: no blown highlights brought on by Auto. Record any photograph it spoils.
+      **Result:**
+
+- [ ] **MV-25.3 — Black & white.**
+      **Run:** press `V`, move the Blue and Green sliders, add a colour grade. Export.
+      **Pass:** no colour without the grade; the skies and foliage respond; the export matches the screen.
+      **Result:**

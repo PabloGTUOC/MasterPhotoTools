@@ -503,3 +503,11 @@ PASSED all 18 viewing requirements successfully.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+### Round 1 — Changes requested
+
+**Checked.** Re-ran the gates on `rp-2b` with `--no-fail-fast`: fmt and clippy clean, build clean, typecheck, build, `check:transport`, `check:edit`, `check:bulk-lut`, `check:develop`, `check:viewing` pass. Three Rust tests fail and the Report names them correctly. Stopping there and listing them was what the brief asked. The diff does what the brief said; the refusal comes before the identity copy.
+
+1. **The three failing tests are about zoom, not about PNG.** All three were written in RP-3 and use a `.png` only as a convenient fixture. The owner's decision makes that fixture invalid, not what they assert. In `crates/rollchrome-core/tests/media_tests.rs`, `opening_a_session_and_rendering_drag_and_settle_decodes_nothing_more` and `the_full_buffer_is_decoded_once`, and in `crates/rollchrome-desktop/tests/local_tools.rs`, `open_preview_reports_the_full_and_settle_dimensions`: change the fixture's file name from `.png` to `.jpg`, and nothing else. **No assertion changes** (G7).
+
+Counts then are 1111 / 281 / 20. Write **Report round 2** as new text, deleting nothing, with the actual output of every gate, using `--no-fail-fast` so that the counts are complete.

@@ -124,8 +124,6 @@ function resetToDefault() {
         :step="props.step"
         :disabled="props.disabled"
         :data-testid="props.testId ? `${props.testId}-number` : undefined"
-        :title="`Double-click to reset to ${props.defaultValue}`"
-        @dblclick="resetToDefault"
         @input="onNumberInput"
         @change="onNumberChange"
       />

@@ -49,6 +49,11 @@ export interface StubState {
   autoToneError: string | null;
   saveCalls: Array<{ path: string; recipe: AdjustmentRecipe }>;
   recipesByPath: Record<string, AdjustmentRecipe | null>;
+  exportCalls: Array<{ path: string; recipe: AdjustmentRecipe; outDir: string; startTime: number; endTime: number }>;
+  exportFailureMap: Record<string, string>;
+  exportDelay: number;
+  activeExports: number;
+  overlappingExportsDetected: boolean;
 }
 
 const stubState: StubState = {
@@ -77,6 +82,11 @@ const stubState: StubState = {
   autoToneError: null,
   saveCalls: [],
   recipesByPath: {},
+  exportCalls: [],
+  exportFailureMap: {},
+  exportDelay: 0,
+  activeExports: 0,
+  overlappingExportsDetected: false,
 };
 
 interface StubHistogram {
@@ -600,7 +610,7 @@ export class StubDesktopApiClient {
 
   async exportEditedImage(
     path: string,
-    _recipe: AdjustmentRecipe,
+    recipe: AdjustmentRecipe,
     outDir: string,
   ): Promise<ExportResult> {
     if (outDir.includes('Publishing')) {
@@ -609,8 +619,38 @@ export class StubDesktopApiClient {
     if (outDir.includes('Card') || outDir.includes('DCIM')) {
       throw new Error('Card media is read-only (G5)');
     }
+
+    const startTime = Date.now();
+    if (stubState.activeExports > 0) {
+      stubState.overlappingExportsDetected = true;
+    }
+    stubState.activeExports++;
+
+    if (stubState.exportDelay > 0) {
+      await new Promise((r) => setTimeout(r, stubState.exportDelay));
+    }
+
+    stubState.activeExports--;
+    const endTime = Date.now();
+
+    const cloned = JSON.parse(JSON.stringify(recipe));
+    stubState.exportCalls.push({
+      path,
+      recipe: cloned,
+      outDir,
+      startTime,
+      endTime,
+    });
+
+    const vName = recipe.version_name ?? null;
+    const lookupKey = vName ?? '__main__';
+    if (stubState.exportFailureMap && stubState.exportFailureMap[lookupKey]) {
+      throw new Error(stubState.exportFailureMap[lookupKey]);
+    }
+
+    const slug = recipe.version_name ? `_edit_${recipe.version_name.replace(/[^a-zA-Z0-9]/g, '-')}` : '_edit';
     return {
-      path: `${outDir}/IMG_0001_edit.jpg`,
+      path: `${outDir}/IMG_0001${slug}.jpg`,
       metadata_skipped: null,
     };
   }

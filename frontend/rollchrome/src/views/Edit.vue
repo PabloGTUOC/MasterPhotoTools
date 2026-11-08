@@ -34,6 +34,7 @@ import type {
   Vignette,
   LookEffects,
   Snapshot,
+  Version,
 } from '@host/api';
 import { desktop } from '@host/api';
 import AdjustmentSlider from '../components/AdjustmentSlider.vue';
@@ -226,6 +227,8 @@ function createIdentityRecipe(sourceSha = ''): AdjustmentRecipe {
     black_and_white: null,
     masks: [],
     snapshots: [],
+    versions: [],
+    version_name: null,
   };
 }
 
@@ -253,6 +256,39 @@ function syncHistoryState() {
 
 const newSnapshotName = ref('');
 const snapshotMessage = ref('');
+
+// ---------------------------------------------------------------------------
+// Versions state (RP-6)
+// ---------------------------------------------------------------------------
+
+const currentVersionName = computed(() => recipe.value.version_name ?? 'Main');
+const hasOtherVersions = computed(() => (recipe.value.versions?.length ?? 0) > 0);
+const newVersionInput = ref('');
+const versionMessage = ref('');
+const editingCurrentVersion = ref(false);
+const renameCurrentInput = ref('');
+const editingVersionName = ref<string | null>(null);
+const renameOtherInput = ref('');
+const isExportingAll = ref(false);
+const exportAllProgressText = ref('');
+const exportAllSummary = ref('');
+
+function suggestVersionName(): string {
+  const existingNames = new Set<string>();
+  if (recipe.value.version_name) {
+    existingNames.add(recipe.value.version_name);
+  } else {
+    existingNames.add('Main');
+  }
+  for (const v of recipe.value.versions ?? []) {
+    existingNames.add(v.name);
+  }
+  let i = 1;
+  while (existingNames.has(`Copy ${i}`)) {
+    i++;
+  }
+  return `Copy ${i}`;
+}
 
 // ---------------------------------------------------------------------------
 // Colour tools: Eyedropper, Auto Tone, Black & White (RP-4)
@@ -1288,6 +1324,7 @@ function scheduleSave(explicitLabel?: string) {
   if (committed) {
     lastCommittedRecipe = cloneRecipe(recipe.value);
     syncHistoryState();
+    dismissNotice();
   }
 
   triggerSaveWithoutHistory();
@@ -1327,12 +1364,26 @@ function jumpToHistory(index: number) {
 
 function applyRestoredRecipe(restored: AdjustmentRecipe) {
   const curSnapshots = recipe.value.snapshots ? cloneRecipe({ snapshots: recipe.value.snapshots } as any).snapshots : [];
+  const curVersions = recipe.value.versions ? cloneRecipe({ versions: recipe.value.versions } as any).versions : [];
+  const curVersionName = recipe.value.version_name ?? null;
+
   const next = cloneRecipe(restored);
   if (curSnapshots && curSnapshots.length > 0) {
     next.snapshots = curSnapshots;
   } else {
     delete next.snapshots;
   }
+  if (curVersions && curVersions.length > 0) {
+    next.versions = curVersions;
+  } else {
+    delete next.versions;
+  }
+  if (curVersionName) {
+    next.version_name = curVersionName;
+  } else {
+    delete next.version_name;
+  }
+
   recipe.value = next;
   lastCommittedRecipe = cloneRecipe(next);
   syncHistoryState();
@@ -1359,6 +1410,8 @@ function saveSnapshot() {
   snapshotMessage.value = '';
   const snapRecipe = cloneRecipe(recipe.value);
   delete snapRecipe.snapshots;
+  delete snapRecipe.versions;
+  delete snapRecipe.version_name;
   const snap: Snapshot = {
     name,
     recipe: snapRecipe,
@@ -1373,12 +1426,26 @@ function saveSnapshot() {
 
 function restoreSnapshot(snap: Snapshot) {
   const curSnapshots = recipe.value.snapshots ? cloneRecipe({ snapshots: recipe.value.snapshots } as any).snapshots : [];
+  const curVersions = recipe.value.versions ? cloneRecipe({ versions: recipe.value.versions } as any).versions : [];
+  const curVersionName = recipe.value.version_name ?? null;
+
   const next = cloneRecipe(snap.recipe);
   if (curSnapshots && curSnapshots.length > 0) {
     next.snapshots = curSnapshots;
   } else {
     delete next.snapshots;
   }
+  if (curVersions && curVersions.length > 0) {
+    next.versions = curVersions;
+  } else {
+    delete next.versions;
+  }
+  if (curVersionName) {
+    next.version_name = curVersionName;
+  } else {
+    delete next.version_name;
+  }
+
   recipe.value = next;
   requestRender('Settle');
   scheduleSave(`Snapshot: ${snap.name}`);
@@ -1388,6 +1455,185 @@ function deleteSnapshot(name: string) {
   if (!recipe.value.snapshots) return;
   recipe.value.snapshots = recipe.value.snapshots.filter((s) => s.name !== name);
   triggerSaveWithoutHistory();
+}
+
+// ---------------------------------------------------------------------------
+// Versions operations (RP-6)
+// ---------------------------------------------------------------------------
+
+function createVersion() {
+  const name = newVersionInput.value.trim();
+  if (!name) {
+    versionMessage.value = 'Version name cannot be empty.';
+    return;
+  }
+  const isMainTaken = !recipe.value.version_name || recipe.value.versions?.some((v) => v.name === 'Main');
+  if (name === 'Main' && isMainTaken) {
+    versionMessage.value = 'A version named "Main" already exists.';
+    return;
+  }
+  if (name === currentVersionName.value || recipe.value.versions?.some((v) => v.name === name)) {
+    versionMessage.value = `A version named "${name}" already exists.`;
+    return;
+  }
+  versionMessage.value = '';
+
+  // The current recipe (excluding versions, snapshots, version_name) goes into the list under its name
+  const oldCurrentStripped = cloneRecipe(recipe.value);
+  delete oldCurrentStripped.versions;
+  delete oldCurrentStripped.snapshots;
+  delete oldCurrentStripped.version_name;
+
+  const oldName = currentVersionName.value;
+  const currentVersions: Version[] = recipe.value.versions ? [...recipe.value.versions] : [];
+  currentVersions.push({
+    name: oldName,
+    recipe: oldCurrentStripped,
+  });
+
+  // Duplicates the current edit, and the new one becomes current
+  recipe.value.versions = currentVersions;
+  recipe.value.version_name = name;
+
+  // Reset history to the new current recipe
+  history.reset(recipe.value);
+  lastCommittedRecipe = cloneRecipe(recipe.value);
+  syncHistoryState();
+
+  triggerSaveWithoutHistory();
+  newVersionInput.value = suggestVersionName();
+}
+
+function switchVersion(targetName: string) {
+  if (!recipe.value.versions) return;
+  const targetIndex = recipe.value.versions.findIndex((v) => v.name === targetName);
+  if (targetIndex === -1) return;
+
+  const target = recipe.value.versions[targetIndex];
+
+  // The current recipe, without versions and snapshots, goes into the list under its name
+  const currentToStore = cloneRecipe(recipe.value);
+  delete currentToStore.versions;
+  delete currentToStore.snapshots;
+  delete currentToStore.version_name;
+
+  const currentStoredName = currentVersionName.value;
+
+  const nextVersions = recipe.value.versions.map((v, i) => {
+    if (i === targetIndex) {
+      return {
+        name: currentStoredName,
+        recipe: currentToStore,
+      };
+    }
+    return v;
+  });
+
+  // Snapshots stay on the top level throughout
+  const currentSnapshots = recipe.value.snapshots ? cloneRecipe({ snapshots: recipe.value.snapshots } as any).snapshots : [];
+
+  // The chosen one comes out of the list and becomes the top level
+  const nextRecipe = cloneRecipe(target.recipe);
+  delete nextRecipe.versions;
+  delete nextRecipe.snapshots;
+  delete nextRecipe.version_name;
+
+  if (targetName !== 'Main') {
+    nextRecipe.version_name = targetName;
+  } else {
+    delete nextRecipe.version_name;
+  }
+  nextRecipe.versions = nextVersions;
+  if (currentSnapshots && currentSnapshots.length > 0) {
+    nextRecipe.snapshots = currentSnapshots;
+  }
+
+  recipe.value = nextRecipe;
+  selectedMaskId.value = null;
+  painting.value = false;
+  requestRender('Settle');
+
+  // Reset the history to the new current recipe
+  history.reset(recipe.value);
+  lastCommittedRecipe = cloneRecipe(recipe.value);
+  syncHistoryState();
+
+  triggerSaveWithoutHistory();
+  newVersionInput.value = suggestVersionName();
+}
+
+function startRenameCurrent() {
+  renameCurrentInput.value = currentVersionName.value;
+  editingCurrentVersion.value = true;
+  versionMessage.value = '';
+}
+
+function submitRenameCurrent() {
+  const name = renameCurrentInput.value.trim();
+  if (!name) {
+    versionMessage.value = 'Version name cannot be empty.';
+    return;
+  }
+  if (name === currentVersionName.value) {
+    editingCurrentVersion.value = false;
+    return;
+  }
+  const isMainTaken = recipe.value.versions?.some((v) => v.name === 'Main');
+  if (name === 'Main' && isMainTaken) {
+    versionMessage.value = 'A version named "Main" already exists.';
+    return;
+  }
+  if (recipe.value.versions?.some((v) => v.name === name)) {
+    versionMessage.value = `A version named "${name}" already exists.`;
+    return;
+  }
+  versionMessage.value = '';
+  recipe.value.version_name = name === 'Main' ? null : name;
+  editingCurrentVersion.value = false;
+  triggerSaveWithoutHistory();
+  newVersionInput.value = suggestVersionName();
+}
+
+function startRenameOther(oldName: string) {
+  renameOtherInput.value = oldName;
+  editingVersionName.value = oldName;
+  versionMessage.value = '';
+}
+
+function submitRenameOther(oldName: string) {
+  const name = renameOtherInput.value.trim();
+  if (!name) {
+    versionMessage.value = 'Version name cannot be empty.';
+    return;
+  }
+  if (name === oldName) {
+    editingVersionName.value = null;
+    return;
+  }
+  const isMainTaken = !recipe.value.version_name || recipe.value.versions?.some((v) => v.name === 'Main' && v.name !== oldName);
+  if (name === 'Main' && isMainTaken) {
+    versionMessage.value = 'A version named "Main" already exists.';
+    return;
+  }
+  if (name === currentVersionName.value || recipe.value.versions?.some((v) => v.name === name && v.name !== oldName)) {
+    versionMessage.value = `A version named "${name}" already exists.`;
+    return;
+  }
+  versionMessage.value = '';
+  const target = recipe.value.versions?.find((v) => v.name === oldName);
+  if (target) {
+    target.name = name;
+  }
+  editingVersionName.value = null;
+  triggerSaveWithoutHistory();
+  newVersionInput.value = suggestVersionName();
+}
+
+function deleteVersion(name: string) {
+  if (!recipe.value.versions) return;
+  recipe.value.versions = recipe.value.versions.filter((v) => v.name !== name);
+  triggerSaveWithoutHistory();
+  newVersionInput.value = suggestVersionName();
 }
 
 function setLut(lut: LutRef | null) {
@@ -1645,6 +1891,11 @@ function normaliseRecipe(existing: AdjustmentRecipe, sourceSha: string): Adjustm
       name: s.name,
       recipe: cloneRecipe(s.recipe),
     })),
+    version_name: existing.version_name ?? null,
+    versions: (existing.versions ?? []).map((v) => ({
+      name: v.name,
+      recipe: cloneRecipe(v.recipe),
+    })),
     source_sha256: existing.source_sha256 || sourceSha,
   };
 }
@@ -1733,6 +1984,8 @@ function replaceLook(incoming: AdjustmentRecipe, text: string, explicitLabel?: s
   next.masks = before.masks;
   next.source_sha256 = before.source_sha256;
   next.snapshots = before.snapshots;
+  next.version_name = before.version_name;
+  next.versions = before.versions;
   recipe.value = next;
   commitRecipeChange(explicitLabel);
   showNotice(text, before);
@@ -1863,6 +2116,12 @@ async function openImage(path: string) {
     lastCommittedRecipe = cloneRecipe(recipe.value);
     syncHistoryState();
 
+    editingCurrentVersion.value = false;
+    editingVersionName.value = null;
+    versionMessage.value = '';
+    newVersionInput.value = suggestVersionName();
+    exportAllSummary.value = '';
+
     // Default export directory to image directory
     const parts = path.trim().split('/');
     parts.pop();
@@ -1895,6 +2154,74 @@ async function handleExport() {
   } catch (err: unknown) {
     exportError.value = err instanceof Error ? err.message : String(err);
   }
+}
+
+async function exportAllVersions() {
+  if (!sourcePath.value || !exportDir.value || isExportingAll.value) return;
+
+  const currentExportRecipe = cloneRecipe(recipe.value);
+  delete currentExportRecipe.versions;
+  delete currentExportRecipe.snapshots;
+  currentExportRecipe.version_name = recipe.value.version_name ?? null;
+
+  interface ExportItem {
+    name: string;
+    recipe: AdjustmentRecipe;
+  }
+
+  const items: ExportItem[] = [
+    {
+      name: currentVersionName.value,
+      recipe: currentExportRecipe,
+    },
+  ];
+
+  for (const v of recipe.value.versions ?? []) {
+    const r = cloneRecipe(v.recipe);
+    delete r.versions;
+    delete r.snapshots;
+    r.version_name = v.name === 'Main' ? null : v.name;
+    items.push({
+      name: v.name,
+      recipe: r,
+    });
+  }
+
+  isExportingAll.value = true;
+  exportAllSummary.value = '';
+  const written: Array<{ name: string; path: string }> = [];
+  const failures: Array<{ name: string; reason: string }> = [];
+
+  try {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      exportAllProgressText.value = `Exporting ${i + 1}/${items.length}…`;
+      try {
+        const res = await desktop.exportEditedImage(
+          sourcePath.value.trim(),
+          item.recipe,
+          exportDir.value.trim(),
+        );
+        written.push({ name: item.name, path: res.path });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        failures.push({ name: item.name, reason: msg });
+      }
+    }
+  } finally {
+    isExportingAll.value = false;
+    exportAllProgressText.value = '';
+  }
+
+  const parts: string[] = [];
+  if (written.length > 0) {
+    parts.push(`${written.length} written`);
+  }
+  if (failures.length > 0) {
+    const reasons = failures.map((f) => `${f.name}: ${f.reason}`).join('; ');
+    parts.push(`${failures.length} failed (${reasons})`);
+  }
+  exportAllSummary.value = parts.join(', ');
 }
 
 function resetAll() {
@@ -4293,6 +4620,162 @@ onUnmounted(() => {
               </ul>
             </div>
           </CollapsibleSection>
+
+          <!-- 10. Versions (RP-6) -->
+          <CollapsibleSection
+            title="Versions"
+            test-id="section-versions"
+            v-show="!selectedMask"
+            :default-open="false"
+          >
+            <div class="versions-panel" data-testid="versions-panel">
+              <div class="current-version-card" data-testid="current-version-card">
+                <div class="current-version-header">
+                  <span class="current-version-badge">Current</span>
+                  <span class="current-version-name" data-testid="current-version-name">{{ currentVersionName }}</span>
+                </div>
+                <div v-if="editingCurrentVersion" class="version-rename-form">
+                  <input
+                    v-model="renameCurrentInput"
+                    type="text"
+                    class="version-input"
+                    data-testid="rename-current-input"
+                    placeholder="New name"
+                    @keydown.enter="submitRenameCurrent"
+                    @keydown.esc="editingCurrentVersion = false"
+                  />
+                  <button
+                    type="button"
+                    class="version-btn version-btn--save"
+                    data-testid="rename-current-save-btn"
+                    @click="submitRenameCurrent"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    class="version-btn"
+                    data-testid="rename-current-cancel-btn"
+                    @click="editingCurrentVersion = false"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <div v-else class="current-version-actions">
+                  <button
+                    type="button"
+                    class="version-btn"
+                    data-testid="rename-current-btn"
+                    :disabled="loading || !sessionId"
+                    @click="startRenameCurrent"
+                  >
+                    Rename
+                  </button>
+                </div>
+              </div>
+
+              <div class="versions-new-form">
+                <input
+                  v-model="newVersionInput"
+                  type="text"
+                  placeholder="Version name"
+                  class="version-input"
+                  data-testid="version-name-input"
+                  :disabled="loading || !sessionId"
+                  @keydown.enter="createVersion"
+                />
+                <button
+                  type="button"
+                  class="version-btn version-btn--primary"
+                  data-testid="version-create-btn"
+                  :disabled="loading || !sessionId"
+                  @click="createVersion"
+                >
+                  New version
+                </button>
+              </div>
+
+              <div
+                v-if="versionMessage"
+                class="version-message"
+                data-testid="version-message"
+              >
+                {{ versionMessage }}
+              </div>
+
+              <div v-if="!recipe.versions || recipe.versions.length === 0" class="versions-empty" data-testid="versions-empty">
+                No other versions
+              </div>
+              <ul v-else class="versions-list" data-testid="versions-list">
+                <li
+                  v-for="v in recipe.versions"
+                  :key="v.name"
+                  class="version-item"
+                  :data-testid="`version-item-${v.name}`"
+                >
+                  <div v-if="editingVersionName === v.name" class="version-rename-form">
+                    <input
+                      v-model="renameOtherInput"
+                      type="text"
+                      class="version-input"
+                      :data-testid="`rename-input-${v.name}`"
+                      placeholder="New name"
+                      @keydown.enter="submitRenameOther(v.name)"
+                      @keydown.esc="editingVersionName = null"
+                    />
+                    <button
+                      type="button"
+                      class="version-btn version-btn--save"
+                      :data-testid="`rename-save-${v.name}`"
+                      @click="submitRenameOther(v.name)"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      class="version-btn"
+                      :data-testid="`rename-cancel-${v.name}`"
+                      @click="editingVersionName = null"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  <div v-else class="version-item__row">
+                    <span class="version-item__name" :data-testid="`version-name-${v.name}`">{{ v.name }}</span>
+                    <div class="version-item__actions">
+                      <button
+                        type="button"
+                        class="version-btn"
+                        :data-testid="`version-switch-${v.name}`"
+                        :disabled="loading || !sessionId"
+                        @click="switchVersion(v.name)"
+                      >
+                        Switch
+                      </button>
+                      <button
+                        type="button"
+                        class="version-btn"
+                        :data-testid="`version-rename-${v.name}`"
+                        :disabled="loading || !sessionId"
+                        @click="startRenameOther(v.name)"
+                      >
+                        Rename
+                      </button>
+                      <button
+                        type="button"
+                        class="version-btn version-btn--delete"
+                        :data-testid="`version-delete-${v.name}`"
+                        :disabled="loading || !sessionId"
+                        @click="deleteVersion(v.name)"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </CollapsibleSection>
         </div>
 
         <!-- Save Status Line -->
@@ -4314,15 +4797,31 @@ onUnmounted(() => {
             placeholder="/path/to/output_folder"
           />
 
-          <button
-            type="button"
-            class="primary adjustment-panel__export-btn"
-            data-testid="export-btn"
-            :disabled="!sessionId || !exportDir"
-            @click="handleExport"
-          >
-            Export render
-          </button>
+          <div class="adjustment-panel__export-actions">
+            <button
+              type="button"
+              class="primary adjustment-panel__export-btn"
+              data-testid="export-btn"
+              :disabled="!sessionId || !exportDir || isExportingAll"
+              @click="handleExport"
+            >
+              Export render
+            </button>
+            <button
+              v-if="hasOtherVersions"
+              type="button"
+              class="adjustment-panel__export-all-btn"
+              data-testid="export-all-btn"
+              :disabled="!sessionId || !exportDir || isExportingAll"
+              @click="exportAllVersions"
+            >
+              {{ isExportingAll ? exportAllProgressText : 'Export all versions' }}
+            </button>
+          </div>
+
+          <div v-if="exportAllSummary" class="adjustment-panel__export-all-summary" data-testid="export-all-summary">
+            {{ exportAllSummary }}
+          </div>
 
           <div v-if="exportStatus" class="adjustment-panel__export-success" data-testid="export-success">
             Exported to: {{ exportStatus }}
@@ -5610,5 +6109,211 @@ onUnmounted(() => {
 .snapshot-action-btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* --- Versions Section (RP-6) -------------------------------------------- */
+.versions-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.current-version-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.current-version-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+}
+
+.current-version-badge {
+  font-family: var(--font-label);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.current-version-name {
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.current-version-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.versions-new-form {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.version-input {
+  flex: 1;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-label);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  box-sizing: border-box;
+}
+
+.version-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.version-btn {
+  min-height: 40px;
+  min-width: 40px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-heading);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.version-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.version-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.version-btn--primary {
+  background: var(--bg-panel);
+  border-color: var(--border);
+}
+
+.version-btn--save {
+  background: var(--bg-panel);
+}
+
+.version-btn--delete:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.version-message {
+  font-family: var(--font-label);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.versions-empty {
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: var(--space-1) 0;
+}
+
+.versions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.version-item {
+  display: flex;
+  flex-direction: column;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  background: var(--bg-panel);
+  box-sizing: border-box;
+}
+
+.version-item__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 40px;
+  padding: var(--space-1) var(--space-2);
+  gap: var(--space-2);
+}
+
+.version-item__name {
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.version-item__actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.version-rename-form {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+}
+
+.adjustment-panel__export-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.adjustment-panel__export-all-btn {
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-heading);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-none);
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.adjustment-panel__export-all-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.adjustment-panel__export-all-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.adjustment-panel__export-all-summary {
+  font-family: var(--font-label);
+  font-size: 12px;
+  color: var(--text-heading);
+  padding: var(--space-1) 0;
 }
 </style>

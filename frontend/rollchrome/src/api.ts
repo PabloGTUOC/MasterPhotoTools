@@ -613,6 +613,16 @@ export interface AdjustmentRecipe {
   masks?: Mask[];
   /** Named snapshots of adjustment recipes for this photograph (RP-5). */
   snapshots?: Snapshot[];
+  /** The name of this version, or null/undefined if Main (RP-6). */
+  version_name?: string | null;
+  /** Other versions of this photograph (RP-6). */
+  versions?: Version[];
+}
+
+/** A named virtual copy of an adjustment recipe (RP-6). */
+export interface Version {
+  name: string;
+  recipe: AdjustmentRecipe;
 }
 
 /** A named snapshot of an adjustment recipe (RP-5). */

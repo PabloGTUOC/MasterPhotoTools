@@ -17,9 +17,11 @@ export interface CopiedSettings {
 
 export const copiedSettings = ref<CopiedSettings | null>(null);
 
-/** Copy settings to clipboard, ensuring snapshots are stripped (RP-5). */
+/** Copy settings to clipboard, ensuring snapshots and versions are stripped (RP-5, RP-6). */
 export function copyToClipboard(recipe: AdjustmentRecipe, from: string): void {
   const cloned: AdjustmentRecipe = JSON.parse(JSON.stringify(recipe));
   delete cloned.snapshots;
+  delete cloned.versions;
+  delete cloned.version_name;
   copiedSettings.value = { recipe: cloned, from };
 }

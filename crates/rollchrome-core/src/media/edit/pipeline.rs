@@ -101,11 +101,26 @@ pub struct AdjustmentRecipe {
     /// Saved snapshots of adjustments for this photograph.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub snapshots: Vec<Snapshot>,
+
+    // RP-6 virtual copies / versions:
+    /// Optional name of the current version (None indicates the primary version, shown as Main).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    /// Alternate virtual copies of adjustments for this photograph.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub versions: Vec<Version>,
 }
 
 /// A named snapshot of an adjustment recipe (RP-5).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
+    pub name: String,
+    pub recipe: AdjustmentRecipe,
+}
+
+/// A named virtual copy / version of an adjustment recipe (RP-6).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Version {
     pub name: String,
     pub recipe: AdjustmentRecipe,
 }
@@ -139,6 +154,8 @@ impl Default for AdjustmentRecipe {
             looks: None,
             masks: Vec::new(),
             snapshots: Vec::new(),
+            version_name: None,
+            versions: Vec::new(),
         }
     }
 }

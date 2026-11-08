@@ -245,3 +245,12 @@ the automated check drives the screen against a stub.
       **Run:** in Edit, create an edit, save a snapshot named "Grade A", make further adjustments and save "Grade B". Quit Rollchrome completely, reopen it, and load the same photograph.
       **Pass:** both "Grade A" and "Grade B" appear in the Snapshots list; restoring each reproduces its exact recipe; deleting removes it and persists across reload.
       **Result:**
+
+## MV-27 — Virtual copies (RP-6)
+
+[`../briefs/RP-6.md`](../briefs/RP-6.md). Real photographs in the real application.
+
+- [ ] **MV-27.1 — Colour and black & white versions exported together and surviving a restart.**
+      **Run:** in Edit, open a photograph, adjust colours, and save a virtual copy named "B&W". On "B&W", convert to black & white (press `V`) and tune tonal sliders. Switch between "Main" and "B&W" to verify that edits on each remain intact. Click "Export all versions" to export both to a destination folder. Quit Rollchrome completely, reopen it, and reopen the same photograph.
+      **Pass:** both versions appear with their respective names and recipes intact; switching between them updates the sliders and image without data loss; both exported images are in the destination folder with correct filenames (`_edit.jpg` and `_edit_b-w.jpg`).
+      **Result:**

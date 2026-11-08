@@ -164,9 +164,17 @@ where
 
     let mut to_save = recipe.clone();
     to_save.version = CURRENT_RECIPE_VERSION;
-    // Clear snapshots inside each snapshot's own recipe so that they never nest (RP-5).
+    // Clear snapshots and versions inside each snapshot's own recipe so that they never nest (RP-5, RP-6).
     for snap in &mut to_save.snapshots {
         snap.recipe.snapshots.clear();
+        snap.recipe.versions.clear();
+        snap.recipe.version_name = None;
+    }
+    // Clear versions and snapshots inside each version's own recipe so that they never nest (RP-6).
+    for ver in &mut to_save.versions {
+        ver.recipe.versions.clear();
+        ver.recipe.snapshots.clear();
+        ver.recipe.version_name = None;
     }
     if to_save.source_sha256.is_empty() {
         let bytes = std::fs::read(image_path)?;
@@ -232,6 +240,19 @@ impl AsRef<Path> for ExportResult {
     fn as_ref(&self) -> &Path {
         &self.path
     }
+}
+
+/// Turn a version name into a safe file path slug keeping letters and digits, turning anything else into '-' (RP-6).
+pub fn slug_version_name(name: &str) -> String {
+    let mut slug = String::with_capacity(name.len());
+    for c in name.chars() {
+        if c.is_alphanumeric() {
+            slug.push(c);
+        } else {
+            slug.push('-');
+        }
+    }
+    slug
 }
 
 /// Atomically creates an exclusive export target file, testing candidates `{stem}_{suffix}.{ext}`, `{stem}_{suffix}_1.{ext}`, etc.
@@ -423,6 +444,11 @@ where
         return Err(Error::Refused("Source file has no stem name".into()));
     }
 
+    let suffix = match &recipe.version_name {
+        Some(name) => format!("_edit_{}", slug_version_name(name)),
+        None => "_edit".to_string(),
+    };
+
     let identity = is_identity(recipe, lut);
 
     // Identity recipe on already-encoded image: byte copy without re-encoding
@@ -436,7 +462,7 @@ where
             .to_string_lossy()
             .to_lowercase();
         let (target_path, mut target_file) =
-            exclusive_create_target(out_dir, &stem, "_edit", &ext)?;
+            exclusive_create_target(out_dir, &stem, &suffix, &ext)?;
         if let Err(e) = std::io::copy(&mut src_file, &mut target_file) {
             let _ = std::fs::remove_file(&target_path);
             return Err(Error::from(e));
@@ -452,7 +478,7 @@ where
     }
 
     // Non-identity: render-and-write, then carry metadata for this single derivative (G4)
-    let derived = render_and_write(source, recipe, lut, out_dir, "_edit")?;
+    let derived = render_and_write(source, recipe, lut, out_dir, &suffix)?;
 
     // ED-13 Export Rule:
     // Any geometry present -> render upright, write Orientation = 1 (`carry_metadata(..., upright: true)`);

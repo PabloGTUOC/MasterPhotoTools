@@ -20,6 +20,8 @@ interface HistoryItem {
 function stripSnapshots(recipe: AdjustmentRecipe): AdjustmentRecipe {
   const clone: AdjustmentRecipe = JSON.parse(JSON.stringify(recipe));
   delete clone.snapshots;
+  delete clone.versions;
+  delete clone.version_name;
   return clone;
 }
 

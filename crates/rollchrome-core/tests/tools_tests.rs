@@ -1475,3 +1475,226 @@ fn a_recipe_with_only_snapshots_is_still_identity() {
         "a recipe with only snapshots and no edits must be identity"
     );
 }
+
+#[test]
+fn a_version_survives_a_save_and_a_load() {
+    use rollchrome_core::media::edit::{AdjustmentRecipe, Version};
+    use rollchrome_core::tools::edit::{load_recipe, save_recipe, sidecar_path};
+
+    let f = Fixtures::new();
+    let img_path = f.path().join("photo_versions.jpg");
+    fs::write(&img_path, b"fake jpeg image data").unwrap();
+
+    let colour_recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        saturation: 20.0,
+        ..Default::default()
+    };
+    let recipe = AdjustmentRecipe {
+        exposure: -0.2,
+        version_name: Some("B&W".into()),
+        versions: vec![Version {
+            name: "Colour".into(),
+            recipe: colour_recipe,
+        }],
+        ..Default::default()
+    };
+
+    save_recipe(&img_path, &recipe).expect("save recipe with version");
+    let sidecar = sidecar_path(&img_path);
+    assert!(sidecar.exists());
+
+    let loaded = load_recipe(&sidecar).expect("load saved recipe");
+    assert_eq!(loaded.exposure, -0.2);
+    assert_eq!(loaded.version_name.as_deref(), Some("B&W"));
+    assert_eq!(loaded.versions.len(), 1);
+    assert_eq!(loaded.versions[0].name, "Colour");
+    assert_eq!(loaded.versions[0].recipe.exposure, 0.5);
+    assert_eq!(loaded.versions[0].recipe.saturation, 20.0);
+}
+
+#[test]
+fn a_saved_version_never_holds_versions_or_snapshots_of_its_own() {
+    use rollchrome_core::media::edit::{AdjustmentRecipe, Snapshot, Version};
+    use rollchrome_core::tools::edit::{load_recipe, save_recipe, sidecar_path};
+
+    let f = Fixtures::new();
+    let img_path = f.path().join("photo_nested_versions.jpg");
+    fs::write(&img_path, b"fake jpeg image data").unwrap();
+
+    let inner_version = Version {
+        name: "Inner".into(),
+        recipe: AdjustmentRecipe::default(),
+    };
+    let inner_snapshot = Snapshot {
+        name: "InnerSnap".into(),
+        recipe: AdjustmentRecipe::default(),
+    };
+    let version_with_nested = Version {
+        name: "TopVersion".into(),
+        recipe: AdjustmentRecipe {
+            exposure: 0.75,
+            version_name: Some("InnerName".into()),
+            versions: vec![inner_version],
+            snapshots: vec![inner_snapshot],
+            ..Default::default()
+        },
+    };
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.1,
+        versions: vec![version_with_nested],
+        ..Default::default()
+    };
+
+    save_recipe(&img_path, &recipe).expect("save recipe");
+    let loaded = load_recipe(&sidecar_path(&img_path)).expect("load recipe");
+    assert_eq!(loaded.versions.len(), 1);
+    assert!(
+        loaded.versions[0].recipe.versions.is_empty(),
+        "a saved version's recipe must have its versions cleared"
+    );
+    assert!(
+        loaded.versions[0].recipe.snapshots.is_empty(),
+        "a saved version's recipe must have its snapshots cleared"
+    );
+    assert!(
+        loaded.versions[0].recipe.version_name.is_none(),
+        "a saved version's recipe must have version_name set to None"
+    );
+}
+
+#[test]
+fn a_preset_saved_from_a_recipe_with_versions_carries_none() {
+    use rollchrome_core::media::edit::{AdjustmentRecipe, Version};
+    use rollchrome_core::tools::presets::{load_preset, save_preset};
+
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.8,
+        version_name: Some("V1".into()),
+        versions: vec![Version {
+            name: "Should be dropped".into(),
+            recipe: AdjustmentRecipe::default(),
+        }],
+        ..Default::default()
+    };
+
+    save_preset(dir, "clean_preset_versions", &recipe, false).expect("save preset");
+    let loaded = load_preset(dir, "clean_preset_versions").expect("load preset");
+    assert_eq!(loaded.exposure, 0.8);
+    assert!(
+        loaded.versions.is_empty(),
+        "a preset must carry no versions"
+    );
+    assert!(
+        loaded.version_name.is_none(),
+        "a preset must carry no version_name"
+    );
+}
+
+#[test]
+fn a_recipe_with_only_versions_is_still_identity() {
+    use rollchrome_core::media::edit::{AdjustmentRecipe, Version};
+
+    let recipe = AdjustmentRecipe {
+        version_name: Some("V1".into()),
+        versions: vec![Version {
+            name: "V2".into(),
+            recipe: AdjustmentRecipe {
+                exposure: 2.5,
+                contrast: 50.0,
+                ..Default::default()
+            },
+        }],
+        ..Default::default()
+    };
+
+    assert!(
+        recipe.is_identity(),
+        "a recipe with only versions and version_name must be identity"
+    );
+}
+
+#[test]
+fn a_named_version_exports_with_its_name_in_the_file_name() {
+    use rollchrome_core::media::edit::AdjustmentRecipe;
+    use rollchrome_core::tools::edit::export_edited_image;
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("sunset.jpg", 40, 40);
+    let out_dir = f.path().join("exports");
+    fs::create_dir_all(&out_dir).unwrap();
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.2,
+        version_name: Some("B&W Contrast".into()),
+        ..Default::default()
+    };
+
+    let res = export_edited_image(&img, &recipe, None, &out_dir).unwrap();
+    assert_eq!(res.path, out_dir.join("sunset_edit_B-W-Contrast.jpg"));
+    assert!(res.path.exists());
+}
+
+#[test]
+fn an_unnamed_version_exports_exactly_as_before() {
+    use rollchrome_core::media::edit::AdjustmentRecipe;
+    use rollchrome_core::tools::edit::export_edited_image;
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("portrait.jpg", 40, 40);
+    let out_dir = f.path().join("exports");
+    fs::create_dir_all(&out_dir).unwrap();
+
+    let recipe = AdjustmentRecipe {
+        exposure: 0.2,
+        version_name: None,
+        ..Default::default()
+    };
+
+    let res = export_edited_image(&img, &recipe, None, &out_dir).unwrap();
+    assert_eq!(res.path, out_dir.join("portrait_edit.jpg"));
+    assert!(res.path.exists());
+}
+
+#[test]
+fn a_version_name_cannot_escape_the_output_folder() {
+    use rollchrome_core::media::edit::AdjustmentRecipe;
+    use rollchrome_core::tools::edit::export_edited_image;
+
+    let f = Fixtures::new();
+    let img = f.jpeg_without_exif("landscape.jpg", 40, 40);
+    let out_dir = f.path().join("exports");
+    fs::create_dir_all(&out_dir).unwrap();
+
+    // Test with traversal characters "../../x"
+    let recipe_traversal = AdjustmentRecipe {
+        exposure: 0.1,
+        version_name: Some("../../x".into()),
+        ..Default::default()
+    };
+    let res_traversal = export_edited_image(&img, &recipe_traversal, None, &out_dir).unwrap();
+    assert_eq!(res_traversal.path.parent(), Some(out_dir.as_path()));
+    assert_eq!(
+        res_traversal.path.file_name().unwrap(),
+        "landscape_edit_------x.jpg"
+    );
+    assert!(res_traversal.path.exists());
+
+    // Test with only separators "///"
+    let recipe_separators = AdjustmentRecipe {
+        exposure: 0.1,
+        version_name: Some("///".into()),
+        ..Default::default()
+    };
+    let res_separators = export_edited_image(&img, &recipe_separators, None, &out_dir).unwrap();
+    assert_eq!(res_separators.path.parent(), Some(out_dir.as_path()));
+    assert_eq!(
+        res_separators.path.file_name().unwrap(),
+        "landscape_edit_---.jpg"
+    );
+    assert!(res_separators.path.exists());
+}

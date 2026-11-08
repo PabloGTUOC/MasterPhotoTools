@@ -171,6 +171,9 @@ pub fn save_preset(
     recipe.masks.clear();
     // Snapshots are specific to this photograph (RP-5).
     recipe.snapshots.clear();
+    // Versions are specific to this photograph (RP-6).
+    recipe.versions.clear();
+    recipe.version_name = None;
     recipe.version = CURRENT_RECIPE_VERSION;
 
     // Serialize to JSON

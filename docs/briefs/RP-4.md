@@ -631,3 +631,24 @@ check:colour PASSED: all 11 colour tool checks passed cleanly.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+### Round 1 — Changes requested
+
+**Checked.** Re-ran every gate on `rp-4`: fmt and clippy clean, build clean; workspace 1126, `phototools-core` 713, `rollchrome-core` 294, `phototools-desktop` 26, `rollchrome-desktop` 22, none failed or ignored; every front-end check exits 0. The Rust for the pick, the bisections and black & white is sound, and setting chroma to zero is done at the right place in both pipelines.
+
+The counts are right but what was counted is not what was asked, and the Report says *Deviations: None*.
+
+1. **The thirteen tests are not the thirteen in the brief.** `colour_tools_tests.rs` has thirteen tests with other names and other claims. Missing altogether: neutrality **through the real render** (`picking_a_grey_patch_with_a_cast_makes_it_neutral`), the same spot giving the same answer whatever the recipe, a gradient with near-neutrals having no colour anywhere, export and preview agreeing, an old recipe still loading, and the auto targets. Replace the file's tests with **exactly the thirteen named in the Acceptance**, by those names, plus item 4's one.
+
+2. **`check:colour` does not check what the brief lists, and prints that it does.** Its *Phase 1* greps the source text for strings, which proves nothing, and its last line is a fixed "all 11". There is no orientation 6 test, no crop test, no Esc, no panning, no clamped or refused path, no focus test, no crop or compare disabling. Delete the static phase. Implement assertions **1 to 11, as the brief numbers them, in the browser**, each measured against what the stub recorded, and print the number actually run.
+
+3. **The eyedropper reads the wrong place on a rotated photograph.** `onEyedropperSample` takes `u`, `v` from the canvas's `getBoundingClientRect`, which is the box **as displayed**, and feeds them to `frameToStored`, which expects the **frame's own** coordinates. They differ whenever the orientation is not 1. Without geometry, the frame is in stored orientation and CSS rotates it, so for a portrait photograph the click lands somewhere else entirely. Turn the pointer position into frame coordinates by inverting the CSS orientation, or by taking it from an element that carries the canvas's transform, as `MaskOverlay` does (`offsetX`/`offsetY` on an element with `canvasStyle` give frame coordinates directly). Then apply `frameToStored`. Assertions 2 and 3 are what catch this.
+
+4. **Auto drives a real photograph into both limits.** On the chart TIFF it returned exposure **+2.00** and whites **−50**: it lifted the median into the band by blowing the highlights, then tried to pull them back. Lifting the shadows of a dark frame must not cost the bright parts.
+   - After the exposure bisection, if the exposure is positive, also bisect in `[0, exposure]` for the 99.5th percentile of the display luma at 250, and take the smaller exposure. My brief did not cover this. Add a test, `auto_does_not_blow_highlights_to_lift_the_median`: a mostly dark photograph with a small bright area, whose 99.5th percentile stays at or below 254 and whose exposure stays below +2.
+   - The brief says **display luma** for the whites and blacks percentiles. The code uses the largest and smallest channel, which is not reported. Use display luma.
+   Report the values for the chart again.
+
+5. **The Report.** It says Auto targets a median of 95 ± 4 and leaves photographs alone within that, which is not what the code does or what the brief says (band 95–135). Say what is, and list every deviation.
+
+Counts: workspace 1127, `rollchrome-core` 295, `rollchrome-desktop` 22. Update `CLAUDE.md`. Write **Report round 2** as new text, deleting nothing.

@@ -1,6 +1,6 @@
 # `RP-8` · Clarity, texture and dehaze
 
-> **Status:** briefed
+> **Status:** **approved**
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-8` · **Branch:** `rp-8`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -60,7 +60,7 @@ Comment why each constant has its value, and tune only what the tests allow.
 
 ### Acceptance
 
-- [ ] `rollchrome-core` gains exactly these thirteen tests, in `crates/rollchrome-core/tests/detail_tests.rs`:
+- [x] `rollchrome-core` gains exactly these thirteen tests, in `crates/rollchrome-core/tests/detail_tests.rs`:
   `presence_at_rest_changes_nothing`,
   `clarity_raises_mid_tone_contrast_on_a_soft_edge`,
   `clarity_leaves_blacks_and_whites_alone`,
@@ -74,9 +74,9 @@ Comment why each constant has its value, and tune only what the tests allow.
   `presence_scales_with_the_proxy` (clarity, texture and dehaze on a half-size image agree with halving the full result, within 3 levels of mean difference),
   `export_and_full_preview_agree_on_presence` (within 2 levels),
   `a_detail_written_before_presence_still_loads`.
-- [ ] Counts: workspace 1153 → 1166, `rollchrome-core` 321 → 334; `phototools-core` 713, `phototools-desktop` 26, `rollchrome-desktop` 22 unchanged. Every existing test still there, none weakened (G7).
-- [ ] `check:detail` asserts all thirteen, as numbered here, and passes; all the other checks unchanged and passing.
-- [ ] No `todo!()`, bare lock `unwrap()` or swallowed error on a shipped path (G10).
+- [x] Counts: workspace 1153 → 1166, `rollchrome-core` 321 → 334; `phototools-core` 713, `phototools-desktop` 26, `rollchrome-desktop` 22 unchanged. Every existing test still there, none weakened (G7).
+- [x] `check:detail` asserts all thirteen, as numbered here, and passes; all the other checks unchanged and passing.
+- [x] No `todo!()`, bare lock `unwrap()` or swallowed error on a shipped path (G10).
 
 ### Gates
 
@@ -1083,3 +1083,9 @@ Saved screenshot to frontend/rollchrome/layout-proof/presence.png
 Assertions run: 13/13
 All 13 assertions PASSED!
 ```
+
+### Round 2 — **Approved**
+
+**Checked.** Re-ran every gate on `rp-8` at `3eb1ebf` with `--no-fail-fast`: fmt and clippy clean, build clean; workspace 1166, `phototools-core` 713, `rollchrome-core` 334, `phototools-desktop` 26, `rollchrome-desktop` 22, none failed or ignored; typecheck, build and every check pass. `AdjustmentSlider.vue` is back as it was and the file no longer differs from `main`. The neutral shortcut in the rebuild (`g = y` when both chroma planes are zero) only removes a rounding error and stays.
+
+**Not verified.** Clarity and Dehaze on real photographs: `MV-29`.

@@ -1,6 +1,6 @@
 # Rollchrome towards a Lightroom replacement — plan
 
-> **Status (2026-11-08):** RP-1 and RP-2 done (MV-24 awaits real files); RP-3 briefed. Steps have stable ids (`RP-4`), each built from a
+> **Status (2026-11-08):** RP-1 and RP-2 done (MV-24 awaits real files); RP-3 and RP-2b briefed. Steps have stable ids (`RP-4`), each built from a
 > brief in [`docs/briefs/`](../briefs/).
 
 **The owner's goal is to stop paying for a Lightroom subscription.** The list comes from comparing
@@ -36,7 +36,8 @@ be right before anything is built on top of it. Later steps get their brief when
 | Id | Step | Contains | Size |
 |---|---|---|---|
 | **RP-1** | Three tabs and the Develop screen | Develop, Edit, Batch in the navigation. Folder of RAWs, thumbnails, a look per photo or for a selection, preview, dry run, run | Medium |
-| **RP-2** | Edit and Batch read developed files correctly | Honour the embedded ICC profile, so a ProPhoto TIFF is right on screen and on export. Whether RAWs stay allowed in Edit and Batch is the owner's call | Small to medium |
+| **RP-2** | Edit and Batch read developed files correctly | Honour the embedded ICC profile, so a ProPhoto TIFF is right on screen and on export. | Small to medium |
+| **RP-2b** | RAW only in Develop | The owner's decision: Edit and Batch take JPEG or TIFF and nothing else. Follows RP-3, which is on the same screen | Small |
 | **RP-3** | Viewing | Zoom and pan in Edit up to real pixels, which needs a full-resolution preview stage; side-by-side and split before/after | Medium (first sized small, before that was seen) |
 | **RP-4** | Colour tools | White balance eyedropper, auto settings, black & white with an 8-band mix | Small to medium |
 | **RP-5** | Undo and history | General undo/redo, edit history, named snapshots | Medium |

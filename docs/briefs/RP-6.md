@@ -1,6 +1,6 @@
 # `RP-6` · Virtual copies
 
-> **Status:** briefed
+> **Status:** **approved**
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-6` · **Branch:** `rp-6`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -74,7 +74,7 @@ A virtual copy is a second, independent edit of the same photograph, without a s
 
 ### Acceptance
 
-- [ ] `rollchrome-core` gains exactly these seven tests, in `crates/rollchrome-core/tests/tools_tests.rs`:
+- [x] `rollchrome-core` gains exactly these seven tests, in `crates/rollchrome-core/tests/tools_tests.rs`:
   `a_version_survives_a_save_and_a_load`,
   `a_saved_version_never_holds_versions_or_snapshots_of_its_own`,
   `a_preset_saved_from_a_recipe_with_versions_carries_none`,
@@ -82,9 +82,9 @@ A virtual copy is a second, independent edit of the same photograph, without a s
   `a_named_version_exports_with_its_name_in_the_file_name`,
   `an_unnamed_version_exports_exactly_as_before`,
   `a_version_name_cannot_escape_the_output_folder` (with `../../x` and a name of only separators).
-- [ ] Counts: workspace 1132 → 1139, `rollchrome-core` 300 → 307; `phototools-core` 713, `phototools-desktop` 26, `rollchrome-desktop` 22 unchanged. Every existing test still there, none weakened (G7).
-- [ ] `check:versions` asserts all fourteen, as numbered here, and passes; all the other checks unchanged and passing.
-- [ ] No `todo!()` or swallowed error on a shipped path (G10).
+- [x] Counts: workspace 1132 → 1139, `rollchrome-core` 300 → 307; `phototools-core` 713, `phototools-desktop` 26, `rollchrome-desktop` 22 unchanged. Every existing test still there, none weakened (G7).
+- [x] `check:versions` asserts all fourteen, as numbered here, and passes; all the other checks unchanged and passing.
+- [x] No `todo!()` or swallowed error on a shipped path (G10).
 
 ### Gates
 
@@ -425,3 +425,9 @@ Real camera file verification on a physical Mac Studio with attached card reader
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+### Round 1 — **Approved**
+
+**Checked.** Re-ran every gate on `rp-6` at `a62741f` with `--no-fail-fast`: fmt and clippy clean, build clean; workspace 1139, `phototools-core` 713, `rollchrome-core` 307, `phototools-desktop` 26, `rollchrome-desktop` 22, none failed or ignored; typecheck, build, and `check:transport`, `check:edit`, `check:bulk-lut`, `check:develop`, `check:viewing`, `check:colour`, `check:history` pass and `check:versions` runs its fourteen numbered assertions and counts them. The seven tests have the brief's names. Read the switch, which exchanges only the two versions and keeps snapshots on top; the export naming, whose slug cannot leave the folder; and Export all, which gives each version its own name so that files do not collide by accident. The notice is dismissed when a step is recorded.
+
+**Not verified.** A real photograph with two versions in the real application: `MV-27`.

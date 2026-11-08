@@ -22,7 +22,7 @@ cause: **the tools had only ever been exercised with typed file paths, and the f
 pointing at a folder the normal gesture.**
 
 The numbered checks in [`manual-verification.md`](docs/manual-verification.md) remain the
-structured half of that work — 96 for PhotoTools, eight done, and 41 for Rollchrome in
+structured half of that work — 96 for PhotoTools, eight done, and 42 for Rollchrome in
 [`docs/rollchrome/manual-verification.md`](docs/rollchrome/manual-verification.md), same ids.
 
 | Read this | For |
@@ -36,7 +36,7 @@ structured half of that work — 96 for PhotoTools, eight done, and 41 for Rollc
 | [`docs/timeline-plan.md`](docs/timeline-plan.md) | The Timeline tab: the track library on a map, and points placed by hand. Stage A built; MV-17 awaits a browser. Google's location history is Stages B–C, not built |
 | [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
-| [`docs/rollchrome/parity-plan.md`](docs/rollchrome/parity-plan.md) | Rollchrome towards replacing Lightroom: three tabs (Develop, Edit, Batch) and the small and medium gaps, RP-1 to RP-13. RP-1 to RP-9 and RP-2b done (MV-24 to MV-30 await real files); RP-12 briefed |
+| [`docs/rollchrome/parity-plan.md`](docs/rollchrome/parity-plan.md) | Rollchrome towards replacing Lightroom: three tabs (Develop, Edit, Batch) and the small and medium gaps, RP-1 to RP-13. RP-1 to RP-9, RP-2b and RP-12 done (MV-24 to MV-31 await real files; XZ-1 verified, D60 and X100VI await real raw captures); RP-10 next |
 | [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | Splitting Edit and Batch Grade out into Rollchrome, a desktop-only film emulator. RC-1 to RC-3 done; Develop next |
 | [`docs/develop-plan.md`](docs/develop-plan.md) | Rollchrome's third screen, Develop: RAW files to finished JPEG or TIFF, a film look each. DV-1 to DV-3 done: the function and twelve built-in looks; the screen came with RP-1 (MV-23 and MV-24 await real files) |
 | [`docs/rollchrome/edit-plan.md`](docs/rollchrome/edit-plan.md) | Rollchrome's Edit and Batch Grade screens: non-destructive exposure adjustments and 3D LUT grading. Rounds 1 and 2 built (ED-1–ED-18); MV-20 and MV-21 await a Mac. Round 3, masks (ED-19–ED-24), built; MV-20 to MV-22 await the Mac Studio |
@@ -121,11 +121,11 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 1166 passing
-cargo test -p phototools-core   # 713 passing — G2
-cargo test -p rollchrome-core   # 347 passing — G2
+cargo test --workspace          # 1186 passing
+cargo test -p phototools-core   # 714 passing — G2
+cargo test -p rollchrome-core   # 351 passing — G2
 cargo test -p phototools-desktop   # 26 passing
-cargo test -p rollchrome-desktop   # 22 passing
+cargo test -p rollchrome-desktop   # 24 passing
 ```
 
 Front ends:

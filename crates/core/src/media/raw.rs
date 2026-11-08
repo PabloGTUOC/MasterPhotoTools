@@ -53,7 +53,7 @@ pub struct DerivedJpeg {
 /// **CR3 is deliberately absent.** It uses an ISO-BMFF container rather than a
 /// TIFF-based one and needs separate handling; F14 puts it out of scope until
 /// needed, and silently mis-handling it would be worse than declining it.
-pub const RAW_EXTENSIONS: &[&str] = &["dng", "nef", "arw", "cr2", "raf"];
+pub const RAW_EXTENSIONS: &[&str] = &["dng", "nef", "arw", "cr2", "raf", "orf"];
 
 pub fn is_raw(path: &Path) -> bool {
     path.extension()
@@ -693,6 +693,12 @@ mod tests {
         assert!(!is_raw(Path::new("a.cr3")));
         assert!(!is_raw(Path::new("a.jpg")));
         assert!(!is_raw(Path::new("noextension")));
+    }
+
+    #[test]
+    fn an_orf_is_a_raw_file() {
+        assert!(is_raw(Path::new("a.orf")));
+        assert!(is_raw(Path::new("a.ORF")));
     }
 
     // ------------------------------------------------------- jpeg dimensions

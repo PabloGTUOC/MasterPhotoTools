@@ -16,6 +16,7 @@ use rollchrome_core::media::edit::pipeline::AdjustmentRecipe;
 use rollchrome_core::media::edit::preview::{
     AutoTone, PreviewSession, PreviewStage, RgbaFrame, WhiteBalancePick,
 };
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -45,7 +46,6 @@ pub struct ActivePreview {
 
 struct CachedDevelopPreview {
     path: PathBuf,
-    exposure_bits: u32,
     preview: Arc<rollchrome_core::media::develop::DevelopPreview>,
 }
 
@@ -60,11 +60,13 @@ pub struct AppState {
     /// closes and frees the first. The session is also closed when explicitly dismissed
     /// or when the window closes (via `on_window_event` in `main.rs` calling `close_any_preview`).
     active_preview: Mutex<Option<ActivePreview>>,
-    /// Cached develop preview (RP-1).
+    /// Cached develop previews (RP-1, RP-12).
     ///
-    /// Memory: at most one DevelopPreview is kept, keyed by resolved path and exposure.
-    /// Changing a look re-renders without re-developing the RAW.
-    develop_preview: Mutex<Option<CachedDevelopPreview>>,
+    /// Memory: keeps the eight most recently used DevelopPreviews, keyed by resolved path only.
+    /// Changing a look or exposure re-renders from the linear preview without re-developing the RAW.
+    /// Returning to a recently viewed photograph is immediate.
+    /// A photograph's file having changed on disk is not handled.
+    develop_preview: Mutex<VecDeque<CachedDevelopPreview>>,
     develop_preview_runs: AtomicU64,
 }
 
@@ -78,7 +80,7 @@ impl AppState {
             config: RwLock::new(Arc::new(config)),
             jobs: JobRunner::new(ledger, sink),
             active_preview: Mutex::new(None),
-            develop_preview: Mutex::new(None),
+            develop_preview: Mutex::new(VecDeque::with_capacity(8)),
             develop_preview_runs: AtomicU64::new(0),
         }
     }
@@ -264,46 +266,55 @@ impl AppState {
         self.develop_preview_runs.load(Ordering::SeqCst)
     }
 
-    /// Returns a cached DevelopPreview or creates and caches one (RP-1).
+    /// Returns a cached DevelopPreview or creates and caches one (RP-1, RP-12).
     ///
+    /// The cache keeps the eight most recently used DevelopPreviews, keyed by resolved path only.
     /// The lock is NOT held during the slow RAW development.
+    /// A photograph's file having changed on disk is not handled.
     pub fn get_or_create_develop_preview(
         &self,
         path: &std::path::Path,
-        exposure_ev: f32,
     ) -> Result<Arc<rollchrome_core::media::develop::DevelopPreview>, Error> {
-        let exp_bits = exposure_ev.to_bits();
         // 1. Check cache with lock held briefly
         {
-            let slot = self
+            let mut cache = self
                 .develop_preview
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            if let Some(cached) = slot.as_ref() {
-                if cached.path == path && cached.exposure_bits == exp_bits {
-                    return Ok(cached.preview.clone());
-                }
+            if let Some(pos) = cache.iter().position(|c| c.path == path) {
+                let item = cache.remove(pos).unwrap();
+                let preview = item.preview.clone();
+                cache.push_back(item);
+                return Ok(preview);
             }
         }
 
         // 2. Lock is dropped. Develop RAW without holding the lock!
+        // A photograph's file having changed on disk is not handled.
         let raw = std::fs::read(path).map_err(Error::Io)?;
         self.develop_preview_runs.fetch_add(1, Ordering::SeqCst);
         let preview = Arc::new(rollchrome_core::media::develop::DevelopPreview::new(
             &raw,
-            exposure_ev,
             rollchrome_core::media::develop::PREVIEW_MAX_EDGE,
         )?);
 
-        // 3. Re-acquire lock and store the single cached preview
+        // 3. Re-acquire lock and store in LRU cache (capacity 8)
         {
-            let mut slot = self
+            let mut cache = self
                 .develop_preview
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            *slot = Some(CachedDevelopPreview {
+            if let Some(pos) = cache.iter().position(|c| c.path == path) {
+                let item = cache.remove(pos).unwrap();
+                let prev = item.preview.clone();
+                cache.push_back(item);
+                return Ok(prev);
+            }
+            if cache.len() >= 8 {
+                cache.pop_front();
+            }
+            cache.push_back(CachedDevelopPreview {
                 path: path.to_path_buf(),
-                exposure_bits: exp_bits,
                 preview: preview.clone(),
             });
         }

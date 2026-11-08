@@ -281,3 +281,12 @@ the automated check drives the screen against a stub.
       **Run:** in Edit, open a real photograph and make several adjustments. In the Export Render section, export the photograph across all supported formats: JPEG at quality 90, TIFF at 16-bit, PNG at 8-bit, WebP (lossless), and AVIF at quality 70. Test resizing with Long Edge (e.g. 1920 px) and Megapixels (e.g. 12 MP), output sharpening (Screen and Print), and a custom name template `{date}_{name}_{version}_{edit}` with No Location metadata policy. Open each exported file in macOS Preview, a web browser (Safari/Chrome), or another image viewer.
       **Pass:** every file opens cleanly without decode errors or corrupted artifacts; JPEG matches the requested quality and dimensions; 16-bit TIFF displays full dynamic range; PNG and WebP show sharp pixel-exact rendering; AVIF opens with photographic fidelity at compact file size; dimensions strictly follow the resize constraint without enlargement; sharpened files exhibit clean edge acuity tailored for display/print; GPS location metadata is cleanly stripped when No Location is chosen while camera and capture timestamp remain intact; custom filename template substitution and monotonic numbering work accurately.
       **Result:**
+
+## MV-31 — Owner's cameras: XZ-1, D60, and X100VI (RP-12)
+
+[`../briefs/RP-12.md`](../briefs/RP-12.md). Develop real RAW captures and compare with camera JPEG.
+
+- [ ] **MV-31.1 — Develop real XZ-1, D60, and X100VI RAW captures.**
+      **Run:** in Develop, point the folder input at a directory containing real RAW captures from Olympus XZ-1 (.ORF), Nikon D60 (.NEF), and Fujifilm X100VI (.RAF, 40 MP). Verify that .ORF files are listed alongside .NEF and .RAF. Select an image, assign a look, adjust the exposure slider (noting fast draft rendering during dragging and full resolution on release), and develop each file. Compare the resulting developed image with the in-camera JPEG. Note: Olympus XZ-1 is verified with the real file; Nikon D60 and Fujifilm X100VI camera support is written and wired in rawler, and manual visual comparison awaits real captures.
+      **Pass:** .ORF, .NEF, and .RAF are discovered and listed; thumbnails load upright without distortion; dragging exposure shows instant draft previews; releasing exposure settles to full preview; development produces clean JPEG/TIFF without artifacts; colors and tone curve match expectations; Olympus XZ-1 matches camera JPEG rendering.
+      **Result:**

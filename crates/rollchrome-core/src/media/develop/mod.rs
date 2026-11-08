@@ -28,7 +28,7 @@ pub mod render;
 pub mod tone;
 pub mod xtrans;
 
-pub use preview::{DevelopPreview, PREVIEW_MAX_EDGE};
+pub use preview::{DevelopPreview, PREVIEW_DRAFT_EDGE, PREVIEW_MAX_EDGE};
 pub use render::{prophoto_icc_profile, render, Look, LookSpace, OutputFormat, Rendered};
 
 /// Options controlling RAW development.
@@ -52,7 +52,7 @@ pub enum Demosaic {
 }
 
 /// Linear, scene-referred ProPhoto RGB stage.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LinearProPhoto {
     pub width: u32,
     pub height: u32,
@@ -342,15 +342,16 @@ fn develop_linear_impl(raw: &[u8], options: &DevelopOptions) -> Result<LinearPro
     })
 }
 
-/// Fully develops raw file bytes into 16-bit ProPhoto RGB image.
-pub fn develop(raw: &[u8], options: &DevelopOptions) -> Result<Developed, Error> {
-    let linear = develop_linear(raw, options)?;
-    let w = linear.width;
-    let h = linear.height;
-
-    // Apply base tone, ProPhoto ROMM transfer function, and scale to u16
-    let u16_data: Vec<u16> = linear
-        .pixels
+/// Converts linear ProPhoto RGB pixels to a developed 16-bit ProPhoto RGB image
+/// using the base tone curve and ROMM encoding.
+pub fn linear_to_developed(
+    width: u32,
+    height: u32,
+    pixels: &[[f32; 3]],
+    orientation: u16,
+    demosaic: Demosaic,
+) -> Result<Developed, Error> {
+    let u16_data: Vec<u16> = pixels
         .into_par_iter()
         .flat_map(|p| {
             let mut out = [0u16; 3];
@@ -363,7 +364,7 @@ pub fn develop(raw: &[u8], options: &DevelopOptions) -> Result<Developed, Error>
         })
         .collect();
 
-    let image = match image::ImageBuffer::from_raw(w, h, u16_data) {
+    let image = match image::ImageBuffer::from_raw(width, height, u16_data) {
         Some(img) => img,
         None => {
             return Err(Error::Internal(
@@ -374,9 +375,21 @@ pub fn develop(raw: &[u8], options: &DevelopOptions) -> Result<Developed, Error>
 
     Ok(Developed {
         image,
-        orientation: linear.orientation,
-        demosaic: linear.demosaic,
+        orientation,
+        demosaic,
     })
+}
+
+/// Fully develops raw file bytes into 16-bit ProPhoto RGB image.
+pub fn develop(raw: &[u8], options: &DevelopOptions) -> Result<Developed, Error> {
+    let linear = develop_linear(raw, options)?;
+    linear_to_developed(
+        linear.width,
+        linear.height,
+        &linear.pixels,
+        linear.orientation,
+        linear.demosaic,
+    )
 }
 
 /// Converts a 16-bit ProPhoto RGB image into standard 8-bit sRGB for display.

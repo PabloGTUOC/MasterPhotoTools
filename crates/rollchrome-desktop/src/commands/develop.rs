@@ -86,11 +86,12 @@ pub async fn preview_develop(
     name: String,
     look: Option<String>,
     exposure_ev: f32,
+    draft: bool,
     app: tauri::AppHandle,
 ) -> Result<tauri::ipc::Response, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        preview_develop_impl(&state, folder, name, look, exposure_ev)
+        preview_develop_impl(&state, folder, name, look, exposure_ev, draft)
     })
     .await
     .map_err(|e| format!("preview develop panicked: {e}"))?
@@ -103,6 +104,7 @@ pub fn preview_develop_impl(
     name: String,
     look: Option<String>,
     exposure_ev: f32,
+    draft: bool,
 ) -> Result<Vec<u8>, String> {
     validate_filename(&name).map_err(describe)?;
     let config = state.config();
@@ -120,9 +122,11 @@ pub fn preview_develop_impl(
     };
 
     let preview = state
-        .get_or_create_develop_preview(&path, exposure_ev)
+        .get_or_create_develop_preview(&path)
         .map_err(describe)?;
-    let rendered = preview.render(look_obj.as_ref()).map_err(describe)?;
+    let rendered = preview
+        .render(look_obj.as_ref(), exposure_ev, draft)
+        .map_err(describe)?;
     Ok(rendered.bytes)
 }
 

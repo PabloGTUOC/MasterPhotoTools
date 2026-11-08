@@ -331,12 +331,14 @@ export class RollchromeClient {
     name: string,
     look: string | null,
     exposureEv: number,
+    draft: boolean,
   ): Promise<Uint8Array> {
     const res = await invoke<ArrayBuffer | Uint8Array>('preview_develop', {
       folder,
       name,
       look,
       exposureEv,
+      draft,
     });
     return res instanceof Uint8Array ? res : new Uint8Array(res);
   }

@@ -17,6 +17,7 @@
  * 12. Unmounting and remounting while thumbnails load gives no overlapping thumbnail requests.
  * 13. Remounting during a run shows its progress and keeps Develop disabled.
  * 14. With Selected only, the items sent to plan_develop are exactly the selection, and changing the selection locks Develop.
+ * 15. During an exposure drag the requests carry draft: true, and the release sends one with draft: false and the final exposure.
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -672,6 +673,49 @@ try {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // 15. Exposure drag requests draft: true, release sends draft: false (RP-12)
+  // -------------------------------------------------------------------------
+  console.log('15. Checking exposure drag carries draft: true and release sends draft: false...');
+  await page.evaluate(() => {
+    window.__DEVELOP_STUB__.previewRequests = [];
+    window.__DEVELOP_STUB__.previewDelayMs = { 1: 50, 2: 50 };
+  });
+
+  const exposureRange = page.locator('[data-testid="exposure-slider-slider"]');
+  // Simulate scrubbing/dragging with input events
+  for (let i = 1; i <= 3; i++) {
+    const val = (i * 0.3).toFixed(1);
+    await exposureRange.evaluate((el, v) => {
+      el.value = v;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, val);
+    await page.waitForTimeout(30);
+  }
+
+  // Release with change event at final exposure 1.5
+  await exposureRange.evaluate((el) => {
+    el.value = '1.5';
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(300);
+
+  const dragRequests = await page.evaluate(() => window.__DEVELOP_STUB__.previewRequests);
+  console.log(`  Drag/release preview requests: ${JSON.stringify(dragRequests)}`);
+
+  const hasDraftTrue = dragRequests.some((r) => r.draft === true);
+  if (!hasDraftTrue) {
+    failures.push(
+      `During an exposure drag the requests carry draft: true; none found in: ${JSON.stringify(dragRequests)}`,
+    );
+  }
+
+  const lastReq = dragRequests[dragRequests.length - 1];
+  if (!lastReq || lastReq.draft !== false || Math.abs(lastReq.exposure_ev - 1.5) > 0.01) {
+    failures.push(
+      `The release must send one with draft: false and the final exposure (1.5), got: ${JSON.stringify(lastReq)}`,
+    );
+  }
 } catch (err) {
   failures.push(`Test execution threw: ${err instanceof Error ? err.stack : String(err)}`);
 } finally {
@@ -686,5 +730,5 @@ if (failures.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log('\ncheck:develop PASSED: all 14 checks verified successfully.');
+  console.log('\ncheck:develop PASSED: all 15 checks verified successfully.');
 }

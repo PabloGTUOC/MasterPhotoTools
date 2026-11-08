@@ -982,9 +982,9 @@ fn a_preview_fits_the_long_edge_and_keeps_the_aspect_ratio() {
     let dng = DngBuilder::new_bayer(width, height).build(&pixels);
 
     let max_edge = 120u32;
-    let preview = rollchrome_core::media::develop::DevelopPreview::new(&dng, 0.0, max_edge)
+    let preview = rollchrome_core::media::develop::DevelopPreview::new(&dng, max_edge)
         .expect("develop preview");
-    let rendered = preview.render(None).expect("render preview");
+    let rendered = preview.render(None, 0.0, false).expect("render preview");
 
     assert_eq!(rendered.width, 120);
     assert_eq!(rendered.height, 80);
@@ -1001,9 +1001,9 @@ fn a_preview_is_upright_for_a_rotated_raw() {
     let dng = builder.build(&pixels);
 
     let max_edge = 120u32;
-    let preview = rollchrome_core::media::develop::DevelopPreview::new(&dng, 0.0, max_edge)
+    let preview = rollchrome_core::media::develop::DevelopPreview::new(&dng, max_edge)
         .expect("develop preview");
-    let rendered = preview.render(None).expect("render preview");
+    let rendered = preview.render(None, 0.0, false).expect("render preview");
 
     // Upright should be portrait: width 80, height 120
     assert_eq!(rendered.width, 80);
@@ -1029,9 +1029,11 @@ fn a_preview_with_a_look_matches_the_full_render_within_two_levels() {
         .to_rgb8();
 
     // Preview render (reduced to max edge 48)
-    let preview = rollchrome_core::media::develop::DevelopPreview::new(&dng, 0.0, 48)
-        .expect("preview develop");
-    let prev_rendered = preview.render(Some(&look)).expect("preview render");
+    let preview =
+        rollchrome_core::media::develop::DevelopPreview::new(&dng, 48).expect("preview develop");
+    let prev_rendered = preview
+        .render(Some(&look), 0.0, false)
+        .expect("preview render");
     let prev_img = image::load_from_memory(&prev_rendered.bytes)
         .expect("decode preview jpeg")
         .to_rgb8();
@@ -1157,4 +1159,150 @@ fn resolve_look_finds_builtin_and_library_and_refuses_an_unknown_name() {
     // 4. Unknown library look refused
     let unknown_library = rollchrome_core::tools::develop::resolve_look("unknown.cube", &store);
     assert!(unknown_library.is_err());
+}
+
+#[test]
+fn an_orf_is_listed_for_development() {
+    let temp = tempfile::tempdir().unwrap();
+    let folder = temp.path();
+
+    std::fs::write(folder.join("PC280001.ORF"), b"raw").unwrap();
+    std::fs::write(folder.join("other.jpg"), b"jpeg").unwrap();
+    std::fs::write(folder.join("readme.txt"), b"text").unwrap();
+
+    let names = rollchrome_core::tools::develop_folder::raw_names(folder).expect("list raw names");
+    assert_eq!(names, vec!["PC280001.ORF".to_string()]);
+}
+
+#[test]
+fn changing_exposure_needs_only_the_cached_linear_image() {
+    let width = 96u32;
+    let height = 64u32;
+    let pixels = vec![2000u16; (width * height) as usize];
+    let dng = DngBuilder::new_bayer(width, height).build(&pixels);
+
+    let preview =
+        rollchrome_core::media::develop::DevelopPreview::new(&dng, 48).expect("develop preview");
+
+    let r_base = preview.render(None, 0.0, false).expect("render 0 EV");
+    let r_plus = preview.render(None, 1.0, false).expect("render +1 EV");
+    let r_minus = preview.render(None, -1.0, false).expect("render -1 EV");
+
+    assert_eq!(r_base.width, r_plus.width);
+    assert_eq!(r_base.height, r_plus.height);
+    assert_eq!(r_base.width, r_minus.width);
+    assert_eq!(r_base.height, r_minus.height);
+
+    let img_base = image::load_from_memory(&r_base.bytes).unwrap().to_rgb8();
+    let img_plus = image::load_from_memory(&r_plus.bytes).unwrap().to_rgb8();
+    let img_minus = image::load_from_memory(&r_minus.bytes).unwrap().to_rgb8();
+
+    let px_base = img_base.get_pixel(img_base.width() / 2, img_base.height() / 2)[0];
+    let px_plus = img_plus.get_pixel(img_plus.width() / 2, img_plus.height() / 2)[0];
+    let px_minus = img_minus.get_pixel(img_minus.width() / 2, img_minus.height() / 2)[0];
+
+    assert!(
+        px_plus > px_base,
+        "expected +1 EV ({px_plus}) > 0 EV ({px_base})"
+    );
+    assert!(
+        px_minus < px_base,
+        "expected -1 EV ({px_minus}) < 0 EV ({px_base})"
+    );
+}
+
+#[test]
+fn a_preview_at_an_exposure_matches_a_full_development_at_that_exposure() {
+    let width = 96u32;
+    let height = 64u32;
+    let pixels = vec![3000u16; (width * height) as usize];
+    let dng = DngBuilder::new_bayer(width, height).build(&pixels);
+
+    let exposure_ev = 1.0f32;
+
+    // Full render at exposure_ev
+    let full_dev = develop(&dng, &DevelopOptions { exposure_ev }).expect("full develop");
+    let full_rendered =
+        render(&full_dev, None, OutputFormat::Jpeg { quality: 90 }).expect("full render");
+    let full_img = image::load_from_memory(&full_rendered.bytes)
+        .expect("decode full jpeg")
+        .to_rgb8();
+
+    // Preview render at exposure_ev (max edge 48)
+    let preview =
+        rollchrome_core::media::develop::DevelopPreview::new(&dng, 48).expect("preview develop");
+    let prev_rendered = preview
+        .render(None, exposure_ev, false)
+        .expect("preview render");
+    let prev_img = image::load_from_memory(&prev_rendered.bytes)
+        .expect("decode preview jpeg")
+        .to_rgb8();
+
+    let full_px = full_img.get_pixel(full_img.width() / 2, full_img.height() / 2);
+    let prev_px = prev_img.get_pixel(prev_img.width() / 2, prev_img.height() / 2);
+
+    for c in 0..3 {
+        let diff = (full_px[c] as i32 - prev_px[c] as i32).abs();
+        assert!(
+            diff <= 2,
+            "Channel {c} diff {diff} > 2 levels: full={}, preview={}",
+            full_px[c],
+            prev_px[c]
+        );
+    }
+}
+
+#[test]
+fn a_draft_preview_is_smaller_and_agrees_with_the_full_preview() {
+    let width = 1200u32;
+    let height = 800u32;
+    let pixels = vec![3500u16; (width * height) as usize];
+    let dng = DngBuilder::new_bayer(width, height).build(&pixels);
+
+    let preview = rollchrome_core::media::develop::DevelopPreview::new(
+        &dng,
+        rollchrome_core::media::develop::PREVIEW_MAX_EDGE,
+    )
+    .expect("develop preview");
+
+    let exposure_ev = 0.5f32;
+    let full_rendered = preview
+        .render(None, exposure_ev, false)
+        .expect("full preview render");
+    let draft_rendered = preview
+        .render(None, exposure_ev, true)
+        .expect("draft preview render");
+
+    assert!(
+        draft_rendered.width < full_rendered.width,
+        "draft width {} should be < full width {}",
+        draft_rendered.width,
+        full_rendered.width
+    );
+    assert!(
+        draft_rendered.height < full_rendered.height,
+        "draft height {} should be < full height {}",
+        draft_rendered.height,
+        full_rendered.height
+    );
+
+    let full_img = image::load_from_memory(&full_rendered.bytes)
+        .expect("decode full jpeg")
+        .to_rgb8();
+    let draft_img = image::load_from_memory(&draft_rendered.bytes)
+        .expect("decode draft jpeg")
+        .to_rgb8();
+
+    let full_px = full_img.get_pixel(full_img.width() / 2, full_img.height() / 2);
+    let draft_px = draft_img.get_pixel(draft_img.width() / 2, draft_img.height() / 2);
+
+    for c in 0..3 {
+        let diff = (full_px[c] as i32 - draft_px[c] as i32).abs();
+        assert!(
+            diff <= 3,
+            "Channel {c} diff {diff} > 3 levels: full={}, draft={}",
+            full_px[c],
+            draft_px[c]
+        );
+    }
 }

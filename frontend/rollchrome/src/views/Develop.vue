@@ -89,6 +89,7 @@ interface WantedPreviewState {
   name: string;
   look: string | null;
   exposure_ev: number;
+  draft: boolean;
 }
 let previewInFlight = false;
 let pendingPreviewState: WantedPreviewState | null = null;
@@ -347,6 +348,16 @@ function onLookChange(event: Event) {
   triggerPreview();
 }
 
+function onExposureInput(exposure_ev: number) {
+  const updated = { ...moduleAssignments.value };
+  for (const name of selection.value) {
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0 };
+    updated[name] = { ...existing, exposure_ev };
+  }
+  moduleAssignments.value = updated;
+  triggerPreview(true);
+}
+
 function onExposureChange(exposure_ev: number) {
   const updated = { ...moduleAssignments.value };
   for (const name of selection.value) {
@@ -354,14 +365,14 @@ function onExposureChange(exposure_ev: number) {
     updated[name] = { ...existing, exposure_ev };
   }
   moduleAssignments.value = updated;
-  triggerPreview();
+  triggerPreview(false);
 }
 
 // ---------------------------------------------------------------------------
 // Actions: Serialized at-most-one-in-flight preview rendering (RP-1 review item 1)
 // ---------------------------------------------------------------------------
 
-async function triggerPreview() {
+async function triggerPreview(draft = false) {
   const targetPhoto = lastClicked.value;
   const currentPath = folder.value.trim();
   if (!targetPhoto || !currentPath || !photos.value.includes(targetPhoto)) {
@@ -380,6 +391,7 @@ async function triggerPreview() {
     name: targetPhoto,
     look: assignment.look,
     exposure_ev: assignment.exposure_ev,
+    draft,
   };
 
   if (previewInFlight) {
@@ -403,6 +415,7 @@ async function executePreview(wanted: WantedPreviewState) {
       wanted.name,
       wanted.look,
       wanted.exposure_ev,
+      wanted.draft,
     );
     if (seq === previewSeq) {
       if (previewUrl.value) {
@@ -785,7 +798,7 @@ onMounted(async () => {
               :disabled="selection.length === 0 || isDeveloping"
               test-id="exposure-slider"
               @change="onExposureChange"
-              @update:model-value="onExposureChange"
+              @update:model-value="onExposureInput"
             />
           </div>
         </div>

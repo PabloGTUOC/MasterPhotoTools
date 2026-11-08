@@ -135,6 +135,7 @@ fn preview_refuses_a_name_that_leaves_the_folder() {
         "../escape.dng".to_string(),
         None,
         0.0,
+        false,
     )
     .unwrap_err();
     assert!(err1.contains("path separators or '..'"));
@@ -145,6 +146,7 @@ fn preview_refuses_a_name_that_leaves_the_folder() {
         "..".to_string(),
         None,
         0.0,
+        false,
     )
     .unwrap_err();
     assert!(err2.contains("path separators or '..'"));
@@ -155,6 +157,7 @@ fn preview_refuses_a_name_that_leaves_the_folder() {
         "sub/file.dng".to_string(),
         None,
         0.0,
+        false,
     )
     .unwrap_err();
     assert!(err3.contains("path separators or '..'"));
@@ -173,6 +176,7 @@ fn preview_refuses_a_folder_outside_the_roots() {
         "sample.dng".to_string(),
         None,
         0.0,
+        false,
     )
     .unwrap_err();
 
@@ -194,6 +198,7 @@ fn preview_develop_returns_a_jpeg_for_a_synthetic_raw() {
         "sample.dng".to_string(),
         Some("builtin:fujifilm-classic-chrome".to_string()),
         0.0,
+        false,
     )
     .expect("preview develop");
 
@@ -221,6 +226,7 @@ fn a_second_look_on_the_same_photo_does_not_develop_it_again() {
         "photo.dng".to_string(),
         Some("builtin:fujifilm-classic-chrome".to_string()),
         0.0,
+        false,
     )
     .expect("first look");
 
@@ -233,8 +239,95 @@ fn a_second_look_on_the_same_photo_does_not_develop_it_again() {
         "photo.dng".to_string(),
         Some("builtin:ricoh-standard".to_string()),
         0.0,
+        false,
     )
     .expect("second look");
 
     assert_eq!(state.develop_preview_runs(), 1);
+}
+
+#[test]
+fn changing_exposure_does_not_develop_the_photo_again() {
+    let f = fixture();
+    let state = make_state(&f);
+
+    let pixels = vec![3000u16; 64 * 48];
+    let dng = dng::DngBuilder::new_bayer(64, 48).build(&pixels);
+    std::fs::write(f.root.join("photo.dng"), dng).unwrap();
+
+    assert_eq!(state.develop_preview_runs(), 0);
+
+    let _ = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        f.root.to_string_lossy().to_string(),
+        "photo.dng".to_string(),
+        None,
+        0.0,
+        false,
+    )
+    .expect("first render");
+
+    assert_eq!(state.develop_preview_runs(), 1);
+
+    let _ = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        f.root.to_string_lossy().to_string(),
+        "photo.dng".to_string(),
+        None,
+        1.0,
+        false,
+    )
+    .expect("second render with new exposure");
+
+    assert_eq!(state.develop_preview_runs(), 1);
+}
+
+#[test]
+fn going_back_to_a_recent_photo_does_not_develop_it_again() {
+    let f = fixture();
+    let state = make_state(&f);
+
+    let pixels = vec![3000u16; 64 * 48];
+    let dng1 = dng::DngBuilder::new_bayer(64, 48).build(&pixels);
+    let dng2 = dng::DngBuilder::new_bayer(64, 48).build(&pixels);
+    std::fs::write(f.root.join("photo1.dng"), dng1).unwrap();
+    std::fs::write(f.root.join("photo2.dng"), dng2).unwrap();
+
+    assert_eq!(state.develop_preview_runs(), 0);
+
+    // Develop photo 1
+    let _ = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        f.root.to_string_lossy().to_string(),
+        "photo1.dng".to_string(),
+        None,
+        0.0,
+        false,
+    )
+    .expect("photo 1");
+    assert_eq!(state.develop_preview_runs(), 1);
+
+    // Develop photo 2
+    let _ = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        f.root.to_string_lossy().to_string(),
+        "photo2.dng".to_string(),
+        None,
+        0.0,
+        false,
+    )
+    .expect("photo 2");
+    assert_eq!(state.develop_preview_runs(), 2);
+
+    // Go back to photo 1
+    let _ = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        f.root.to_string_lossy().to_string(),
+        "photo1.dng".to_string(),
+        None,
+        0.0,
+        false,
+    )
+    .expect("photo 1 again");
+    assert_eq!(state.develop_preview_runs(), 2);
 }

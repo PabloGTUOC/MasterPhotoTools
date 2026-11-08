@@ -1,6 +1,6 @@
 # `RP-7` · Detail: sharpening, noise reduction, hot pixels
 
-> **Status:** briefed
+> **Status:** **approved**
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-7` · **Branch:** `rp-7`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -85,7 +85,7 @@ The regularisation constants are yours to tune against the tests; put why they h
 
 ### Acceptance
 
-- [ ] `rollchrome-core` gains exactly these thirteen tests, in a new `crates/rollchrome-core/tests/detail_tests.rs`:
+- [x] `rollchrome-core` gains exactly these thirteen tests, in a new `crates/rollchrome-core/tests/detail_tests.rs`:
   `detail_at_rest_changes_nothing` (no `detail` and an identity one give identical bytes),
   `sharpening_raises_the_contrast_of_an_edge`,
   `sharpening_leaves_a_flat_area_alone`,
@@ -99,9 +99,9 @@ The regularisation constants are yours to tune against the tests; put why they h
   `changing_another_slider_does_not_recompute_detail` (`detail_computes() == 1` after two renders differing only in exposure),
   `a_recipe_written_before_detail_still_loads`,
   `a_sharpened_photograph_is_not_identity`.
-- [ ] Counts: workspace 1139 → 1152, `rollchrome-core` 307 → 320; `phototools-core` 713, `phototools-desktop` 26, `rollchrome-desktop` 22 unchanged. Every existing test still there, none weakened (G7).
-- [ ] `check:detail` asserts all eight, as numbered here, and passes; all the other checks unchanged and passing.
-- [ ] No `todo!()`, bare lock `unwrap()` or swallowed error on a shipped path (G10).
+- [x] Counts: workspace 1139 → 1152, `rollchrome-core` 307 → 320; `phototools-core` 713, `phototools-desktop` 26, `rollchrome-desktop` 22 unchanged. Every existing test still there, none weakened (G7).
+- [x] `check:detail` asserts all eight, as numbered here, and passes; all the other checks unchanged and passing.
+- [x] No `todo!()`, bare lock `unwrap()` or swallowed error on a shipped path (G10).
 
 ### Gates
 
@@ -1106,3 +1106,9 @@ Saved screenshot to frontend/rollchrome/layout-proof/detail.png
 Assertions run: 8/8
 All 8 assertions PASSED!
 ```
+
+### Round 2 — **Approved**
+
+**Checked.** Re-ran every gate on `rp-7` at `080956a` with `--no-fail-fast`: fmt and clippy clean, build clean; workspace 1153, `phototools-core` 713, `rollchrome-core` 321, `phototools-desktop` 26, `rollchrome-desktop` 22, none failed or ignored; typecheck, build and every check pass. Sharpening now uses a real Gaussian of radius `ceil(3σ)`, the slider is continuous, and the new test pins both the difference between radii and the reach at a proxy. On a 24 MP file with everything on: `Drag` 43 ms, `Settle` 162 ms, `Full` 1657 ms, and 37 ms for a later `Full` changing only exposure, as reported.
+
+**Not verified.** Sharpening and noise reduction on a real high-ISO photograph: `MV-28`.

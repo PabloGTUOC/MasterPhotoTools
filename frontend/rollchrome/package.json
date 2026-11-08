@@ -10,7 +10,8 @@
     "check:transport": "node scripts/check-transport.mjs",
     "check:edit": "node scripts/check-edit.mjs",
     "check:bulk-lut": "node scripts/check-bulk-lut.mjs",
-    "check:develop": "node scripts/check-develop.mjs"
+    "check:develop": "node scripts/check-develop.mjs",
+    "check:viewing": "node scripts/check-viewing.mjs"
   },
   "dependencies": {
     "@phototools/shared": "file:../shared",

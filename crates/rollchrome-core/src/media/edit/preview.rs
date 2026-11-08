@@ -101,6 +101,13 @@ pub const DRAG_MAX_EDGE: u32 = 1280;
 /// Maximum long-edge pixel dimension for settled preview on release (1440p long edge).
 pub const SETTLE_MAX_EDGE: u32 = 2560;
 
+/// Maximum long-edge pixel dimension for full-resolution preview.
+///
+/// Limited to 8192 px because HTML5 Canvas has area and texture size limits across
+/// web browsers (e.g. WebKit canvas size limits, WebGL MAX_TEXTURE_SIZE). Photographs
+/// with a long edge exceeding 8192 px are scaled to this limit for the Full preview stage.
+pub const FULL_MAX_EDGE: u32 = 8192;
+
 /// Stage of interactive preview rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PreviewStage {
@@ -108,6 +115,8 @@ pub enum PreviewStage {
     Drag,
     /// 1440p long-edge proxy when mouse is released to settle.
     Settle,
+    /// Full-resolution preview (up to 8192 px on the long edge).
+    Full,
 }
 
 /// An uncompressed RGBA8 pixel frame ready for HTML5 Canvas ImageData or display.
@@ -169,12 +178,15 @@ struct CachedGeometry {
     geometry: super::geometry::Geometry,
     drag_transformed: Option<LinearBuffer>,
     settle_transformed: Option<LinearBuffer>,
+    full_transformed: Option<LinearBuffer>,
 }
 
 /// An interactive preview session constructed once per image.
 ///
 /// Holds pre-downscaled, pre-linearised proxies for drag (720p) and settle (1440p)
 /// stages. Linearisation is performed once during session creation rather than per slider tick.
+/// The full-resolution linear buffer is decoded and linearised lazily when first requested
+/// by `PreviewStage::Full`, capped at `FULL_MAX_EDGE = 8192`.
 ///
 /// In ED-13:
 /// Holds cached geometry-transformed linear proxies (`cached_geom`) when geometry adjustments
@@ -183,6 +195,11 @@ struct CachedGeometry {
 pub struct PreviewSession {
     drag_linear: LinearBuffer,
     settle_linear: LinearBuffer,
+    source_path: Option<std::path::PathBuf>,
+    source_clone: Option<ImageBuffer>,
+    full_linear: Mutex<Option<Arc<LinearBuffer>>>,
+    full_decodes: AtomicUsize,
+    full_dimensions: (u32, u32),
     pub orientation: u32,
     pub source_sha256: String,
     cached_geom: Mutex<Option<CachedGeometry>>,
@@ -211,7 +228,11 @@ impl MaskRasters for SessionRasters<'_> {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         raster.hash(&mut hasher);
         let key = hasher.finish();
-        let mut cache = self.session.stored.lock().unwrap();
+        let mut cache = self
+            .session
+            .stored
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some((k, r)) = cache.get(&m.id) {
             if *k == key {
                 return Ok(r.clone());
@@ -232,9 +253,28 @@ impl PreviewSession {
             .map(|m| m.orientation as u32)
             .unwrap_or(1);
         let image = super::pipeline::decode_image(path)?;
-        let mut session = Self::from_image_buffer_with_orientation(&image, orientation)?;
-        session.source_sha256 = source_sha256;
-        Ok(session)
+        let full_dimensions = fit_full_edge(image.width(), image.height(), FULL_MAX_EDGE);
+        let drag_buf = downscale_image_buffer(&image, DRAG_MAX_EDGE)?;
+        let settle_buf = downscale_image_buffer(&image, SETTLE_MAX_EDGE)?;
+
+        let drag_linear = LinearBuffer::from_image_buffer(&drag_buf);
+        let settle_linear = LinearBuffer::from_image_buffer(&settle_buf);
+
+        Ok(Self {
+            drag_linear,
+            settle_linear,
+            source_path: Some(path.to_path_buf()),
+            source_clone: None,
+            full_linear: Mutex::new(None),
+            full_decodes: AtomicUsize::new(0),
+            full_dimensions,
+            orientation: if orientation == 0 { 1 } else { orientation },
+            source_sha256,
+            cached_geom: Mutex::new(None),
+            geom_recompute_count: AtomicUsize::new(0),
+            brushes: Mutex::new(HashMap::new()),
+            stored: Mutex::new(HashMap::new()),
+        })
     }
 
     /// Build a preview session from a decoded image buffer.
@@ -256,6 +296,7 @@ impl PreviewSession {
         image: &ImageBuffer,
         orientation: u32,
     ) -> Result<Self, Error> {
+        let full_dimensions = fit_full_edge(image.width(), image.height(), FULL_MAX_EDGE);
         let drag_buf = downscale_image_buffer(image, DRAG_MAX_EDGE)?;
         let settle_buf = downscale_image_buffer(image, SETTLE_MAX_EDGE)?;
 
@@ -265,6 +306,11 @@ impl PreviewSession {
         Ok(Self {
             drag_linear,
             settle_linear,
+            source_path: None,
+            source_clone: Some(image.clone()),
+            full_linear: Mutex::new(None),
+            full_decodes: AtomicUsize::new(0),
+            full_dimensions,
             orientation: if orientation == 0 { 1 } else { orientation },
             source_sha256: String::new(),
             cached_geom: Mutex::new(None),
@@ -300,6 +346,38 @@ impl PreviewSession {
         (self.settle_linear.width, self.settle_linear.height)
     }
 
+    /// Dimensions (width, height) of the full preview frame, without decoding.
+    pub fn full_dimensions(&self) -> (u32, u32) {
+        self.full_dimensions
+    }
+
+    /// Number of times the full source buffer was decoded or converted.
+    pub fn full_decodes(&self) -> usize {
+        self.full_decodes.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn ensure_full_linear(&self) -> Result<Arc<LinearBuffer>, Error> {
+        let mut lock = self.full_linear.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(buf) = lock.as_ref() {
+            return Ok(buf.clone());
+        }
+        let image = if let Some(path) = &self.source_path {
+            super::pipeline::decode_image(path)?
+        } else if let Some(clone) = &self.source_clone {
+            clone.clone()
+        } else {
+            return Err(Error::Internal(
+                "No source available for full stage decode".into(),
+            ));
+        };
+        self.full_decodes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let fitted = downscale_image_buffer(&image, FULL_MAX_EDGE)?;
+        let linear = Arc::new(LinearBuffer::from_image_buffer(&fitted));
+        *lock = Some(linear.clone());
+        Ok(linear)
+    }
+
     /// Renders an RGBA8 frame for the requested preview stage with the specified recipe and LUT.
     ///
     /// Validates LUT presence and hash equality via `validate_lut`.
@@ -326,7 +404,7 @@ impl PreviewSession {
         };
 
         if let Some(geom) = recipe_ref.geometry.as_ref() {
-            let mut cache = self.cached_geom.lock().unwrap();
+            let mut cache = self.cached_geom.lock().unwrap_or_else(|e| e.into_inner());
             let hit = match &*cache {
                 Some(c) => c.geometry == *geom,
                 None => false,
@@ -338,6 +416,7 @@ impl PreviewSession {
                     geometry: geom.clone(),
                     drag_transformed: None,
                     settle_transformed: None,
+                    full_transformed: None,
                 });
             }
             let c = cache.as_mut().unwrap();
@@ -354,15 +433,19 @@ impl PreviewSession {
                             Some(geom.apply_to_linear(&self.settle_linear, self.orientation)?);
                     }
                 }
+                PreviewStage::Full => {
+                    if c.full_transformed.is_none() {
+                        let full = self.ensure_full_linear()?;
+                        c.full_transformed = Some(geom.apply_to_linear(&full, self.orientation)?);
+                    }
+                }
             }
             let proxy = match stage {
                 PreviewStage::Drag => c.drag_transformed.as_ref().unwrap(),
                 PreviewStage::Settle => c.settle_transformed.as_ref().unwrap(),
+                PreviewStage::Full => c.full_transformed.as_ref().unwrap(),
             };
-            let (stored_w, stored_h) = match stage {
-                PreviewStage::Drag => (self.drag_linear.width, self.drag_linear.height),
-                PreviewStage::Settle => (self.settle_linear.width, self.settle_linear.height),
-            };
+            let (stored_w, stored_h) = self.stored_dims(stage);
             let masks = self.compile_masks(recipe_ref, Some(geom), stage)?;
             let mut frame = render_rgba_frame_masked(proxy, recipe_ref, lut, masks.as_ref())?;
             frame.orientation = 1;
@@ -370,9 +453,14 @@ impl PreviewSession {
                 super::masks::output_to_stored(Some(geom), stored_w, stored_h, self.orientation)?;
             Ok(frame)
         } else {
+            let full_buf;
             let proxy = match stage {
                 PreviewStage::Drag => &self.drag_linear,
                 PreviewStage::Settle => &self.settle_linear,
+                PreviewStage::Full => {
+                    full_buf = self.ensure_full_linear()?;
+                    &full_buf
+                }
             };
             let masks = self.compile_masks(recipe_ref, None, stage)?;
             let mut frame = render_rgba_frame_masked(proxy, recipe_ref, lut, masks.as_ref())?;
@@ -399,6 +487,7 @@ impl PreviewSession {
         match stage {
             PreviewStage::Drag => (self.drag_linear.width, self.drag_linear.height),
             PreviewStage::Settle => (self.settle_linear.width, self.settle_linear.height),
+            PreviewStage::Full => self.full_dimensions,
         }
     }
 
@@ -413,11 +502,11 @@ impl PreviewSession {
         // Forget the rasters of masks that are gone.
         self.brushes
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .retain(|(id, _), _| recipe.masks.iter().any(|m| &m.id == id));
         self.stored
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .retain(|id, _| recipe.masks.iter().any(|m| &m.id == id));
         CompiledMasks::compile_with(
             &recipe.masks,
@@ -436,7 +525,7 @@ impl PreviewSession {
 
     /// The brush rasters of mask `m` at `stage`, drawing only what changed since last asked.
     fn brush_raster(&self, m: &Mask, stage: PreviewStage, w: u32, h: u32) -> Arc<BrushRaster> {
-        let mut caches = self.brushes.lock().unwrap();
+        let mut caches = self.brushes.lock().unwrap_or_else(|e| e.into_inner());
         caches
             .entry((m.id.clone(), stage))
             .or_insert_with(|| BrushCache::new(w, h))
@@ -448,7 +537,7 @@ impl PreviewSession {
     pub fn brush_segments_drawn(&self) -> usize {
         self.brushes
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .values()
             .map(|c| c.segments_drawn)
             .sum()
@@ -467,9 +556,14 @@ impl PreviewSession {
             .iter()
             .find(|m| m.id == mask_id)
             .ok_or_else(|| Error::Refused(format!("No mask {mask_id} in this recipe")))?;
+        let full_buf;
         let proxy = match stage {
             PreviewStage::Drag => &self.drag_linear,
             PreviewStage::Settle => &self.settle_linear,
+            PreviewStage::Full => {
+                full_buf = self.ensure_full_linear()?;
+                &full_buf
+            }
         };
         let (stored_w, stored_h) = (proxy.width, proxy.height);
         let (out_w, out_h, affine) = match recipe.geometry.as_ref() {
@@ -497,18 +591,29 @@ impl PreviewSession {
     }
 }
 
+/// Calculates the dimensions (width, height) scaled down so the longest edge does not exceed `max_edge`.
+///
+/// If `w.max(h) <= max_edge` or `max_edge == 0`, returns `(w, h)` unmodified.
+pub fn fit_full_edge(w: u32, h: u32, max_edge: u32) -> (u32, u32) {
+    let long = w.max(h);
+    if long <= max_edge || max_edge == 0 {
+        return (w, h);
+    }
+    let ratio = max_edge as f64 / long as f64;
+    let new_w = ((w as f64 * ratio).floor() as u32).max(1);
+    let new_h = ((h as f64 * ratio).floor() as u32).max(1);
+    (new_w, new_h)
+}
+
 /// Downscales an ImageBuffer so its long edge does not exceed `max_edge`.
 /// If the image is already within bounds, returns a clone without scaling.
 pub fn downscale_image_buffer(buf: &ImageBuffer, max_edge: u32) -> Result<ImageBuffer, Error> {
     let w = buf.width();
     let h = buf.height();
-    let long = w.max(h);
-    if long <= max_edge || max_edge == 0 {
+    let (new_w, new_h) = fit_full_edge(w, h, max_edge);
+    if new_w == w && new_h == h {
         return Ok(buf.clone());
     }
-    let ratio = max_edge as f64 / long as f64;
-    let new_w = ((w as f64 * ratio).floor() as u32).max(1);
-    let new_h = ((h as f64 * ratio).floor() as u32).max(1);
 
     match buf {
         ImageBuffer::Rgb8 { data, .. } => {

@@ -647,7 +647,7 @@ export interface Mask {
 }
 
 /** Stage for preview rendering. */
-export type PreviewStage = 'Drag' | 'Settle';
+export type PreviewStage = 'Drag' | 'Settle' | 'Full';
 
 /** Open preview response. */
 export interface OpenPreviewResult {
@@ -655,6 +655,10 @@ export interface OpenPreviewResult {
   source_sha256?: string;
   drag: [number, number];
   settle: [number, number];
+  full_width: number;
+  full_height: number;
+  settle_width: number;
+  settle_height: number;
   orientation: number;
   read_only: boolean;
 }

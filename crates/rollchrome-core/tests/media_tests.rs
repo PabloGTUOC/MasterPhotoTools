@@ -2677,3 +2677,173 @@ fn a_stored_automatic_mask_acts_where_it_covers_and_a_damaged_one_is_refused() {
     };
     assert!(session.render(&recipe, None, PreviewStage::Drag).is_err());
 }
+
+#[test]
+fn the_full_stage_renders_every_source_pixel() {
+    use rollchrome_core::media::edit::{
+        AdjustmentRecipe, ImageBuffer, PreviewSession, PreviewStage,
+    };
+    let w = 800u32;
+    let h = 600u32;
+    let data = vec![128u8; (w * h * 3) as usize];
+    let img = ImageBuffer::Rgb8 {
+        width: w,
+        height: h,
+        data,
+    };
+    let session = PreviewSession::new(&img).unwrap();
+    let recipe = AdjustmentRecipe::default();
+    let frame = session.render(&recipe, None, PreviewStage::Full).unwrap();
+    assert_eq!(frame.width, w);
+    assert_eq!(frame.height, h);
+    assert_eq!(frame.bytes.len(), (w * h * 4) as usize);
+}
+
+#[test]
+fn the_full_stage_fits_the_canvas_limit() {
+    use rollchrome_core::media::edit::{fit_full_edge, FULL_MAX_EDGE};
+    // Within limits: unmodified
+    assert_eq!(fit_full_edge(4000, 3000, FULL_MAX_EDGE), (4000, 3000));
+    assert_eq!(fit_full_edge(8192, 5461, FULL_MAX_EDGE), (8192, 5461));
+    // Over limit: downscaled to FULL_MAX_EDGE on the long edge
+    assert_eq!(fit_full_edge(10000, 5000, 8192), (8192, 4096));
+    assert_eq!(fit_full_edge(6000, 12000, 8192), (4096, 8192));
+    // Zero max_edge: unmodified
+    assert_eq!(fit_full_edge(10000, 5000, 0), (10000, 5000));
+}
+
+#[test]
+fn opening_a_session_and_rendering_drag_and_settle_decodes_nothing_more() {
+    use rollchrome_core::media::edit::{AdjustmentRecipe, PreviewSession, PreviewStage};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.png");
+    image::RgbImage::new(400, 300).save(&path).unwrap();
+
+    let session = PreviewSession::open(&path).unwrap();
+    assert_eq!(session.full_decodes(), 0);
+
+    let recipe = AdjustmentRecipe::default();
+    let _ = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+    assert_eq!(session.full_decodes(), 0);
+
+    let _ = session.render(&recipe, None, PreviewStage::Settle).unwrap();
+    assert_eq!(session.full_decodes(), 0);
+}
+
+#[test]
+fn the_full_buffer_is_decoded_once() {
+    use rollchrome_core::media::edit::{AdjustmentRecipe, PreviewSession, PreviewStage};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.png");
+    image::RgbImage::new(400, 300).save(&path).unwrap();
+
+    let session = PreviewSession::open(&path).unwrap();
+    assert_eq!(session.full_decodes(), 0);
+
+    let recipe1 = AdjustmentRecipe::default();
+    let _ = session.render(&recipe1, None, PreviewStage::Full).unwrap();
+    assert_eq!(session.full_decodes(), 1);
+
+    let recipe2 = AdjustmentRecipe {
+        exposure: 1.0,
+        ..Default::default()
+    };
+    let _ = session.render(&recipe2, None, PreviewStage::Full).unwrap();
+    assert_eq!(session.full_decodes(), 1);
+}
+
+#[test]
+fn the_full_stage_applies_crop_and_masks_as_settle_does() {
+    use rollchrome_core::media::edit::{
+        AdjustmentRecipe, Geometry, ImageBuffer, LocalAdjustments, Mask, MaskKind, NormalizedCrop,
+        PreviewSession, PreviewStage,
+    };
+    // Create an image with uniform colour patches (1200 x 800)
+    let w = 1200u32;
+    let h = 800u32;
+    let mut data = vec![0u8; (w * h * 3) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((y * w + x) * 3) as usize;
+            let patch_x = x / 300;
+            let patch_y = y / 200;
+            data[idx] = (patch_x * 60 + 40) as u8;
+            data[idx + 1] = (patch_y * 50 + 50) as u8;
+            data[idx + 2] = ((patch_x + patch_y) * 30 + 60) as u8;
+        }
+    }
+    let img = ImageBuffer::Rgb8 {
+        width: w,
+        height: h,
+        data,
+    };
+    let session = PreviewSession::new(&img).unwrap();
+
+    let crop = NormalizedCrop {
+        x: 0.1,
+        y: 0.1,
+        width: 0.8,
+        height: 0.8,
+    };
+    let geom = Geometry {
+        crop: Some(crop),
+        rotate: 0,
+        straighten: 0.0,
+        flip_h: false,
+        flip_v: false,
+        aspect: Some("original".into()),
+    };
+    let radial = Mask {
+        id: "radial1".into(),
+        name: "Radial".into(),
+        kind: MaskKind::Radial {
+            center: [0.5, 0.5],
+            radius_x: 0.3,
+            radius_y: 0.3,
+            angle: 0.0,
+            feather: 0.5,
+        },
+        invert: false,
+        opacity: 100.0,
+        enabled: true,
+        adjustments: LocalAdjustments {
+            exposure: 1.0,
+            ..Default::default()
+        },
+        strokes: vec![],
+    };
+    let recipe = AdjustmentRecipe {
+        geometry: Some(geom),
+        masks: vec![radial],
+        ..Default::default()
+    };
+
+    let settle_frame = session.render(&recipe, None, PreviewStage::Settle).unwrap();
+    let full_frame = session.render(&recipe, None, PreviewStage::Full).unwrap();
+
+    // Check corresponding positions across an 8x8 grid
+    for gy in 1..9 {
+        for gx in 1..9 {
+            let u = gx as f32 / 10.0;
+            let v = gy as f32 / 10.0;
+            let sx =
+                ((u * settle_frame.width as f32) as usize).min(settle_frame.width as usize - 1);
+            let sy =
+                ((v * settle_frame.height as f32) as usize).min(settle_frame.height as usize - 1);
+            let fx = ((u * full_frame.width as f32) as usize).min(full_frame.width as usize - 1);
+            let fy = ((v * full_frame.height as f32) as usize).min(full_frame.height as usize - 1);
+
+            let s_idx = (sy * settle_frame.width as usize + sx) * 4;
+            let f_idx = (fy * full_frame.width as usize + fx) * 4;
+
+            for c in 0..3 {
+                let s_val = settle_frame.bytes[s_idx + c] as i32;
+                let f_val = full_frame.bytes[f_idx + c] as i32;
+                assert!(
+                    (s_val - f_val).abs() <= 2,
+                    "Channel {c} mismatch at ({u}, {v}): settle={s_val}, full={f_val}"
+                );
+            }
+        }
+    }
+}

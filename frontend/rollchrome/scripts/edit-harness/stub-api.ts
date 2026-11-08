@@ -172,6 +172,10 @@ export class StubDesktopApiClient {
       source_sha256: 'stub_source_sha256_e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
       drag: [DRAG_WIDTH, DRAG_HEIGHT],
       settle: [SETTLE_WIDTH, SETTLE_HEIGHT],
+      full_width: 6000,
+      full_height: 4000,
+      settle_width: SETTLE_WIDTH,
+      settle_height: SETTLE_HEIGHT,
       orientation: stubState.orientation,
       read_only: stubState.readOnly,
     };
@@ -201,10 +205,11 @@ export class StubDesktopApiClient {
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
 
+    const isFull = stage === 'Full';
     const isSettle = stage === 'Settle';
     const isSwapped = [5, 6, 7, 8].includes(stubState.orientation);
-    let baseW = isSettle ? SETTLE_WIDTH : DRAG_WIDTH;
-    let baseH = isSettle ? SETTLE_HEIGHT : DRAG_HEIGHT;
+    let baseW = isFull ? 6000 : isSettle ? SETTLE_WIDTH : DRAG_WIDTH;
+    let baseH = isFull ? 4000 : isSettle ? SETTLE_HEIGHT : DRAG_HEIGHT;
 
     // In ED-13: Backend bakes orientation whenever geometry is present (not only when non-identity)
     const hasGeom = recipe.geometry !== null && recipe.geometry !== undefined;
@@ -501,6 +506,34 @@ export class StubDesktopApiClient {
         vibrance: 12,
         lut: null,
         lut_intensity: 1.0,
+      };
+    }
+    if (path.includes('crop_test')) {
+      return {
+        version: 2,
+        source_sha256: 'sha_crop_test',
+        exposure: 0,
+        temperature: 0,
+        tint: 0,
+        highlights: 0,
+        shadows: 0,
+        contrast: 0,
+        saturation: 0,
+        vibrance: 0,
+        whites: 0,
+        blacks: 0,
+        brightness: 0,
+        hue: 0,
+        lut: null,
+        lut_intensity: 1.0,
+        geometry: {
+          crop: { x: 0, y: 0, width: 0.4, height: 0.4 },
+          rotate: 0,
+          straighten: 0,
+          flip_h: false,
+          flip_v: false,
+          aspect: 'free',
+        },
       };
     }
     if (path.includes('corrupted_sidecar')) {

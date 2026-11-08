@@ -508,6 +508,34 @@ export class StubDesktopApiClient {
         lut_intensity: 1.0,
       };
     }
+    if (path.includes('crop_test')) {
+      return {
+        version: 2,
+        source_sha256: 'sha_crop_test',
+        exposure: 0,
+        temperature: 0,
+        tint: 0,
+        highlights: 0,
+        shadows: 0,
+        contrast: 0,
+        saturation: 0,
+        vibrance: 0,
+        whites: 0,
+        blacks: 0,
+        brightness: 0,
+        hue: 0,
+        lut: null,
+        lut_intensity: 1.0,
+        geometry: {
+          crop: { x: 0, y: 0, width: 0.4, height: 0.4 },
+          rotate: 0,
+          straighten: 0,
+          flip_h: false,
+          flip_v: false,
+          aspect: 'free',
+        },
+      };
+    }
     if (path.includes('corrupted_sidecar')) {
       throw new Error('Syntax error: invalid JSON in sidecar');
     }

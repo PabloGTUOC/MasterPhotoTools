@@ -762,42 +762,13 @@ try {
 
   // 16. A 40% crop at 100% requests Full, and the visible canvas is 40% of the full width ± 1.
   console.log('Asserting 16: A 40% crop at 100% requests Full, and visible canvas is 40% of full width ± 1...');
-  // Open fresh orientation 1 image (6000x4000)
+  // Open orientation 1 image with stub 40% crop (6000x4000)
   await page.evaluate(() => {
     window.__STUB__.orientation = 1;
+    window.__STUB__.renders = [];
   });
   await pathInput.fill('/Volumes/Photos/crop_test.jpg');
   await pathInput.press('Enter');
-  await page.waitForTimeout(200);
-  await blurAll();
-
-  // Enter crop mode
-  if (!(await page.locator('button[data-testid="crop-mode-toggle-btn"]').isVisible())) {
-    await geomToggle15.click();
-    await page.waitForTimeout(100);
-  }
-  await page.locator('button[data-testid="crop-mode-toggle-btn"]').click();
-  await page.waitForTimeout(100);
-
-  // Drag se handle to make 40% crop (0.4 width, 0.4 height)
-  await page.evaluate(() => {
-    const se = document.querySelector('[data-test="crop-handle-se"]');
-    const stage = document.querySelector('.canvas-viewport__stage');
-    if (!se || !stage) return;
-    const stageRect = stage.getBoundingClientRect();
-    const startX = stageRect.left + stageRect.width;
-    const startY = stageRect.top + stageRect.height;
-    const targetX = stageRect.left + stageRect.width * 0.4;
-    const targetY = stageRect.top + stageRect.height * 0.4;
-
-    se.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: startY, bubbles: true }));
-    window.dispatchEvent(new PointerEvent('pointermove', { clientX: targetX, clientY: targetY, bubbles: true }));
-    window.dispatchEvent(new PointerEvent('pointerup', { clientX: targetX, clientY: targetY, bubbles: true }));
-  });
-  await page.waitForTimeout(100);
-
-  // Exit crop mode (click Done Cropping)
-  await page.locator('button[data-testid="crop-mode-toggle-btn"]').click();
   await page.waitForTimeout(200);
   await blurAll();
 

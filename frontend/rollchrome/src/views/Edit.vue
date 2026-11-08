@@ -231,6 +231,8 @@ const zoom = ref<'fit' | number>('fit');
 const pan = ref<{ x: number; y: number }>({ x: 0, y: 0 });
 const fullWidth = ref(0);
 const fullHeight = ref(0);
+const dragWidth = ref(1280);
+const dragHeight = ref(854);
 const settleWidth = ref(2560);
 const settleHeight = ref(1707);
 const compareMode = ref<'off' | 'side-by-side' | 'split'>('off');
@@ -289,35 +291,44 @@ const canvasTransform = computed(() => {
   }
 });
 
-// Visual dimensions at 100% zoom (1 source px per device px, upright)
-const visual100Dimensions = computed(() => {
-  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+function getProxyLongEdge(stage: PreviewStage): number {
+  if (stage === 'Full') {
+    return Math.max(fullWidth.value, fullHeight.value) || 6000;
+  }
+  if (stage === 'Drag') {
+    return Math.max(dragWidth.value, dragHeight.value) || 1280;
+  }
+  return Math.max(settleWidth.value, settleHeight.value) || 2560;
+}
+
+function getVisualFullContentDimensions(): { width: number; height: number } {
   const fw = frameWidth.value || 1280;
   const fh = frameHeight.value || 854;
-
   const fullLongEdge = Math.max(fullWidth.value, fullHeight.value) || 6000;
-  let proxyLongEdge: number;
-  if (paintedStage.value === 'Full') {
-    proxyLongEdge = fullLongEdge;
-  } else if (paintedStage.value === 'Drag') {
-    proxyLongEdge = 1280;
-  } else {
-    proxyLongEdge = Math.max(settleWidth.value, settleHeight.value) || 2560;
-  }
-
+  const proxyLongEdge = getProxyLongEdge(paintedStage.value);
   const multiplier = paintedStage.value === 'Full' ? 1.0 : fullLongEdge / proxyLongEdge;
   const fullContentW = fw * multiplier;
   const fullContentH = fh * multiplier;
 
   if (swapsAxes.value) {
     return {
-      width: Math.round(fullContentH / dpr),
-      height: Math.round(fullContentW / dpr),
+      width: fullContentH,
+      height: fullContentW,
     };
   }
   return {
-    width: Math.round(fullContentW / dpr),
-    height: Math.round(fullContentH / dpr),
+    width: fullContentW,
+    height: fullContentH,
+  };
+}
+
+// Visual dimensions at 100% zoom (1 source px per device px, upright)
+const visual100Dimensions = computed(() => {
+  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+  const { width, height } = getVisualFullContentDimensions();
+  return {
+    width: Math.round(width / dpr),
+    height: Math.round(height / dpr),
   };
 });
 
@@ -611,28 +622,13 @@ function settleStageForCurrentZoom(): PreviewStage {
   const neededW = stageDimensions.value.width * dpr;
   const neededH = stageDimensions.value.height * dpr;
 
-  const fw = frameWidth.value || 1280;
-  const fh = frameHeight.value || 854;
   const fullLongEdge = Math.max(fullWidth.value, fullHeight.value) || 6000;
-  let proxyLongEdge: number;
-  if (paintedStage.value === 'Full') {
-    proxyLongEdge = fullLongEdge;
-  } else if (paintedStage.value === 'Drag') {
-    proxyLongEdge = 1280;
-  } else {
-    proxyLongEdge = Math.max(settleWidth.value, settleHeight.value) || 2560;
-  }
-  const multiplier = paintedStage.value === 'Full' ? 1.0 : fullLongEdge / proxyLongEdge;
-  const fullContentW = fw * multiplier;
-  const fullContentH = fh * multiplier;
-
   const settleLongEdge = Math.max(settleWidth.value, settleHeight.value) || 2560;
   const settleScale = settleLongEdge / fullLongEdge;
-  const settleContentW = fullContentW * settleScale;
-  const settleContentH = fullContentH * settleScale;
 
-  const visualSettleW = swapsAxes.value ? settleContentH : settleContentW;
-  const visualSettleH = swapsAxes.value ? settleContentW : settleContentH;
+  const { width: visualFullW, height: visualFullH } = getVisualFullContentDimensions();
+  const visualSettleW = visualFullW * settleScale;
+  const visualSettleH = visualFullH * settleScale;
 
   if (neededW > visualSettleW || neededH > visualSettleH) {
     return 'Full';
@@ -1396,6 +1392,10 @@ async function openImage(path: string) {
     isReadOnly.value = info.read_only;
     baseProxyWidth.value = info.settle[0];
     baseProxyHeight.value = info.settle[1];
+    if (info.drag) {
+      dragWidth.value = info.drag[0];
+      dragHeight.value = info.drag[1];
+    }
     settleWidth.value = info.settle_width ?? info.settle[0];
     settleHeight.value = info.settle_height ?? info.settle[1];
     fullWidth.value = info.full_width ?? info.settle[0];
@@ -2137,10 +2137,6 @@ function calculatePresetCrop(preset: string): NormalizedCrop {
 
 function toggleCropMode() {
   if (isCropMode.value) {
-    if (cropModel.value) {
-      const g = ensureGeometry();
-      g.crop = { ...cropModel.value };
-    }
     isCropMode.value = false;
     requestRender('Settle');
     scheduleSave();

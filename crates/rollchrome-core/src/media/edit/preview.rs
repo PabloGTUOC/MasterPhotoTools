@@ -192,6 +192,7 @@ pub fn encode_preview_frame(frame: &RgbaFrame) -> Vec<u8> {
 
 struct CachedGeometry {
     geometry: super::geometry::Geometry,
+    detail: Option<super::detail::Detail>,
     drag_transformed: Option<LinearBuffer>,
     settle_transformed: Option<LinearBuffer>,
     full_transformed: Option<LinearBuffer>,
@@ -209,8 +210,8 @@ struct CachedGeometry {
 /// are active, preventing expensive geometry resampling during continuous colour slider drags.
 /// Thread-safe `geom_recompute_count` tracks recomputations for performance verification.
 pub struct PreviewSession {
-    drag_linear: LinearBuffer,
-    settle_linear: LinearBuffer,
+    drag_linear: Arc<LinearBuffer>,
+    settle_linear: Arc<LinearBuffer>,
     source_path: Option<std::path::PathBuf>,
     source_clone: Option<ImageBuffer>,
     full_linear: Mutex<Option<Arc<LinearBuffer>>>,
@@ -218,8 +219,13 @@ pub struct PreviewSession {
     full_dimensions: (u32, u32),
     pub orientation: u32,
     pub source_sha256: String,
+    pub source_long_edge: u32,
     cached_geom: Mutex<Option<CachedGeometry>>,
     pub geom_recompute_count: AtomicUsize,
+    cached_detail_drag: Mutex<Option<(super::detail::Detail, Arc<LinearBuffer>)>>,
+    cached_detail_settle: Mutex<Option<(super::detail::Detail, Arc<LinearBuffer>)>>,
+    cached_detail_full: Mutex<Option<(super::detail::Detail, Arc<LinearBuffer>)>>,
+    pub detail_recompute_count: AtomicUsize,
     /// Brush rasters per mask and stage, so painting redraws only the new segments (ED-21).
     brushes: Mutex<HashMap<(String, PreviewStage), BrushCache>>,
     /// Decoded automatic masks per mask, with a hash of the PNG they came from (ED-23).
@@ -270,11 +276,12 @@ impl PreviewSession {
             .unwrap_or(1);
         let image = super::pipeline::decode_image(path)?;
         let full_dimensions = fit_full_edge(image.width(), image.height(), FULL_MAX_EDGE);
+        let source_long_edge = image.width().max(image.height()).max(1);
         let drag_buf = downscale_image_buffer(&image, DRAG_MAX_EDGE)?;
         let settle_buf = downscale_image_buffer(&image, SETTLE_MAX_EDGE)?;
 
-        let drag_linear = LinearBuffer::from_image_buffer(&drag_buf);
-        let settle_linear = LinearBuffer::from_image_buffer(&settle_buf);
+        let drag_linear = Arc::new(LinearBuffer::from_image_buffer(&drag_buf));
+        let settle_linear = Arc::new(LinearBuffer::from_image_buffer(&settle_buf));
 
         Ok(Self {
             drag_linear,
@@ -286,8 +293,13 @@ impl PreviewSession {
             full_dimensions,
             orientation: if orientation == 0 { 1 } else { orientation },
             source_sha256,
+            source_long_edge,
             cached_geom: Mutex::new(None),
             geom_recompute_count: AtomicUsize::new(0),
+            cached_detail_drag: Mutex::new(None),
+            cached_detail_settle: Mutex::new(None),
+            cached_detail_full: Mutex::new(None),
+            detail_recompute_count: AtomicUsize::new(0),
             brushes: Mutex::new(HashMap::new()),
             stored: Mutex::new(HashMap::new()),
         })
@@ -313,11 +325,12 @@ impl PreviewSession {
         orientation: u32,
     ) -> Result<Self, Error> {
         let full_dimensions = fit_full_edge(image.width(), image.height(), FULL_MAX_EDGE);
+        let source_long_edge = image.width().max(image.height()).max(1);
         let drag_buf = downscale_image_buffer(image, DRAG_MAX_EDGE)?;
         let settle_buf = downscale_image_buffer(image, SETTLE_MAX_EDGE)?;
 
-        let drag_linear = LinearBuffer::from_image_buffer(&drag_buf);
-        let settle_linear = LinearBuffer::from_image_buffer(&settle_buf);
+        let drag_linear = Arc::new(LinearBuffer::from_image_buffer(&drag_buf));
+        let settle_linear = Arc::new(LinearBuffer::from_image_buffer(&settle_buf));
 
         Ok(Self {
             drag_linear,
@@ -329,8 +342,13 @@ impl PreviewSession {
             full_dimensions,
             orientation: if orientation == 0 { 1 } else { orientation },
             source_sha256: String::new(),
+            source_long_edge,
             cached_geom: Mutex::new(None),
             geom_recompute_count: AtomicUsize::new(0),
+            cached_detail_drag: Mutex::new(None),
+            cached_detail_settle: Mutex::new(None),
+            cached_detail_full: Mutex::new(None),
+            detail_recompute_count: AtomicUsize::new(0),
             brushes: Mutex::new(HashMap::new()),
             stored: Mutex::new(HashMap::new()),
         })
@@ -370,6 +388,53 @@ impl PreviewSession {
     /// Number of times the full source buffer was decoded or converted.
     pub fn full_decodes(&self) -> usize {
         self.full_decodes.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Number of times detail was computed across all preview stages.
+    pub fn detail_computes(&self) -> usize {
+        self.detail_recompute_count
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Provides the linear proxy for `stage`, applying and caching `detail` if specified and not identity.
+    pub fn stage_linear(
+        &self,
+        stage: PreviewStage,
+        detail: Option<&super::detail::Detail>,
+    ) -> Result<Arc<LinearBuffer>, Error> {
+        let active_detail = match detail {
+            Some(d) if !d.is_identity() => d,
+            _ => {
+                return match stage {
+                    PreviewStage::Drag => Ok(self.drag_linear.clone()),
+                    PreviewStage::Settle => Ok(self.settle_linear.clone()),
+                    PreviewStage::Full => self.ensure_full_linear(),
+                };
+            }
+        };
+
+        let (cache_mutex, base) = match stage {
+            PreviewStage::Drag => (&self.cached_detail_drag, self.drag_linear.clone()),
+            PreviewStage::Settle => (&self.cached_detail_settle, self.settle_linear.clone()),
+            PreviewStage::Full => {
+                let full = self.ensure_full_linear()?;
+                (&self.cached_detail_full, full)
+            }
+        };
+
+        let mut lock = cache_mutex.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((cached_det, cached_buf)) = lock.as_ref() {
+            if cached_det == active_detail {
+                return Ok(cached_buf.clone());
+            }
+        }
+
+        self.detail_recompute_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let scale = (base.width.max(base.height) as f32) / (self.source_long_edge as f32);
+        let processed = Arc::new(super::detail::apply_detail(&base, active_detail, scale));
+        *lock = Some((active_detail.clone(), processed.clone()));
+        Ok(processed)
     }
 
     fn ensure_full_linear(&self) -> Result<Arc<LinearBuffer>, Error> {
@@ -420,9 +485,14 @@ impl PreviewSession {
         };
 
         if let Some(geom) = recipe_ref.geometry.as_ref() {
+            let active_detail = recipe_ref
+                .detail
+                .as_ref()
+                .filter(|d| !d.is_identity())
+                .cloned();
             let mut cache = self.cached_geom.lock().unwrap_or_else(|e| e.into_inner());
             let hit = match &*cache {
-                Some(c) => c.geometry == *geom,
+                Some(c) => c.geometry == *geom && c.detail == active_detail,
                 None => false,
             };
             if !hit {
@@ -430,6 +500,7 @@ impl PreviewSession {
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 *cache = Some(CachedGeometry {
                     geometry: geom.clone(),
+                    detail: active_detail,
                     drag_transformed: None,
                     settle_transformed: None,
                     full_transformed: None,
@@ -439,20 +510,21 @@ impl PreviewSession {
             match stage {
                 PreviewStage::Drag => {
                     if c.drag_transformed.is_none() {
-                        c.drag_transformed =
-                            Some(geom.apply_to_linear(&self.drag_linear, self.orientation)?);
+                        let input = self.stage_linear(stage, recipe_ref.detail.as_ref())?;
+                        c.drag_transformed = Some(geom.apply_to_linear(&input, self.orientation)?);
                     }
                 }
                 PreviewStage::Settle => {
                     if c.settle_transformed.is_none() {
+                        let input = self.stage_linear(stage, recipe_ref.detail.as_ref())?;
                         c.settle_transformed =
-                            Some(geom.apply_to_linear(&self.settle_linear, self.orientation)?);
+                            Some(geom.apply_to_linear(&input, self.orientation)?);
                     }
                 }
                 PreviewStage::Full => {
                     if c.full_transformed.is_none() {
-                        let full = self.ensure_full_linear()?;
-                        c.full_transformed = Some(geom.apply_to_linear(&full, self.orientation)?);
+                        let input = self.stage_linear(stage, recipe_ref.detail.as_ref())?;
+                        c.full_transformed = Some(geom.apply_to_linear(&input, self.orientation)?);
                     }
                 }
             }
@@ -469,17 +541,9 @@ impl PreviewSession {
                 super::masks::output_to_stored(Some(geom), stored_w, stored_h, self.orientation)?;
             Ok(frame)
         } else {
-            let full_buf;
-            let proxy = match stage {
-                PreviewStage::Drag => &self.drag_linear,
-                PreviewStage::Settle => &self.settle_linear,
-                PreviewStage::Full => {
-                    full_buf = self.ensure_full_linear()?;
-                    &full_buf
-                }
-            };
+            let proxy = self.stage_linear(stage, recipe_ref.detail.as_ref())?;
             let masks = self.compile_masks(recipe_ref, None, stage)?;
-            let mut frame = render_rgba_frame_masked(proxy, recipe_ref, lut, masks.as_ref())?;
+            let mut frame = render_rgba_frame_masked(&proxy, recipe_ref, lut, masks.as_ref())?;
             frame.orientation = self.orientation;
             Ok(frame)
         }
@@ -572,15 +636,7 @@ impl PreviewSession {
             .iter()
             .find(|m| m.id == mask_id)
             .ok_or_else(|| Error::Refused(format!("No mask {mask_id} in this recipe")))?;
-        let full_buf;
-        let proxy = match stage {
-            PreviewStage::Drag => &self.drag_linear,
-            PreviewStage::Settle => &self.settle_linear,
-            PreviewStage::Full => {
-                full_buf = self.ensure_full_linear()?;
-                &full_buf
-            }
-        };
+        let proxy = self.stage_linear(stage, recipe.detail.as_ref())?;
         let (stored_w, stored_h) = (proxy.width, proxy.height);
         let (out_w, out_h, affine) = match recipe.geometry.as_ref() {
             Some(g) => {

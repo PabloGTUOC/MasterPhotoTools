@@ -164,14 +164,23 @@ where
 
     let mut to_save = recipe.clone();
     to_save.version = CURRENT_RECIPE_VERSION;
+    if to_save.detail.as_ref().is_some_and(|d| d.is_identity()) {
+        to_save.detail = None;
+    }
     // Clear snapshots and versions inside each snapshot's own recipe so that they never nest (RP-5, RP-6).
     for snap in &mut to_save.snapshots {
+        if snap.recipe.detail.as_ref().is_some_and(|d| d.is_identity()) {
+            snap.recipe.detail = None;
+        }
         snap.recipe.snapshots.clear();
         snap.recipe.versions.clear();
         snap.recipe.version_name = None;
     }
     // Clear versions and snapshots inside each version's own recipe so that they never nest (RP-6).
     for ver in &mut to_save.versions {
+        if ver.recipe.detail.as_ref().is_some_and(|d| d.is_identity()) {
+            ver.recipe.detail = None;
+        }
         ver.recipe.versions.clear();
         ver.recipe.snapshots.clear();
         ver.recipe.version_name = None;

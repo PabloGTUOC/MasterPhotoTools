@@ -92,6 +92,11 @@ pub struct AdjustmentRecipe {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub looks: Option<super::looks::LookEffects>,
 
+    // RP-7 detail (sharpening, noise reduction, hot pixels):
+    /// Optional detail processing evaluated on the stored frame before geometry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<super::detail::Detail>,
+
     // Round 3 local adjustments (ED-19):
     /// Masks, each with its own adjustments, in stored-frame coordinates (`masks`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -152,6 +157,7 @@ impl Default for AdjustmentRecipe {
             vignette: None,
             grain: None,
             looks: None,
+            detail: None,
             masks: Vec::new(),
             snapshots: Vec::new(),
             version_name: None,
@@ -184,6 +190,7 @@ impl AdjustmentRecipe {
             && self.vignette.as_ref().is_none_or(|v| v.is_identity())
             && self.grain.as_ref().is_none_or(|g| g.is_identity())
             && self.looks.as_ref().is_none_or(|l| l.is_identity())
+            && self.detail.as_ref().is_none_or(|d| d.is_identity())
             && self.masks.iter().all(|m| m.is_identity())
     }
 }
@@ -984,6 +991,11 @@ pub fn apply_recipe_with_orientation(
     validate_lut(recipe, lut)?;
 
     let mut linear = LinearBuffer::from_image_buffer(image);
+    if let Some(detail) = &recipe.detail {
+        if !detail.is_identity() {
+            linear = super::detail::apply_detail(&linear, detail, 1.0);
+        }
+    }
     let masks = super::masks::CompiledMasks::compile(
         &recipe.masks,
         recipe.geometry.as_ref(),

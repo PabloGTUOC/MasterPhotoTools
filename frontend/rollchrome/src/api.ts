@@ -582,6 +582,16 @@ export interface BlackAndWhite {
   magenta: number;
 }
 
+/** Detail processing adjustments: sharpening, noise reduction, hot pixels (RP-7). */
+export interface Detail {
+  sharpen_amount: number;
+  sharpen_radius: number;
+  sharpen_masking: number;
+  noise_luminance: number;
+  noise_colour: number;
+  hot_pixels: boolean;
+}
+
 /** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11, ED-12, ED-13, ED-14, ED-16, RP-4). */
 export interface AdjustmentRecipe {
   version?: number;
@@ -609,6 +619,8 @@ export interface AdjustmentRecipe {
   vignette?: Vignette | null;
   grain?: FilmGrain | null;
   looks?: LookEffects | null;
+  /** Sharpening, noise reduction and hot pixel removal (RP-7). */
+  detail?: Detail | null;
   /** Masks with their own adjustments, in stored-frame coordinates (ED-19). */
   masks?: Mask[];
   /** Named snapshots of adjustment recipes for this photograph (RP-5). */

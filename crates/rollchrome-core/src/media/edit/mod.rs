@@ -3,6 +3,7 @@
 pub mod brush;
 pub mod color;
 pub mod curves;
+pub mod detail;
 pub mod geometry;
 pub mod grading;
 pub mod grain;
@@ -21,6 +22,7 @@ pub use color::{
     linear_srgb_to_oklab, oklab_to_linear_srgb, rotate_hue_oklch, rotate_hue_oklch_sincos,
 };
 pub use curves::{CurvePoint, CurveTable, MonotoneSpline, ToneCurves, ToneCurvesTable};
+pub use detail::{apply_detail, Detail};
 pub use geometry::{
     aspect_ratio_from_preset, largest_inscribed_rect, preset_to_normalized_crop, Geometry,
     GeometryPlan, NormalizedCrop, MIN_CROP_DIMENSION,

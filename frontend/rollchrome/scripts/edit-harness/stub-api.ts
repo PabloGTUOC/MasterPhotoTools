@@ -9,6 +9,7 @@ import type {
   AdjustmentRecipe,
   AutoTone,
   BrowserEntry,
+  Detail,
   ExportResult,
   LutEntry,
   LutLibraryList,
@@ -179,6 +180,15 @@ for (let i = 0; i < settleBuffer.length; i += 4) {
   settleBuffer[i + 1] = 118;
   settleBuffer[i + 2] = 118;
   settleBuffer[i + 3] = 255;
+}
+
+function isIdentityDetail(d: Detail): boolean {
+  return (
+    d.sharpen_amount === 0 &&
+    d.noise_luminance === 0 &&
+    d.noise_colour === 0 &&
+    !d.hot_pixels
+  );
 }
 
 export class StubDesktopApiClient {
@@ -603,6 +613,9 @@ export class StubDesktopApiClient {
       throw new Error('Card media is read-only (G5). Copy files to a working folder to save edits.');
     }
     const cloned = JSON.parse(JSON.stringify(recipe));
+    if (cloned.detail && isIdentityDetail(cloned.detail)) {
+      delete cloned.detail;
+    }
     stubState.lastSavedRecipe = cloned;
     stubState.saveCalls.push({ path, recipe: cloned });
     return `${path}.photoedit`;

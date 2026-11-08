@@ -5,7 +5,7 @@ from [`../manual-verification.md`](../manual-verification.md) when the editor le
 (RC-3), and **their ids are unchanged**, so anything that names MV-20.4 still finds it.
 
 How to work through them — tick the box, replace **Result:** with what actually happened, and a
-failed check is a result — is as described at the top of that file. **31 checks**, none done yet
+failed check is a result — is as described at the top of that file. **39 checks**, none done yet
 (2026-11-06). They all need a Mac with real photographs, and MV-20.7 also a card and a mounted
 share.
 
@@ -253,4 +253,13 @@ the automated check drives the screen against a stub.
 - [ ] **MV-27.1 — Colour and black & white versions exported together and surviving a restart.**
       **Run:** in Edit, open a photograph, adjust colours, and save a virtual copy named "B&W". On "B&W", convert to black & white (press `V`) and tune tonal sliders. Switch between "Main" and "B&W" to verify that edits on each remain intact. Click "Export all versions" to export both to a destination folder. Quit Rollchrome completely, reopen it, and reopen the same photograph.
       **Pass:** both versions appear with their respective names and recipes intact; switching between them updates the sliders and image without data loss; both exported images are in the destination folder with correct filenames (`_edit.jpg` and `_edit_b-w.jpg`).
+      **Result:**
+
+## MV-28 — Detail: sharpening, noise reduction, hot pixels (RP-7)
+
+[`../briefs/RP-7.md`](../briefs/RP-7.md). Real photographs in the real application at 100% zoom.
+
+- [ ] **MV-28.1 — Sharpening and noise reduction on a high-ISO photograph.**
+      **Run:** in Edit, open a real high-ISO photograph (e.g. ISO 6400+). Press `Z` (or Cmd-1) to view at 100%. Open the Detail panel. Increase Sharpening Amount to 80, Radius to 1.2, and adjust Masking with Alt-held/visual feedback. Increase Luminance Noise Reduction to 40 and Colour Noise Reduction to 50. Toggle Remove Hot Pixels. Export the edited image.
+      **Pass:** at 100% zoom, chroma noise (coloured specks) disappears without desaturating subject colours; luminance noise grain is subdued while sharp subject edges (eyelashes, text, high-contrast borders) remain crisp and defined; single-pixel hot sensor dots vanish; the exported file matches the 100% on-screen appearance.
       **Result:**

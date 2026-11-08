@@ -376,7 +376,7 @@ pub fn render_and_write(
 /// has already been resolved against allowed roots and does not land inside the Publishing folder
 /// (e.g. using `resolve_output`, as applied at the command layer in ED-6).
 ///
-/// Identity recipes on non-RAW images perform a direct stream byte copy to avoid generational compression loss.
+/// Identity recipes perform a direct stream byte copy to avoid generational compression loss.
 pub fn export_edited_image(
     source: &Path,
     recipe: &AdjustmentRecipe,
@@ -404,6 +404,13 @@ where
         ));
     }
 
+    // Refuse RAW source: RAW files are developed in Develop tab only
+    if phototools_core::media::raw::is_raw(source) {
+        return Err(Error::Refused(
+            "RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes.".into(),
+        ));
+    }
+
     // 2. Validate LUT presence: a recipe that requests a LUT must have it provided and matched
     validate_lut(recipe, lut)?;
 
@@ -412,11 +419,10 @@ where
         return Err(Error::Refused("Source file has no stem name".into()));
     }
 
-    let is_raw = phototools_core::media::raw::is_raw(source);
     let identity = is_identity(recipe, lut);
 
-    // Identity recipe on already-encoded non-RAW image: byte copy without re-encoding
-    if !is_raw && identity {
+    // Identity recipe on already-encoded image: byte copy without re-encoding
+    if identity {
         let mut src_file = File::open(source)?;
         std::fs::create_dir_all(out_dir)?;
 
@@ -441,7 +447,7 @@ where
         });
     }
 
-    // Non-identity or RAW: render-and-write, then carry metadata for this single derivative (G4)
+    // Non-identity: render-and-write, then carry metadata for this single derivative (G4)
     let derived = render_and_write(source, recipe, lut, out_dir, "_edit")?;
 
     // ED-13 Export Rule:

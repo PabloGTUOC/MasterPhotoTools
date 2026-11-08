@@ -996,17 +996,17 @@ pub fn apply_recipe_with_orientation(
     }
 }
 
-/// Decodes an image from disk.
+/// Decodes an image from disk for Edit and Batch.
 ///
-/// JPEGs and TIFFs (8-bit and 16-bit) are decoded via `image`.
-/// RAW files are decoded through `media::raw::raw_to_jpeg` (the F14 ladder),
-/// preserving modularity since `media` must never depend on `ingest`.
+/// Only JPEGs and TIFFs (8-bit and 16-bit) are accepted.
+/// RAW files are refused (developed only in the Develop tab).
+/// Any format other than JPEG or TIFF is refused.
 pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
     if phototools_core::media::raw::is_raw(path) {
-        let derived = phototools_core::media::raw::raw_to_jpeg(path)?;
-        let dyn_img = image::load_from_memory(&derived.bytes)
-            .map_err(|e| Error::Internal(format!("failed to decode derived RAW JPEG: {e}")))?;
-        return Ok(ImageBuffer::from(dyn_img));
+        return Err(Error::Refused(
+            "RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes."
+                .to_string(),
+        ));
     }
 
     use image::ImageDecoder;
@@ -1015,51 +1015,60 @@ pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
         .with_guessed_format()
         .map_err(|e| Error::Internal(format!("could not identify {}: {e}", path.display())))?;
     let format = reader.format();
-    if format == Some(image::ImageFormat::Tiff) {
-        // Read ICC profile directly using `tiff::decoder::Decoder` to avoid the
-        // `image::codecs::tiff::TiffDecoder::set_limits` bug where decoding_buffer_size
-        // is clamped to the total raw pixel buffer size (e.g. 48 bytes for small images),
-        // causing tag reading to fail and swallow the profile.
-        let file = std::fs::File::open(path)?;
-        let mut tiff_dec = tiff::decoder::Decoder::new(std::io::BufReader::new(file))
-            .map_err(|e| Error::Internal(format!("could not read TIFF {}: {e}", path.display())))?;
-        let icc = match tiff_dec.get_tag_u8_vec(tiff::tags::Tag::IccProfile) {
-            Ok(bytes) => Some(bytes),
-            Err(tiff::TiffError::FormatError(tiff::TiffFormatError::RequiredTagNotFound(_))) => {
-                None
-            }
-            Err(_) => {
-                return Err(Error::Refused(
-                    "The file's colour profile could not be read; colours would be wrong."
-                        .to_string(),
-                ));
-            }
-        };
-        let dyn_img = reader
-            .decode()
-            .map_err(|e| Error::Internal(format!("failed to decode {}: {e}", path.display())))?;
-        let buffer = ImageBuffer::from(dyn_img);
-        super::icc::to_srgb(buffer, icc.as_deref())
-    } else {
-        let mut decoder = reader.into_decoder().map_err(|e| {
-            Error::Internal(format!(
-                "could not create decoder for {}: {e}",
-                path.display()
-            ))
-        })?;
-        let icc = match decoder.icc_profile() {
-            Ok(icc) => icc,
-            Err(_) => {
-                return Err(Error::Refused(
-                    "The file's colour profile could not be read; colours would be wrong."
-                        .to_string(),
-                ));
-            }
-        };
-        let dyn_img = image::DynamicImage::from_decoder(decoder)
-            .map_err(|e| Error::Internal(format!("failed to decode {}: {e}", path.display())))?;
-        let buffer = ImageBuffer::from(dyn_img);
-        super::icc::to_srgb(buffer, icc.as_deref())
+    match format {
+        Some(image::ImageFormat::Tiff) => {
+            // Read ICC profile directly using `tiff::decoder::Decoder` to avoid the
+            // `image::codecs::tiff::TiffDecoder::set_limits` bug where decoding_buffer_size
+            // is clamped to the total raw pixel buffer size (e.g. 48 bytes for small images),
+            // causing tag reading to fail and swallow the profile.
+            let file = std::fs::File::open(path)?;
+            let mut tiff_dec =
+                tiff::decoder::Decoder::new(std::io::BufReader::new(file)).map_err(|e| {
+                    Error::Internal(format!("could not read TIFF {}: {e}", path.display()))
+                })?;
+            let icc = match tiff_dec.get_tag_u8_vec(tiff::tags::Tag::IccProfile) {
+                Ok(bytes) => Some(bytes),
+                Err(tiff::TiffError::FormatError(tiff::TiffFormatError::RequiredTagNotFound(
+                    _,
+                ))) => None,
+                Err(_) => {
+                    return Err(Error::Refused(
+                        "The file's colour profile could not be read; colours would be wrong."
+                            .to_string(),
+                    ));
+                }
+            };
+            let dyn_img = reader.decode().map_err(|e| {
+                Error::Internal(format!("failed to decode {}: {e}", path.display()))
+            })?;
+            let buffer = ImageBuffer::from(dyn_img);
+            super::icc::to_srgb(buffer, icc.as_deref())
+        }
+        Some(image::ImageFormat::Jpeg) => {
+            let mut decoder = reader.into_decoder().map_err(|e| {
+                Error::Internal(format!(
+                    "could not create decoder for {}: {e}",
+                    path.display()
+                ))
+            })?;
+            let icc = match decoder.icc_profile() {
+                Ok(icc) => icc,
+                Err(_) => {
+                    return Err(Error::Refused(
+                        "The file's colour profile could not be read; colours would be wrong."
+                            .to_string(),
+                    ));
+                }
+            };
+            let dyn_img = image::DynamicImage::from_decoder(decoder).map_err(|e| {
+                Error::Internal(format!("failed to decode {}: {e}", path.display()))
+            })?;
+            let buffer = ImageBuffer::from(dyn_img);
+            super::icc::to_srgb(buffer, icc.as_deref())
+        }
+        _ => Err(Error::Refused(
+            "Edit and Batch take JPEG or TIFF.".to_string(),
+        )),
     }
 }
 
@@ -1514,7 +1523,8 @@ mod tests {
     }
 
     #[test]
-    fn a_raw_is_decoded_through_the_media_raw_ladder() {
+    fn a_raw_file_is_refused_for_editing_and_points_at_develop() {
+        use crate::media::edit::PreviewSession;
         // Synthesise a minimal TIFF-based RAW file carrying an embedded JPEG preview
         let temp = tempfile::tempdir().unwrap();
         let raw_path = temp.path().join("test_shot.nef");
@@ -1568,18 +1578,37 @@ mod tests {
 
         std::fs::write(&raw_path, &tiff).unwrap();
 
-        // Decode through decode_image, which delegates RAWs to media::raw
-        let decoded =
-            decode_image(&raw_path).expect("RAW decoding through media::raw ladder must succeed");
-        assert_eq!(decoded.width(), w);
-        assert_eq!(decoded.height(), h);
-        match decoded {
-            ImageBuffer::Rgb8 { data, .. } => {
-                assert_eq!(data.len(), (w * h * 3) as usize);
-            }
-            ImageBuffer::Rgb16 { .. } => {
-                panic!("RAW ladder preview decoded as Rgb16 instead of Rgb8")
-            }
+        let expected_msg =
+            "RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes.";
+        match decode_image(&raw_path) {
+            Err(Error::Refused(msg)) => assert_eq!(msg, expected_msg),
+            other => panic!("expected Error::Refused, got {other:?}"),
+        }
+        match PreviewSession::open(&raw_path) {
+            Err(Error::Refused(msg)) => assert_eq!(msg, expected_msg),
+            Err(e) => panic!("expected Error::Refused, got {e:?}"),
+            Ok(_) => panic!("expected Error::Refused, got Ok"),
+        }
+    }
+
+    #[test]
+    fn a_png_is_refused_for_editing() {
+        use crate::media::edit::PreviewSession;
+        let temp = tempfile::tempdir().unwrap();
+        let png_path = temp.path().join("test_shot.png");
+        let img = image::RgbImage::from_pixel(16, 16, image::Rgb([100, 150, 200]));
+        img.save_with_format(&png_path, image::ImageFormat::Png)
+            .unwrap();
+
+        let expected_msg = "Edit and Batch take JPEG or TIFF.";
+        match decode_image(&png_path) {
+            Err(Error::Refused(msg)) => assert_eq!(msg, expected_msg),
+            other => panic!("expected Error::Refused, got {other:?}"),
+        }
+        match PreviewSession::open(&png_path) {
+            Err(Error::Refused(msg)) => assert_eq!(msg, expected_msg),
+            Err(e) => panic!("expected Error::Refused, got {e:?}"),
+            Ok(_) => panic!("expected Error::Refused, got Ok"),
         }
     }
 

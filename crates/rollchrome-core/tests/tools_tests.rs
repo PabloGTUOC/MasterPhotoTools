@@ -1232,3 +1232,101 @@ fn a_recipe_with_only_round_two_adjustments_is_rendered_not_byte_copied() {
         "Recipe with 0% intensity LUT must be considered identity"
     );
 }
+
+#[test]
+fn an_edit_export_of_a_raw_file_is_refused_and_writes_nothing() {
+    use rollchrome_core::media::edit::AdjustmentRecipe;
+    use rollchrome_core::tools::edit::export_edited_image;
+
+    let f = Fixtures::new();
+    let raw_path = f.path().join("camera_raw.nef");
+    fs::write(&raw_path, b"dummy raw data").unwrap();
+
+    let out_dir = f.path().join("out");
+    fs::create_dir_all(&out_dir).unwrap();
+
+    // 1. Identity recipe
+    let identity_recipe = AdjustmentRecipe::default();
+    let err = export_edited_image(&raw_path, &identity_recipe, None, &out_dir).unwrap_err();
+    match err {
+        phototools_core::error::Error::Refused(msg) => {
+            assert_eq!(
+                msg,
+                "RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes."
+            );
+        }
+        other => panic!("expected Error::Refused, got {other:?}"),
+    }
+    assert_eq!(
+        fs::read_dir(&out_dir).unwrap().count(),
+        0,
+        "out_dir must remain empty after refused RAW export"
+    );
+
+    // 2. Non-identity recipe
+    let non_identity_recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        ..Default::default()
+    };
+    let err = export_edited_image(&raw_path, &non_identity_recipe, None, &out_dir).unwrap_err();
+    match err {
+        phototools_core::error::Error::Refused(msg) => {
+            assert_eq!(
+                msg,
+                "RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes."
+            );
+        }
+        other => panic!("expected Error::Refused, got {other:?}"),
+    }
+    assert_eq!(
+        fs::read_dir(&out_dir).unwrap().count(),
+        0,
+        "out_dir must remain empty after refused RAW export"
+    );
+}
+
+#[test]
+fn a_batch_given_a_raw_file_skips_it_and_says_so() {
+    use rollchrome_core::media::edit::AdjustmentRecipe;
+    use rollchrome_core::tools::bulk_edit::{BulkEditParams, BulkEditTool};
+    use rollchrome_core::tools::lut::{BulkLutParams, BulkLutTool};
+
+    let f = Fixtures::new();
+    let raw_file = f.path().join("camera_raw.nef");
+    fs::write(&raw_file, b"dummy raw data").unwrap();
+
+    let out_dir = f.path().join("out");
+    fs::create_dir_all(&out_dir).unwrap();
+
+    // 1. BulkLutTool
+    let lut_path = create_test_cube(f.path());
+    let lut_params = BulkLutParams::new(vec![raw_file.clone()], lut_path, 1.0, out_dir.clone());
+    let lut_plan = BulkLutTool.plan(&lut_params).unwrap().data;
+    assert_eq!(lut_plan.actions.len(), 0);
+    assert_eq!(lut_plan.skipped.len(), 1);
+    assert_eq!(lut_plan.skipped[0].file, raw_file.to_string_lossy());
+    assert_eq!(
+        lut_plan.skipped[0].reason,
+        "Not a file type this tool accepts"
+    );
+
+    // 2. BulkEditTool
+    let recipe = AdjustmentRecipe {
+        exposure: 0.5,
+        ..Default::default()
+    };
+    let edit_params = BulkEditParams::new(
+        vec![raw_file.clone()],
+        recipe,
+        f.path().join("luts"),
+        out_dir.clone(),
+    );
+    let edit_plan = BulkEditTool.plan(&edit_params).unwrap().data;
+    assert_eq!(edit_plan.actions.len(), 0);
+    assert_eq!(edit_plan.skipped.len(), 1);
+    assert_eq!(edit_plan.skipped[0].file, raw_file.to_string_lossy());
+    assert_eq!(
+        edit_plan.skipped[0].reason,
+        "Not a file type this tool accepts"
+    );
+}

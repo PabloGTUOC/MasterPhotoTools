@@ -55,7 +55,7 @@ A dedicated desktop workspace for tuning one photograph at a time:
 
 ### 2 · Bulk LUT tool (`frontend/desktop/src/views/BulkLut.vue`)
 A standard folder tool matching the pattern of F7 (Border) and F8 (TIFF):
-- **Input**: Point at a folder of photographs (JPEG, TIFF, or camera RAW).
+- **Input**: Point at a folder of photographs (JPEG or TIFF; camera RAW support withdrawn in RP-2b to keep RAW in Develop).
 - **LUT selection**: Choose a 3D LUT from the managed LUT library (`.cube`, `.3dl`, or HALD `.png`)
   and set intensity (0–100%).
 - **Multi-sample preview**: Previews the LUT effect across 3–5 representative frames spread
@@ -101,7 +101,7 @@ is invented (G11); the specification is not edited (G9).
 | Decision | Rationale & consequence |
 |---|---|
 | **CPU-first authority** | A multithreaded CPU pipeline in `core` using `rayon` is the authority for exports and CI tests. `wgpu` is deferred to keep dependencies clean (G8) and avoid GPU driver requirements in headless CI environments. |
-| **RAW decoded through media::raw ladder** | Camera RAW inputs are decoded using `media::raw` (not `ingest::derivation`, preserving modularity since `media` must never depend on `ingest`). In v1, the ladder yields an 8-bit JPEG (often the camera's embedded preview); thus v1 edits the camera's rendering, not sensor data, and has no headroom above the camera's clipping point. |
+| **RAW decoded through media::raw ladder (withdrawn in RP-2b)** | Camera RAW inputs were initially decoded using `media::raw`'s ladder; in RP-2b, RAW support in Edit and Batch was withdrawn so RAW files are accepted only in Develop. |
 | **Display-encoded LUT application** | Tone and exposure adjustments occur in **linear light**. Values are hard-clipped at display white ($[0.0, 1.0]$) to preserve exact identity under identity recipes, and sRGB transfer is applied *before* the 3D LUT, because creative `.cube` LUTs expect display-referred inputs. Inputs are clamped to `DOMAIN_MIN`/`DOMAIN_MAX`. |
 | **Crossover at 0.18 for tones** | Mid-grey ($0.18$) is strictly stationary. Shadows' weight falls to exactly zero at $0.18$; Highlights' weight rises from zero at $0.18$. Adjusting highlights or shadows leaves an 18% grey card untouched. |
 | **Card detection at mount point** | A card volume is identified at its mount point by walking up ancestors to the volume root (`MetadataExt::dev` boundary on Unix) and verifying `Card::at(volume_root).looks_like_a_card()` (case-insensitive `DCIM`). We do not check every ancestor for `DCIM` (a library folder holding a copied `DCIM` tree is not a card). macOS mounts of NAS SMB shares without `DCIM` at their mount root remain fully editable while camera cards remain strictly read-only (G5). |
@@ -1196,7 +1196,7 @@ local adjustments, so most pixels pay for more than one mask.
 Excluded per Ground Rule G11 to maintain architectural purity and scope discipline:
 - **Group C features (Detail & Optics)**: Sharpening (unsharp mask, Richardson-Lucy), Clarity / Local Contrast, Noise Reduction (chrominance/luminance wavelet smoothing), Dehaze (dark channel prior), and Chromatic Aberration defringing.
 - **Synthetic lens flare**: Excluded on photographic integrity grounds; artificial CGI overlays contradict PhotoTools' darkroom principles.
-- **True RAW sensor development**: Camera RAWs continue to be decoded via `media::raw`'s ladder (often the camera's embedded JPEG preview). True Bayer demosaicing, sensor highlight reconstruction, and 14-bit linear camera pipelines remain excluded.
+- **True RAW sensor development**: Handled exclusively in the Develop tab. In RP-2b, opening camera RAW files in Edit and Batch Grade was withdrawn.
 - **GPL-licensed AgX tone mapper**: Excluded to avoid copyleft contamination; Narkowicz ACES (public domain) is used instead.
 - **Carrying `.xmp` sidecars in Rename**: Rename carries `.photoedit` companion files only.
 - **Web browser editing**: Editing and batch grading remain strictly desktop-focused.
@@ -1211,7 +1211,7 @@ Judgement checks in the style of [`docs/manual-verification.md`](manual-verifica
 
 - [ ] **MV-20.1 — Exposure matching against camera JPEG.**
       Linear exposure compensation must match optical exposure shifts without flattening highlights.
-      **Run:** shoot a RAW frame at 0 EV and +1 EV; adjust the 0 EV RAW to +1 EV in the Editor; compare the result against the camera's native +1 EV JPEG.
+      **Run:** shoot a RAW frame at 0 EV and +1 EV; develop the 0 EV RAW to JPEG/TIFF in Develop (RP-2b withdrew RAW from Edit); adjust the 0 EV JPEG/TIFF to +1 EV in the Editor; compare the result against the camera's native +1 EV JPEG.
       **Pass:** mid-tone luminance and highlight rolloff match the optical +1 EV frame within visual tolerance (highlight recovery beyond the camera JPEG is not expected in v1).
       **Result:**
 
@@ -1253,7 +1253,7 @@ Judgement checks in the style of [`docs/manual-verification.md`](manual-verifica
 
 - [ ] **MV-20.8 — Interactive slider drag timing on a 36 MP file in the running app.**
       Real Tauri IPC cannot be driven headless, so end-to-end responsiveness with real IPC and a full-resolution 36 MP frame must be verified interactively.
-      **Run:** open a 36 MP RAW/JPEG in the desktop Editor; rapidly scrub an adjustment slider (Exposure or Highlights) back and forth across its full range for 5 seconds, then release the mouse.
+      **Run:** open a 36 MP JPEG or TIFF in the desktop Editor (developed from RAW via Develop if shooting RAW, per RP-2b); rapidly scrub an adjustment slider (Exposure or Highlights) back and forth across its full range for 5 seconds, then release the mouse.
       **Pass:** the preview updates fluidly during dragging without perceptible stutter or event backlog (sustaining ≥ 20 fps interactive response), and settles cleanly to the sharp 1440p frame within ~120 ms of mouse release.
       **Result:**
 

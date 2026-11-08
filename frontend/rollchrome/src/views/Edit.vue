@@ -2337,7 +2337,7 @@ onUnmounted(() => {
         :roots-error="rootsError"
         :list="listRoots"
         placeholder="/path/to/image.jpg"
-        :selectable="['jpg', 'jpeg', 'tif', 'tiff', 'cr2', 'nef', 'arw', 'dng', 'png']"
+        :selectable="['jpg', 'jpeg', 'tif', 'tiff']"
       />
 
       <div v-if="loading" class="edit-screen__loading" data-testid="edit-loading">

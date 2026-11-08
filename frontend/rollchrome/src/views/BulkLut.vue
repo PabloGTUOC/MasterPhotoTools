@@ -9,7 +9,7 @@
  *   replaced after the review, core refuses the run and the refusal is shown here.
  *
  * Dedicated workflow for applying a 3D LUT across folders or files:
- * - Inputs: Source photographs (folders/files via PathListField), recursive toggle,
+ * - Inputs: Source photographs (JPEG or TIFF, folders/files via PathListField), recursive toggle,
  *   3D LUT selector with blend intensity (LutPicker), and output folder (PathField).
  * - Dry run (planBulkLut): Calculates graded counts, skipped files with reasons,
  *   explains '_lut' suffix output naming, and sequentially previews sample frames.
@@ -440,7 +440,7 @@ onMounted(() => {
     <header class="page-head">
       <h1>Batch Grade</h1>
       <p class="muted">
-        Apply a 3D LUT or a saved preset across photographs into a destination folder.
+        Apply a 3D LUT or a saved preset across photographs (JPEG or TIFF) into a destination folder.
       </p>
     </header>
 
@@ -448,7 +448,7 @@ onMounted(() => {
       <div class="inputs-section">
         <PathListField
           v-model="inputsText"
-          label="Source photographs"
+          label="Source photographs (JPEG or TIFF)"
           placeholder="/path/to/folder or /path/to/image.jpg (one per line)"
           :roots="roots"
           :roots-error="rootsError"

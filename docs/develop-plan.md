@@ -178,7 +178,7 @@ the embedded preview. X-Trans through a demosaic of our own, written from the br
 (rawler has none, and the open ones are GPL or LGPL), Bayer through rawler's PPG.
 
 **Leaves alone** F14 and `media::raw` in `phototools-core` (publishing wants the camera's look and
-has it), and the RAW path of Edit and Batch Grade (decision 1, and Batch Grade stays as it is).
+has it). Note: RP-2b withdrew the RAW path from Edit and Batch Grade entirely, making RAW files exclusive to Develop.
 
 Acceptance, in outline — the brief sets the numbers, after measuring:
 

@@ -16,7 +16,7 @@ run locally and need no server, but MV-20.7 needs a card and a mounted share.
 
 - [ ] **MV-20.1 — Exposure matching against camera JPEG.**
       Linear exposure compensation must match optical exposure shifts without flattening highlights.
-      **Run:** shoot a RAW frame at 0 EV and +1 EV; adjust the 0 EV RAW to +1 EV in the Editor; compare the result against the camera's native +1 EV JPEG.
+      **Run:** shoot a RAW frame at 0 EV and +1 EV; develop the 0 EV RAW to JPEG/TIFF in Develop (RP-2b withdrew RAW from Edit); adjust the 0 EV JPEG/TIFF to +1 EV in the Editor; compare the result against the camera's native +1 EV JPEG.
       **Pass:** mid-tone luminance and highlight rolloff match the optical +1 EV frame within visual tolerance (highlight recovery beyond the camera JPEG is not expected in v1).
       **Result:**
 
@@ -58,7 +58,7 @@ run locally and need no server, but MV-20.7 needs a card and a mounted share.
 
 - [ ] **MV-20.8 — Interactive slider drag timing on a 36 MP file in the running app.**
       Real Tauri IPC cannot be driven headless, so end-to-end responsiveness with real IPC and a full-resolution 36 MP frame must be verified interactively.
-      **Run:** open a 36 MP RAW/JPEG in the desktop Editor (release build from `cargo tauri build`, not debug from `cargo tauri dev`); rapidly scrub an adjustment slider (Exposure or Highlights) back and forth across its full range for 5 seconds, then release the mouse.
+      **Run:** open a 36 MP JPEG or TIFF in the desktop Editor (developed from RAW via Develop if shooting RAW, per RP-2b; release build from `cargo tauri build`, not debug from `cargo tauri dev`); rapidly scrub an adjustment slider (Exposure or Highlights) back and forth across its full range for 5 seconds, then release the mouse.
       **Pass:** the preview updates fluidly during dragging without perceptible stutter or event backlog (sustaining ≥ 20 fps interactive response), and settles cleanly to the sharp 1440p frame within ~120 ms of mouse release.
       **Result:**
 

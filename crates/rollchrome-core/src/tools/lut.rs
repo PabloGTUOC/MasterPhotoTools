@@ -18,10 +18,8 @@ use phototools_core::tools::{carry_metadata_correcting, expand_inputs, Derived, 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Image formats accepted by `BulkLutTool` (matching formats supported by `decode_image`).
-pub const ACCEPTED: [&str; 9] = [
-    "jpg", "jpeg", "tif", "tiff", "dng", "nef", "arw", "cr2", "raf",
-];
+/// Image formats accepted by `BulkLutTool` and `BulkEditTool` (matching formats supported by `decode_image`).
+pub const ACCEPTED: [&str; 4] = ["jpg", "jpeg", "tif", "tiff"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BulkLutParams {

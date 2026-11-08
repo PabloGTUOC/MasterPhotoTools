@@ -16,7 +16,8 @@
     "check:history": "node scripts/check-history.mjs",
     "check:versions": "node scripts/check-versions.mjs",
     "check:detail": "node scripts/check-detail.mjs",
-    "check:export": "node scripts/check-export.mjs"
+    "check:export": "node scripts/check-export.mjs",
+    "check:point": "node scripts/check-point.mjs"
   },
   "dependencies": {
     "@phototools/shared": "file:../shared",

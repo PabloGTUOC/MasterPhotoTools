@@ -750,6 +750,75 @@ impl PreviewSession {
         })
     }
 
+    /// Measures the unadjusted linear light in a 5×5 box on `settle_linear` around normalized `(x, y)`
+    /// and returns the OkLCh hue, chroma, and lightness (RP-10).
+    ///
+    /// Refuses with descriptive error if coordinates are out of bounds (not 0.0..=1.0),
+    /// or if chroma < 0.01 (there is no colour there to select).
+    pub fn colour_at(&self, x: f32, y: f32) -> Result<super::point_colour::PickedColour, Error> {
+        if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) || x.is_nan() || y.is_nan() {
+            return Err(Error::Refused(format!(
+                "Sample point ({x:.3}, {y:.3}) is outside stored frame bounds 0.0..=1.0"
+            )));
+        }
+
+        let w = self.settle_linear.width;
+        let h = self.settle_linear.height;
+        if w == 0 || h == 0 {
+            return Err(Error::Refused("Image buffer is empty".into()));
+        }
+
+        let cx = ((x * (w as f32 - 1.0)).round() as i32).clamp(0, w as i32 - 1);
+        let cy = ((y * (h as f32 - 1.0)).round() as i32).clamp(0, h as i32 - 1);
+
+        let mut sum_r = 0.0f32;
+        let mut sum_g = 0.0f32;
+        let mut sum_b = 0.0f32;
+        let mut count = 0usize;
+
+        for dy in -2..=2 {
+            let py = cy + dy;
+            if py < 0 || py >= h as i32 {
+                continue;
+            }
+            for dx in -2..=2 {
+                let px = cx + dx;
+                if px < 0 || px >= w as i32 {
+                    continue;
+                }
+                let idx = (py as usize * w as usize + px as usize) * 3;
+                sum_r += self.settle_linear.data[idx];
+                sum_g += self.settle_linear.data[idx + 1];
+                sum_b += self.settle_linear.data[idx + 2];
+                count += 1;
+            }
+        }
+
+        if count == 0 {
+            return Err(Error::Refused("No valid pixels in sample box".into()));
+        }
+
+        let r = sum_r / count as f32;
+        let g = sum_g / count as f32;
+        let b = sum_b / count as f32;
+
+        let (l, a, b_val) = crate::media::edit::color::linear_srgb_to_oklab(r, g, b);
+        let chroma = (a * a + b_val * b_val).sqrt();
+        if chroma < 0.01 {
+            return Err(Error::Refused(
+                "Chroma below 0.01: there is no colour there to select".into(),
+            ));
+        }
+
+        let hue = b_val.atan2(a).to_degrees().rem_euclid(360.0);
+
+        Ok(super::point_colour::PickedColour {
+            hue,
+            chroma,
+            lightness: l.clamp(0.0, 1.0),
+        })
+    }
+
     /// Evaluates optimal tone sliders (exposure, whites, blacks) via bisection on the drag proxy
     /// under an identity recipe.
     ///
@@ -1127,7 +1196,13 @@ pub fn render_rgba_frame_masked(
         recipe.hue,
         recipe.black_and_white.as_ref(),
     );
-    let has_oklab = !compiled_hsl.is_identity;
+    let compiled_points = if recipe.black_and_white.is_some() {
+        super::point_colour::CompiledPointColours::identity()
+    } else {
+        super::point_colour::CompiledPointColours::compile(&recipe.point_colours)
+    };
+    let has_points = !compiled_points.is_identity();
+    let has_oklab = !compiled_hsl.is_identity || has_points;
 
     let intensity = if recipe.lut.is_some() {
         recipe.lut_intensity.clamp(0.0, 1.0)
@@ -1338,12 +1413,30 @@ pub fn render_rgba_frame_masked(
                         b = (y + k * (b - y)).max(0.0);
                     }
 
-                    // Oklab stage: Global Hue rotation and 8-band HSL in ONE pass
+                    // Oklab stage: Point colour, Global Hue rotation, and 8-band HSL in ONE pass
                     if has_oklab {
-                        let (hr, hg, hb) = compiled_hsl.apply_linear_srgb(r, g, b);
-                        r = hr;
-                        g = hg;
-                        b = hb;
+                        if !has_points {
+                            let (hr, hg, hb) = compiled_hsl.apply_linear_srgb(r, g, b);
+                            r = hr;
+                            g = hg;
+                            b = hb;
+                        } else {
+                            let (l, a, b_val) =
+                                crate::media::edit::color::linear_srgb_to_oklab(r, g, b);
+                            let (l_pt, a_pt, b_pt) = compiled_points.apply(l, a, b_val);
+                            let (final_l, final_a, final_b) = if !compiled_hsl.is_identity {
+                                let c_sq = a_pt * a_pt + b_pt * b_pt;
+                                compiled_hsl.apply_with_c_sq(l_pt, a_pt, b_pt, c_sq)
+                            } else {
+                                (l_pt, a_pt, b_pt)
+                            };
+                            let (hr, hg, hb) = crate::media::edit::color::oklab_to_linear_srgb(
+                                final_l, final_a, final_b,
+                            );
+                            r = hr.max(0.0);
+                            g = hg.max(0.0);
+                            b = hb.max(0.0);
+                        }
                     }
 
                     // Scale-independent vignette in linear light

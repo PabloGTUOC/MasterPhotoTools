@@ -168,6 +168,12 @@ where
         )));
     }
 
+    if recipe.point_colours.len() > 8 {
+        return Err(Error::Refused(
+            "Cannot save more than 8 point colours".into(),
+        ));
+    }
+
     let mut to_save = recipe.clone();
     to_save.version = CURRENT_RECIPE_VERSION;
     if to_save.detail.as_ref().is_some_and(|d| d.is_identity()) {

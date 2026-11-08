@@ -244,6 +244,28 @@ impl AppState {
         active.session.white_balance_at(x, y)
     }
 
+    /// Measures unadjusted linear light in a 5×5 box on `settle_linear` and returns OkLCh color (RP-10).
+    pub fn colour_at(
+        &self,
+        session_id: &str,
+        x: f32,
+        y: f32,
+    ) -> Result<rollchrome_core::media::edit::point_colour::PickedColour, Error> {
+        let slot = self
+            .active_preview
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let active = slot
+            .as_ref()
+            .ok_or_else(|| Error::Refused("No active preview session is open".into()))?;
+        if active.session_id != session_id {
+            return Err(Error::Refused(
+                "The preview session has been closed or replaced by another preview".into(),
+            ));
+        }
+        active.session.colour_at(x, y)
+    }
+
     /// Calculates optimal exposure, whites, and blacks via bisection on the drag proxy.
     pub fn auto_tone(&self, session_id: &str) -> Result<AutoTone, Error> {
         let slot = self

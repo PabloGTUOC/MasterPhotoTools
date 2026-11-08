@@ -357,7 +357,6 @@ export class StubDesktopApiClient {
   }
 
   /** A disc or band of full coverage, in frame coordinates through the identity map. */
-  /** A disc or band of full coverage, in frame coordinates through the identity map. */
   async renderMaskCoverage(
     _sessionId: string,
     recipe: AdjustmentRecipe,

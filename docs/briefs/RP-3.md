@@ -575,3 +575,31 @@ PASSED all 13 viewing requirements successfully.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+### Round 1 — Changes requested
+
+**Checked.** Re-ran every gate on `rp-3`: fmt and clippy clean, build clean; workspace 1108, `phototools-core` 713, `rollchrome-core` 278, `phototools-desktop` 26,
+`rollchrome-desktop` 20, none failed or ignored; typecheck, build, `check:transport`, `check:edit`, `check:bulk-lut`, `check:develop` and `check:viewing` (13) pass. No existing assertion changed. The `Full` stage follows the same
+paths as the other two, is decoded once, and is freed with the session. Replacing the existing `lock().unwrap()` calls went beyond *no new bare unwrap* (G11); it changes nothing and is reported, so it stays, without being a precedent.
+
+The Rust is right. Zoom is right only for an upright, uncropped photograph, and `check:viewing` tests no other kind.
+
+1. **Zoom sizes every rotated or cropped photograph wrongly.** `zoom100Dimensions` computes from the stored `full_width`, `full_height` and the crop, and the result is then used for a canvas in several different frames:
+   - **Portrait, no geometry (orientation 5–8).** `displayedDimensions` returns the *unrotated* canvas size, which the CSS rotation then turns upright: long edge as width. `zoom100Dimensions` returns the swapped one for the same case, so at 100% a 3:2 buffer gets a 2:3 box and is then rotated: a portrait photograph shown squeezed, on its side.
+   - **Portrait or `rotate: 90`, with any geometry.** With geometry the frame comes back upright and `swapsAxes` is false, but the stored 6000×4000 is still used: a 4000×6000 frame in a landscape box.
+   - **`stage` and pan** use those same numbers, so with a rotated canvas the clamp is computed for a box that is not what is on screen.
+   - **`settleStageForCurrentZoom` ignores the crop.** It compares the displayed size with the whole 2560 proxy, but a cropped settle frame has only the cropped part of those pixels. A 40% crop at 100% needs 2400 device pixels, passes as *Settle can serve this*, and shows 1024 pixels stretched and labelled 100%. That is what this step exists to prevent.
+
+   Replace the calculation with one derived from **the frame actually painted**. `frameWidth`, `frameHeight`, and the proxy it came from give the size the frame has at full resolution: multiply by `full long edge / long edge of the proxy of that stage` (1 for `Full`). If `swapsAxes`, swap them: that is the **visual** size, what the viewer sees upright. Everything about zoom, stage size, pan clamping, centring, zoom about a point and the choice of stage uses the visual size; the stage is sized to it; only the canvas element's CSS size is swapped when `swapsAxes`, and it stays centred in the stage. The stage choice compares needed device pixels with the frame's size **at settle**. Do not change fit: `check:edit`'s orientation checks must keep passing as they are.
+
+   Add to `check:viewing`, with the bounding box of the canvas as the measure, at `devicePixelRatio` 2:
+   - *14. Orientation 6, no geometry: at 100% the visible canvas is 2000 × 3000 ± 1 and `Full` is requested.*
+   - *15. Orientation 6 with a geometry present, and orientation 1 with `rotate: 90`: at 100% the visible canvas is 2000 × 3000 ± 1.*
+   - *16. A 40% crop at 100% requests `Full`, and the visible canvas is 40% of the full width ± 1.*
+   - *17. For the orientation 6 case, panning past each edge leaves no gap, measured from the visible canvas's box.*
+
+2. **A second dab of the brush zooms the photograph.** `onStageDoubleClick` guards only crop mode, so two quick dabs toggle fit and 100%. Do nothing when a mask is selected or a brush is active. Add: *18. With a brush active, a double-click changes neither zoom nor pan.*
+
+3. **The timing cannot be right.** The Report gives 0.073 s for a first `Full` *including* decoding that 24 MP TIFF, but `decode_image` on the same file measured 0.70 s in the RP-2 review. Measure through `PreviewSession::open(path)`, the path the application takes, not a session built from a buffer, and give the first `Full` and a later one with a LUT.
+
+Counts stay at 1108 / 278 / 20. `check:viewing` now asserts eighteen. Write **Report round 2** as new text, deleting nothing.

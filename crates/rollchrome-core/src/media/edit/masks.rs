@@ -95,6 +95,44 @@ pub enum MaskKind {
         target: AutoTarget,
         mask: StoredRaster,
     },
+    /// Luminance range: 0..1 on sqrt of linear Rec.709 luminance (RP-11).
+    LuminanceRange {
+        #[serde(default)]
+        low: f32,
+        #[serde(default = "default_high")]
+        high: f32,
+        #[serde(default = "default_feather")]
+        feather: f32,
+    },
+    /// Colour range: OkLCh target and range tolerance matching point colour adjustments (RP-11).
+    ColourRange {
+        #[serde(default)]
+        hue: f32,
+        #[serde(default)]
+        chroma: f32,
+        #[serde(default)]
+        lightness: f32,
+        #[serde(default = "default_range")]
+        range: f32,
+    },
+}
+
+/// Operation for combining mask components (RP-11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaskOp {
+    Add,
+    Subtract,
+    Intersect,
+}
+
+/// A component shape combined with a mask's base shape (RP-11).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MaskComponent {
+    pub op: MaskOp,
+    pub kind: MaskKind,
+    #[serde(default)]
+    pub invert: bool,
 }
 
 /// What an automatic mask finds.
@@ -110,7 +148,12 @@ pub enum AutoTarget {
 /// redraw a stroke or decode a PNG it has already seen; an export computes them once.
 pub trait MaskRasters {
     fn brush(&mut self, m: &Mask) -> Arc<BrushRaster>;
-    fn stored(&mut self, m: &Mask, raster: &StoredRaster) -> Result<Arc<CoverageRaster>, Error>;
+    fn stored(
+        &mut self,
+        m: &Mask,
+        comp_idx: Option<usize>,
+        raster: &StoredRaster,
+    ) -> Result<Arc<CoverageRaster>, Error>;
 }
 
 /// Computes everything afresh: what an export, which renders once, needs.
@@ -123,13 +166,26 @@ impl MaskRasters for Uncached {
     fn brush(&mut self, m: &Mask) -> Arc<BrushRaster> {
         super::brush::rasterise(&m.strokes, self.stored_w, self.stored_h)
     }
-    fn stored(&mut self, _m: &Mask, raster: &StoredRaster) -> Result<Arc<CoverageRaster>, Error> {
+    fn stored(
+        &mut self,
+        _m: &Mask,
+        _comp_idx: Option<usize>,
+        raster: &StoredRaster,
+    ) -> Result<Arc<CoverageRaster>, Error> {
         Ok(Arc::new(raster.decode()?))
     }
 }
 
 fn default_feather() -> f32 {
     0.5
+}
+
+fn default_high() -> f32 {
+    1.0
+}
+
+fn default_range() -> f32 {
+    50.0
 }
 
 fn default_opacity() -> f32 {
@@ -162,6 +218,9 @@ pub struct Mask {
     /// added stroke always adds effect where it is painted, whatever the shape or invert.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub strokes: Vec<Stroke>,
+    /// Components modifying this mask's coverage (RP-11).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<MaskComponent>,
 }
 
 impl Mask {
@@ -197,26 +256,39 @@ enum Shape {
     Empty,
     /// An automatic mask's stored pixels, sampled in stored-normalised coordinates.
     Raster(Arc<CoverageRaster>),
+    /// Luminance range: 0..1 on sqrt of linear Rec.709 luminance (RP-11).
+    LuminanceRange { low: f32, high: f32, feather: f32 },
+    /// Colour range matching OkLCh point colour adjustments (RP-11).
+    ColourRange {
+        h0: f32,
+        c0: f32,
+        l0: f32,
+        w_h: f32,
+        w_c: f32,
+        w_l: f32,
+    },
 }
 
-#[derive(Debug, Clone)]
-struct CompiledMask {
-    shape: Shape,
-    invert: bool,
-    opacity: f32,
-    adjustments: LocalAdjustments,
-    brush: Option<Arc<BrushRaster>>,
-    /// Stored width and height over the long edge, to recover stored-normalised
-    /// coordinates for the brush rasters from the aspect-scaled ones shapes use.
-    ax: f32,
-    ay: f32,
-}
+impl Shape {
+    fn is_luminance(&self) -> bool {
+        matches!(self, Shape::LuminanceRange { .. })
+    }
 
-impl CompiledMask {
-    /// Coverage at a point in aspect-scaled stored coordinates, before invert and opacity.
+    fn is_colour(&self) -> bool {
+        matches!(self, Shape::ColourRange { .. })
+    }
+
     #[inline(always)]
-    fn coverage(&self, x: f32, y: f32) -> f32 {
-        match self.shape {
+    fn coverage(
+        &self,
+        x: f32,
+        y: f32,
+        ax: f32,
+        ay: f32,
+        y_sqrt: f32,
+        oklch: (f32, f32, f32),
+    ) -> f32 {
+        match *self {
             Shape::Linear { sx, sy, dx, dy } => {
                 let t = (x - sx) * dx + (y - sy) * dy;
                 1.0 - smoothstep(t)
@@ -248,14 +320,103 @@ impl CompiledMask {
                 }
             }
             Shape::Empty => 0.0,
-            Shape::Raster(ref r) => r.sample(x / self.ax, y / self.ay),
+            Shape::Raster(ref r) => r.sample(x / ax, y / ay),
+            Shape::LuminanceRange { low, high, feather } => {
+                let (low, high) = if low <= high {
+                    (low, high)
+                } else {
+                    (high, low)
+                };
+                if feather <= 1e-6 {
+                    if y_sqrt >= low && y_sqrt <= high {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                } else {
+                    let dist = if y_sqrt < low {
+                        low - y_sqrt
+                    } else if y_sqrt > high {
+                        y_sqrt - high
+                    } else {
+                        0.0
+                    };
+                    if dist <= 0.0 {
+                        1.0
+                    } else if dist >= feather {
+                        0.0
+                    } else {
+                        1.0 - smoothstep(dist / feather)
+                    }
+                }
+            }
+            Shape::ColourRange {
+                h0,
+                c0,
+                l0,
+                w_h,
+                w_c,
+                w_l,
+            } => crate::media::edit::point_colour::colour_weight(
+                h0, c0, l0, w_h, w_c, w_l, oklch.0, oklch.1, oklch.2,
+            ),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CompiledComponent {
+    op: MaskOp,
+    shape: Shape,
+    invert: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CompiledMask {
+    shape: Shape,
+    components: Vec<CompiledComponent>,
+    invert: bool,
+    opacity: f32,
+    adjustments: LocalAdjustments,
+    brush: Option<Arc<BrushRaster>>,
+    /// Stored width and height over the long edge, to recover stored-normalised
+    /// coordinates for the brush rasters from the aspect-scaled ones shapes use.
+    ax: f32,
+    ay: f32,
+}
+
+impl CompiledMask {
+    fn needs_luminance(&self) -> bool {
+        self.shape.is_luminance() || self.components.iter().any(|c| c.shape.is_luminance())
+    }
+
+    fn needs_colour(&self) -> bool {
+        self.shape.is_colour() || self.components.iter().any(|c| c.shape.is_colour())
     }
 
     #[inline(always)]
-    fn weight(&self, x: f32, y: f32) -> f32 {
-        let c = self.coverage(x, y);
-        let c = if self.invert { 1.0 - c } else { c };
+    fn coverage(&self, x: f32, y: f32, y_sqrt: f32, oklch: (f32, f32, f32)) -> f32 {
+        let mut c = self.shape.coverage(x, y, self.ax, self.ay, y_sqrt, oklch);
+        if self.invert {
+            c = 1.0 - c;
+        }
+        for comp in &self.components {
+            let mut ci = comp.shape.coverage(x, y, self.ax, self.ay, y_sqrt, oklch);
+            if comp.invert {
+                ci = 1.0 - ci;
+            }
+            match comp.op {
+                MaskOp::Add => c = c.max(ci),
+                MaskOp::Subtract => c *= 1.0 - ci,
+                MaskOp::Intersect => c *= ci,
+            }
+        }
+        c
+    }
+
+    #[inline(always)]
+    fn weight(&self, x: f32, y: f32, y_sqrt: f32, oklch: (f32, f32, f32)) -> f32 {
+        let c = self.coverage(x, y, y_sqrt, oklch);
         let c = match &self.brush {
             Some(b) => b.apply(c, x / self.ax, y / self.ay),
             None => c,
@@ -270,14 +431,17 @@ pub struct CompiledMasks {
     /// Output normalised → stored normalised (`GeometryPlan::normalised_affine`).
     affine: [f32; 6],
     /// Stored width and height over the stored long edge.
-    ax: f32,
-    ay: f32,
+    pub ax: f32,
+    pub ay: f32,
     masks: Vec<CompiledMask>,
     /// Which groups of adjustments any mask touches, so the pixel pass enables a stage
     /// that is at rest globally but active locally.
     pub touches_tone: bool,
     pub touches_contrast: bool,
     pub touches_saturation: bool,
+    pub has_range_masks: bool,
+    pub needs_luminance: bool,
+    pub needs_colour: bool,
 }
 
 impl CompiledMasks {
@@ -327,6 +491,10 @@ impl CompiledMasks {
             .collect::<Result<Vec<_>, Error>>()?;
 
         let any = |f: fn(&LocalAdjustments) -> bool| compiled.iter().any(|m| f(&m.adjustments));
+        let needs_luminance = compiled.iter().any(|m| m.needs_luminance());
+        let needs_colour = compiled.iter().any(|m| m.needs_colour());
+        let has_range_masks = needs_luminance || needs_colour;
+
         Ok(Some(Self {
             affine,
             ax,
@@ -336,6 +504,9 @@ impl CompiledMasks {
             }),
             touches_contrast: any(|a| a.contrast != 0.0),
             touches_saturation: any(|a| a.saturation != 0.0 || a.vibrance != 0.0),
+            has_range_masks,
+            needs_luminance,
+            needs_colour,
             masks: compiled,
         }))
     }
@@ -357,12 +528,31 @@ impl CompiledMasks {
         }
     }
 
-    /// The summed local adjustments at a point given by a `RowCursor`.
+    /// The summed local adjustments at a point given by a `RowCursor`, reading incoming linear RGB (RP-11).
     #[inline(always)]
-    pub fn local_at(&self, x: f32, y: f32) -> LocalAdjustments {
+    pub fn local_at(&self, x: f32, y: f32, r: f32, g: f32, b: f32) -> LocalAdjustments {
+        let (y_sqrt, oklch) = if self.has_range_masks {
+            let y_sqrt = if self.needs_luminance {
+                (0.2126 * r + 0.7152 * g + 0.0722 * b).max(0.0).sqrt()
+            } else {
+                0.0
+            };
+            let oklch = if self.needs_colour {
+                let (l, a, b_val) = crate::media::edit::color::linear_srgb_to_oklab(r, g, b);
+                let c = (a * a + b_val * b_val).sqrt();
+                let h = b_val.atan2(a).to_degrees().rem_euclid(360.0);
+                (h, c, l)
+            } else {
+                (0.0, 0.0, 0.0)
+            };
+            (y_sqrt, oklch)
+        } else {
+            (0.0, (0.0, 0.0, 0.0))
+        };
+
         let mut sum = LocalAdjustments::default();
         for m in &self.masks {
-            let w = m.weight(x, y);
+            let w = m.weight(x, y, y_sqrt, oklch);
             if w > 0.0 {
                 sum.add_scaled(&m.adjustments, w);
             }
@@ -402,6 +592,7 @@ fn aspect(stored_w: u32, stored_h: u32) -> (f32, f32) {
 /// Includes invert and opacity but not whether the mask has adjustments yet: a new mask
 /// is shown before it does anything. Computed here, by the same formula the pixels use,
 /// so the overlay cannot disagree with the effect.
+#[allow(clippy::too_many_arguments)]
 pub fn coverage_frame(
     mask: &Mask,
     rasters: &mut dyn MaskRasters,
@@ -410,26 +601,57 @@ pub fn coverage_frame(
     stored_h: u32,
     out_w: u32,
     out_h: u32,
+    pixels: &[f32],
 ) -> Result<Vec<u8>, Error> {
     use rayon::prelude::*;
     let (ax, ay) = aspect(stored_w, stored_h);
+    let compiled = compile_mask(mask, ax, ay, rasters)?;
+    let needs_luminance = compiled.needs_luminance();
+    let needs_colour = compiled.needs_colour();
+    let has_range = needs_luminance || needs_colour;
     let one = CompiledMasks {
         affine,
         ax,
         ay,
-        masks: vec![compile_mask(mask, ax, ay, rasters)?],
         touches_tone: false,
         touches_contrast: false,
         touches_saturation: false,
+        has_range_masks: has_range,
+        needs_luminance,
+        needs_colour,
+        masks: vec![compiled],
     };
     let mut out = vec![0u8; (out_w as usize) * (out_h as usize)];
     out.par_chunks_exact_mut(out_w.max(1) as usize)
         .enumerate()
         .for_each(|(y, row)| {
             let cursor = one.row(y as u32, out_w, out_h);
+            let px_row_start = y * (out_w as usize) * 3;
             for (x, px) in row.iter_mut().enumerate() {
                 let (mx, my) = cursor.at(x);
-                let w = one.masks[0].weight(mx, my);
+                let (y_sqrt, oklch) = if has_range && px_row_start + x * 3 + 2 < pixels.len() {
+                    let r = pixels[px_row_start + x * 3];
+                    let g = pixels[px_row_start + x * 3 + 1];
+                    let b = pixels[px_row_start + x * 3 + 2];
+                    let y_sqrt = if needs_luminance {
+                        (0.2126 * r + 0.7152 * g + 0.0722 * b).max(0.0).sqrt()
+                    } else {
+                        0.0
+                    };
+                    let oklch = if needs_colour {
+                        let (l, a, b_val) =
+                            crate::media::edit::color::linear_srgb_to_oklab(r, g, b);
+                        let c = (a * a + b_val * b_val).sqrt();
+                        let h = b_val.atan2(a).to_degrees().rem_euclid(360.0);
+                        (h, c, l)
+                    } else {
+                        (0.0, 0.0, 0.0)
+                    };
+                    (y_sqrt, oklch)
+                } else {
+                    (0.0, (0.0, 0.0, 0.0))
+                };
+                let w = one.masks[0].weight(mx, my, y_sqrt, oklch);
                 // Any weight at all shows: a weight that rounds to 0 can still move a pixel
                 // by a code value, and the overlay must not hide where the mask acts.
                 *px = if w > 0.0 {
@@ -467,11 +689,24 @@ fn compile_mask(
     rasters: &mut dyn MaskRasters,
 ) -> Result<CompiledMask, Error> {
     let shape = match &m.kind {
-        MaskKind::Auto { mask, .. } => Shape::Raster(rasters.stored(m, mask)?),
+        MaskKind::Auto { mask, .. } => Shape::Raster(rasters.stored(m, None, mask)?),
         kind => compile_shape(kind, ax, ay),
     };
+    let mut compiled_components = Vec::with_capacity(m.components.len());
+    for (i, comp) in m.components.iter().enumerate() {
+        let shape = match &comp.kind {
+            MaskKind::Auto { mask, .. } => Shape::Raster(rasters.stored(m, Some(i), mask)?),
+            kind => compile_shape(kind, ax, ay),
+        };
+        compiled_components.push(CompiledComponent {
+            op: comp.op,
+            shape,
+            invert: comp.invert,
+        });
+    }
     Ok(CompiledMask {
         shape,
+        components: compiled_components,
         invert: m.invert,
         opacity: m.opacity.clamp(0.0, 1.0),
         adjustments: m.adjustments,
@@ -525,6 +760,27 @@ fn compile_shape(kind: &MaskKind, ax: f32, ay: f32) -> Shape {
                 inv_feather: 1.0 / feather.max(1e-6),
             }
         }
+        MaskKind::LuminanceRange { low, high, feather } => Shape::LuminanceRange {
+            low,
+            high,
+            feather: feather.max(0.0),
+        },
+        MaskKind::ColourRange {
+            hue,
+            chroma,
+            lightness,
+            range,
+        } => {
+            let (w_h, w_c, w_l) = crate::media::edit::point_colour::point_colour_widths(range);
+            Shape::ColourRange {
+                h0: hue.rem_euclid(360.0),
+                c0: chroma.max(0.0),
+                l0: lightness.clamp(0.0, 1.0),
+                w_h,
+                w_c,
+                w_l,
+            }
+        }
     }
 }
 
@@ -545,6 +801,7 @@ mod tests {
                 ..Default::default()
             },
             strokes: Vec::new(),
+            components: Vec::new(),
         }
     }
 
@@ -556,7 +813,7 @@ mod tests {
 
     /// Exposure the mask contributes at stored-normalised `(u, v)` of a `w` × `h` frame.
     fn exposure_at(c: &CompiledMasks, u: f32, v: f32) -> f32 {
-        c.local_at(u * c.ax, v * c.ay).exposure
+        c.local_at(u * c.ax, v * c.ay, 0.5, 0.5, 0.5).exposure
     }
 
     #[test]

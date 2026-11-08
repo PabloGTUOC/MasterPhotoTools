@@ -82,9 +82,58 @@ pub struct CompiledPointColours {
 }
 
 #[inline(always)]
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+/// Compute hue, chroma, and lightness tolerance widths from range [0.0, 100.0].
+pub fn point_colour_widths(range: f32) -> (f32, f32, f32) {
+    let r = range.clamp(0.0, 100.0);
+    (8.0 + 0.52 * r, 0.04 + 0.002 * r, 0.12 + 0.004 * r)
+}
+
+/// Calculate the selection weight in OkLCh color space, matching point colour adjustments.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub fn colour_weight(
+    h0: f32,
+    c0: f32,
+    l0: f32,
+    w_h: f32,
+    w_c: f32,
+    w_l: f32,
+    h: f32,
+    c: f32,
+    l: f32,
+) -> f32 {
+    let mut d_h = (h - h0).abs();
+    if d_h > 180.0 {
+        d_h = 360.0 - d_h;
+    }
+    if d_h >= w_h {
+        return 0.0;
+    }
+
+    let d_c = (c - c0).abs();
+    if d_c >= w_c {
+        return 0.0;
+    }
+
+    let d_l = (l - l0).abs();
+    if d_l >= w_l {
+        return 0.0;
+    }
+
+    // Each weight is 1 - smoothstep(0.5, 1.0, distance / width).
+    // Inner half (distance <= 0.5 * width) gets full weight 1.0;
+    // outer half smoothly falls off to 0.0 using cubic Hermite interpolation.
+    let w_h_val = 1.0 - smoothstep(0.5, 1.0, d_h / w_h);
+    let w_c_val = 1.0 - smoothstep(0.5, 1.0, d_c / w_c);
+    let w_l_val = 1.0 - smoothstep(0.5, 1.0, d_l / w_l);
+    let fade = crate::media::edit::hsl::chroma_fade(c);
+
+    w_h_val * w_c_val * w_l_val * fade
 }
 
 impl CompiledPointColours {
@@ -94,7 +143,6 @@ impl CompiledPointColours {
             .iter()
             .filter(|p| !p.is_identity())
             .map(|p| {
-                let r = p.range.clamp(0.0, 100.0);
                 // Why each constant has its value:
                 // - Hue width `8.0 + 0.52 * range`: at range 0, an 8° width provides a narrow slice
                 //   to isolate subtle tint differences; at range 50, 34° covers an entire color family;
@@ -112,13 +160,14 @@ impl CompiledPointColours {
                 //   to 0.0 and +100 doubles the chroma.
                 // - `(luminance / 100.0) * 0.3`: scales -100..100 to at most ±0.3 OkLCh lightness,
                 //   preventing harsh highlight clipping or black crushing.
+                let (w_h, w_c, w_l) = point_colour_widths(p.range);
                 CompiledPoint {
                     h0: p.hue.rem_euclid(360.0),
                     c0: p.chroma.max(0.0),
                     l0: p.lightness.clamp(0.0, 1.0),
-                    w_h: 8.0 + 0.52 * r,
-                    w_c: 0.04 + 0.002 * r,
-                    w_l: 0.12 + 0.004 * r,
+                    w_h,
+                    w_c,
+                    w_l,
                     hue_shift_scaled: p.hue_shift.clamp(-100.0, 100.0) * 0.3,
                     sat_scaled: p.saturation.clamp(-100.0, 100.0) / 100.0,
                     lum_scaled: (p.luminance.clamp(-100.0, 100.0) / 100.0) * 0.3,
@@ -166,32 +215,7 @@ impl CompiledPointColours {
         let mut delta_l = 0.0f32;
 
         for pt in &self.points {
-            let mut d_h = (h - pt.h0).abs();
-            if d_h > 180.0 {
-                d_h = 360.0 - d_h;
-            }
-            if d_h >= pt.w_h {
-                continue;
-            }
-
-            let d_c = (c - pt.c0).abs();
-            if d_c >= pt.w_c {
-                continue;
-            }
-
-            let d_l = (l - pt.l0).abs();
-            if d_l >= pt.w_l {
-                continue;
-            }
-
-            // Each weight is 1 - smoothstep(0.5, 1.0, distance / width).
-            // Inner half (distance <= 0.5 * width) gets full weight 1.0;
-            // outer half smoothly falls off to 0.0 using cubic Hermite interpolation.
-            let w_h = 1.0 - smoothstep(0.5, 1.0, d_h / pt.w_h);
-            let w_c = 1.0 - smoothstep(0.5, 1.0, d_c / pt.w_c);
-            let w_l = 1.0 - smoothstep(0.5, 1.0, d_l / pt.w_l);
-
-            let w = w_h * w_c * w_l * fade;
+            let w = colour_weight(pt.h0, pt.c0, pt.l0, pt.w_h, pt.w_c, pt.w_l, h, c, l);
             if w <= 0.0 {
                 continue;
             }

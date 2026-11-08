@@ -32,7 +32,9 @@ export type MaskShape =
     }
   | { type: 'brush' }
   /** Made by a model and stored as pixels: nothing to drag, only to paint (ED-23). */
-  | { type: 'auto' };
+  | { type: 'auto' }
+  | { type: 'luminance_range'; low?: number; high?: number; feather?: number }
+  | { type: 'colour_range'; hue?: number; chroma?: number; lightness?: number; range?: number };
 
 export interface OverlayMask {
   id: string;
@@ -157,7 +159,7 @@ const radialRings = computed(() => {
 /** Where an unselected mask's pin sits, to select it by clicking; none for an unpainted brush. */
 function anchorOf(m: OverlayMask): Pt | null {
   if (m.kind.type === 'radial') return toView(m.kind.center);
-  if (m.kind.type === 'auto') return null;
+  if (m.kind.type === 'auto' || m.kind.type === 'luminance_range' || m.kind.type === 'colour_range') return null;
   if (m.kind.type === 'brush') {
     const pts = m.strokes?.[0]?.points;
     return pts?.length ? toView(pts[Math.floor(pts.length / 2)]) : null;
@@ -198,7 +200,7 @@ function moved(kind: MaskShape, handle: Handle, from: Pt, to: Pt): MaskShape {
     if (handle === 'end') return { ...kind, end: shift(kind.end) };
     return { ...kind, start: shift(kind.start), end: shift(kind.end) };
   }
-  if (kind.type === 'brush' || kind.type === 'auto') return kind; // painted, not dragged
+  if (kind.type === 'brush' || kind.type === 'auto' || kind.type === 'luminance_range' || kind.type === 'colour_range') return kind; // painted, not dragged
   if (handle === 'center') return { ...kind, center: shift(kind.center) };
   const [cx, cy] = toAspect(kind.center);
   const [px, py] = toAspect(to);
@@ -292,7 +294,7 @@ function handleAnchor(kind: MaskShape, handle: Handle): Pt {
     if (handle === 'end') return kind.end;
     return [(kind.start[0] + kind.end[0]) / 2, (kind.start[1] + kind.end[1]) / 2];
   }
-  if (kind.type === 'brush' || kind.type === 'auto') return [0.5, 0.5];
+  if (kind.type === 'brush' || kind.type === 'auto' || kind.type === 'luminance_range' || kind.type === 'colour_range') return [0.5, 0.5];
   if (handle === 'rx') return radialAxisPoint(kind, 'x');
   if (handle === 'ry') return radialAxisPoint(kind, 'y');
   return kind.center;
@@ -330,7 +332,7 @@ const brushRing = computed(() => {
 
 const handles = computed(() => {
   const m = selected.value;
-  if (!m || props.paint || m.kind.type === 'brush' || m.kind.type === 'auto') return [];
+  if (!m || props.paint || m.kind.type === 'brush' || m.kind.type === 'auto' || m.kind.type === 'luminance_range' || m.kind.type === 'colour_range') return [];
   const kind = m.kind;
   const list: { handle: Handle; at: Pt; label: string }[] =
     kind.type === 'linear'

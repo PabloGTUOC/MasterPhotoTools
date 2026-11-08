@@ -674,7 +674,7 @@ impl LinearBuffer {
                     let p = match cursor {
                         Some((m, c)) => {
                             let (mx, my) = c.at(x);
-                            let local = m.local_at(mx, my);
+                            let local = m.local_at(mx, my, px[0], px[1], px[2]);
                             if local.is_zero() {
                                 &global
                             } else {

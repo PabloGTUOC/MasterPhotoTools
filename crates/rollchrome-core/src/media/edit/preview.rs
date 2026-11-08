@@ -198,6 +198,9 @@ struct CachedGeometry {
     full_transformed: Option<LinearBuffer>,
 }
 
+type StoredMaskKey = (String, Option<usize>);
+type StoredMaskEntry = (u64, Arc<CoverageRaster>);
+
 /// An interactive preview session constructed once per image.
 ///
 /// Holds pre-downscaled, pre-linearised proxies for drag (720p) and settle (1440p)
@@ -228,8 +231,8 @@ pub struct PreviewSession {
     pub detail_recompute_count: AtomicUsize,
     /// Brush rasters per mask and stage, so painting redraws only the new segments (ED-21).
     brushes: Mutex<HashMap<(String, PreviewStage), BrushCache>>,
-    /// Decoded automatic masks per mask, with a hash of the PNG they came from (ED-23).
-    stored: Mutex<HashMap<String, (u64, Arc<CoverageRaster>)>>,
+    /// Decoded automatic masks per (mask, component), with a hash of the PNG they came from (ED-23, RP-11).
+    stored: Mutex<HashMap<StoredMaskKey, StoredMaskEntry>>,
 }
 
 /// A session's caches, offered to mask compilation for one stage.
@@ -245,23 +248,29 @@ impl MaskRasters for SessionRasters<'_> {
         self.session.brush_raster(m, self.stage, self.w, self.h)
     }
 
-    fn stored(&mut self, m: &Mask, raster: &StoredRaster) -> Result<Arc<CoverageRaster>, Error> {
+    fn stored(
+        &mut self,
+        m: &Mask,
+        comp_idx: Option<usize>,
+        raster: &StoredRaster,
+    ) -> Result<Arc<CoverageRaster>, Error> {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         raster.hash(&mut hasher);
         let key = hasher.finish();
+        let cache_key = (m.id.clone(), comp_idx);
         let mut cache = self
             .session
             .stored
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        if let Some((k, r)) = cache.get(&m.id) {
+        if let Some((k, r)) = cache.get(&cache_key) {
             if *k == key {
                 return Ok(r.clone());
             }
         }
         let decoded = Arc::new(raster.decode()?);
-        cache.insert(m.id.clone(), (key, decoded.clone()));
+        cache.insert(cache_key, (key, decoded.clone()));
         Ok(decoded)
     }
 }
@@ -587,7 +596,7 @@ impl PreviewSession {
         self.stored
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .retain(|id, _| recipe.masks.iter().any(|m| &m.id == id));
+            .retain(|(id, _), _| recipe.masks.iter().any(|m| &m.id == id));
         CompiledMasks::compile_with(
             &recipe.masks,
             geometry,
@@ -636,15 +645,28 @@ impl PreviewSession {
             .iter()
             .find(|m| m.id == mask_id)
             .ok_or_else(|| Error::Refused(format!("No mask {mask_id} in this recipe")))?;
-        let proxy = self.stage_linear(stage, recipe.detail.as_ref())?;
-        let (stored_w, stored_h) = (proxy.width, proxy.height);
-        let (out_w, out_h, affine) = match recipe.geometry.as_ref() {
-            Some(g) => {
-                let plan = g.plan(stored_w, stored_h, self.orientation)?;
-                (plan.out_w, plan.out_h, plan.normalised_affine())
-            }
-            None => (stored_w, stored_h, [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
-        };
+        let input = self.stage_linear(stage, recipe.detail.as_ref())?;
+        let (stored_w, stored_h) = (input.width, input.height);
+        let transformed_buf;
+        let (out_w, out_h, affine, pixels_ref): (u32, u32, [f32; 6], &[f32]) =
+            match recipe.geometry.as_ref() {
+                Some(g) => {
+                    let plan = g.plan(stored_w, stored_h, self.orientation)?;
+                    transformed_buf = g.apply_to_linear(&input, self.orientation)?;
+                    (
+                        plan.out_w,
+                        plan.out_h,
+                        plan.normalised_affine(),
+                        &transformed_buf.data,
+                    )
+                }
+                None => (
+                    stored_w,
+                    stored_h,
+                    [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                    &input.data,
+                ),
+            };
         let coverage = super::masks::coverage_frame(
             mask,
             &mut SessionRasters {
@@ -658,6 +680,7 @@ impl PreviewSession {
             stored_h,
             out_w,
             out_h,
+            pixels_ref,
         )?;
         Ok((out_w, out_h, coverage))
     }
@@ -1318,7 +1341,7 @@ pub fn render_rgba_frame_masked(
                     let p = match mask_row {
                         Some((m, cursor)) => {
                             let (mx, my) = cursor.at(base_x + i);
-                            let local = m.local_at(mx, my);
+                            let local = m.local_at(mx, my, in_px[0], in_px[1], in_px[2]);
                             if local.is_zero() {
                                 &global
                             } else {

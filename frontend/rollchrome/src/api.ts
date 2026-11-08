@@ -704,7 +704,19 @@ export type MaskKind =
       feather: number;
     }
   | { type: 'brush' }
-  | { type: 'auto'; target: AutoTarget; mask: StoredRaster };
+  | { type: 'auto'; target: AutoTarget; mask: StoredRaster }
+  | { type: 'luminance_range'; low: number; high: number; feather: number }
+  | { type: 'colour_range'; hue: number; chroma: number; lightness: number; range: number };
+
+/** Operation for combining mask components (RP-11). */
+export type MaskOp = 'add' | 'subtract' | 'intersect';
+
+/** A component shape combined with a mask's base shape (RP-11). */
+export interface MaskComponent {
+  op: MaskOp;
+  kind: MaskKind;
+  invert: boolean;
+}
 
 /** What an automatic mask finds (ED-23). */
 export type AutoTarget = 'subject' | 'sky';
@@ -744,6 +756,8 @@ export interface Mask {
   adjustments: LocalAdjustments;
   /** Painted after the shape and its invert, in order (ED-21). */
   strokes?: BrushStroke[];
+  /** Components modifying this mask's coverage (RP-11). */
+  components?: MaskComponent[];
 }
 
 /** Stage for preview rendering. */

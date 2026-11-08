@@ -458,6 +458,7 @@ fn masks_are_never_applied_by_batch() {
             ..Default::default()
         },
         strokes: Vec::new(),
+        components: Vec::new(),
     };
 
     let plain = AdjustmentRecipe {

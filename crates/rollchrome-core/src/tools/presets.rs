@@ -338,6 +338,7 @@ mod tests {
                 ..Default::default()
             },
             strokes: Vec::new(),
+            components: Vec::new(),
         });
 
         save_preset(dir, "framed", &recipe, false).unwrap();

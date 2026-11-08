@@ -5,7 +5,7 @@ from [`../manual-verification.md`](../manual-verification.md) when the editor le
 (RC-3), and **their ids are unchanged**, so anything that names MV-20.4 still finds it.
 
 How to work through them — tick the box, replace **Result:** with what actually happened, and a
-failed check is a result — is as described at the top of that file. **40 checks**, none done yet
+failed check is a result — is as described at the top of that file. **41 checks**, none done yet
 (2026-11-06). They all need a Mac with real photographs, and MV-20.7 also a card and a mounted
 share.
 
@@ -298,5 +298,19 @@ the automated check drives the screen against a stub.
 - [ ] **MV-32.1 — Single colour changed on a real photograph.**
       **Run:** in Edit, open a real photograph containing a distinct, saturated subject against contrasting surroundings (e.g. a red car, a yellow flower, a blue jacket, or a model in a vibrant dress). Open the Colour / HSL section and click "Pick a colour". Sample the subject by clicking directly on its surface. Observe that a new swatch appears, selected, with Hue, Saturation, Luminance, and Range sliders at their defaults. Adjust the Hue slider to shift the color (e.g. from red to purple or blue), increase Saturation (+40), and adjust Luminance (+20) and Range. Toggle Black & White on and off, and verify the point colour is bypassed in B&W and restored when returning to colour. Export the edited image.
       **Pass:** only the picked subject's colour changes smoothly; adjacent colors, skin tones, neutrals, and skies remain untouched; the transition at the edge of the range falloff is smooth without blotchy haloing or chromatic noise in near-neutrals; the exported photograph exactly matches the preview.
+      **Result:**
+
+## MV-33 — Masks: ranges and combining (RP-11)
+
+[`../briefs/RP-11.md`](../briefs/RP-11.md). Real photographs in the real application.
+
+- [ ] **MV-33.1 — Mask combinations: colour and luminance ranges with shapes.**
+      **Run:** in Edit, open a real photograph with a subject and background (e.g. portrait against foliage or sky).
+      1. Click `+ Background` to create an inverted subject mask, adjust exposure and contrast, verify the background is isolated without fringing.
+      2. Click `+ Luminance range` to create a mid-tones mask, inspect low/high/feather adjustments, verify that changing exposure on the mask affects only mid-tones.
+      3. Add a Linear gradient mask, add a `Luminance range` component set to `intersect` or `subtract`, drag the linear gradient handles and observe interactive coverage updates without affecting the component's range settings.
+      4. Click `+ Colour range`, sample a dominant hue on the image, shift its exposure, then click `Re-pick colour` to select a different hue.
+      5. Export the photograph across formats and verify that masked adjustments match the on-screen preview.
+      **Pass:** range masks cleanly isolate tones and colours without noise or harsh boundaries; combining operations (`add`, `subtract`, `intersect`) and component inverting accurately compose complex selection areas; gradient handles remain fully interactive for both base and components; exported renders match the interactive display preview.
       **Result:**
 

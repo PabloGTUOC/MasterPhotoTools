@@ -25,7 +25,9 @@ import type {
   LocalAdjustments,
   LutRef,
   Mask,
+  MaskComponent,
   MaskKind,
+  MaskOp,
   NormalizedCrop,
   PointColour,
   PresetList,
@@ -46,7 +48,7 @@ import CropOverlay from '../components/CropOverlay.vue';
 import CurveEditor from '../components/CurveEditor.vue';
 import Histogram, { type HistogramMode } from '../components/Histogram.vue';
 import JobProgress from '@ui/components/JobProgress.vue';
-import MaskOverlay from '../components/MaskOverlay.vue';
+import MaskOverlay, { type OverlayMask } from '../components/MaskOverlay.vue';
 import PresetBar from '../components/PresetBar.vue';
 import { copiedSettings, copyToClipboard } from '../recipeClipboard';
 import { exportState, buildExportOptions, isResizeValid, resizeInvalidReason } from '../exportState';
@@ -313,7 +315,13 @@ function suggestVersionName(): string {
 // Colour tools: Eyedropper, Auto Tone, Black & White (RP-4), Point Colour (RP-10)
 // ---------------------------------------------------------------------------
 
-type EyedropperTarget = 'white-balance' | 'point-colour' | null;
+type EyedropperTarget =
+  | 'white-balance'
+  | 'point-colour'
+  | 'colour-range-mask'
+  | 'colour-range-repick'
+  | 'colour-range-component'
+  | null;
 const eyedropperTarget = ref<EyedropperTarget>(null);
 const isEyedropperActive = computed(() => eyedropperTarget.value !== null);
 
@@ -326,6 +334,21 @@ function togglePointColourEyedropper() {
   if (isCropMode.value || isBefore.value || compareMode.value !== 'off' || !sessionId.value) return;
   if ((recipe.value.point_colours?.length ?? 0) >= 8) return;
   eyedropperTarget.value = eyedropperTarget.value === 'point-colour' ? null : 'point-colour';
+}
+
+function startColourRangeEyedropper() {
+  if (isCropMode.value || isBefore.value || compareMode.value !== 'off' || !sessionId.value) return;
+  eyedropperTarget.value = 'colour-range-mask';
+}
+
+function startColourRangeRepick() {
+  if (isCropMode.value || isBefore.value || compareMode.value !== 'off' || !sessionId.value) return;
+  eyedropperTarget.value = 'colour-range-repick';
+}
+
+function startColourRangeComponentEyedropper() {
+  if (isCropMode.value || isBefore.value || compareMode.value !== 'off' || !sessionId.value) return;
+  eyedropperTarget.value = 'colour-range-component';
 }
 
 function exitEyedropper() {
@@ -464,6 +487,87 @@ async function onEyedropperSample(e: MouseEvent | PointerEvent) {
       recipe.value.point_colours.push(newPoint);
       selectedPointIndex.value = recipe.value.point_colours.length - 1;
       commitRecipeChange('Point colour');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showNotice(`Cannot pick colour: ${msg}`);
+    }
+  } else if (target === 'colour-range-mask') {
+    try {
+      const pick = await desktop.colourAt(sessionId.value, storedX, storedY);
+      if (masks.value.length >= MASK_LIMIT) {
+        showNotice(`Cannot add more than ${MASK_LIMIT} masks`);
+        return;
+      }
+      maskSeq += 1;
+      const count = masks.value.filter((m) => m.kind.type === 'colour_range').length + 1;
+      const mask: Mask = {
+        id: `m${Date.now().toString(36)}${maskSeq}`,
+        name: `Colour Range ${count}`,
+        kind: {
+          type: 'colour_range',
+          hue: pick.hue,
+          chroma: pick.chroma,
+          lightness: pick.lightness,
+          range: 50,
+        },
+        invert: false,
+        opacity: 1,
+        enabled: true,
+        adjustments: { ...ZERO_LOCAL },
+      };
+      recipe.value.masks = [...masks.value, mask];
+      selectedMaskId.value = mask.id;
+      selectedComponentIndex.value = null;
+      showMaskOverlay.value = true;
+      commitRecipeChange('Add mask');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showNotice(`Cannot pick colour: ${msg}`);
+    }
+  } else if (target === 'colour-range-repick') {
+    try {
+      const pick = await desktop.colourAt(sessionId.value, storedX, storedY);
+      const m = selectedMask.value;
+      if (!m) return;
+      if (selectedComponentIndex.value !== null && m.components?.[selectedComponentIndex.value]) {
+        const comp = m.components[selectedComponentIndex.value];
+        if (comp.kind.type === 'colour_range') {
+          comp.kind.hue = pick.hue;
+          comp.kind.chroma = pick.chroma;
+          comp.kind.lightness = pick.lightness;
+          onRecipeValueChange();
+        }
+      } else if (m.kind.type === 'colour_range') {
+        m.kind.hue = pick.hue;
+        m.kind.chroma = pick.chroma;
+        m.kind.lightness = pick.lightness;
+        onRecipeValueChange();
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showNotice(`Cannot pick colour: ${msg}`);
+    }
+  } else if (target === 'colour-range-component') {
+    try {
+      const pick = await desktop.colourAt(sessionId.value, storedX, storedY);
+      const m = selectedMask.value;
+      if (!m) return;
+      if (!m.components) {
+        m.components = [];
+      }
+      m.components.push({
+        op: 'intersect',
+        kind: {
+          type: 'colour_range',
+          hue: pick.hue,
+          chroma: pick.chroma,
+          lightness: pick.lightness,
+          range: 50,
+        },
+        invert: false,
+      });
+      selectedComponentIndex.value = m.components.length - 1;
+      onRecipeValueChange();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showNotice(`Cannot pick colour: ${msg}`);
@@ -1428,7 +1532,7 @@ function triggerSaveWithoutHistory() {
   saveDebounceTimer = window.setTimeout(async () => {
     saveDebounceTimer = undefined;
     try {
-      await desktop.saveRecipe(sourcePath.value, recipe.value);
+      await desktop.saveRecipe(sourcePath.value, cleanRecipeForSave(recipe.value));
       saveStatus.value = 'Saved';
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -2053,7 +2157,7 @@ function normaliseMask(m: Mask): Mask {
       ? { ...m.kind, angle: m.kind.angle ?? 0, feather: m.kind.feather ?? 0.5 }
       : { ...m.kind };
   // core writes nothing for an empty stroke list (`skip_serializing_if`).
-  return {
+  const res: Mask = {
     id: m.id,
     name: m.name ?? '',
     kind,
@@ -2069,6 +2173,29 @@ function normaliseMask(m: Mask): Mask {
       erase: st.erase ?? false,
     })),
   };
+  if (m.components && m.components.length > 0) {
+    res.components = m.components.map((c) => ({
+      op: c.op ?? 'intersect',
+      kind:
+        c.kind.type === 'radial'
+          ? { ...c.kind, angle: c.kind.angle ?? 0, feather: c.kind.feather ?? 0.5 }
+          : { ...c.kind },
+      invert: c.invert ?? false,
+    }));
+  }
+  return res;
+}
+
+function cleanRecipeForSave(r: AdjustmentRecipe): AdjustmentRecipe {
+  const copy = cloneRecipe(r);
+  if (copy.masks) {
+    for (const m of copy.masks) {
+      if (!m.components || m.components.length === 0) {
+        delete m.components;
+      }
+    }
+  }
+  return copy;
 }
 
 function cloneRecipe(r: AdjustmentRecipe): AdjustmentRecipe {
@@ -2493,9 +2620,51 @@ function addMask(type: 'linear' | 'radial' | 'brush') {
   };
   recipe.value.masks = [...masks.value, mask];
   selectedMaskId.value = mask.id;
+  selectedComponentIndex.value = null;
   // A brush mask is nothing until painted: start painting at once.
   painting.value = type === 'brush';
   commitRecipeChange('Add mask');
+}
+
+function addLuminanceMask() {
+  if (!sessionId.value || masks.value.length >= MASK_LIMIT) return;
+  const count = masks.value.filter((m) => m.kind.type === 'luminance_range').length + 1;
+  maskSeq += 1;
+  const mask: Mask = {
+    id: `m${Date.now().toString(36)}${maskSeq}`,
+    name: `Luminance ${count}`,
+    kind: {
+      type: 'luminance_range',
+      low: 25,
+      high: 75,
+      feather: 20,
+    },
+    invert: false,
+    opacity: 1,
+    enabled: true,
+    adjustments: { ...ZERO_LOCAL },
+  };
+  recipe.value.masks = [...masks.value, mask];
+  selectedMaskId.value = mask.id;
+  selectedComponentIndex.value = null;
+  showMaskOverlay.value = true;
+  commitRecipeChange('Add mask');
+}
+
+async function addBackgroundMask() {
+  if (!sessionId.value || masks.value.length >= MASK_LIMIT || autoBusy.value) return;
+  error.value = null;
+  try {
+    const model = (await desktop.autoMaskModels()).find((m) => m.target === 'subject');
+    if (!model) throw new Error('No model is known for Subject');
+    if (!model.present) {
+      autoDownload.value = { target: 'subject', name: model.name, jobId: null };
+      return;
+    }
+    await runAutoMask('subject', true);
+  } catch (err: unknown) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
 }
 
 /** The brush radius the overlay paints with, or null when not painting. */
@@ -2534,6 +2703,7 @@ function onStrokeEnd() {
 /** Back to the whole photograph: the mask stays, only its editing ends. */
 function finishMaskEditing() {
   painting.value = false;
+  selectedComponentIndex.value = null;
   selectedMaskId.value = null;
 }
 
@@ -2621,7 +2791,7 @@ async function onModelDownloaded() {
   }
 }
 
-async function runAutoMask(target: AutoTarget) {
+async function runAutoMask(target: AutoTarget, asBackground = false) {
   if (!sessionId.value) return;
   const seq = ++autoSeq;
   const session = sessionId.value;
@@ -2634,9 +2804,9 @@ async function runAutoMask(target: AutoTarget) {
     maskSeq += 1;
     const mask: Mask = {
       id: `m${Date.now().toString(36)}${maskSeq}`,
-      name: `${AUTO_LABEL[target]} ${count}`,
+      name: asBackground ? 'Background' : `${AUTO_LABEL[target]} ${count}`,
       kind: { type: 'auto', target, mask: raster },
-      invert: false,
+      invert: asBackground,
       opacity: 1,
       enabled: true,
       adjustments: { ...ZERO_LOCAL },
@@ -2644,6 +2814,7 @@ async function runAutoMask(target: AutoTarget) {
     };
     recipe.value.masks = [...masks.value, mask];
     selectedMaskId.value = mask.id;
+    selectedComponentIndex.value = null;
     // Show what was found: the person judges it before adjusting through it.
     showMaskOverlay.value = true;
     onRecipeValueChange();
@@ -2659,11 +2830,228 @@ function stopAutoMask() {
   autoBusy.value = null;
 }
 
+const selectedComponentIndex = ref<number | null>(null);
+
+watch(selectedMaskId, () => {
+  selectedComponentIndex.value = null;
+});
+
+const activeEditingKind = computed(() => {
+  if (!selectedMask.value) return null;
+  if (
+    selectedComponentIndex.value !== null &&
+    selectedMask.value.components?.[selectedComponentIndex.value]
+  ) {
+    return selectedMask.value.components[selectedComponentIndex.value].kind;
+  }
+  return selectedMask.value.kind;
+});
+
+const overlayMasks = computed<OverlayMask[]>(() => {
+  return masks.value.map((m) => {
+    if (
+      m.id === selectedMaskId.value &&
+      selectedComponentIndex.value !== null &&
+      m.components?.[selectedComponentIndex.value]
+    ) {
+      const comp = m.components[selectedComponentIndex.value];
+      return {
+        id: m.id,
+        name: m.name,
+        kind: comp.kind,
+        strokes: m.strokes,
+      };
+    }
+    return {
+      id: m.id,
+      name: m.name,
+      kind: m.kind,
+      strokes: m.strokes,
+    };
+  });
+});
+
+function selectComponent(index: number) {
+  selectedComponentIndex.value = index;
+}
+
+function selectBaseMask() {
+  selectedComponentIndex.value = null;
+}
+
+function setComponentOp(index: number, op: MaskOp) {
+  const m = selectedMask.value;
+  if (!m?.components?.[index]) return;
+  m.components[index].op = op;
+  onRecipeValueChange();
+}
+
+function toggleComponentInvert(index: number) {
+  const m = selectedMask.value;
+  if (!m?.components?.[index]) return;
+  m.components[index].invert = !m.components[index].invert;
+  onRecipeValueChange();
+}
+
+function deleteComponent(index: number) {
+  const m = selectedMask.value;
+  if (!m || !m.components) return;
+  m.components.splice(index, 1);
+  if (m.components.length === 0) {
+    delete m.components;
+  }
+  if (selectedComponentIndex.value === index) {
+    selectedComponentIndex.value = null;
+  } else if (selectedComponentIndex.value !== null && selectedComponentIndex.value > index) {
+    selectedComponentIndex.value -= 1;
+  }
+  onRecipeValueChange();
+}
+
+function addComponent(type: 'linear' | 'radial' | 'luminance_range' | 'colour_range' | 'subject' | 'sky') {
+  const m = selectedMask.value;
+  if (!m) return;
+  if (type === 'colour_range') {
+    startColourRangeComponentEyedropper();
+    return;
+  }
+  if (type === 'subject' || type === 'sky') {
+    addAutoComponent(type);
+    return;
+  }
+  if (!m.components) {
+    m.components = [];
+  }
+  let comp: MaskComponent;
+  if (type === 'linear') {
+    comp = {
+      op: 'add',
+      kind: {
+        type: 'linear',
+        start: frameToStoredPoint(0.5, 0.1),
+        end: frameToStoredPoint(0.5, 0.55),
+      },
+      invert: false,
+    };
+  } else if (type === 'radial') {
+    comp = {
+      op: 'add',
+      kind: {
+        type: 'radial',
+        center: frameToStoredPoint(0.5, 0.5),
+        radius_x: 0.2,
+        radius_y: 0.2,
+        angle: 0,
+        feather: 0.5,
+      },
+      invert: false,
+    };
+  } else {
+    comp = {
+      op: 'intersect',
+      kind: {
+        type: 'luminance_range',
+        low: 25,
+        high: 75,
+        feather: 20,
+      },
+      invert: false,
+    };
+  }
+  m.components.push(comp);
+  selectedComponentIndex.value = m.components.length - 1;
+  onRecipeValueChange();
+}
+
+async function addAutoComponent(target: AutoTarget) {
+  if (!sessionId.value || autoBusy.value) return;
+  const m = selectedMask.value;
+  if (!m) return;
+  error.value = null;
+  try {
+    const model = (await desktop.autoMaskModels()).find((md) => md.target === target);
+    if (!model) throw new Error(`No model is known for ${AUTO_LABEL[target]}`);
+    if (!model.present) {
+      autoDownload.value = { target, name: model.name, jobId: null };
+      return;
+    }
+    const seq = ++autoSeq;
+    const session = sessionId.value;
+    autoBusy.value = target;
+    try {
+      const raster = await desktop.makeAutoMask(session, target);
+      if (seq !== autoSeq || session !== sessionId.value) return;
+      if (!m.components) m.components = [];
+      m.components.push({
+        op: 'add',
+        kind: { type: 'auto', target, mask: raster },
+        invert: false,
+      });
+      selectedComponentIndex.value = m.components.length - 1;
+      onRecipeValueChange();
+    } finally {
+      if (seq === autoSeq) autoBusy.value = null;
+    }
+  } catch (err: unknown) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+function setLuminanceRangeField(field: 'low' | 'high' | 'feather', val: number, settle: boolean) {
+  if (!activeEditingKind.value || activeEditingKind.value.type !== 'luminance_range') return;
+  activeEditingKind.value[field] = val;
+  if (settle) onRecipeValueChange();
+  else requestRender('Drag');
+}
+
+function setColourRangeField(field: 'range', val: number, settle: boolean) {
+  if (!activeEditingKind.value || activeEditingKind.value.type !== 'colour_range') return;
+  activeEditingKind.value[field] = val;
+  if (settle) onRecipeValueChange();
+  else requestRender('Drag');
+}
+
+function componentSummary(comp: MaskComponent): string {
+  if (comp.kind.type === 'luminance_range') {
+    return `Luminance ${comp.kind.low ?? 0}–${comp.kind.high ?? 100}%`;
+  }
+  if (comp.kind.type === 'colour_range') {
+    return `Colour (range ${comp.kind.range ?? 50}%)`;
+  }
+  if (comp.kind.type === 'linear') return 'Linear';
+  if (comp.kind.type === 'radial') return 'Radial';
+  if (comp.kind.type === 'auto') return AUTO_LABEL[comp.kind.target] || 'Auto';
+  if (comp.kind.type === 'brush') return 'Brush';
+  return 'Component';
+}
+
+function baseShapeSummary(mask: Mask): string {
+  if (mask.kind.type === 'linear') return 'Linear';
+  if (mask.kind.type === 'radial') return 'Radial';
+  if (mask.kind.type === 'brush') return 'Brush';
+  if (mask.kind.type === 'auto') return AUTO_LABEL[mask.kind.target] || 'Auto';
+  if (mask.kind.type === 'luminance_range') {
+    return `Luminance ${mask.kind.low ?? 0}–${mask.kind.high ?? 100}%`;
+  }
+  if (mask.kind.type === 'colour_range') {
+    return `Colour (range ${mask.kind.range ?? 50}%)`;
+  }
+  return 'Shape';
+}
+
 /** The overlay moves gradient handles only; its shape type is the narrower view of `MaskKind`. */
 function updateMaskKind(id: string, kind: { type: string }) {
   const m = masks.value.find((x) => x.id === id);
   if (!m) return;
-  m.kind = kind as MaskKind;
+  if (
+    id === selectedMaskId.value &&
+    selectedComponentIndex.value !== null &&
+    m.components?.[selectedComponentIndex.value]
+  ) {
+    m.components[selectedComponentIndex.value].kind = kind as MaskKind;
+  } else {
+    m.kind = kind as MaskKind;
+  }
   requestRender('Drag');
 }
 
@@ -2701,8 +3089,15 @@ function setMaskLocal(key: keyof LocalAdjustments, value: number, settle: boolea
 function setMaskField(field: 'opacity' | 'feather', percent: number, settle: boolean) {
   const m = selectedMask.value;
   if (!m) return;
-  if (field === 'opacity') m.opacity = percent / 100;
-  else if (m.kind.type === 'radial') m.kind.feather = percent / 100;
+  if (field === 'opacity') {
+    m.opacity = percent / 100;
+  } else if (field === 'feather') {
+    if (activeEditingKind.value?.type === 'radial') {
+      activeEditingKind.value.feather = percent / 100;
+    } else if (m.kind.type === 'radial') {
+      m.kind.feather = percent / 100;
+    }
+  }
   if (settle) onRecipeValueChange();
   else requestRender('Drag');
 }
@@ -3325,7 +3720,7 @@ onUnmounted(() => {
     window.clearTimeout(saveDebounceTimer);
     saveDebounceTimer = undefined;
     if (!isReadOnly.value && !autosaveDisabled.value && sourcePath.value && sessionId.value) {
-      desktop.saveRecipe(sourcePath.value, recipe.value).catch((err: unknown) => {
+      desktop.saveRecipe(sourcePath.value, cleanRecipeForSave(recipe.value)).catch((err: unknown) => {
         console.error('Failed to flush recipe save on unmount:', err);
       });
     }
@@ -3504,7 +3899,7 @@ onUnmounted(() => {
               ></canvas>
               <MaskOverlay
                 v-if="sessionId && masks.length && !isCropMode && !isBefore && compareMode === 'off'"
-                :masks="masks"
+                :masks="overlayMasks"
                 :selected-id="selectedMaskId"
                 :to-stored="frameToStored"
                 :aspect="storedAspect"
@@ -3685,6 +4080,203 @@ onUnmounted(() => {
             These sliders act only where the mask covers. Done (or Esc) returns to the whole
             photograph.
           </p>
+
+          <div class="mask-components" data-testid="mask-components">
+            <span class="effects-group-title">Components</span>
+            <div class="component-list" data-testid="component-list">
+              <div
+                class="component-row component-row--base"
+                :class="{ 'is-selected': selectedComponentIndex === null }"
+                data-testid="component-row-base"
+                @click="selectBaseMask"
+              >
+                <button
+                  type="button"
+                  class="ghost component-select"
+                  data-testid="component-select-base"
+                  @click.stop="selectBaseMask"
+                >
+                  Base: {{ baseShapeSummary(selectedMask) }}
+                </button>
+              </div>
+              <div
+                v-for="(comp, i) in (selectedMask.components ?? [])"
+                :key="i"
+                class="component-row"
+                :class="{ 'is-selected': selectedComponentIndex === i }"
+                :data-testid="`component-row-${i}`"
+                @click="selectComponent(i)"
+              >
+                <button
+                  type="button"
+                  class="ghost component-select"
+                  :data-testid="`component-select-${i}`"
+                  @click.stop="selectComponent(i)"
+                >
+                  {{ componentSummary(comp) }}
+                </button>
+                <select
+                  :data-testid="`component-op-${i}`"
+                  class="component-op-select"
+                  :value="comp.op"
+                  @click.stop
+                  @change="(e) => setComponentOp(i, (e.target as HTMLSelectElement).value as MaskOp)"
+                >
+                  <option value="add">Add</option>
+                  <option value="subtract">Subtract</option>
+                  <option value="intersect">Intersect</option>
+                </select>
+                <button
+                  type="button"
+                  class="ghost component-invert"
+                  :class="{ active: comp.invert }"
+                  :data-testid="`component-invert-${i}`"
+                  title="Invert component"
+                  @click.stop="toggleComponentInvert(i)"
+                >
+                  Inv
+                </button>
+                <button
+                  type="button"
+                  class="ghost component-delete"
+                  :data-testid="`component-delete-${i}`"
+                  title="Delete component"
+                  @click.stop="deleteComponent(i)"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div class="component-add-menu" data-testid="add-component-menu">
+              <button
+                type="button"
+                class="ghost"
+                data-testid="add-component-linear"
+                :disabled="!sessionId || isReadOnly"
+                @click="addComponent('linear')"
+              >
+                + Linear
+              </button>
+              <button
+                type="button"
+                class="ghost"
+                data-testid="add-component-radial"
+                :disabled="!sessionId || isReadOnly"
+                @click="addComponent('radial')"
+              >
+                + Radial
+              </button>
+              <button
+                type="button"
+                class="ghost"
+                data-testid="add-component-luminance"
+                :disabled="!sessionId || isReadOnly"
+                @click="addComponent('luminance_range')"
+              >
+                + Luminance
+              </button>
+              <button
+                type="button"
+                class="ghost"
+                data-testid="add-component-colour"
+                :disabled="!sessionId || isReadOnly"
+                @click="addComponent('colour_range')"
+              >
+                + Colour
+              </button>
+              <button
+                type="button"
+                class="ghost"
+                data-testid="add-component-subject"
+                :disabled="!sessionId || isReadOnly || !!autoBusy"
+                @click="addComponent('subject')"
+              >
+                + Subject
+              </button>
+              <button
+                type="button"
+                class="ghost"
+                data-testid="add-component-sky"
+                :disabled="!sessionId || isReadOnly || !!autoBusy"
+                @click="addComponent('sky')"
+              >
+                + Sky
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="activeEditingKind?.type === 'luminance_range'"
+            class="range-controls"
+            data-testid="luminance-range-controls"
+          >
+            <span class="effects-group-title">Luminance Range</span>
+            <AdjustmentSlider
+              label="Low"
+              :model-value="activeEditingKind.low"
+              :min="0"
+              :max="100"
+              :step="1"
+              unit="%"
+              :default-value="25"
+              test-id="mask-range-low"
+              @update:model-value="(v) => setLuminanceRangeField('low', v, false)"
+              @change="(v) => setLuminanceRangeField('low', v, true)"
+            />
+            <AdjustmentSlider
+              label="High"
+              :model-value="activeEditingKind.high"
+              :min="0"
+              :max="100"
+              :step="1"
+              unit="%"
+              :default-value="75"
+              test-id="mask-range-high"
+              @update:model-value="(v) => setLuminanceRangeField('high', v, false)"
+              @change="(v) => setLuminanceRangeField('high', v, true)"
+            />
+            <AdjustmentSlider
+              label="Feather"
+              :model-value="activeEditingKind.feather"
+              :min="0"
+              :max="100"
+              :step="1"
+              unit="%"
+              :default-value="20"
+              test-id="mask-range-feather"
+              @update:model-value="(v) => setLuminanceRangeField('feather', v, false)"
+              @change="(v) => setLuminanceRangeField('feather', v, true)"
+            />
+          </div>
+
+          <div
+            v-if="activeEditingKind?.type === 'colour_range'"
+            class="range-controls"
+            data-testid="colour-range-controls"
+          >
+            <span class="effects-group-title">Colour Range</span>
+            <AdjustmentSlider
+              label="Range"
+              :model-value="activeEditingKind.range"
+              :min="0"
+              :max="100"
+              :step="1"
+              unit="%"
+              :default-value="50"
+              test-id="mask-colour-range"
+              @update:model-value="(v) => setColourRangeField('range', v, false)"
+              @change="(v) => setColourRangeField('range', v, true)"
+            />
+            <button
+              type="button"
+              class="ghost"
+              data-testid="mask-colour-repick"
+              @click="startColourRangeRepick"
+            >
+              Re-pick colour
+            </button>
+          </div>
+
         <div class="effects-group" data-testid="mask-controls">
           <label class="mask-name">
             <span class="effects-group-title">Name</span>
@@ -3814,9 +4406,9 @@ onUnmounted(() => {
             @change="(v) => setMaskField('opacity', v, true)"
           />
           <AdjustmentSlider
-            v-if="selectedMask.kind.type === 'radial'"
+            v-if="activeEditingKind?.type === 'radial'"
             label="Feather"
-            :model-value="Math.round(selectedMask.kind.feather * 100)"
+            :model-value="Math.round(activeEditingKind.feather * 100)"
             :min="0"
             :max="100"
             :step="1"
@@ -4090,6 +4682,24 @@ onUnmounted(() => {
                 <button
                   type="button"
                   class="secondary"
+                  data-testid="add-luminance-mask"
+                  :disabled="!sessionId || isReadOnly || masks.length >= MASK_LIMIT"
+                  @click="addLuminanceMask"
+                >
+                  + Luminance range
+                </button>
+                <button
+                  type="button"
+                  class="secondary"
+                  data-testid="add-colour-mask"
+                  :disabled="!sessionId || isReadOnly || masks.length >= MASK_LIMIT"
+                  @click="startColourRangeEyedropper"
+                >
+                  + Colour range
+                </button>
+                <button
+                  type="button"
+                  class="secondary"
                   data-testid="add-subject-mask"
                   title="Find the main subject (a model, downloaded once)"
                   :disabled="!sessionId || isReadOnly || masks.length >= MASK_LIMIT || !!autoBusy"
@@ -4106,6 +4716,16 @@ onUnmounted(() => {
                   @click="addAutoMask('sky')"
                 >
                   + Sky
+                </button>
+                <button
+                  type="button"
+                  class="secondary"
+                  data-testid="add-background-mask"
+                  title="Find the background (subject model inverted)"
+                  :disabled="!sessionId || isReadOnly || masks.length >= MASK_LIMIT || !!autoBusy"
+                  @click="addBackgroundMask"
+                >
+                  + Background
                 </button>
               </div>
 
@@ -6596,6 +7216,91 @@ onUnmounted(() => {
 .mask-show.active {
   color: var(--accent);
   border: var(--border-active);
+}
+
+.mask-components {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.component-list {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.component-row {
+  display: grid;
+  grid-template-columns: 1fr auto 44px 40px;
+  gap: var(--space-1);
+  align-items: center;
+  border: var(--border-hair);
+  background: var(--bg-panel);
+  min-height: 40px;
+}
+
+.component-row--base {
+  grid-template-columns: 1fr;
+}
+
+.component-row.is-selected {
+  border: var(--border-active);
+}
+
+.component-row button {
+  min-height: 40px;
+  min-width: 40px;
+  padding: 0 var(--space-2);
+  font-size: 12px;
+}
+
+.component-select {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.component-op-select {
+  min-height: 40px;
+  min-width: 80px;
+  background: var(--bg-input);
+  color: var(--text-base);
+  border: var(--border-hair);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  font-size: 12px;
+}
+
+.component-invert.active {
+  color: var(--accent);
+  border: var(--border-active);
+}
+
+.component-add-menu {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--space-1);
+}
+
+.component-add-menu button {
+  min-height: 40px;
+  padding: 0 var(--space-1);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.range-controls {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--bg-surface);
+  border: var(--border-hair);
+}
+
+.range-controls button {
+  min-height: 40px;
+  font-size: 12px;
 }
 
 .effects-group-title {

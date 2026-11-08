@@ -245,6 +245,7 @@ fn f3_rename_carries_masks_in_the_sidecar() {
             flow: 1.0,
             erase: true,
         }],
+        components: Vec::new(),
     };
     let recipe = AdjustmentRecipe {
         masks: vec![auto],

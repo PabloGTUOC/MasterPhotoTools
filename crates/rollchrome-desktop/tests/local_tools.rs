@@ -273,6 +273,7 @@ fn mask_coverage_is_served_for_the_open_preview() {
             // A new mask with nothing set yet is still shown.
             adjustments: LocalAdjustments::default(),
             strokes: Vec::new(),
+            components: Vec::new(),
         }],
         ..Default::default()
     };

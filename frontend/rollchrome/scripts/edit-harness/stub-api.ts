@@ -370,40 +370,62 @@ export class StubDesktopApiClient {
     const height = stage === 'Settle' ? SETTLE_HEIGHT : DRAG_HEIGHT;
     const coverage = new Uint8Array(width * height);
     const long = Math.max(width, height);
-    if (m.kind.type === 'auto') {
-      for (let y = 0; y < height; y++) coverage.fill(255, y * width, y * width + Math.floor(width / 2));
-      return { width, height, coverage };
-    }
-    if (m.kind.type === 'brush') {
-      // Discs around the stroke points, filled directly: a per-pixel test against every
-      // point is far too slow for a stub asked for coverage on every frame.
-      for (const st of m.strokes ?? []) {
-        if (st.erase) continue;
-        const r = st.radius * long;
-        for (const [pu, pv] of st.points) {
-          const [cx, cy] = [pu * width, pv * height];
-          for (let y = Math.max(0, Math.floor(cy - r)); y < Math.min(height, Math.ceil(cy + r)); y++) {
-            for (let x = Math.max(0, Math.floor(cx - r)); x < Math.min(width, Math.ceil(cx + r)); x++) {
-              if (Math.hypot(x + 0.5 - cx, y + 0.5 - cy) <= r) coverage[y * width + x] = 255;
-            }
+
+    function evalShape(kind: any, u: number, v: number, strokes?: any[]): number {
+      if (kind.type === 'auto') {
+        return u < 0.5 ? 1.0 : 0.0;
+      }
+      if (kind.type === 'linear') {
+        const midY = (kind.start[1] + kind.end[1]) / 2;
+        return v <= midY ? 1.0 : 0.0;
+      }
+      if (kind.type === 'radial') {
+        const dx = ((u - kind.center[0]) * width) / long;
+        const dy = ((v - kind.center[1]) * height) / long;
+        return Math.hypot(dx / kind.radius_x, dy / kind.radius_y) <= 1 ? 1.0 : 0.0;
+      }
+      if (kind.type === 'luminance_range') {
+        const low = (kind.low ?? 0) / 100;
+        const high = (kind.high ?? 100) / 100;
+        return u >= low && u <= Math.min(1.0, 0.1 + high) ? 1.0 : 0.0;
+      }
+      if (kind.type === 'colour_range') {
+        const rng = (kind.range ?? 50) / 100;
+        return u >= 0.5 - rng / 2 && u <= 0.5 + rng / 2 ? 1.0 : 0.0;
+      }
+      if (kind.type === 'brush') {
+        for (const st of strokes ?? []) {
+          if (st.erase) continue;
+          const r = st.radius * long;
+          for (const [pu, pv] of st.points) {
+            const cx = pu * width;
+            const cy = pv * height;
+            if (Math.hypot(u * width - cx, v * height - cy) <= r) return 1.0;
           }
         }
+        return 0.0;
       }
-      return { width, height, coverage };
+      return 1.0;
     }
+
     for (let y = 0; y < height; y++) {
+      const v = (y + 0.5) / height;
       for (let x = 0; x < width; x++) {
         const u = (x + 0.5) / width;
-        const v = (y + 0.5) / height;
-        let inside: boolean;
-        if (m.kind.type === 'radial') {
-          const dx = ((u - m.kind.center[0]) * width) / long;
-          const dy = ((v - m.kind.center[1]) * height) / long;
-          inside = Math.hypot(dx / m.kind.radius_x, dy / m.kind.radius_y) <= 1;
-        } else {
-          inside = v <= (m.kind.start[1] + m.kind.end[1]) / 2;
+        let cov = evalShape(m.kind, u, v, m.strokes);
+        if (m.invert) cov = 1.0 - cov;
+        for (const comp of m.components ?? []) {
+          let compCov = evalShape(comp.kind, u, v);
+          if (comp.invert) compCov = 1.0 - compCov;
+          if (comp.op === 'add') {
+            cov = Math.max(cov, compCov);
+          } else if (comp.op === 'subtract') {
+            cov = cov * (1.0 - compCov);
+          } else if (comp.op === 'intersect') {
+            cov = cov * compCov;
+          }
         }
-        if (inside !== m.invert) coverage[y * width + x] = 255;
+        coverage[y * width + x] = Math.round(cov * 255);
       }
     }
     return { width, height, coverage };

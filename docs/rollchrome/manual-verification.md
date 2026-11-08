@@ -187,3 +187,23 @@ sRGB PNGs.
       **Run:** the same command on a 24 MP and on a 40 MP-plus RAW.
       **Pass:** record the printed times. They set Develop's budget; there is no pass threshold yet.
       **Result:**
+
+## MV-24 — the Develop screen (RP-1, RP-2)
+
+[`../briefs/RP-1.md`](../briefs/RP-1.md). Needs a folder of real RAW files on the Mac, in the real application:
+the automated check drives the screen against a stub.
+
+- [ ] **MV-24.1 — A look each, then develop.**
+      **Run:** Develop tab, choose the folder. Give one photograph one look and a selection another. Dry run, Develop.
+      **Pass:** thumbnails appear upright; each photograph's preview shows its look; `Developed/` holds one file per photograph, each with the look it was given.
+      **Result:**
+
+- [ ] **MV-24.2 — The preview keeps up.**
+      **Run:** drag the exposure slider end to end, then click quickly through several photographs.
+      **Pass:** the Mac stays responsive and the preview settles on the last choice within one development. Record the seconds for a first look at a photograph and for changing look on it.
+      **Result:**
+
+- [ ] **MV-24.3 — Develop to Edit keeps its colour (needs RP-2).**
+      **Run:** develop one photograph to both JPEG and TIFF. Open the TIFF in Edit, beside the JPEG in Preview.
+      **Pass:** the same colours, not muted. Export it from Edit without changes to a slider and with one change: both look right in Preview.
+      **Result:**

@@ -11,7 +11,7 @@ and maintain a photo library on a NAS.
 emulator, in the same repository (RC-1 to RC-3, 2026-11-06). [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md)
 has the decisions and the steps; RC-1 to RC-3 are done, and Develop's first step,
 [DV-1](docs/briefs/DV-1.md), the neutral RAW development, is done, and so are DV-2a
-and DV-2b: Develop's function is complete, with no screen yet, and DV-3 added twelve built-in looks fitted from chart photographs. The state
+and DV-2b: Develop's function is complete, DV-3 added twelve built-in looks fitted from chart photographs, and RP-1 gave it its screen. The state
 before the split is frozen on the **`FullEdition`** branch.
 
 The active job is **using the application on a Mac and fixing what that finds.** Two sessions of
@@ -22,7 +22,7 @@ cause: **the tools had only ever been exercised with typed file paths, and the f
 pointing at a folder the normal gesture.**
 
 The numbered checks in [`manual-verification.md`](docs/manual-verification.md) remain the
-structured half of that work — 96 for PhotoTools, eight done, and 28 for Rollchrome in
+structured half of that work — 96 for PhotoTools, eight done, and 31 for Rollchrome in
 [`docs/rollchrome/manual-verification.md`](docs/rollchrome/manual-verification.md), same ids.
 
 | Read this | For |
@@ -36,9 +36,9 @@ structured half of that work — 96 for PhotoTools, eight done, and 28 for Rollc
 | [`docs/timeline-plan.md`](docs/timeline-plan.md) | The Timeline tab: the track library on a map, and points placed by hand. Stage A built; MV-17 awaits a browser. Google's location history is Stages B–C, not built |
 | [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
-| [`docs/rollchrome/parity-plan.md`](docs/rollchrome/parity-plan.md) | Rollchrome towards replacing Lightroom: three tabs (Develop, Edit, Batch) and the small and medium gaps, RP-1 to RP-13. RP-1 briefed |
+| [`docs/rollchrome/parity-plan.md`](docs/rollchrome/parity-plan.md) | Rollchrome towards replacing Lightroom: three tabs (Develop, Edit, Batch) and the small and medium gaps, RP-1 to RP-13. RP-1 done (MV-24 awaits real files); RP-2 briefed |
 | [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | Splitting Edit and Batch Grade out into Rollchrome, a desktop-only film emulator. RC-1 to RC-3 done; Develop next |
-| [`docs/develop-plan.md`](docs/develop-plan.md) | Rollchrome's third screen, Develop: RAW files to finished JPEG or TIFF, a film look each. DV-1 to DV-3 done: the function and twelve built-in looks, no screen yet (MV-23 awaits real files); the screen is next, to be discussed |
+| [`docs/develop-plan.md`](docs/develop-plan.md) | Rollchrome's third screen, Develop: RAW files to finished JPEG or TIFF, a film look each. DV-1 to DV-3 done: the function and twelve built-in looks; the screen came with RP-1 (MV-23 and MV-24 await real files) |
 | [`docs/rollchrome/edit-plan.md`](docs/rollchrome/edit-plan.md) | Rollchrome's Edit and Batch Grade screens: non-destructive exposure adjustments and 3D LUT grading. Rounds 1 and 2 built (ED-1–ED-18); MV-20 and MV-21 await a Mac. Round 3, masks (ED-19–ED-24), built; MV-20 to MV-22 await the Mac Studio |
 | [`docs/deployment.md`](docs/deployment.md) | Deploying the server and the desktop app, and every environment variable |
 | [`docs/phase-reports/`](docs/phase-reports/) | One report per phase: what was delivered, what deviated, and why |

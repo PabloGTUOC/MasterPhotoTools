@@ -1,6 +1,6 @@
 # Rollchrome towards a Lightroom replacement — plan
 
-> **Status (2026-11-08):** RP-1 implemented (three tabs, Develop screen). Steps have stable ids (`RP-4`), each built from a
+> **Status (2026-11-08):** RP-1 done (MV-24 awaits real files); RP-2 briefed. Steps have stable ids (`RP-4`), each built from a
 > brief in [`docs/briefs/`](../briefs/).
 
 **The owner's goal is to stop paying for a Lightroom subscription.** The list comes from comparing
@@ -24,7 +24,9 @@ the LUT library, which is sRGB.
 takes the file's embedded camera JPEG through the F14 ladder, so the edit starts from 8 bits with
 the camera's look baked in. And neither Edit nor Batch reads an ICC profile, so a Develop TIFF, which
 is ProPhoto, would be taken for sRGB and show wrong colours. RP-2 closes the second before anyone
-relies on the Develop → Edit path.
+relies on the Develop → Edit path. Edit itself works in sRGB, so colours a ProPhoto TIFF holds beyond
+sRGB are clipped on opening it there; the TIFF keeps them, and carrying them through Edit would mean
+rebuilding its pipeline, which no step here does.
 
 ## Steps
 

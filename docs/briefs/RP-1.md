@@ -1,6 +1,6 @@
 # `RP-1` · Three tabs and the Develop screen
 
-> **Status:** briefed
+> **Status:** **approved**
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-1` · **Branch:** `rp-1`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -147,24 +147,24 @@ section say the screen exists, pointing at this brief. **`docs/rollchrome/parity
 
 ### Acceptance
 
-- [ ] Navigation shows Develop, Edit, Batch; `/` is Develop.
-- [ ] `check:develop` asserts all nine and passes; `check:edit` and `check:bulk-lut` unchanged and passing.
-- [ ] `rollchrome-core` gains exactly these six tests:
+- [x] Navigation shows Develop, Edit, Batch; `/` is Develop.
+- [x] `check:develop` asserts all nine and passes; `check:edit` and `check:bulk-lut` unchanged and passing.
+- [x] `rollchrome-core` gains exactly these six tests:
   `a_preview_fits_the_long_edge_and_keeps_the_aspect_ratio`,
   `a_preview_is_upright_for_a_rotated_raw`,
   `a_preview_with_a_look_matches_the_full_render_within_two_levels` (uniform patches, on the 8-bit output),
   `the_builtin_look_list_has_twelve_entries_that_all_resolve`,
   `a_folder_lists_only_its_raw_files_sorted`,
   `resolve_look_finds_builtin_and_library_and_refuses_an_unknown_name`.
-- [ ] `rollchrome-desktop` gains exactly these four:
+- [x] `rollchrome-desktop` gains exactly these four:
   `preview_refuses_a_name_that_leaves_the_folder`,
   `preview_refuses_a_folder_outside_the_roots`,
   `preview_develop_returns_a_jpeg_for_a_synthetic_raw`,
   `a_second_look_on_the_same_photo_does_not_develop_it_again` (asserts `develop_preview_runs() == 1`).
-- [ ] Counts: workspace 1083 → 1093, `rollchrome-core` 258 → 264, `rollchrome-desktop` 15 → 19,
+- [x] Counts: workspace 1083 → 1093, `rollchrome-core` 258 → 264, `rollchrome-desktop` 15 → 19,
   `phototools-core` 713 and `phototools-desktop` 26 unchanged. Every existing test still there,
   none weakened (G7).
-- [ ] No `unwrap()`, `todo!()` or swallowed error on a shipped path (G10); no logic in the binary beyond
+- [x] No `unwrap()`, `todo!()` or swallowed error on a shipped path (G10); no logic in the binary beyond
   the cache (G1).
 
 ### Gates
@@ -979,3 +979,22 @@ The Rust is right. The defects are in how the screen behaves over time, which th
 
 Counts stay at 1093 / 264 / 19. `check:develop` now asserts fourteen. Write **Report round 2** above this Review
 section's end, as new text, deleting nothing.
+
+### Round 2 — **Approved**
+
+**Checked.** Re-ran every gate on `rp-1` at `bcbb454`: fmt and clippy clean, build clean; workspace 1093,
+`phototools-core` 713, `rollchrome-core` 264, `phototools-desktop` 26, `rollchrome-desktop` 19, none failed or
+ignored; typecheck, build, `check:transport`, `check:edit`, `check:bulk-lut` pass, `check:develop` passes all
+fourteen. Read the round 2 diff and all eight items are done. Assertion 5 is intact. The screenshot now shows
+images, display names and a job re-attached after remounting.
+
+**Accepted as it stands.** With requests serialised, a response that returns while a newer choice waits is shown until
+the newer one arrives, for at most one development and with the working indicator on. Strictly this reads against
+*never displayed* in the brief, but it is the previous image staying up while the next one loads, and during an exposure
+drag it is useful. What stays on screen is always the newest choice, which is the claim that matters.
+`onMounted` does not list `interrupted`, but that status only arises from an application restart, which clears
+module state.
+
+**Not verified.** Nobody has clicked through this screen in the real application; the check drives it against a stub,
+and the real path was exercised only through the `_impl` functions. `MV-24` in
+`docs/rollchrome/manual-verification.md` covers it.

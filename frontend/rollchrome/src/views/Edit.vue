@@ -48,6 +48,7 @@ import JobProgress from '@ui/components/JobProgress.vue';
 import MaskOverlay from '../components/MaskOverlay.vue';
 import PresetBar from '../components/PresetBar.vue';
 import { copiedSettings, copyToClipboard } from '../recipeClipboard';
+import { exportState, buildExportOptions, isResizeValid, resizeInvalidReason } from '../exportState';
 import { EditHistory } from '../editHistory';
 import LutPicker from '../components/LutPicker.vue';
 import PathField from '@ui/components/PathField.vue';
@@ -2187,16 +2188,71 @@ async function openImage(path: string) {
   }
 }
 
+const liveExampleName = computed(() => {
+  const stem = sourcePath.value
+    ? sourcePath.value.split('/').pop()?.replace(/\.[^/.]+$/, '') || 'IMG_0001'
+    : 'IMG_0001';
+  const verName = currentVersionName.value === 'Main' ? '' : currentVersionName.value;
+  const editSuffix = verName ? `_edit_${verName.replace(/[^a-zA-Z0-9]/g, '-')}` : '_edit';
+  const dateStr = '2024-08-15';
+
+  let ext = 'jpg';
+  switch (exportState.formatKind) {
+    case 'AsSource': {
+      const srcExt = sourcePath.value?.split('.').pop()?.toLowerCase();
+      ext = srcExt === 'tiff' || srcExt === 'tif' ? 'tiff' : 'jpg';
+      break;
+    }
+    case 'Jpeg':
+      ext = 'jpg';
+      break;
+    case 'Tiff':
+      ext = 'tiff';
+      break;
+    case 'Png':
+      ext = 'png';
+      break;
+    case 'Webp':
+      ext = 'webp';
+      break;
+    case 'Avif':
+      ext = 'avif';
+      break;
+  }
+
+  if (!exportState.nameTemplate.trim()) {
+    return `${stem}${editSuffix}.${ext}`;
+  }
+
+  const substituted = exportState.nameTemplate
+    .replace(/\{name\}/g, stem)
+    .replace(/\{version\}/g, verName)
+    .replace(/\{date\}/g, dateStr)
+    .replace(/\{edit\}/g, editSuffix);
+
+  let sanitized = '';
+  for (const c of substituted) {
+    if (/[a-zA-Z0-9\-_. ]/.test(c)) {
+      sanitized += c;
+    } else {
+      sanitized += '-';
+    }
+  }
+  return `${sanitized}.${ext}`;
+});
+
 async function handleExport() {
-  if (!sourcePath.value || !exportDir.value) return;
+  if (!sourcePath.value || !exportDir.value || !isResizeValid.value) return;
   exportStatus.value = null;
   exportError.value = null;
 
   try {
+    const options = buildExportOptions();
     const res = await desktop.exportEditedImage(
       sourcePath.value.trim(),
       recipe.value,
       exportDir.value.trim(),
+      options,
     );
     exportStatus.value = res.path;
     if (res.metadata_skipped) {
@@ -2208,7 +2264,7 @@ async function handleExport() {
 }
 
 async function exportAllVersions() {
-  if (!sourcePath.value || !exportDir.value || isExportingAll.value) return;
+  if (!sourcePath.value || !exportDir.value || isExportingAll.value || !isResizeValid.value) return;
 
   const currentExportRecipe = cloneRecipe(recipe.value);
   delete currentExportRecipe.versions;
@@ -2242,6 +2298,7 @@ async function exportAllVersions() {
   exportAllSummary.value = '';
   const written: Array<{ name: string; path: string }> = [];
   const failures: Array<{ name: string; reason: string }> = [];
+  const options = buildExportOptions();
 
   try {
     for (let i = 0; i < items.length; i++) {
@@ -2252,6 +2309,7 @@ async function exportAllVersions() {
           sourcePath.value.trim(),
           item.recipe,
           exportDir.value.trim(),
+          options,
         );
         written.push({ name: item.name, path: res.path });
       } catch (err: unknown) {
@@ -5053,12 +5111,167 @@ onUnmounted(() => {
             placeholder="/path/to/output_folder"
           />
 
+          <!-- Format selection -->
+          <div class="adjustment-panel__export-row">
+            <label class="adjustment-panel__export-label">Format</label>
+            <select
+              v-model="exportState.formatKind"
+              class="adjustment-panel__export-select"
+              data-testid="export-format-select"
+            >
+              <option value="AsSource">As source</option>
+              <option value="Jpeg">JPEG</option>
+              <option value="Tiff">TIFF</option>
+              <option value="Png">PNG</option>
+              <option value="Webp">WebP</option>
+              <option value="Avif">AVIF</option>
+            </select>
+          </div>
+
+          <!-- Quality for JPEG -->
+          <div v-if="exportState.formatKind === 'Jpeg'" class="adjustment-panel__export-row">
+            <label class="adjustment-panel__export-label">Quality (1–100)</label>
+            <input
+              v-model.number="exportState.jpegQuality"
+              type="number"
+              min="1"
+              max="100"
+              class="adjustment-panel__export-input"
+              data-testid="export-quality-input"
+            />
+          </div>
+
+          <!-- Quality for AVIF -->
+          <div v-if="exportState.formatKind === 'Avif'" class="adjustment-panel__export-row">
+            <label class="adjustment-panel__export-label">Quality (1–100)</label>
+            <input
+              v-model.number="exportState.avifQuality"
+              type="number"
+              min="1"
+              max="100"
+              class="adjustment-panel__export-input"
+              data-testid="export-quality-input"
+            />
+          </div>
+
+          <!-- Bits for TIFF -->
+          <div v-if="exportState.formatKind === 'Tiff'" class="adjustment-panel__export-row">
+            <label class="adjustment-panel__export-label">Bit depth</label>
+            <select
+              v-model.number="exportState.tiffBits"
+              class="adjustment-panel__export-select"
+              data-testid="export-bits-select"
+            >
+              <option :value="8">8-bit</option>
+              <option :value="16">16-bit</option>
+            </select>
+          </div>
+
+          <!-- Bits for PNG -->
+          <div v-if="exportState.formatKind === 'Png'" class="adjustment-panel__export-row">
+            <label class="adjustment-panel__export-label">Bit depth</label>
+            <select
+              v-model.number="exportState.pngBits"
+              class="adjustment-panel__export-select"
+              data-testid="export-bits-select"
+            >
+              <option :value="8">8-bit</option>
+              <option :value="16">16-bit</option>
+            </select>
+          </div>
+
+          <!-- WebP notice -->
+          <div v-if="exportState.formatKind === 'Webp'" class="adjustment-panel__export-notice" data-testid="export-webp-notice">
+            WebP is lossless.
+          </div>
+
+          <!-- Size options -->
+          <div class="adjustment-panel__export-row">
+            <label class="adjustment-panel__export-label">Size</label>
+            <select
+              v-model="exportState.resizeKind"
+              class="adjustment-panel__export-select"
+              data-testid="export-size-select"
+            >
+              <option value="Full">Full</option>
+              <option value="LongEdge">Long edge</option>
+              <option value="Megapixels">Megapixels</option>
+            </select>
+          </div>
+
+          <!-- Numeric input for LongEdge or Megapixels -->
+          <div v-if="exportState.resizeKind !== 'Full'" class="adjustment-panel__export-row">
+            <label class="adjustment-panel__export-label">
+              {{ exportState.resizeKind === 'LongEdge' ? 'Long edge (px)' : 'Megapixels (MP)' }}
+            </label>
+            <input
+              v-model="exportState.resizeValue"
+              type="number"
+              min="1"
+              class="adjustment-panel__export-input"
+              data-testid="export-size-input"
+            />
+          </div>
+
+          <!-- Output sharpening -->
+          <div class="adjustment-panel__export-row">
+            <label class="adjustment-panel__export-label">Output sharpening</label>
+            <select
+              v-model="exportState.outputSharpening"
+              class="adjustment-panel__export-select"
+              data-testid="export-sharpening-select"
+            >
+              <option value="Off">Off</option>
+              <option value="Screen">Screen</option>
+              <option value="Print">Print</option>
+            </select>
+          </div>
+
+          <!-- Name template -->
+          <div class="adjustment-panel__export-row">
+            <label class="adjustment-panel__export-label">File name template</label>
+            <input
+              v-model="exportState.nameTemplate"
+              type="text"
+              placeholder="{name}{edit}"
+              class="adjustment-panel__export-input"
+              data-testid="export-template-input"
+            />
+            <span class="adjustment-panel__export-tokens" data-testid="export-template-tokens">
+              Tokens: {name}, {version}, {date}, {edit}
+            </span>
+          </div>
+
+          <!-- Live example -->
+          <div class="adjustment-panel__export-example" data-testid="export-name-example">
+            Example: {{ liveExampleName }}
+          </div>
+
+          <!-- Metadata policy -->
+          <div class="adjustment-panel__export-row">
+            <label class="adjustment-panel__export-label">Metadata</label>
+            <select
+              v-model="exportState.metadataPolicy"
+              class="adjustment-panel__export-select"
+              data-testid="export-metadata-select"
+            >
+              <option value="All">All</option>
+              <option value="NoLocation">No location</option>
+              <option value="None">None</option>
+            </select>
+          </div>
+
+          <!-- Size validation error message -->
+          <div v-if="!isResizeValid" class="adjustment-panel__export-size-error" data-testid="export-size-error">
+            {{ resizeInvalidReason }}
+          </div>
+
           <div class="adjustment-panel__export-actions">
             <button
               type="button"
               class="primary adjustment-panel__export-btn"
               data-testid="export-btn"
-              :disabled="!sessionId || !exportDir || isExportingAll"
+              :disabled="!sessionId || !exportDir || isExportingAll || !isResizeValid"
               @click="handleExport"
             >
               Export render
@@ -5068,7 +5281,7 @@ onUnmounted(() => {
               type="button"
               class="adjustment-panel__export-all-btn"
               data-testid="export-all-btn"
-              :disabled="!sessionId || !exportDir || isExportingAll"
+              :disabled="!sessionId || !exportDir || isExportingAll || !isResizeValid"
               @click="exportAllVersions"
             >
               {{ isExportingAll ? exportAllProgressText : 'Export all versions' }}
@@ -5493,6 +5706,65 @@ onUnmounted(() => {
   padding: var(--space-3);
   border: var(--border-hair);
   background: var(--bg-panel);
+}
+
+.adjustment-panel__export-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.adjustment-panel__export-label {
+  font-family: var(--font-label, sans-serif);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.adjustment-panel__export-select,
+.adjustment-panel__export-input {
+  min-height: 40px;
+  height: 40px;
+  padding: 0 var(--space-2, 8px);
+  background: var(--bg-secondary, #1a1a1a);
+  color: var(--text-primary, #fff);
+  border: var(--border-hair, 1px solid #333);
+  border-radius: var(--radius-sm, 2px);
+  font-size: 13px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.adjustment-panel__export-select:focus,
+.adjustment-panel__export-input:focus {
+  outline: none;
+  border-color: var(--accent, #3b82f6);
+}
+
+.adjustment-panel__export-notice {
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  font-style: italic;
+}
+
+.adjustment-panel__export-tokens {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  margin-top: 2px;
+}
+
+.adjustment-panel__export-example {
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+}
+
+.adjustment-panel__export-size-error {
+  font-size: 12px;
+  color: var(--color-error, #f44336);
 }
 
 .adjustment-panel__export-btn {

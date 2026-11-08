@@ -10,6 +10,7 @@ import type {
   AutoTone,
   BrowserEntry,
   Detail,
+  ExportOptions,
   ExportResult,
   LutEntry,
   LutLibraryList,
@@ -50,11 +51,12 @@ export interface StubState {
   autoToneError: string | null;
   saveCalls: Array<{ path: string; recipe: AdjustmentRecipe }>;
   recipesByPath: Record<string, AdjustmentRecipe | null>;
-  exportCalls: Array<{ path: string; recipe: AdjustmentRecipe; outDir: string; startTime: number; endTime: number }>;
+  exportCalls: Array<{ path: string; recipe: AdjustmentRecipe; outDir: string; startTime: number; endTime: number; options?: ExportOptions }>;
   exportFailureMap: Record<string, string>;
   exportDelay: number;
   activeExports: number;
   overlappingExportsDetected: boolean;
+  refuseTemplate: boolean;
 }
 
 const stubState: StubState = {
@@ -88,6 +90,7 @@ const stubState: StubState = {
   exportDelay: 0,
   activeExports: 0,
   overlappingExportsDetected: false,
+  refuseTemplate: false,
 };
 
 interface StubHistogram {
@@ -628,12 +631,24 @@ export class StubDesktopApiClient {
     path: string,
     recipe: AdjustmentRecipe,
     outDir: string,
+    options?: ExportOptions,
   ): Promise<ExportResult> {
     if (outDir.includes('Publishing')) {
       throw new Error('Refused: cannot export directly to Publishing folder (MV-16.7)');
     }
     if (outDir.includes('Card') || outDir.includes('DCIM')) {
       throw new Error('Card media is read-only (G5)');
+    }
+
+    if (stubState.refuseTemplate) {
+      throw new Error('Refused: export template resulted in an empty filename or only dots');
+    }
+
+    if (options?.name_template !== undefined && options?.name_template !== null) {
+      const tmpl = options.name_template.trim();
+      if (tmpl === '' || tmpl.replace(/\./g, '') === '' || tmpl.includes('invalid') || tmpl.includes('refuse')) {
+        throw new Error('Refused: export template resulted in an empty filename or only dots');
+      }
     }
 
     const startTime = Date.now();
@@ -650,12 +665,14 @@ export class StubDesktopApiClient {
     const endTime = Date.now();
 
     const cloned = JSON.parse(JSON.stringify(recipe));
+    const clonedOpts = options ? JSON.parse(JSON.stringify(options)) : undefined;
     stubState.exportCalls.push({
       path,
       recipe: cloned,
       outDir,
       startTime,
       endTime,
+      options: clonedOpts,
     });
 
     const vName = recipe.version_name ?? null;

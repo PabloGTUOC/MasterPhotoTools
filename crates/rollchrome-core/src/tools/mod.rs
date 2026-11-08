@@ -15,10 +15,12 @@ pub use develop::{
 };
 pub use develop_folder::FolderStore;
 pub use edit::{
-    exclusive_create_target, export_edited_image, export_edited_image_with_resolver,
+    exclusive_create_target, export_edited_image, export_edited_image_with_options,
+    export_edited_image_with_options_with_resolver, export_edited_image_with_resolver,
     find_volume_root, is_card_volume, is_card_volume_with_resolver, is_identity, is_sidecar,
-    load_recipe, load_recipe_for_image, render_and_write, save_recipe, save_recipe_with_resolver,
-    sidecar_path, ExportResult, CURRENT_RECIPE_VERSION, SIDECAR_EXTENSION,
+    load_recipe, load_recipe_for_image, render_and_write, resolve_name_template, save_recipe,
+    save_recipe_with_resolver, sidecar_path, ExportFormat, ExportOptions, ExportResize,
+    ExportResult, MetadataPolicy, OutputSharpening, CURRENT_RECIPE_VERSION, SIDECAR_EXTENSION,
 };
 pub use lut::{
     sample_frames, BulkLutAction, BulkLutParams, BulkLutSummary, BulkLutTool,

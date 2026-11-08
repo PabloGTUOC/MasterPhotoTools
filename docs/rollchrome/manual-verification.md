@@ -272,3 +272,12 @@ the automated check drives the screen against a stub.
       **Run:** in Edit, open a real portrait photograph; increase Texture to +40 and Clarity to +30, then test negative Clarity (-30) and Texture (-20). Next, open a landscape photograph with foliage, rock relief, and soft clouds; increase Clarity to +50 and Texture to +40. Finally, open a landscape with atmospheric haze or mist; increase Dehaze to +60, and test negative Dehaze (-40) on a sunny scene to introduce haze. Export all results.
       **Pass:** on the portrait, positive clarity and texture accentuate iris and hair detail without haloing high-contrast edges; negative clarity softens skin tones while leaving deep blacks and specular whites untouched. On the landscape, foliage and textures gain local mid-tone contrast and edge punch without haloing against the sky. On the hazy photograph, positive dehaze cuts through the atmospheric wash to restore contrast, saturation, and depth without colour cast in neutral areas; negative dehaze adds mist/glow gracefully without clipping highlights; exports match the on-screen preview.
       **Result:**
+
+## MV-30 — Export options (RP-9)
+
+[`../briefs/RP-9.md`](../briefs/RP-9.md). Real exports opened in external applications (Preview, Photoshop, or browser).
+
+- [ ] **MV-30.1 — Opening each format from a real export in another application.**
+      **Run:** in Edit, open a real photograph and make several adjustments. In the Export Render section, export the photograph across all supported formats: JPEG at quality 90, TIFF at 16-bit, PNG at 8-bit, WebP (lossless), and AVIF at quality 70. Test resizing with Long Edge (e.g. 1920 px) and Megapixels (e.g. 12 MP), output sharpening (Screen and Print), and a custom name template `{date}_{name}_{version}_{edit}` with No Location metadata policy. Open each exported file in macOS Preview, a web browser (Safari/Chrome), or another image viewer.
+      **Pass:** every file opens cleanly without decode errors or corrupted artifacts; JPEG matches the requested quality and dimensions; 16-bit TIFF displays full dynamic range; PNG and WebP show sharp pixel-exact rendering; AVIF opens with photographic fidelity at compact file size; dimensions strictly follow the resize constraint without enlargement; sharpened files exhibit clean edge acuity tailored for display/print; GPS location metadata is cleanly stripped when No Location is chosen while camera and capture timestamp remain intact; custom filename template substitution and monotonic numbering work accurately.
+      **Result:**

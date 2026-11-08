@@ -137,11 +137,13 @@ export class RollchromeClient {
     path: string,
     recipe: AdjustmentRecipe,
     outDir: string,
+    options?: ExportOptions,
   ): Promise<ExportResult> {
     return invoke<ExportResult>('export_edited_image', {
       path,
       recipe,
       outDir,
+      options,
     });
   }
 
@@ -732,6 +734,36 @@ export interface OpenPreviewResult {
   settle_height: number;
   orientation: number;
   read_only: boolean;
+}
+
+/** Format selection and format-specific parameters for export (RP-9). */
+export type ExportFormat =
+  | 'AsSource'
+  | { Jpeg: { quality: number } }
+  | { Tiff: { bits: number } }
+  | { Png: { bits: number } }
+  | 'Webp'
+  | { Avif: { quality: number } };
+
+/** Spatial resize mode (RP-9). */
+export type ExportResize =
+  | 'None'
+  | { LongEdge: number }
+  | { Megapixels: number };
+
+/** Output sharpening tailored to display/print medium (RP-9). */
+export type OutputSharpening = 'Off' | 'Screen' | 'Print';
+
+/** Metadata preservation policy (RP-9). */
+export type MetadataPolicy = 'All' | 'NoLocation' | 'None';
+
+/** Full export configuration (RP-9). */
+export interface ExportOptions {
+  format?: ExportFormat;
+  resize?: ExportResize;
+  output_sharpening?: OutputSharpening;
+  name_template?: string | null;
+  metadata?: MetadataPolicy;
 }
 
 /** Export result. */

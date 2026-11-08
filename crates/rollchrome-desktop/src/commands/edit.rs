@@ -92,9 +92,10 @@ pub fn export_edited_image(
     path: String,
     recipe: AdjustmentRecipe,
     out_dir: String,
+    options: Option<rollchrome_core::tools::ExportOptions>,
     state: State<'_, AppState>,
 ) -> CommandResult<ExportResult> {
-    export_edited_image_impl(&state, path, recipe, out_dir)
+    export_edited_image_with_options_impl(&state, path, recipe, out_dir, options)
 }
 
 pub fn export_edited_image_impl(
@@ -102,6 +103,16 @@ pub fn export_edited_image_impl(
     path: String,
     recipe: AdjustmentRecipe,
     out_dir: String,
+) -> CommandResult<ExportResult> {
+    export_edited_image_with_options_impl(state, path, recipe, out_dir, None)
+}
+
+pub fn export_edited_image_with_options_impl(
+    state: &AppState,
+    path: String,
+    recipe: AdjustmentRecipe,
+    out_dir: String,
+    options: Option<rollchrome_core::tools::ExportOptions>,
 ) -> CommandResult<ExportResult> {
     let config = state.config();
     let resolved_path = resolve_input(&config, &path)?;
@@ -117,11 +128,13 @@ pub fn export_edited_image_impl(
         None => None,
     };
 
-    rollchrome_core::tools::edit::export_edited_image(
+    let opts = options.unwrap_or_default();
+    rollchrome_core::tools::edit::export_edited_image_with_options(
         &resolved_path,
         &recipe,
         lut_opt.as_ref(),
         &resolved_out,
+        &opts,
     )
     .map_err(describe)
 }

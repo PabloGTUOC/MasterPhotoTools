@@ -187,6 +187,9 @@ function createDefaultDetail(): Detail {
     noise_luminance: 0,
     noise_colour: 0,
     hot_pixels: false,
+    clarity: 0,
+    texture: 0,
+    dehaze: 0,
   };
 }
 
@@ -1291,7 +1294,26 @@ function deriveLabel(before: AdjustmentRecipe | null, after: AdjustmentRecipe): 
     changed.push('Looks');
   }
   if (JSON.stringify(before.detail) !== JSON.stringify(after.detail)) {
-    changed.push('Detail');
+    const bd = before.detail ?? createDefaultDetail();
+    const ad = after.detail ?? createDefaultDetail();
+    const presenceChanged: string[] = [];
+    if ((bd.clarity ?? 0) !== (ad.clarity ?? 0)) presenceChanged.push('Clarity');
+    if ((bd.texture ?? 0) !== (ad.texture ?? 0)) presenceChanged.push('Texture');
+    if ((bd.dehaze ?? 0) !== (ad.dehaze ?? 0)) presenceChanged.push('Dehaze');
+
+    const detail6Changed =
+      (bd.sharpen_amount ?? 0) !== (ad.sharpen_amount ?? 0) ||
+      (bd.sharpen_radius ?? 1.0) !== (ad.sharpen_radius ?? 1.0) ||
+      (bd.sharpen_masking ?? 0) !== (ad.sharpen_masking ?? 0) ||
+      (bd.noise_luminance ?? 0) !== (ad.noise_luminance ?? 0) ||
+      (bd.noise_colour ?? 0) !== (ad.noise_colour ?? 0) ||
+      Boolean(bd.hot_pixels) !== Boolean(ad.hot_pixels);
+
+    if (!detail6Changed && presenceChanged.length === 1) {
+      changed.push(presenceChanged[0]);
+    } else {
+      changed.push('Detail');
+    }
   }
   if (JSON.stringify(before.masks) !== JSON.stringify(after.masks)) {
     if ((after.masks?.length ?? 0) > (before.masks?.length ?? 0)) {
@@ -1910,6 +1932,9 @@ function normaliseRecipe(existing: AdjustmentRecipe, sourceSha: string): Adjustm
           noise_luminance: existing.detail.noise_luminance ?? 0,
           noise_colour: existing.detail.noise_colour ?? 0,
           hot_pixels: existing.detail.hot_pixels ?? false,
+          clarity: existing.detail.clarity ?? 0,
+          texture: existing.detail.texture ?? 0,
+          dehaze: existing.detail.dehaze ?? 0,
         }
       : createDefaultDetail(),
     masks: (existing.masks ?? []).map(normaliseMask),
@@ -3072,6 +3097,26 @@ function ensureDetail(): Detail {
   return recipe.value.detail;
 }
 
+function onPresenceSliderInput(prop: 'clarity' | 'texture' | 'dehaze', val: number) {
+  const d = ensureDetail();
+  d[prop] = val;
+  onRecipeValueInput();
+}
+
+function onPresenceSliderChange(prop: 'clarity' | 'texture' | 'dehaze', val: number) {
+  const d = ensureDetail();
+  d[prop] = val;
+  onRecipeValueChange();
+}
+
+function resetPresence() {
+  const d = ensureDetail();
+  d.clarity = 0;
+  d.texture = 0;
+  d.dehaze = 0;
+  commitRecipeChange('Presence');
+}
+
 function onDetailSliderInput(prop: keyof Detail, val: number) {
   const d = ensureDetail();
   (d as any)[prop] = val;
@@ -3091,7 +3136,13 @@ function toggleHotPixels() {
 }
 
 function resetDetail() {
-  recipe.value.detail = createDefaultDetail();
+  const d = ensureDetail();
+  d.sharpen_amount = 0;
+  d.sharpen_radius = 1.0;
+  d.sharpen_masking = 0;
+  d.noise_luminance = 0;
+  d.noise_colour = 0;
+  d.hot_pixels = false;
   commitRecipeChange('Detail');
 }
 
@@ -3811,6 +3862,54 @@ onUnmounted(() => {
               @update:model-value="onRecipeValueInput"
               @change="onRecipeValueChange"
             />
+          </CollapsibleSection>
+
+          <!-- Presence (RP-8) -->
+          <CollapsibleSection
+            title="Presence"
+            test-id="section-presence"
+            v-show="!selectedMask"
+            :default-open="false"
+            @reset="resetPresence"
+          >
+            <div class="presence-panel" data-testid="presence-panel">
+              <AdjustmentSlider
+                label="Clarity"
+                :model-value="recipe.detail?.clarity ?? 0"
+                :min="-100"
+                :max="100"
+                :step="1"
+                :default-value="0"
+                :disabled="loading || isReadOnly"
+                test-id="presence-clarity"
+                @update:model-value="(v) => onPresenceSliderInput('clarity', v)"
+                @change="(v) => onPresenceSliderChange('clarity', v)"
+              />
+              <AdjustmentSlider
+                label="Texture"
+                :model-value="recipe.detail?.texture ?? 0"
+                :min="-100"
+                :max="100"
+                :step="1"
+                :default-value="0"
+                :disabled="loading || isReadOnly"
+                test-id="presence-texture"
+                @update:model-value="(v) => onPresenceSliderInput('texture', v)"
+                @change="(v) => onPresenceSliderChange('texture', v)"
+              />
+              <AdjustmentSlider
+                label="Dehaze"
+                :model-value="recipe.detail?.dehaze ?? 0"
+                :min="-100"
+                :max="100"
+                :step="1"
+                :default-value="0"
+                :disabled="loading || isReadOnly"
+                test-id="presence-dehaze"
+                @update:model-value="(v) => onPresenceSliderInput('dehaze', v)"
+                @change="(v) => onPresenceSliderChange('dehaze', v)"
+              />
+            </div>
           </CollapsibleSection>
 
           <!-- 1b. Masks (ED-20) -->
@@ -6472,6 +6571,14 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--text-heading);
   padding: var(--space-1) 0;
+}
+
+/* Presence Section (RP-8) */
+.presence-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
 }
 
 /* Detail Section (RP-7) */

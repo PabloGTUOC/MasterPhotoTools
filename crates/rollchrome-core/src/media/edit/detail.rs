@@ -29,6 +29,15 @@ pub struct Detail {
     /// Hot pixel detection and suppression: default false.
     #[serde(default)]
     pub hot_pixels: bool,
+    /// Clarity: -100..100, default 0.
+    #[serde(default)]
+    pub clarity: f32,
+    /// Texture: -100..100, default 0.
+    #[serde(default)]
+    pub texture: f32,
+    /// Dehaze: -100..100, default 0.
+    #[serde(default)]
+    pub dehaze: f32,
 }
 
 fn default_sharpen_amount() -> f32 {
@@ -56,6 +65,9 @@ impl Default for Detail {
             noise_luminance: 0.0,
             noise_colour: 0.0,
             hot_pixels: false,
+            clarity: 0.0,
+            texture: 0.0,
+            dehaze: 0.0,
         }
     }
 }
@@ -67,6 +79,9 @@ impl Detail {
             && self.noise_luminance == 0.0
             && self.noise_colour == 0.0
             && !self.hot_pixels
+            && self.clarity == 0.0
+            && self.texture == 0.0
+            && self.dehaze == 0.0
     }
 }
 
@@ -116,6 +131,7 @@ pub fn apply_detail(src: &LinearBuffer, detail: &Detail, scale: f32) -> LinearBu
         });
 
     let scale_eff = scale.max(0.01);
+    let working_l = w.max(h) as f32;
 
     // -------------------------------------------------------------------------
     // 3. Colour noise reduction (guided filter on Cb and Cr with Y as guide)
@@ -146,7 +162,58 @@ pub fn apply_detail(src: &LinearBuffer, detail: &Detail, scale: f32) -> LinearBu
     }
 
     // -------------------------------------------------------------------------
-    // 5. Sharpening: D = Y - gaussian(Y), real separable Gaussian blur with sigma
+    // 5. Clarity (guided filter on Y plane, midtone contrast)
+    // -------------------------------------------------------------------------
+    if detail.clarity != 0.0 {
+        let r_clarity = (0.01 * working_l).round().max(1.0) as usize;
+        let eps_clarity = 0.002f32;
+        let base = guided_filter_self(&y_plane, w, h, r_clarity, eps_clarity);
+        let factor = detail.clarity / 100.0;
+
+        y_plane
+            .par_iter_mut()
+            .zip(base.par_iter())
+            .for_each(|(y, &b)| {
+                let orig = *y;
+                let d = orig - b;
+                let t = 2.0 * orig - 1.0;
+                let w_mask = (1.0 - t * t).clamp(0.0, 1.0);
+                *y = (orig + factor * d * w_mask).max(0.0);
+            });
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. Texture (bandpass on Y plane)
+    // -------------------------------------------------------------------------
+    if detail.texture != 0.0 {
+        let sigma_1 = (0.0004 * working_l).max(0.5);
+        let sigma_2 = 0.003 * working_l;
+
+        let g1 = gaussian_blur_2d(&y_plane, w, h, sigma_1);
+        let g2 = if sigma_2 < 3.0 {
+            gaussian_blur_2d(&y_plane, w, h, sigma_2)
+        } else {
+            let r_box = (((1.0 + 4.0 * sigma_2 * sigma_2).sqrt() - 1.0) / 2.0)
+                .round()
+                .max(1.0) as usize;
+            let pass1 = box_filter_2d(&y_plane, w, h, r_box);
+            let pass2 = box_filter_2d(&pass1, w, h, r_box);
+            box_filter_2d(&pass2, w, h, r_box)
+        };
+
+        let factor = (detail.texture / 100.0) * 1.5;
+        y_plane
+            .par_iter_mut()
+            .zip(g1.par_iter())
+            .zip(g2.par_iter())
+            .for_each(|((y, &v1), &v2)| {
+                let band = v1 - v2;
+                *y = (*y + factor * band).max(0.0);
+            });
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. Sharpening: D = Y - gaussian(Y), real separable Gaussian blur with sigma
     // -------------------------------------------------------------------------
     if detail.sharpen_amount > 0.0 {
         let sigma = (detail.sharpen_radius * scale_eff).max(0.35);
@@ -188,7 +255,7 @@ pub fn apply_detail(src: &LinearBuffer, detail: &Detail, scale: f32) -> LinearBu
     }
 
     // -------------------------------------------------------------------------
-    // 6. Rebuild linear RGB: R = Y + Cr, B = Y + Cb, G = (Y - 0.2126R - 0.0722B)/0.7152
+    // 8. Rebuild linear RGB: R = Y + Cr, B = Y + Cb, G = (Y - 0.2126R - 0.0722B)/0.7152
     // -------------------------------------------------------------------------
     let mut out_data = vec![0.0f32; n_pixels * 3];
 
@@ -205,7 +272,11 @@ pub fn apply_detail(src: &LinearBuffer, detail: &Detail, scale: f32) -> LinearBu
 
                 let r = y + cr;
                 let b = y + cb;
-                let g = (y - 0.2126 * r - 0.0722 * b) / 0.7152;
+                let g = if cb == 0.0 && cr == 0.0 {
+                    y
+                } else {
+                    (y - 0.2126 * r - 0.0722 * b) / 0.7152
+                };
 
                 let r_clamped = r.max(0.0);
                 let g_clamped = g.max(0.0);
@@ -216,6 +287,13 @@ pub fn apply_detail(src: &LinearBuffer, detail: &Detail, scale: f32) -> LinearBu
                 rgb_row[x * 3 + 2] = b_clamped * b_clamped;
             }
         });
+
+    // -------------------------------------------------------------------------
+    // 9. Dehaze in linear RGB
+    // -------------------------------------------------------------------------
+    if detail.dehaze != 0.0 {
+        apply_dehaze(&mut out_data, w, h, detail.dehaze);
+    }
 
     LinearBuffer {
         width: src.width,
@@ -514,4 +592,303 @@ fn guided_filter_self(guide: &[f32], w: usize, h: usize, r: usize, eps: f32) -> 
     });
 
     q
+}
+
+/// Applies dehaze in linear RGB space using an adapted Dark Channel Prior.
+fn apply_dehaze(rgb_data: &mut [f32], w: usize, h: usize, dehaze: f32) {
+    let working_l = (w.max(h) as f32).max(1.0);
+    let s_down = if working_l > 1024.0 {
+        1024.0 / working_l
+    } else {
+        1.0
+    };
+    let cw = ((w as f32) * s_down).round().max(1.0) as usize;
+    let ch = ((h as f32) * s_down).round().max(1.0) as usize;
+    let copy_l = (cw.max(ch) as f32).max(1.0);
+
+    let copy_rgb = if cw == w && ch == h {
+        rgb_data.to_vec()
+    } else {
+        downsample_bilinear_rgb(rgb_data, w, h, cw, ch)
+    };
+
+    let n_copy = cw * ch;
+    let mut min_rgb = vec![0.0f32; n_copy];
+    min_rgb.par_chunks_mut(cw).enumerate().for_each(|(y, row)| {
+        for x in 0..cw {
+            let r = copy_rgb[(y * cw + x) * 3];
+            let g = copy_rgb[(y * cw + x) * 3 + 1];
+            let b = copy_rgb[(y * cw + x) * 3 + 2];
+            row[x] = r.min(g).min(b);
+        }
+    });
+
+    let r_dark = (0.015 * copy_l).round().max(1.0) as usize;
+    let dark_channel = min_filter_2d(&min_rgb, cw, ch, r_dark);
+
+    // Atmospheric light vector A from top 0.1% brightest in dark_channel
+    let k = ((n_copy as f32) * 0.001).ceil().max(1.0) as usize;
+    let k = k.min(n_copy);
+    let mut indices: Vec<usize> = (0..n_copy).collect();
+    indices.select_nth_unstable_by(n_copy - k, |&i, &j| {
+        dark_channel[i].total_cmp(&dark_channel[j])
+    });
+
+    let top_k = &indices[n_copy - k..];
+    let mut sum_r = 0.0f64;
+    let mut sum_g = 0.0f64;
+    let mut sum_b = 0.0f64;
+    for &idx in top_k {
+        sum_r += copy_rgb[idx * 3] as f64;
+        sum_g += copy_rgb[idx * 3 + 1] as f64;
+        sum_b += copy_rgb[idx * 3 + 2] as f64;
+    }
+    let inv_k = 1.0 / (top_k.len() as f64);
+    let a_r = ((sum_r * inv_k) as f32).max(0.01);
+    let a_g = ((sum_g * inv_k) as f32).max(0.01);
+    let a_b = ((sum_b * inv_k) as f32).max(0.01);
+
+    if dehaze > 0.0 {
+        let omega = 0.95 * (dehaze / 100.0);
+        let mut min_norm = vec![0.0f32; n_copy];
+        min_norm
+            .par_chunks_mut(cw)
+            .enumerate()
+            .for_each(|(y, row)| {
+                for x in 0..cw {
+                    let r = copy_rgb[(y * cw + x) * 3];
+                    let g = copy_rgb[(y * cw + x) * 3 + 1];
+                    let b = copy_rgb[(y * cw + x) * 3 + 2];
+                    let norm = (r / a_r).min(g / a_g).min(b / a_b);
+                    row[x] = norm;
+                }
+            });
+
+        let dark_norm = min_filter_2d(&min_norm, cw, ch, r_dark);
+
+        let mut t_raw = vec![0.0f32; n_copy];
+        t_raw
+            .par_iter_mut()
+            .zip(dark_norm.par_iter())
+            .for_each(|(t, &d)| {
+                *t = 1.0 - omega * d;
+            });
+
+        let mut y_copy = vec![0.0f32; n_copy];
+        y_copy.par_chunks_mut(cw).enumerate().for_each(|(y, row)| {
+            for x in 0..cw {
+                let r = copy_rgb[(y * cw + x) * 3].max(0.0);
+                let g = copy_rgb[(y * cw + x) * 3 + 1].max(0.0);
+                let b = copy_rgb[(y * cw + x) * 3 + 2].max(0.0);
+                row[x] = (0.2126 * r + 0.7152 * g + 0.0722 * b).clamp(0.0, 1.0);
+            }
+        });
+
+        let r_guide = (4 * r_dark).min(cw.max(ch) / 2).max(1);
+        let t_refined = guided_filter(&y_copy, &t_raw, cw, ch, r_guide, 0.001);
+
+        let mut t_clamped = vec![0.0f32; n_copy];
+        t_clamped
+            .par_iter_mut()
+            .zip(t_refined.par_iter())
+            .for_each(|(out, &t)| {
+                *out = t.clamp(0.1, 1.0);
+            });
+
+        let t_full = if cw == w && ch == h {
+            t_clamped
+        } else {
+            upsample_bilinear_1d(&t_clamped, cw, ch, w, h)
+        };
+
+        rgb_data
+            .par_chunks_mut(w * 3)
+            .zip(t_full.par_chunks(w))
+            .for_each(|(row, t_row)| {
+                for x in 0..w {
+                    let t_val = t_row[x].max(0.1);
+                    let inv_t = 1.0 / t_val;
+                    let r = row[x * 3];
+                    let g = row[x * 3 + 1];
+                    let b = row[x * 3 + 2];
+                    row[x * 3] = ((r - a_r) * inv_t + a_r).max(0.0);
+                    row[x * 3 + 1] = ((g - a_g) * inv_t + a_g).max(0.0);
+                    row[x * 3 + 2] = ((b - a_b) * inv_t + a_b).max(0.0);
+                }
+            });
+    } else {
+        // Negative dehaze: blend linearly toward atmospheric light A
+        let h_veil = (dehaze.abs() / 100.0) * 0.6;
+        let one_minus_h = 1.0 - h_veil;
+
+        rgb_data.par_chunks_mut(w * 3).for_each(|row| {
+            for x in 0..w {
+                let r = row[x * 3];
+                let g = row[x * 3 + 1];
+                let b = row[x * 3 + 2];
+                row[x * 3] = (r * one_minus_h + a_r * h_veil).max(0.0);
+                row[x * 3 + 1] = (g * one_minus_h + a_g * h_veil).max(0.0);
+                row[x * 3 + 2] = (b * one_minus_h + a_b * h_veil).max(0.0);
+            }
+        });
+    }
+}
+
+/// 1D min filter across a contiguous slice with window `[max(0, x - r), min(len - 1, x + r)]`.
+/// Runs in O(N) using a monotonic double-ended queue.
+fn min_filter_1d(src: &[f32], r: usize) -> Vec<f32> {
+    let len = src.len();
+    if len == 0 || r == 0 {
+        return src.to_vec();
+    }
+    let mut out = vec![0.0f32; len];
+    let mut deque: std::collections::VecDeque<usize> =
+        std::collections::VecDeque::with_capacity(2 * r + 2);
+
+    let initial_end = r.min(len - 1);
+    for i in 0..=initial_end {
+        while let Some(&back) = deque.back() {
+            if src[back] >= src[i] {
+                deque.pop_back();
+            } else {
+                break;
+            }
+        }
+        deque.push_back(i);
+    }
+
+    for (x, out_val) in out.iter_mut().enumerate() {
+        let new_idx = x + r;
+        if new_idx < len && new_idx > initial_end {
+            while let Some(&back) = deque.back() {
+                if src[back] >= src[new_idx] {
+                    deque.pop_back();
+                } else {
+                    break;
+                }
+            }
+            deque.push_back(new_idx);
+        }
+        let min_valid_idx = x.saturating_sub(r);
+        while let Some(&front) = deque.front() {
+            if front < min_valid_idx {
+                deque.pop_front();
+            } else {
+                break;
+            }
+        }
+        *out_val = src[*deque.front().unwrap()];
+    }
+
+    out
+}
+
+/// Separable 2D min filter across rows then columns in O(1) per pixel.
+pub fn min_filter_2d(src: &[f32], w: usize, h: usize, r: usize) -> Vec<f32> {
+    if r == 0 || w == 0 || h == 0 {
+        return src.to_vec();
+    }
+
+    let mut temp = vec![0.0f32; w * h];
+    temp.par_chunks_mut(w)
+        .zip(src.par_chunks(w))
+        .for_each(|(out_row, in_row)| {
+            let filtered = min_filter_1d(in_row, r);
+            out_row.copy_from_slice(&filtered);
+        });
+
+    let mut trans = vec![0.0f32; w * h];
+    transpose(&temp, &mut trans, w, h);
+
+    let mut trans_filtered = vec![0.0f32; w * h];
+    trans_filtered
+        .par_chunks_mut(h)
+        .zip(trans.par_chunks(h))
+        .for_each(|(out_row, in_row)| {
+            let filtered = min_filter_1d(in_row, r);
+            out_row.copy_from_slice(&filtered);
+        });
+
+    let mut out = vec![0.0f32; w * h];
+    transpose(&trans_filtered, &mut out, h, w);
+
+    out
+}
+
+/// Bilinear downsampling for RGB buffers.
+fn downsample_bilinear_rgb(src: &[f32], w: usize, h: usize, cw: usize, ch: usize) -> Vec<f32> {
+    if w == cw && h == ch {
+        return src.to_vec();
+    }
+    let mut dst = vec![0.0f32; cw * ch * 3];
+    let sx = w as f32 / cw as f32;
+    let sy = h as f32 / ch as f32;
+
+    dst.par_chunks_mut(cw * 3)
+        .enumerate()
+        .for_each(|(cy, row)| {
+            let v = (cy as f32 + 0.5) * sy - 0.5;
+            let y0 = (v.floor() as isize).clamp(0, h as isize - 1) as usize;
+            let y1 = (y0 + 1).min(h - 1);
+            let fy = (v - v.floor()).clamp(0.0, 1.0);
+
+            for cx in 0..cw {
+                let u = (cx as f32 + 0.5) * sx - 0.5;
+                let x0 = (u.floor() as isize).clamp(0, w as isize - 1) as usize;
+                let x1 = (x0 + 1).min(w - 1);
+                let fx = (u - u.floor()).clamp(0.0, 1.0);
+
+                let w00 = (1.0 - fx) * (1.0 - fy);
+                let w10 = fx * (1.0 - fy);
+                let w01 = (1.0 - fx) * fy;
+                let w11 = fx * fy;
+
+                for c in 0..3 {
+                    let c00 = src[(y0 * w + x0) * 3 + c];
+                    let c10 = src[(y0 * w + x1) * 3 + c];
+                    let c01 = src[(y1 * w + x0) * 3 + c];
+                    let c11 = src[(y1 * w + x1) * 3 + c];
+                    row[cx * 3 + c] = w00 * c00 + w10 * c10 + w01 * c01 + w11 * c11;
+                }
+            }
+        });
+
+    dst
+}
+
+/// Bilinear upsampling for single-channel float buffers.
+fn upsample_bilinear_1d(src: &[f32], cw: usize, ch: usize, w: usize, h: usize) -> Vec<f32> {
+    if cw == w && ch == h {
+        return src.to_vec();
+    }
+    let mut dst = vec![0.0f32; w * h];
+    let sx = cw as f32 / w as f32;
+    let sy = ch as f32 / h as f32;
+
+    dst.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        let v = (y as f32 + 0.5) * sy - 0.5;
+        let y0 = (v.floor() as isize).clamp(0, ch as isize - 1) as usize;
+        let y1 = (y0 + 1).min(ch - 1);
+        let fy = (v - v.floor()).clamp(0.0, 1.0);
+
+        for (x, out_val) in row.iter_mut().enumerate() {
+            let u = (x as f32 + 0.5) * sx - 0.5;
+            let x0 = (u.floor() as isize).clamp(0, cw as isize - 1) as usize;
+            let x1 = (x0 + 1).min(cw - 1);
+            let fx = (u - u.floor()).clamp(0.0, 1.0);
+
+            let w00 = (1.0 - fx) * (1.0 - fy);
+            let w10 = fx * (1.0 - fy);
+            let w01 = (1.0 - fx) * fy;
+            let w11 = fx * fy;
+
+            let c00 = src[y0 * cw + x0];
+            let c10 = src[y0 * cw + x1];
+            let c01 = src[y1 * cw + x0];
+            let c11 = src[y1 * cw + x1];
+            *out_val = w00 * c00 + w10 * c10 + w01 * c01 + w11 * c11;
+        }
+    });
+
+    dst
 }

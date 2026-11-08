@@ -552,6 +552,7 @@ fn export_and_full_preview_agree_on_detail() {
             noise_luminance: 30.0,
             noise_colour: 30.0,
             hot_pixels: true,
+            ..Detail::default()
         }),
         ..AdjustmentRecipe::default()
     };
@@ -708,4 +709,636 @@ fn sharpening_radius_changes_the_result_and_narrows_below_a_pixel() {
             );
         }
     }
+}
+
+// =============================================================================
+// RP-8 Acceptance Tests: Clarity, Texture, Dehaze (Presence)
+// =============================================================================
+
+#[test]
+fn presence_at_rest_changes_nothing() {
+    let w = 100;
+    let h = 100;
+    let mut data = vec![0.0f32; w * h * 3];
+    for (i, val) in data.iter_mut().enumerate() {
+        *val = ((i * 17) % 256) as f32 / 255.0;
+    }
+    let lin = LinearBuffer {
+        width: w as u32,
+        height: h as u32,
+        data: data.clone(),
+    };
+    let detail = Detail::default();
+    let res = apply_detail(&lin, &detail, 1.0);
+    assert_eq!(res.data, lin.data);
+}
+
+#[test]
+fn clarity_raises_mid_tone_contrast_on_a_soft_edge() {
+    let w = 800;
+    let h = 600;
+    let mut data = vec![0.0f32; w * h * 3];
+    // A soft gradient from 0.3 to 0.7 across 40 px (x from 380 to 420)
+    for y in 0..h {
+        for x in 0..w {
+            let y_val = if x < 380 {
+                0.3f32
+            } else if x >= 420 {
+                0.7f32
+            } else {
+                let t = (x - 380) as f32 / 40.0;
+                0.3f32 + 0.4f32 * (t * t * (3.0 - 2.0 * t))
+            };
+            let lin_val = y_val * y_val;
+            for c in 0..3 {
+                data[(y * w + x) * 3 + c] = lin_val;
+            }
+        }
+    }
+    let lin = LinearBuffer {
+        width: w as u32,
+        height: h as u32,
+        data,
+    };
+    let detail = Detail {
+        clarity: 100.0,
+        ..Detail::default()
+    };
+    let res = apply_detail(&lin, &detail, 1.0);
+
+    let y = 300;
+    let orig_left = lin.data[(y * w + 380) * 3].sqrt();
+    let orig_right = lin.data[(y * w + 420) * 3].sqrt();
+    let orig_contrast = orig_right - orig_left;
+
+    let res_left = res.data[(y * w + 380) * 3].sqrt();
+    let res_right = res.data[(y * w + 420) * 3].sqrt();
+    let res_contrast = res_right - res_left;
+
+    assert!(
+        res_contrast > orig_contrast,
+        "Clarity +100 should raise contrast across soft edge: orig={orig_contrast}, res={res_contrast}"
+    );
+}
+
+#[test]
+fn clarity_leaves_blacks_and_whites_alone() {
+    let w = 64;
+    let h = 64;
+    let mut data = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let val = if x < 32 { 0.0f32 } else { 1.0f32 };
+            for c in 0..3 {
+                data[(y * w + x) * 3 + c] = val;
+            }
+        }
+    }
+    let lin = LinearBuffer {
+        width: w as u32,
+        height: h as u32,
+        data,
+    };
+
+    for clarity_val in [100.0f32, -100.0f32] {
+        let detail = Detail {
+            clarity: clarity_val,
+            ..Detail::default()
+        };
+        let res = apply_detail(&lin, &detail, 1.0);
+
+        for y in 0..h {
+            for x in 0..20 {
+                for c in 0..3 {
+                    let v = res.data[(y * w + x) * 3 + c];
+                    assert!(
+                        v.abs() < 1e-6,
+                        "Black region should remain 0 under clarity {clarity_val}, got {v}"
+                    );
+                }
+            }
+            for x in 44..w {
+                for c in 0..3 {
+                    let v = res.data[(y * w + x) * 3 + c];
+                    assert!(
+                        (v - 1.0).abs() < 1e-6,
+                        "White region should remain 1 under clarity {clarity_val}, got {v}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn negative_clarity_softens() {
+    let w = 120;
+    let h = 120;
+    let mut data = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            // Midtone texture with alternating perturbation
+            let y_val = 0.5f32 + 0.1f32 * if (x + y) % 2 == 0 { 1.0 } else { -1.0 };
+            let lin_val = y_val * y_val;
+            for c in 0..3 {
+                data[(y * w + x) * 3 + c] = lin_val;
+            }
+        }
+    }
+    let lin = LinearBuffer {
+        width: w as u32,
+        height: h as u32,
+        data,
+    };
+    let detail = Detail {
+        clarity: -100.0,
+        ..Detail::default()
+    };
+    let res = apply_detail(&lin, &detail, 1.0);
+
+    let n = (w * h) as f64;
+    let orig_mean: f64 = lin.data.iter().map(|&v| v as f64).sum::<f64>() / (n * 3.0);
+    let res_mean: f64 = res.data.iter().map(|&v| v as f64).sum::<f64>() / (n * 3.0);
+
+    let orig_var: f64 = lin
+        .data
+        .iter()
+        .map(|&v| (v as f64 - orig_mean).powi(2))
+        .sum::<f64>()
+        / (n * 3.0);
+    let res_var: f64 = res
+        .data
+        .iter()
+        .map(|&v| (v as f64 - res_mean).powi(2))
+        .sum::<f64>()
+        / (n * 3.0);
+
+    assert!(
+        (res_mean - orig_mean).abs() < 0.01,
+        "Mean should remain unchanged under negative clarity: orig={orig_mean}, res={res_mean}"
+    );
+    assert!(
+        res_var < orig_var * 0.9,
+        "Variance should drop under negative clarity: orig_var={orig_var}, res_var={res_var}"
+    );
+}
+
+#[test]
+fn clarity_does_not_halo_at_a_hard_edge() {
+    let w = 100;
+    let h = 100;
+    let mut data = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let y_val = if x < 50 { 0.2f32 } else { 0.8f32 };
+            let lin_val = y_val * y_val;
+            for c in 0..3 {
+                data[(y * w + x) * 3 + c] = lin_val;
+            }
+        }
+    }
+    let lin = LinearBuffer {
+        width: w as u32,
+        height: h as u32,
+        data,
+    };
+    let detail = Detail {
+        clarity: 100.0,
+        ..Detail::default()
+    };
+    let res = apply_detail(&lin, &detail, 1.0);
+
+    // Step height is 0.8 - 0.2 = 0.6.
+    // 3% overshoot is 0.6 * 0.03 = 0.018.
+    let y_max = (0.8f32 + 0.018).powi(2);
+    let y_min = (0.2f32 - 0.018).max(0.0).powi(2);
+
+    for (i, &val) in res.data.iter().enumerate() {
+        assert!(
+            val <= y_max + 1e-4,
+            "Pixel at {i} overshoots above 3%: val={val}, max={y_max}"
+        );
+        assert!(
+            val >= y_min - 1e-4,
+            "Pixel at {i} undershoots below 3%: val={val}, min={y_min}"
+        );
+    }
+}
+
+#[test]
+fn texture_lifts_fine_detail_and_leaves_broad_gradients_alone() {
+    let w = 1200;
+    let h = 800;
+    let mut data = vec![0.0f32; w * h * 3];
+    // Broad ramp (0.2 -> 0.8 over 200 px, say x from 500 to 700) + high frequency ripple (amplitude 0.02, wavelength 6 px)
+    for y in 0..h {
+        for x in 0..w {
+            let ramp = if x < 500 {
+                0.2f32
+            } else if x >= 700 {
+                0.8f32
+            } else {
+                0.2f32 + 0.6f32 * ((x - 500) as f32 / 200.0)
+            };
+            let ripple = 0.02f32 * (2.0 * std::f32::consts::PI * x as f32 / 6.0).sin();
+            let y_val = ramp + ripple;
+            let lin_val = y_val * y_val;
+            for c in 0..3 {
+                data[(y * w + x) * 3 + c] = lin_val;
+            }
+        }
+    }
+    let lin = LinearBuffer {
+        width: w as u32,
+        height: h as u32,
+        data,
+    };
+    let detail = Detail {
+        texture: 100.0,
+        ..Detail::default()
+    };
+    let res = apply_detail(&lin, &detail, 1.0);
+
+    // Ripple amplitude check near middle of the ramp (x around 580..620)
+    let y_row = 400;
+    let mut orig_amp_sum = 0.0f32;
+    let mut res_amp_sum = 0.0f32;
+    for period in 0..5 {
+        // For wavelength 6: peak is at period*6 + 1.5, trough at period*6 + 4.5
+        // Sampling integer points 1 and 4 or 2 and 5 gives a consistent amplitude measurement
+        let x_peak = 580 + period * 6 + 1;
+        let x_trough = 580 + period * 6 + 4;
+        let orig_diff = (lin.data[(y_row * w + x_peak) * 3].sqrt()
+            - lin.data[(y_row * w + x_trough) * 3].sqrt())
+        .abs();
+        let res_diff = (res.data[(y_row * w + x_peak) * 3].sqrt()
+            - res.data[(y_row * w + x_trough) * 3].sqrt())
+        .abs();
+        orig_amp_sum += orig_diff;
+        res_amp_sum += res_diff;
+    }
+    assert!(
+        res_amp_sum > orig_amp_sum * 1.25,
+        "Texture +100 should boost ripple amplitude by > 25%: orig={orig_amp_sum}, res={res_amp_sum}"
+    );
+
+    // Broad ramp slope check: average over integer periods of 6 px to cancel ripple
+    let orig_ramp_start: f32 = (0..12)
+        .map(|dx| lin.data[(y_row * w + 520 + dx) * 3].sqrt())
+        .sum::<f32>()
+        / 12.0;
+    let orig_ramp_end: f32 = (0..12)
+        .map(|dx| lin.data[(y_row * w + 660 + dx) * 3].sqrt())
+        .sum::<f32>()
+        / 12.0;
+    let orig_slope = (orig_ramp_end - orig_ramp_start) / 140.0;
+
+    let res_ramp_start: f32 = (0..12)
+        .map(|dx| res.data[(y_row * w + 520 + dx) * 3].sqrt())
+        .sum::<f32>()
+        / 12.0;
+    let res_ramp_end: f32 = (0..12)
+        .map(|dx| res.data[(y_row * w + 660 + dx) * 3].sqrt())
+        .sum::<f32>()
+        / 12.0;
+    let res_slope = (res_ramp_end - res_ramp_start) / 140.0;
+
+    let slope_diff = (res_slope - orig_slope).abs() / orig_slope;
+    assert!(
+        slope_diff < 0.02,
+        "Broad ramp slope should remain unchanged within < 2%: diff={slope_diff}"
+    );
+}
+
+#[test]
+fn dehaze_restores_a_hazy_scene() {
+    let w = 120;
+    let h = 120;
+    let t_known = 0.4f32;
+    let a_known = 0.85f32;
+
+    let mut hazy_data = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            // Synthetic scene with shadows (near 0) and highlights (near 0.8)
+            let clear_val = if (x / 20 + y / 20) % 2 == 0 {
+                0.05f32
+            } else {
+                0.80f32
+            };
+            let hazy_val = clear_val * t_known + a_known * (1.0 - t_known);
+            for c in 0..3 {
+                hazy_data[(y * w + x) * 3 + c] = hazy_val;
+            }
+        }
+    }
+
+    let lin = LinearBuffer {
+        width: w as u32,
+        height: h as u32,
+        data: hazy_data.clone(),
+    };
+    let detail = Detail {
+        dehaze: 100.0,
+        ..Detail::default()
+    };
+    let res = apply_detail(&lin, &detail, 1.0);
+
+    let n = (w * h * 3) as f64;
+    let hazy_mean = hazy_data.iter().map(|&v| v as f64).sum::<f64>() / n;
+    let hazy_std = (hazy_data
+        .iter()
+        .map(|&v| (v as f64 - hazy_mean).powi(2))
+        .sum::<f64>()
+        / n)
+        .sqrt();
+
+    let res_mean = res.data.iter().map(|&v| v as f64).sum::<f64>() / n;
+    let res_std = (res
+        .data
+        .iter()
+        .map(|&v| (v as f64 - res_mean).powi(2))
+        .sum::<f64>()
+        / n)
+        .sqrt();
+
+    assert!(
+        res_std >= hazy_std * 1.50,
+        "Recovered std dev should increase by >= 50%: hazy_std={hazy_std}, res_std={res_std}"
+    );
+}
+
+#[test]
+fn dehaze_leaves_a_clear_scene_nearly_alone() {
+    let w = 120;
+    let h = 120;
+    let mut data = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            // High-contrast scene with deep black shadows (dark channel = 0)
+            let val = if (x / 10) % 2 == 0 || (y / 10) % 2 == 0 {
+                0.0f32
+            } else {
+                0.7f32
+            };
+            for c in 0..3 {
+                data[(y * w + x) * 3 + c] = val;
+            }
+        }
+    }
+    let lin = LinearBuffer {
+        width: w as u32,
+        height: h as u32,
+        data: data.clone(),
+    };
+    let detail = Detail {
+        dehaze: 50.0,
+        ..Detail::default()
+    };
+    let res = apply_detail(&lin, &detail, 1.0);
+
+    let n = (w * h * 3) as f64;
+    let orig_mean = lin.data.iter().map(|&v| v as f64).sum::<f64>() / n;
+    let res_mean = res.data.iter().map(|&v| v as f64).sum::<f64>() / n;
+
+    let diff = (res_mean - orig_mean).abs() / orig_mean;
+    assert!(
+        diff < 0.03,
+        "Dehaze +50 on a clear scene should change mean by < 3%: diff={diff}"
+    );
+}
+
+#[test]
+fn dehaze_does_not_tint_a_neutral_scene() {
+    let w = 64;
+    let h = 64;
+    let mut data = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let val = 0.3f32 + 0.3f32 * ((x + y) as f32 / 128.0);
+            for c in 0..3 {
+                data[(y * w + x) * 3 + c] = val;
+            }
+        }
+    }
+    let lin = LinearBuffer {
+        width: w as u32,
+        height: h as u32,
+        data,
+    };
+    let detail = Detail {
+        dehaze: 50.0,
+        ..Detail::default()
+    };
+    let res = apply_detail(&lin, &detail, 1.0);
+
+    for idx in 0..w * h {
+        let r = res.data[idx * 3];
+        let g = res.data[idx * 3 + 1];
+        let b = res.data[idx * 3 + 2];
+        assert!(
+            (r - g).abs() < 1e-6,
+            "R and G must be identical for neutral scene at pixel {idx}: r={r}, g={g}"
+        );
+        assert!(
+            (g - b).abs() < 1e-6,
+            "G and B must be identical for neutral scene at pixel {idx}: g={g}, b={b}"
+        );
+    }
+}
+
+#[test]
+fn negative_dehaze_adds_haze() {
+    let w = 80;
+    let h = 80;
+    let mut data = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let val = if (x / 8 + y / 8) % 2 == 0 {
+                0.1f32
+            } else {
+                0.9f32
+            };
+            for c in 0..3 {
+                data[(y * w + x) * 3 + c] = val;
+            }
+        }
+    }
+    let lin = LinearBuffer {
+        width: w as u32,
+        height: h as u32,
+        data: data.clone(),
+    };
+    let detail = Detail {
+        dehaze: -50.0,
+        ..Detail::default()
+    };
+    let res = apply_detail(&lin, &detail, 1.0);
+
+    let n = (w * h * 3) as f64;
+    let orig_mean = lin.data.iter().map(|&v| v as f64).sum::<f64>() / n;
+    let orig_var = lin
+        .data
+        .iter()
+        .map(|&v| (v as f64 - orig_mean).powi(2))
+        .sum::<f64>()
+        / n;
+
+    let res_mean = res.data.iter().map(|&v| v as f64).sum::<f64>() / n;
+    let res_var = res
+        .data
+        .iter()
+        .map(|&v| (v as f64 - res_mean).powi(2))
+        .sum::<f64>()
+        / n;
+
+    assert!(
+        res_var <= orig_var * 0.70,
+        "Dehaze -50 must reduce variance by >= 30%: orig_var={orig_var}, res_var={res_var}"
+    );
+
+    // Shadows lifted: check dark region pixels (originally 0.1)
+    let min_orig = lin.data.iter().copied().fold(f32::INFINITY, f32::min);
+    let min_res = res.data.iter().copied().fold(f32::INFINITY, f32::min);
+    assert!(
+        min_res > min_orig + 0.05,
+        "Shadows should be lifted: min_orig={min_orig}, min_res={min_res}"
+    );
+}
+
+#[test]
+fn presence_scales_with_the_proxy() {
+    let w_half = 1200;
+    let h_half = 800;
+    let w_full = 2400;
+    let h_full = 1600;
+
+    // Generate deterministic test pattern
+    let mut data_half = vec![0.0f32; w_half * h_half * 3];
+    for y in 0..h_half {
+        for x in 0..w_half {
+            let u = x as f32 / w_half as f32;
+            let v = y as f32 / h_half as f32;
+            let val = 0.2 + 0.5 * u + 0.1 * (v * 10.0).sin();
+            for c in 0..3 {
+                data_half[(y * w_half + x) * 3 + c] = val;
+            }
+        }
+    }
+    let lin_half = LinearBuffer {
+        width: w_half as u32,
+        height: h_half as u32,
+        data: data_half,
+    };
+
+    let mut data_full = vec![0.0f32; w_full * h_full * 3];
+    for y in 0..h_full {
+        for x in 0..w_full {
+            let u = x as f32 / w_full as f32;
+            let v = y as f32 / h_full as f32;
+            let val = 0.2 + 0.5 * u + 0.1 * (v * 10.0).sin();
+            for c in 0..3 {
+                data_full[(y * w_full + x) * 3 + c] = val;
+            }
+        }
+    }
+    let lin_full = LinearBuffer {
+        width: w_full as u32,
+        height: h_full as u32,
+        data: data_full,
+    };
+
+    let detail = Detail {
+        clarity: 50.0,
+        texture: 50.0,
+        dehaze: 30.0,
+        ..Detail::default()
+    };
+
+    let res_half = apply_detail(&lin_half, &detail, 0.5);
+    let res_full = apply_detail(&lin_full, &detail, 1.0);
+
+    // Downsample res_full by 2x area average
+    let mut downsampled = vec![0.0f32; w_half * h_half * 3];
+    for y in 0..h_half {
+        for x in 0..w_half {
+            for c in 0..3 {
+                let v00 = res_full.data[((y * 2) * w_full + (x * 2)) * 3 + c];
+                let v10 = res_full.data[((y * 2) * w_full + (x * 2 + 1)) * 3 + c];
+                let v01 = res_full.data[((y * 2 + 1) * w_full + (x * 2)) * 3 + c];
+                let v11 = res_full.data[((y * 2 + 1) * w_full + (x * 2 + 1)) * 3 + c];
+                downsampled[(y * w_half + x) * 3 + c] = 0.25 * (v00 + v10 + v01 + v11);
+            }
+        }
+    }
+
+    // Mean absolute difference between downsampled full and half-resolution result
+    let n = (w_half * h_half * 3) as f64;
+    let mut sum_abs_diff = 0.0f64;
+    for (&d, &h) in downsampled.iter().zip(res_half.data.iter()) {
+        sum_abs_diff += (d as f64 - h as f64).abs();
+    }
+    let mean_abs_diff = sum_abs_diff / n;
+    assert!(
+        mean_abs_diff < 0.015,
+        "Mean abs difference between downsampled full and half resolution should be < 0.015, got {mean_abs_diff}"
+    );
+}
+
+#[test]
+fn export_and_full_preview_agree_on_presence() {
+    let buf = ImageBuffer::Rgb8 {
+        width: 120,
+        height: 80,
+        data: (0..120 * 80 * 3).map(|i| ((i * 7) % 256) as u8).collect(),
+    };
+    let session = PreviewSession::new(&buf).unwrap();
+
+    let recipe = AdjustmentRecipe {
+        detail: Some(Detail {
+            clarity: 40.0,
+            texture: -20.0,
+            dehaze: 15.0,
+            ..Detail::default()
+        }),
+        ..AdjustmentRecipe::default()
+    };
+
+    let frame_full = session.render(&recipe, None, PreviewStage::Full).unwrap();
+    let exported = apply_recipe_with_orientation(&buf, &recipe, None, 1).unwrap();
+    let export_bytes = exported.as_rgb8().unwrap();
+
+    let n_pixels = (buf.width() * buf.height()) as usize;
+    for i in 0..n_pixels {
+        for c in 0..3 {
+            let p_val = frame_full.bytes[i * 4 + c];
+            let e_val = export_bytes[i * 3 + c];
+            assert!(
+                (p_val as i32 - e_val as i32).abs() <= 1,
+                "Export and PreviewStage::Full must agree on presence: pixel {i} channel {c}: preview {p_val}, export {e_val}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_detail_written_before_presence_still_loads() {
+    let json = r#"{
+        "sharpen_amount": 50.0,
+        "sharpen_radius": 1.2,
+        "sharpen_masking": 10.0,
+        "noise_luminance": 25.0,
+        "noise_colour": 30.0,
+        "hot_pixels": true
+    }"#;
+    let detail: Detail = serde_json::from_str(json).unwrap();
+    assert_eq!(detail.sharpen_amount, 50.0);
+    assert_eq!(detail.sharpen_radius, 1.2);
+    assert_eq!(detail.sharpen_masking, 10.0);
+    assert_eq!(detail.noise_luminance, 25.0);
+    assert_eq!(detail.noise_colour, 30.0);
+    assert!(detail.hot_pixels);
+    assert_eq!(detail.clarity, 0.0);
+    assert_eq!(detail.texture, 0.0);
+    assert_eq!(detail.dehaze, 0.0);
 }

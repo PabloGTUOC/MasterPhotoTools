@@ -582,7 +582,7 @@ export interface BlackAndWhite {
   magenta: number;
 }
 
-/** Detail processing adjustments: sharpening, noise reduction, hot pixels (RP-7). */
+/** Detail processing adjustments: sharpening, noise reduction, hot pixels (RP-7), presence (RP-8). */
 export interface Detail {
   sharpen_amount: number;
   sharpen_radius: number;
@@ -590,6 +590,9 @@ export interface Detail {
   noise_luminance: number;
   noise_colour: number;
   hot_pixels: boolean;
+  clarity?: number;
+  texture?: number;
+  dehaze?: number;
 }
 
 /** Non-destructive adjustment recipe (ED-1, ED-6, ED-9, ED-10, ED-11, ED-12, ED-13, ED-14, ED-16, RP-4). */

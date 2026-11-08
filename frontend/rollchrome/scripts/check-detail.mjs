@@ -1,7 +1,8 @@
 /**
- * RP-7 Detail (sharpening, noise reduction, hot pixels) acceptance & verification in a real headless browser.
+ * RP-7 Detail (sharpening, noise reduction, hot pixels) & RP-8 Presence (clarity, texture, dehaze)
+ * acceptance & verification in a real headless browser.
  *
- * Asserts all 8 requirements as numbered in the brief:
+ * Asserts all 13 requirements as numbered in the briefs:
  * 1. The section has five sliders and the toggle; at their defaults, and a photograph without detail is still clean of it in the first save.
  * 2. Moving a slider sends Drag renders carrying detail; releasing at fit sends Settle.
  * 3. Releasing at 100% sends Full.
@@ -10,6 +11,11 @@
  * 6. A change has the history label Detail, and Cmd-Z takes it back.
  * 7. The toggle commits, and reaches the save payload.
  * 8. Every new control is at least 40 px. Screenshot to layout-proof/.
+ * 9. The section has three sliders, −100..100, at zero, and double-click resets one.
+ * 10. Moving one sends Drag renders carrying it; releasing at fit sends Settle.
+ * 11. The history labels are Clarity, Texture and Dehaze, each undone by Cmd-Z.
+ * 12. The section reset is one step.
+ * 13. Every new control is at least 40 px. Screenshot to layout-proof/presence.png.
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -107,6 +113,15 @@ try {
   const openDetailSection = async () => {
     const toggleBtn = page.locator('button[data-testid="section-detail-toggle"]');
     const panel = page.locator('[data-testid="detail-panel"]');
+    if (!(await panel.isVisible())) {
+      await toggleBtn.click();
+      await page.waitForTimeout(200);
+    }
+  };
+
+  const openPresenceSection = async () => {
+    const toggleBtn = page.locator('button[data-testid="section-presence-toggle"]');
+    const panel = page.locator('[data-testid="presence-panel"]');
     if (!(await panel.isVisible())) {
       await toggleBtn.click();
       await page.waitForTimeout(200);
@@ -476,13 +491,280 @@ try {
     console.error('Assertion 8 failed:', err);
   }
 
+  // -------------------------------------------------------------------------
+  // 9. The section has three sliders, −100..100, at zero, and double-click resets one.
+  // -------------------------------------------------------------------------
+  console.log('Asserting 9: Section has three sliders, -100..100, at zero, and double-click resets one...');
+  try {
+    assertionsRun++;
+    await openPresenceSection();
+
+    const sliders = [
+      { id: 'presence-clarity', name: 'Clarity' },
+      { id: 'presence-texture', name: 'Texture' },
+      { id: 'presence-dehaze', name: 'Dehaze' },
+    ];
+
+    for (const s of sliders) {
+      const sliderEl = page.locator(`input[data-testid="${s.id}-slider"]`);
+      const numberEl = page.locator(`input[data-testid="${s.id}-number"]`);
+      assert.ok(await sliderEl.isVisible(), `${s.name} slider must be visible`);
+      assert.ok(await numberEl.isVisible(), `${s.name} number input must be visible`);
+
+      const min = parseFloat(await sliderEl.getAttribute('min'));
+      const max = parseFloat(await sliderEl.getAttribute('max'));
+      const val = parseFloat(await numberEl.inputValue());
+
+      assert.equal(min, -100, `${s.name} min must be -100`);
+      assert.equal(max, 100, `${s.name} max must be 100`);
+      assert.equal(val, 0, `${s.name} default value must be 0`);
+    }
+
+    // Double-click resets one
+    const clarityNumber = page.locator('input[data-testid="presence-clarity-number"]');
+    const clarityLabel = page.locator('span[data-testid="presence-clarity-label"]');
+    await clarityNumber.fill('45');
+    await clarityNumber.dispatchEvent('change');
+    await page.waitForTimeout(200);
+    assert.equal(parseFloat(await clarityNumber.inputValue()), 45);
+
+    await clarityLabel.dblclick();
+    await page.waitForTimeout(200);
+    const resetVal = parseFloat(await clarityNumber.inputValue());
+    assert.equal(resetVal, 0, `Double click must reset clarity slider to 0, got ${resetVal}`);
+
+    console.log('  Assertion 9 PASSED');
+  } catch (err) {
+    failures.push({ assertion: 9, error: err });
+    console.error('Assertion 9 failed:', err);
+  }
+
+  // -------------------------------------------------------------------------
+  // 10. Moving one sends Drag renders carrying it; releasing at fit sends Settle.
+  // -------------------------------------------------------------------------
+  console.log('Asserting 10: Moving one sends Drag renders carrying it; releasing at fit sends Settle...');
+  try {
+    assertionsRun++;
+    await openPresenceSection();
+
+    const zoomFitBtn = page.locator('button[data-testid="zoom-fit-btn"]');
+    if (await zoomFitBtn.isVisible()) {
+      await zoomFitBtn.click();
+      await page.waitForTimeout(200);
+    }
+
+    // Clear renders
+    await page.evaluate(() => {
+      window.__STUB__.renders = [];
+    });
+
+    const textureSlider = page.locator('input[data-testid="presence-texture-slider"]');
+    await textureSlider.evaluate((el) => {
+      const input = el;
+      input.value = '35';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.waitForTimeout(100);
+
+    const dragRenders = await page.evaluate(() => {
+      return window.__STUB__.renders.filter((r) => r.stage === 'Drag');
+    });
+    assert.ok(dragRenders.length > 0, 'Moving presence slider must send Drag renders');
+    const lastDrag = dragRenders[dragRenders.length - 1];
+    assert.ok(lastDrag.recipe.detail, 'Drag render must carry detail');
+    assert.equal(lastDrag.recipe.detail.texture, 35, 'Drag render must carry updated texture');
+
+    // Release slider at fit: dispatch change event
+    await textureSlider.evaluate((el) => {
+      const input = el;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForTimeout(200);
+
+    const lastRender = await page.evaluate(() => {
+      const renders = window.__STUB__.renders;
+      return renders[renders.length - 1];
+    });
+    assert.ok(lastRender, 'Render must be sent on release');
+    assert.equal(lastRender.stage, 'Settle', 'Releasing at fit must send Settle render');
+    assert.ok(lastRender.recipe.detail, 'Settle render must carry detail');
+    assert.equal(lastRender.recipe.detail.texture, 35, 'Settle render must carry texture');
+
+    // Reset texture back to 0
+    await textureSlider.evaluate((el) => {
+      const input = el;
+      input.value = '0';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForTimeout(200);
+
+    console.log('  Assertion 10 PASSED');
+  } catch (err) {
+    failures.push({ assertion: 10, error: err });
+    console.error('Assertion 10 failed:', err);
+  }
+
+  // -------------------------------------------------------------------------
+  // 11. The history labels are Clarity, Texture and Dehaze, each undone by Cmd-Z.
+  // -------------------------------------------------------------------------
+  console.log('Asserting 11: History labels are Clarity, Texture and Dehaze, each undone by Cmd-Z...');
+  try {
+    assertionsRun++;
+    await openPresenceSection();
+
+    // 1. Clarity
+    const clarityInput = page.locator('input[data-testid="presence-clarity-number"]');
+    await clarityInput.fill('40');
+    await clarityInput.dispatchEvent('change');
+    await page.waitForTimeout(300);
+
+    let topItem = page.locator('[data-testid^="history-item-"]').first();
+    let topLabel = await topItem.innerText();
+    assert.ok(topLabel.includes('Clarity'), `History step label must be "Clarity", got "${topLabel}"`);
+
+    await blurAll();
+    await page.keyboard.press('Meta+z');
+    await page.waitForTimeout(300);
+    assert.equal(parseFloat(await clarityInput.inputValue()), 0, 'Cmd-Z must undo Clarity change');
+
+    // 2. Texture
+    const textureInput = page.locator('input[data-testid="presence-texture-number"]');
+    await textureInput.fill('30');
+    await textureInput.dispatchEvent('change');
+    await page.waitForTimeout(300);
+
+    topItem = page.locator('[data-testid^="history-item-"]').first();
+    topLabel = await topItem.innerText();
+    assert.ok(topLabel.includes('Texture'), `History step label must be "Texture", got "${topLabel}"`);
+
+    await blurAll();
+    await page.keyboard.press('Meta+z');
+    await page.waitForTimeout(300);
+    assert.equal(parseFloat(await textureInput.inputValue()), 0, 'Cmd-Z must undo Texture change');
+
+    // 3. Dehaze
+    const dehazeInput = page.locator('input[data-testid="presence-dehaze-number"]');
+    await dehazeInput.fill('20');
+    await dehazeInput.dispatchEvent('change');
+    await page.waitForTimeout(300);
+
+    topItem = page.locator('[data-testid^="history-item-"]').first();
+    topLabel = await topItem.innerText();
+    assert.ok(topLabel.includes('Dehaze'), `History step label must be "Dehaze", got "${topLabel}"`);
+
+    await blurAll();
+    await page.keyboard.press('Meta+z');
+    await page.waitForTimeout(300);
+    assert.equal(parseFloat(await dehazeInput.inputValue()), 0, 'Cmd-Z must undo Dehaze change');
+
+    console.log('  Assertion 11 PASSED');
+  } catch (err) {
+    failures.push({ assertion: 11, error: err });
+    console.error('Assertion 11 failed:', err);
+  }
+
+  // -------------------------------------------------------------------------
+  // 12. The section reset is one step.
+  // -------------------------------------------------------------------------
+  console.log('Asserting 12: The section reset is one step...');
+  try {
+    assertionsRun++;
+    await openPresenceSection();
+
+    const clarityInput = page.locator('input[data-testid="presence-clarity-number"]');
+    const textureInput = page.locator('input[data-testid="presence-texture-number"]');
+    const dehazeInput = page.locator('input[data-testid="presence-dehaze-number"]');
+
+    await clarityInput.fill('25');
+    await clarityInput.dispatchEvent('change');
+    await page.waitForTimeout(200);
+
+    await textureInput.fill('-15');
+    await textureInput.dispatchEvent('change');
+    await page.waitForTimeout(200);
+
+    await dehazeInput.fill('30');
+    await dehazeInput.dispatchEvent('change');
+    await page.waitForTimeout(300);
+
+    const historyBeforeCount = await page.evaluate(() => {
+      return document.querySelectorAll('[data-testid^="history-item-"]').length;
+    });
+
+    const resetBtn = page.locator('button[data-testid="section-presence-reset"]');
+    await resetBtn.click();
+    await page.waitForTimeout(400);
+
+    assert.equal(parseFloat(await clarityInput.inputValue()), 0, 'Clarity must reset to 0');
+    assert.equal(parseFloat(await textureInput.inputValue()), 0, 'Texture must reset to 0');
+    assert.equal(parseFloat(await dehazeInput.inputValue()), 0, 'Dehaze must reset to 0');
+
+    const historyAfterCount = await page.evaluate(() => {
+      return document.querySelectorAll('[data-testid^="history-item-"]').length;
+    });
+
+    assert.equal(
+      historyAfterCount,
+      historyBeforeCount + 1,
+      `Reset must add exactly one history step: before=${historyBeforeCount}, after=${historyAfterCount}`
+    );
+
+    console.log('  Assertion 12 PASSED');
+  } catch (err) {
+    failures.push({ assertion: 12, error: err });
+    console.error('Assertion 12 failed:', err);
+  }
+
+  // -------------------------------------------------------------------------
+  // 13. Every new control is at least 40 px. Screenshot to layout-proof/presence.png.
+  // -------------------------------------------------------------------------
+  console.log('Asserting 13: Every new control is at least 40 px. Screenshot to layout-proof/presence.png...');
+  try {
+    assertionsRun++;
+    await openPresenceSection();
+
+    const controls = [
+      { name: 'Presence section toggle', selector: 'button[data-testid="section-presence-toggle"]' },
+      { name: 'Presence section reset', selector: 'button[data-testid="section-presence-reset"]' },
+      { name: 'Clarity slider input', selector: 'input[data-testid="presence-clarity-slider"]' },
+      { name: 'Clarity number input', selector: 'input[data-testid="presence-clarity-number"]' },
+      { name: 'Texture slider input', selector: 'input[data-testid="presence-texture-slider"]' },
+      { name: 'Texture number input', selector: 'input[data-testid="presence-texture-number"]' },
+      { name: 'Dehaze slider input', selector: 'input[data-testid="presence-dehaze-slider"]' },
+      { name: 'Dehaze number input', selector: 'input[data-testid="presence-dehaze-number"]' },
+    ];
+
+    for (const ctrl of controls) {
+      const el = page.locator(ctrl.selector).first();
+      assert.ok(await el.isVisible(), `${ctrl.name} must be visible`);
+      const box = await el.boundingBox();
+      assert.ok(box, `${ctrl.name} bounding box must exist`);
+      assert.ok(
+        box.height >= 39.5,
+        `${ctrl.name} height must be at least 40px, got ${box.height}px`
+      );
+      assert.ok(
+        box.width >= 39.5,
+        `${ctrl.name} width must be at least 40px, got ${box.width}px`
+      );
+    }
+
+    const proofPath = join(OUT, 'presence.png');
+    await page.screenshot({ path: proofPath, fullPage: true });
+    console.log(`Saved screenshot to ${proofPath}`);
+    console.log('  Assertion 13 PASSED');
+  } catch (err) {
+    failures.push({ assertion: 13, error: err });
+    console.error('Assertion 13 failed:', err);
+  }
+
 } finally {
   await browser.close();
   await server.close();
 }
 
 console.log(`\n========================================`);
-console.log(`Assertions run: ${assertionsRun}/8`);
+console.log(`Assertions run: ${assertionsRun}/13`);
 if (failures.length > 0) {
   console.error(`FAILURES: ${failures.length}`);
   for (const f of failures) {
@@ -490,5 +772,5 @@ if (failures.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log(`All 8 assertions PASSED!`);
+  console.log(`All 13 assertions PASSED!`);
 }

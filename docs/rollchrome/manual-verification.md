@@ -5,7 +5,7 @@ from [`../manual-verification.md`](../manual-verification.md) when the editor le
 (RC-3), and **their ids are unchanged**, so anything that names MV-20.4 still finds it.
 
 How to work through them — tick the box, replace **Result:** with what actually happened, and a
-failed check is a result — is as described at the top of that file. **39 checks**, none done yet
+failed check is a result — is as described at the top of that file. **40 checks**, none done yet
 (2026-11-06). They all need a Mac with real photographs, and MV-20.7 also a card and a mounted
 share.
 
@@ -262,4 +262,13 @@ the automated check drives the screen against a stub.
 - [ ] **MV-28.1 — Sharpening and noise reduction on a high-ISO photograph.**
       **Run:** in Edit, open a real high-ISO photograph (e.g. ISO 6400+). Press `Z` (or Cmd-1) to view at 100%. Open the Detail panel. Increase Sharpening Amount to 80, Radius to 1.2, and adjust Masking with Alt-held/visual feedback. Increase Luminance Noise Reduction to 40 and Colour Noise Reduction to 50. Toggle Remove Hot Pixels. Export the edited image.
       **Pass:** at 100% zoom, chroma noise (coloured specks) disappears without desaturating subject colours; luminance noise grain is subdued while sharp subject edges (eyelashes, text, high-contrast borders) remain crisp and defined; single-pixel hot sensor dots vanish; the exported file matches the 100% on-screen appearance.
+      **Result:**
+
+## MV-29 — Presence: clarity, texture, dehaze (RP-8)
+
+[`../briefs/RP-8.md`](../briefs/RP-8.md). Real photographs in the real application at 100% and fit zoom.
+
+- [ ] **MV-29.1 — Clarity on a portrait and a landscape, and Dehaze on a real hazy photograph.**
+      **Run:** in Edit, open a real portrait photograph; increase Texture to +40 and Clarity to +30, then test negative Clarity (-30) and Texture (-20). Next, open a landscape photograph with foliage, rock relief, and soft clouds; increase Clarity to +50 and Texture to +40. Finally, open a landscape with atmospheric haze or mist; increase Dehaze to +60, and test negative Dehaze (-40) on a sunny scene to introduce haze. Export all results.
+      **Pass:** on the portrait, positive clarity and texture accentuate iris and hair detail without haloing high-contrast edges; negative clarity softens skin tones while leaving deep blacks and specular whites untouched. On the landscape, foliage and textures gain local mid-tone contrast and edge punch without haloing against the sky. On the hazy photograph, positive dehaze cuts through the atmospheric wash to restore contrast, saturation, and depth without colour cast in neutral areas; negative dehaze adds mist/glow gracefully without clipping highlights; exports match the on-screen preview.
       **Result:**

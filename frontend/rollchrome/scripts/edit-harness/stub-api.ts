@@ -187,7 +187,10 @@ function isIdentityDetail(d: Detail): boolean {
     d.sharpen_amount === 0 &&
     d.noise_luminance === 0 &&
     d.noise_colour === 0 &&
-    !d.hot_pixels
+    !d.hot_pixels &&
+    (d.clarity === undefined || d.clarity === 0) &&
+    (d.texture === undefined || d.texture === 0) &&
+    (d.dehaze === undefined || d.dehaze === 0)
   );
 }
 

@@ -38,11 +38,17 @@ export interface StubState {
   maskCoverageRequests: Array<{ maskId: string; stage: PreviewStage }>;
   /** ED-23: which models are on disk, downloads asked for, masks made. */
   modelsPresent: Record<string, boolean>;
+  objectModelPresent: boolean;
   downloads: string[];
   cancelledJobs: string[];
   autoMaskCalls: string[];
   autoMaskDelay: number;
   autoMaskFails: string | null;
+  selectObjectCalls: Array<{ sessionId: string; clicks: Array<{ u: number; v: number; add: boolean }> }>;
+  selectObjectDelay: number;
+  selectObjectFails: string | null;
+  selectObjectHold: Promise<void> | null;
+  resolveSelectObjectHold: (() => void) | null;
   /** RP-4 colour tools tracking */
   whiteBalanceCalls: Array<{ sessionId: string; x: number; y: number }>;
   whiteBalanceResult: WhiteBalancePick | null;
@@ -77,11 +83,17 @@ const stubState: StubState = {
   toStoredOverride: null,
   maskCoverageRequests: [],
   modelsPresent: { subject: false, sky: true },
+  objectModelPresent: true,
   downloads: [],
   cancelledJobs: [],
   autoMaskCalls: [],
   autoMaskDelay: 150,
   autoMaskFails: null,
+  selectObjectCalls: [],
+  selectObjectDelay: 50,
+  selectObjectFails: null,
+  selectObjectHold: null,
+  resolveSelectObjectHold: null,
   whiteBalanceCalls: [],
   whiteBalanceResult: null,
   whiteBalanceError: null,
@@ -372,7 +384,7 @@ export class StubDesktopApiClient {
     const long = Math.max(width, height);
 
     function evalShape(kind: any, u: number, v: number): number {
-      if (kind.type === 'auto') {
+      if (kind.type === 'auto' || kind.type === 'object') {
         return u < 0.5 ? 1.0 : 0.0;
       }
       if (kind.type === 'linear') {
@@ -463,6 +475,45 @@ export class StubDesktopApiClient {
     return `job_model_${target}_${stubState.downloads.length}`;
   }
 
+  async objectModelStatus(): Promise<{ name: string; present: boolean; bytes: number }> {
+    return {
+      name: 'MobileSAM (Apache-2.0 / MIT), 45 MB',
+      present: stubState.objectModelPresent,
+      bytes: 44653652,
+    };
+  }
+
+  async downloadObjectModel(): Promise<string> {
+    stubState.downloads.push('object');
+    return `job_model_object_${stubState.downloads.length}`;
+  }
+
+  async selectObject(
+    sessionId: string,
+    clicks: Array<{ u: number; v: number; add: boolean }>,
+  ): Promise<{ width: number; height: number; png: string; model_sha256: string }> {
+    stubState.selectObjectCalls.push({ sessionId, clicks: JSON.parse(JSON.stringify(clicks)) });
+    if (stubState.selectObjectHold) {
+      await stubState.selectObjectHold;
+    }
+    if (stubState.selectObjectDelay > 0) {
+      await new Promise((r) => setTimeout(r, stubState.selectObjectDelay));
+    }
+    if (!stubState.objectModelPresent) {
+      throw new Error('the MobileSAM (Apache-2.0 / MIT), 45 MB model is not downloaded');
+    }
+    if (stubState.selectObjectFails) {
+      throw new Error(stubState.selectObjectFails);
+    }
+    const count = clicks.length;
+    return {
+      width: 1024,
+      height: 683,
+      png: `stub-object-raster-${count}-clicks`,
+      model_sha256: '8976b90a87ba50a6a72217a5ff994f7d25ce16f2229fcc1ed259e1294c622ffe',
+    };
+  }
+
   async cancelJob(id: string): Promise<boolean> {
     stubState.cancelledJobs.push(id);
     return true;
@@ -487,7 +538,11 @@ export class StubDesktopApiClient {
       onEvent({ id, kind: 'download_mask_model', state: 'cancelled', progress: 1, total: 2, message: 'the download was cancelled', terminal: true });
       return;
     }
-    stubState.modelsPresent[target] = true;
+    if (target === 'object') {
+      stubState.objectModelPresent = true;
+    } else {
+      stubState.modelsPresent[target] = true;
+    }
     onEvent({ id, kind: 'download_mask_model', state: 'completed', progress: 2, total: 2, message: 'Downloaded', terminal: true });
   }
 

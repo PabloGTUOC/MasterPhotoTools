@@ -5,7 +5,7 @@ from [`../manual-verification.md`](../manual-verification.md) when the editor le
 (RC-3), and **their ids are unchanged**, so anything that names MV-20.4 still finds it.
 
 How to work through them — tick the box, replace **Result:** with what actually happened, and a
-failed check is a result — is as described at the top of that file. **57 checks**, none done yet
+failed check is a result — is as described at the top of that file. **60 checks**, none done yet
 (2026-11-06). They all need a Mac with real photographs, and MV-20.7 also a card and a mounted
 share.
 
@@ -381,6 +381,26 @@ the automated check drives the screen against a stub.
       **Run:** start a `run_develop` or `run_batch` tool call on a multi-photograph folder from the MCP client and cancel the in-flight request mid-run.
       **Pass:** the server honours `notifications/cancelled`, stops after the current photograph finishes without leaving partial files, and reports the photographs developed before cancellation.
       **Result:**
+
+## MV-36 — Masks: click to select an object ([RP-11c](../briefs/RP-11c.md))
+
+[`edit-plan.md`](edit-plan.md), built. Needs a Mac running Rollchrome (`crates/rollchrome-desktop`, `cargo tauri dev`) with a real photograph.
+
+- [ ] **MV-36.1 — First click selects an object; further clicks add; Alt-click subtracts.**
+      **Run:** in Edit, open a photograph containing distinct subjects and objects. Click **+ Object**. Click on a primary object (e.g. a car, cup, or animal). Observe the mask overlay. Click on an unselected portion of the same object to add it. Hold Option/Alt and click on an unwanted selected area to subtract it. Press Cmd-Z to verify each click undoes cleanly. Click **Done** or press Escape to finalize.
+      **Pass:** the first click identifies and outlines the object cleanly; subsequent clicks add or subtract regions; each click is an undo step; the overlay displays the mask; Done finalizes the object mask.
+      **Result:**
+
+- [ ] **MV-36.2 — Model download prompt on missing model and intent preservation.**
+      **Run:** with `models/` devoid of `mobile_sam_image_encoder.onnx` and `sam_mask_decoder_multi.onnx` (or moved aside), click **+ Object**. Confirm the download dialog prompts to download the ~56 MB MobileSAM model. Approve the download.
+      **Pass:** a download progress indicator appears; once complete, the object selection mode activates immediately without needing to click **+ Object** again; clicks now segment objects normally.
+      **Result:**
+
+- [ ] **MV-36.3 — Component object mask and Refine mode.**
+      **Run:** create an existing mask (e.g. a Linear gradient or Subject mask). Click **Add component** -> **+ Object** and click an object to add to the composite mask. Deselect and re-select the Object component (or an existing Object mask) and click **Refine**.
+      **Pass:** the object is added as a component with `op: add`; clicking Refine enters object selection mode with all saved clicks restored, allowing further prompt clicks to refine the boundary; saving and reopening the photograph preserves the raster and clicks without requiring the model.
+      **Result:**
+
 
 
 

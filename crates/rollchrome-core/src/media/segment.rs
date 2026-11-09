@@ -18,7 +18,7 @@
 //! desktop application enables. Fetching, verifying, orienting and finishing a mask do
 //! not, so `core`'s own tests cover them without the runtime (G2).
 
-use super::edit::masks::AutoTarget;
+use super::edit::masks::{AutoTarget, ObjectClick};
 use super::edit::raster::{StoredRaster, STORED_MASK_EDGE};
 /// Re-exported so the desktop application can hold a photograph's pixels without linking
 /// `image` itself.
@@ -322,6 +322,444 @@ pub fn auto_mask(
     finish_output(&raw, spec, upright.width(), upright.height(), orientation)
 }
 
+/// One of the two files that make up the interactive object segmentation model (RP-11c).
+#[derive(Debug, Clone, Copy)]
+pub struct ObjectModelSpec {
+    pub name: &'static str,
+    pub file: &'static str,
+    pub url: &'static str,
+    pub sha256: &'static str,
+    pub bytes: u64,
+}
+
+/// Human-facing name and licence of the object segmentation model pair.
+pub const OBJECT_MODEL_NAME: &str = "MobileSAM (Apache-2.0 / MIT), 45 MB";
+
+pub const OBJECT_ENCODER: ObjectModelSpec = ObjectModelSpec {
+    name: "MobileSAM image encoder (Apache-2.0 / MIT), 28 MB",
+    file: "mobile_sam_image_encoder.onnx",
+    url: "https://huggingface.co/Acly/MobileSAM/resolve/main/mobile_sam_image_encoder.onnx",
+    sha256: "580f5fb648ea1062c0aabc26217aed56921985f03f0cbbd852bba81d760cc749",
+    bytes: 28_157_093,
+};
+
+pub const OBJECT_DECODER: ObjectModelSpec = ObjectModelSpec {
+    name: "MobileSAM mask decoder (Apache-2.0 / MIT), 16 MB",
+    file: "sam_mask_decoder_multi.onnx",
+    url: "https://huggingface.co/Acly/MobileSAM/resolve/main/sam_mask_decoder_multi.onnx",
+    sha256: "8976b90a87ba50a6a72217a5ff994f7d25ce16f2229fcc1ed259e1294c622ffe",
+    bytes: 16_496_559,
+};
+
+pub const OBJECT_MODEL_BYTES: u64 = OBJECT_ENCODER.bytes + OBJECT_DECODER.bytes;
+
+pub const OBJECT_INPUT_EDGE: u32 = 1024;
+
+pub fn object_model_path(dir: &Path, spec: &ObjectModelSpec) -> PathBuf {
+    dir.join(spec.file)
+}
+
+/// True when both object model files are on disk at their full sizes.
+pub fn object_model_present(dir: &Path) -> bool {
+    std::fs::metadata(object_model_path(dir, &OBJECT_ENCODER))
+        .is_ok_and(|m| m.len() == OBJECT_ENCODER.bytes)
+        && std::fs::metadata(object_model_path(dir, &OBJECT_DECODER))
+            .is_ok_and(|m| m.len() == OBJECT_DECODER.bytes)
+}
+
+/// Refuses an object model file that does not hash to what is recorded.
+pub fn verify_object_model(path: &Path, spec: &ObjectModelSpec) -> Result<(), Error> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| Error::Refused(format!("the {} model is not downloaded ({e})", spec.name)))?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let got = phototools_core::ingest::scanner::hex(&hasher.finalize());
+    if got != spec.sha256 {
+        return Err(Error::Refused(format!(
+            "the {} model on disk is not the one expected (SHA-256 {got}); download it again",
+            spec.name
+        )));
+    }
+    Ok(())
+}
+
+struct OffsetProgress<'a> {
+    inner: &'a dyn Progress,
+    offset: u64,
+    total: u64,
+}
+
+impl Progress for OffsetProgress<'_> {
+    fn report(&self, done: u64, _total: u64, phase: &str) {
+        self.inner.report(self.offset + done, self.total, phase);
+    }
+
+    fn cancelled(&self) -> bool {
+        self.inner.cancelled()
+    }
+}
+
+thread_local! {
+    static TEST_OBJECT_SPECS: std::cell::Cell<Option<(ObjectModelSpec, ObjectModelSpec)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Temporarily overrides `OBJECT_ENCODER` and `OBJECT_DECODER` on the current thread so
+/// `download_object_model` can be tested against a local server.
+pub fn with_test_object_specs<R>(
+    encoder: ObjectModelSpec,
+    decoder: ObjectModelSpec,
+    f: impl FnOnce() -> R,
+) -> R {
+    struct Guard(Option<(ObjectModelSpec, ObjectModelSpec)>);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            TEST_OBJECT_SPECS.with(|c| c.set(self.0));
+        }
+    }
+    let prev = TEST_OBJECT_SPECS.with(|c| c.replace(Some((encoder, decoder))));
+    let _guard = Guard(prev);
+    f()
+}
+
+/// Downloads both object model files sequentially through `fetch`, reporting one running
+/// total over both files' bytes, stopping on cancel, and keeping each file only if it
+/// verifies. If the second fails, the first stays on disk.
+pub fn download_object_model(
+    dir: &Path,
+    progress: &dyn Progress,
+) -> Result<(PathBuf, PathBuf), Error> {
+    let (encoder, decoder) =
+        TEST_OBJECT_SPECS.with(|c| c.get().unwrap_or((OBJECT_ENCODER, OBJECT_DECODER)));
+    download_object_specs(dir, &encoder, &decoder, progress)
+}
+
+/// Downloads `encoder` then `decoder` into `dir` with a single running byte total.
+pub fn download_object_specs(
+    dir: &Path,
+    encoder: &ObjectModelSpec,
+    decoder: &ObjectModelSpec,
+    progress: &dyn Progress,
+) -> Result<(PathBuf, PathBuf), Error> {
+    let total = encoder.bytes + decoder.bytes;
+    let first_progress = OffsetProgress {
+        inner: progress,
+        offset: 0,
+        total,
+    };
+    let enc_path = fetch(
+        encoder.url,
+        &object_model_path(dir, encoder),
+        encoder.sha256,
+        encoder.bytes,
+        &first_progress,
+    )?;
+    let second_progress = OffsetProgress {
+        inner: progress,
+        offset: encoder.bytes,
+        total,
+    };
+    let dec_path = fetch(
+        decoder.url,
+        &object_model_path(dir, decoder),
+        decoder.sha256,
+        decoder.bytes,
+        &second_progress,
+    )?;
+    Ok((enc_path, dec_path))
+}
+
+/// Maps a stored-normalised click `(u, v)` to upright-normalised `(u, v)` for EXIF
+/// `orientation` (1–8), matching `to_upright`.
+pub fn upright_click(u: f32, v: f32, orientation: u32) -> (f32, f32) {
+    match orientation {
+        2 => (1.0 - u, v),
+        3 => (1.0 - u, 1.0 - v),
+        4 => (u, 1.0 - v),
+        5 => (v, u),
+        6 => (1.0 - v, u),
+        7 => (1.0 - v, 1.0 - u),
+        8 => (v, 1.0 - u),
+        _ => (u, v),
+    }
+}
+
+/// Prepared encoder input for MobileSAM: HWC, RGB, f32 in 0..=255, long edge 1024.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectInput {
+    pub data: Vec<f32>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Resizes an upright photograph with `FilterType::Triangle` so its long edge is 1024 and
+/// returns HWC RGB f32 values in 0..=255 (neither padded nor normalised; the encoder graph
+/// does both).
+pub fn prepare_object_input(upright: &RgbImage) -> ObjectInput {
+    let (uw, uh) = (upright.width().max(1), upright.height().max(1));
+    let (width, height) = if uw >= uh {
+        (
+            OBJECT_INPUT_EDGE,
+            ((uh as f64 * OBJECT_INPUT_EDGE as f64 / uw as f64).round() as u32).max(1),
+        )
+    } else {
+        (
+            ((uw as f64 * OBJECT_INPUT_EDGE as f64 / uh as f64).round() as u32).max(1),
+            OBJECT_INPUT_EDGE,
+        )
+    };
+    let resized = imageops::resize(upright, width, height, imageops::FilterType::Triangle);
+    let data = resized.as_raw().iter().map(|&b| b as f32).collect();
+    ObjectInput {
+        data,
+        width,
+        height,
+    }
+}
+
+/// Builds the decoder's `point_coords` and `point_labels` tensors (with the trailing
+/// `(0, 0)` / `-1` sentinel) from stored-normalised clicks.
+pub fn object_prompt(
+    clicks: &[ObjectClick],
+    orientation: u32,
+    width: u32,
+    height: u32,
+) -> Result<(Vec<f32>, Vec<f32>), Error> {
+    if clicks.is_empty() {
+        return Err(Error::Refused("click on an object to select it".into()));
+    }
+    if clicks.len() > 32 {
+        return Err(Error::Refused(
+            "an object mask can take at most 32 clicks".into(),
+        ));
+    }
+    for c in clicks {
+        if !c.u.is_finite()
+            || !c.v.is_finite()
+            || !(0.0..=1.0).contains(&c.u)
+            || !(0.0..=1.0).contains(&c.v)
+        {
+            return Err(Error::Refused(
+                "the click was outside the photograph".into(),
+            ));
+        }
+    }
+    if !clicks.iter().any(|c| c.add) {
+        return Err(Error::Refused(
+            "click on the object to add before taking away".into(),
+        ));
+    }
+
+    let mut coords = Vec::with_capacity((clicks.len() + 1) * 2);
+    let mut labels = Vec::with_capacity(clicks.len() + 1);
+    let w = width as f32;
+    let h = height as f32;
+    for c in clicks {
+        let (u, v) = upright_click(c.u, c.v, orientation);
+        coords.push(u * w);
+        coords.push(v * h);
+        labels.push(if c.add { 1.0 } else { 0.0 });
+    }
+    coords.push(0.0);
+    coords.push(0.0);
+    labels.push(-1.0);
+    Ok((coords, labels))
+}
+
+/// Chooses which of the 4 candidate masks to use: for 1 click, the highest `iou` among
+/// indices 1, 2, 3; for 2 or more clicks, index 0.
+pub fn choose_object_mask(iou: &[f32], clicks: usize) -> usize {
+    if clicks >= 2 {
+        0
+    } else {
+        (1..4.min(iou.len()))
+            .max_by(|&a, &b| iou[a].total_cmp(&iou[b]))
+            .unwrap_or(0)
+    }
+}
+
+/// Maps decoder mask logits at `(width, height)` through the logistic function to 0..=255,
+/// turns the upright mask back into the stored frame, and encodes it with the decoder's
+/// SHA-256. Refuses if no pixel reaches 128.
+pub fn finish_object_mask(
+    logits: &[f32],
+    width: u32,
+    height: u32,
+    orientation: u32,
+) -> Result<StoredRaster, Error> {
+    if logits.len() != (width * height) as usize {
+        return Err(Error::Internal(format!(
+            "the {} model returned {} values, not {}",
+            OBJECT_DECODER.name,
+            logits.len(),
+            width * height
+        )));
+    }
+    let bytes: Vec<u8> = logits
+        .iter()
+        .map(|&v| {
+            let s = 1.0 / (1.0 + (-v).exp());
+            (s * 255.0 + 0.5) as u8
+        })
+        .collect();
+    if !bytes.iter().any(|&b| b >= 128) {
+        return Err(Error::Refused(
+            "nothing was found there; click on the object itself".into(),
+        ));
+    }
+    let Some(upright) = GrayImage::from_raw(width, height, bytes) else {
+        return Err(Error::Internal(
+            "could not build the object mask image".into(),
+        ));
+    };
+    let stored = from_upright(&upright, orientation);
+    StoredRaster::encode(
+        stored.width(),
+        stored.height(),
+        stored.as_raw(),
+        OBJECT_DECODER.sha256,
+    )
+}
+
+/// Holds one photograph's MobileSAM image embedding and the decoder session so clicks run
+/// in tens of milliseconds without re-encoding the photograph.
+#[cfg(feature = "segment")]
+pub struct ObjectSelector {
+    decoder: ort::session::Session,
+    embedding: Vec<f32>,
+    width: u32,
+    height: u32,
+    orientation: u32,
+}
+
+#[cfg(feature = "segment")]
+impl ObjectSelector {
+    /// Verifies both files, runs the encoder once, and drops it: its memory is not held.
+    pub fn new(stored: &RgbImage, orientation: u32, models_dir: &Path) -> Result<Self, Error> {
+        use ort::ep::CPU;
+        use ort::session::Session;
+        use ort::value::Tensor;
+
+        let enc_path = object_model_path(models_dir, &OBJECT_ENCODER);
+        let dec_path = object_model_path(models_dir, &OBJECT_DECODER);
+        verify_object_model(&enc_path, &OBJECT_ENCODER)?;
+        verify_object_model(&dec_path, &OBJECT_DECODER)?;
+
+        let upright = to_upright(stored, orientation);
+        let ObjectInput {
+            data,
+            width,
+            height,
+        } = prepare_object_input(&upright);
+
+        let embedding = {
+            let failed = |e: ort::Error| {
+                Error::Internal(format!("the {} model failed: {e}", OBJECT_ENCODER.name))
+            };
+            let mut encoder = Session::builder()
+                .map_err(failed)?
+                .with_memory_pattern(false)
+                .map_err(|e| failed(e.into()))?
+                .with_execution_providers([CPU::default().with_arena_allocator(false).build()])
+                .map_err(|e| failed(e.into()))?
+                .commit_from_file(&enc_path)
+                .map_err(failed)?;
+            let input_tensor =
+                Tensor::from_array(([height as usize, width as usize, 3usize], data))
+                    .map_err(failed)?;
+            let outputs = encoder
+                .run(ort::inputs!["input_image" => input_tensor])
+                .map_err(failed)?;
+            let (_, emb) = outputs["image_embeddings"]
+                .try_extract_tensor::<f32>()
+                .map_err(failed)?;
+            emb.to_vec()
+        };
+
+        let dec_failed = |e: ort::Error| {
+            Error::Internal(format!("the {} model failed: {e}", OBJECT_DECODER.name))
+        };
+        let decoder = Session::builder()
+            .map_err(dec_failed)?
+            .with_memory_pattern(false)
+            .map_err(|e| dec_failed(e.into()))?
+            .with_execution_providers([CPU::default().with_arena_allocator(false).build()])
+            .map_err(|e| dec_failed(e.into()))?
+            .commit_from_file(&dec_path)
+            .map_err(dec_failed)?;
+
+        Ok(Self {
+            decoder,
+            embedding,
+            width,
+            height,
+            orientation,
+        })
+    }
+
+    /// One decoder run. Tens of milliseconds, so the person can click freely.
+    pub fn select(&mut self, clicks: &[ObjectClick]) -> Result<StoredRaster, Error> {
+        use ort::value::Tensor;
+
+        let (coords, labels) = object_prompt(clicks, self.orientation, self.width, self.height)?;
+        let n_points = labels.len();
+
+        let failed = |e: ort::Error| {
+            Error::Internal(format!("the {} model failed: {e}", OBJECT_DECODER.name))
+        };
+        let emb_tensor =
+            Tensor::from_array(([1usize, 256, 64, 64], self.embedding.clone())).map_err(failed)?;
+        let coords_tensor = Tensor::from_array(([1usize, n_points, 2], coords)).map_err(failed)?;
+        let labels_tensor = Tensor::from_array(([1usize, n_points], labels)).map_err(failed)?;
+        let mask_input_tensor =
+            Tensor::from_array(([1usize, 1, 256, 256], vec![0.0f32; 256 * 256])).map_err(failed)?;
+        let has_mask_tensor = Tensor::from_array(([1usize], vec![0.0f32])).map_err(failed)?;
+        let orig_size_tensor =
+            Tensor::from_array(([2usize], vec![self.height as f32, self.width as f32]))
+                .map_err(failed)?;
+
+        let outputs = self
+            .decoder
+            .run(ort::inputs![
+                "image_embeddings" => emb_tensor,
+                "point_coords" => coords_tensor,
+                "point_labels" => labels_tensor,
+                "mask_input" => mask_input_tensor,
+                "has_mask_input" => has_mask_tensor,
+                "orig_im_size" => orig_size_tensor,
+            ])
+            .map_err(failed)?;
+
+        let (_, iou) = outputs["iou_predictions"]
+            .try_extract_tensor::<f32>()
+            .map_err(failed)?;
+        let (_, masks) = outputs["masks"]
+            .try_extract_tensor::<f32>()
+            .map_err(failed)?;
+
+        let idx = choose_object_mask(iou, clicks.len());
+        let plane = (self.width as usize) * (self.height as usize);
+        let start = idx * plane;
+        let end = start + plane;
+        let Some(slice) = masks.get(start..end) else {
+            return Err(Error::Internal(format!(
+                "the {} model returned {} mask values, not at least {}",
+                OBJECT_DECODER.name,
+                masks.len(),
+                end
+            )));
+        };
+        finish_object_mask(slice, self.width, self.height, self.orientation)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,5 +916,123 @@ mod tests {
             none.data.iter().all(|&v| v == 0),
             "a uniform map finds no sky"
         );
+    }
+
+    fn leak_str(s: String) -> &'static str {
+        Box::leak(s.into_boxed_str())
+    }
+
+    fn test_object_spec(
+        file: &'static str,
+        url: String,
+        sha256: String,
+        bytes: u64,
+    ) -> ObjectModelSpec {
+        ObjectModelSpec {
+            name: "test object model",
+            file,
+            url: leak_str(url),
+            sha256: leak_str(sha256),
+            bytes,
+        }
+    }
+
+    #[test]
+    fn object_model_present_requires_both_files_at_their_exact_byte_sizes() {
+        let dir = tempfile::tempdir().unwrap();
+        let enc_path = object_model_path(dir.path(), &OBJECT_ENCODER);
+        let dec_path = object_model_path(dir.path(), &OBJECT_DECODER);
+
+        assert!(!object_model_present(dir.path()));
+
+        let enc_file = std::fs::File::create(&enc_path).unwrap();
+        enc_file.set_len(OBJECT_ENCODER.bytes).unwrap();
+        assert!(
+            !object_model_present(dir.path()),
+            "encoder alone is not present"
+        );
+
+        let dec_file = std::fs::File::create(&dec_path).unwrap();
+        dec_file.set_len(OBJECT_DECODER.bytes - 1).unwrap();
+        assert!(
+            !object_model_present(dir.path()),
+            "wrong decoder size is not present"
+        );
+
+        dec_file.set_len(OBJECT_DECODER.bytes).unwrap();
+        assert!(object_model_present(dir.path()));
+    }
+
+    #[test]
+    fn download_object_model_keeps_both_files_and_reports_one_running_total() {
+        let dir = tempfile::tempdir().unwrap();
+        let enc_body: Vec<u8> = (0..120_000u32).map(|i| (i % 251) as u8).collect();
+        let dec_body: Vec<u8> = (0..80_000u32).map(|i| ((i * 3) % 251) as u8).collect();
+        let enc_spec = test_object_spec(
+            OBJECT_ENCODER.file,
+            serve_once(enc_body.clone()),
+            sha(&enc_body),
+            enc_body.len() as u64,
+        );
+        let dec_spec = test_object_spec(
+            OBJECT_DECODER.file,
+            serve_once(dec_body.clone()),
+            sha(&dec_body),
+            dec_body.len() as u64,
+        );
+        #[derive(Default)]
+        struct CollectingProgress {
+            events: std::sync::Mutex<Vec<(u64, u64)>>,
+        }
+        impl phototools_core::jobs::Progress for CollectingProgress {
+            fn report(&self, done: u64, total: u64, _msg: &str) {
+                self.events.lock().unwrap().push((done, total));
+            }
+            fn cancelled(&self) -> bool {
+                false
+            }
+        }
+        let progress = CollectingProgress::default();
+        let (enc_path, dec_path) = with_test_object_specs(enc_spec, dec_spec, || {
+            download_object_model(dir.path(), &progress).unwrap()
+        });
+        assert_eq!(std::fs::read(&enc_path).unwrap(), enc_body);
+        assert_eq!(std::fs::read(&dec_path).unwrap(), dec_body);
+        let events = progress.events.lock().unwrap().clone();
+        assert!(!events.is_empty());
+        let sum = (enc_body.len() + dec_body.len()) as u64;
+        for &(_done, total) in &events {
+            assert_eq!(total, sum);
+        }
+        assert_eq!(events.last().unwrap().0, sum);
+    }
+
+    #[test]
+    fn download_object_model_keeps_the_first_file_when_the_second_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let enc_body: Vec<u8> = (0..50_000u32).map(|i| (i % 239) as u8).collect();
+        let dec_body = vec![9u8; 40_000];
+        let enc_spec = test_object_spec(
+            OBJECT_ENCODER.file,
+            serve_once(enc_body.clone()),
+            sha(&enc_body),
+            enc_body.len() as u64,
+        );
+        let dec_spec = test_object_spec(
+            OBJECT_DECODER.file,
+            serve_once(dec_body.clone()),
+            sha(b"wrong decoder hash"),
+            dec_body.len() as u64,
+        );
+        let progress = InMemoryProgress::default();
+        let err = with_test_object_specs(enc_spec, dec_spec, || {
+            download_object_model(dir.path(), &progress).unwrap_err()
+        });
+        assert!(err.to_string().contains("not the one expected"));
+        let enc_dest = object_model_path(dir.path(), &OBJECT_ENCODER);
+        let dec_dest = object_model_path(dir.path(), &OBJECT_DECODER);
+        assert_eq!(std::fs::read(&enc_dest).unwrap(), enc_body);
+        assert!(!dec_dest.exists());
+        assert!(!dec_dest.with_extension("part").exists());
     }
 }

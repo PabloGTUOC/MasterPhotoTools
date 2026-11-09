@@ -38,6 +38,8 @@ Not dependencies of the build: downloaded at run time, with the person's consent
 |---|---|---|---|---|
 | Subject | BiRefNet lite, full precision (`onnx-community/BiRefNet_lite-ONNX`, `onnx/model.onnx`) | MIT (ZhengPeng7/BiRefNet) | 224,005,088 | `5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333` |
 | Sky | U²-Net sky segmentation (`JianyuanWang/skyseg`, `skyseg.onnx`) | MIT (xiongzhu666/Sky-Segmentation-and-Post-processing) | 175,997,079 | `ab9c34c64c3d821220a2886a4a06da4642ffa14d5b30e8d5339056a089aa1d39` |
+| Object (RP-11c) | MobileSAM encoder (`vietanhdev/MobileSAM-ONNX-Models`, `mobile_sam_image_encoder.onnx`) | Apache-2.0 (ChaoningZhang/MobileSAM) | 39,267,823 | `6e61f1c713b918f706fae9d40e1cfc531d052be5186b86cfdc9fce4076378c80` |
+| Object (RP-11c) | MobileSAM multi-mask decoder (`vietanhdev/MobileSAM-ONNX-Models`, `sam_mask_decoder_multi.onnx`) | Apache-2.0 (ChaoningZhang/MobileSAM) | 16,846,944 | `5ca444d3fa542713f0ae91b1ea7383bbd705c1d6837fb4e5a91448dd4b6f1201` |
 
 ## What is unverified
 

@@ -197,6 +197,183 @@ Under `## Report` in this file: what was done; **every** deviation from this bri
 
 ## Report
 
+### What was done
+
+1. **Core data model and raster handling (`rollchrome-core`)**:
+   - Added `ObjectClick { u: f32, v: f32, add: bool }` in `media::edit::masks` (and re-exported in `media::edit`).
+   - Extended `MaskKind` with `Object { clicks: Vec<ObjectClick>, mask: StoredRaster }`.
+   - Updated `compile_shape` and `render_mask` to evaluate `MaskKind::Object` through the raster cache identical to `Auto`, preserving full local detail, adjustments, invert flags, and export parity.
+   - Updated aspect scaling to scale `ObjectClick` coordinates cleanly.
+
+2. **MobileSAM ONNX model pipeline (`rollchrome-core`)**:
+   - Added `ObjectModelSpec`, `OBJECT_ENCODER`, and `OBJECT_DECODER` pointing to `vietanhdev/MobileSAM-ONNX-Models` on Hugging Face with exact SHA-256 hashes.
+   - Added `download_object_model` which streams both models to temporary `.part` files, verifies hashes, preserves the first file if the second fails, and reports a unified running byte total across both models.
+   - Implemented `upright_click` mapping normalized upright coordinates across all 8 EXIF orientations against stored frame pixels.
+   - Implemented `prepare_object_input` (HWC, 0..255, 1024 on long edge, bilinear interpolation).
+   - Implemented `object_prompt` (x then y in resized 1024 coords, trailing sentinel `(0, 0, -1)`, add=1, sub=0, max 32 clicks).
+   - Implemented `choose_object_mask` (index 0 never for 1 click, index 0 always for >= 2 clicks).
+   - Implemented `finish_object_mask` (logistic sigmoid, 0 logit -> 127/128 soft edge, min 100 px coverage, orientation back to stored frame, 1024 max long edge PNG stored raster).
+   - Implemented `ObjectSelector` struct keeping the decoder session alive across clicks and dropping the encoder session immediately after computing the image embedding.
+
+3. **Desktop platform integration (`rollchrome-desktop`)**:
+   - Extended `ActivePreview` with `object_selector: Arc<Mutex<Option<ObjectSelector>>>` and added helper `object_selection_input` which clones the proxy input and orientation without holding the `active_preview` lock during model inference.
+   - Implemented `object_model_status`, `download_object_model`, and `select_object` Tauri commands.
+   - Tested IPC error handling for missing models and invalid sessions in `crates/rollchrome-desktop/tests/local_tools.rs`.
+
+4. **UI and browser check (`frontend/rollchrome`)**:
+   - Added `ObjectClick`, `ObjectModelStatus`, and `MaskKind::Object` variant in `api.ts`.
+   - Wired `MaskOverlay.vue` to render object masks using the raster overlay path.
+   - In `Edit.vue`:
+     - Added `+ Object` button in mask toolbar, `refine-object` button on selected Object masks, and `add-component-object` button under Add component.
+     - Implemented `objectSelectionMode` state tracking `{ maskId, componentIndex }`, crosshair cursor on preview, prompt hint, and Done button.
+     - Implemented single in-flight click suppression (`objectClickInFlight`), sequence checking to discard stale clicks across photo changes, and undo integration (each click is one undo step labelled `Masks`).
+     - Handled missing model download flow with intent preservation.
+   - Extended stub API in `scripts/edit-harness/stub-api.ts`.
+   - Created `scripts/check-object.mjs` with 15 browser assertions and layout screenshot verification, added `"check:object"` to `package.json`.
+
+5. **Real-model test**:
+   - Implemented `the_real_model_selects_the_object_that_was_clicked` in `tests/object_mask_tests.rs` (marked `#[ignore]`).
+   - Executed against real MobileSAM ONNX models: IoU > 99%, encoder took 555.4 ms (< 2 s budget), click took ~25 ms (< 150 ms budget). Temporary model files removed afterwards.
+
+6. **Documentation updates**:
+   - `docs/rollchrome/parity-plan.md`: updated status line and RP-11c row marked Done.
+   - `CLAUDE.md`: updated status line, test counts (1281 passing, 1 ignored), manual verification count (60 checks), and added `check:object` gate.
+   - `docs/rollchrome/manual-verification.md`: updated check count to 60 and added MV-36 (MV-36.1, MV-36.2, MV-36.3).
+   - `docs/rollchrome/phase-reports/edit-round-3.md`: added MobileSAM encoder and decoder rows under The models.
+
+### Deviations
+
+None.
+
+### Could not verify
+
+None on this machine. (As documented in `phase-reports/edit-round-3.md`, manual verification MV-36 awaits real photographs on a Mac).
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `CLAUDE.md` | Updated status line, test counts (1281 passing, 1 ignored), manual checks (60 checks), and `check:object` gate line |
+| `crates/rollchrome-core/src/media/edit/masks.rs` | Added `ObjectClick`, `MaskKind::Object`, shape compilation, aspect scaling |
+| `crates/rollchrome-core/src/media/edit/mod.rs` | Re-exported `ObjectClick` |
+| `crates/rollchrome-core/src/media/segment.rs` | MobileSAM model specifications, downloader with running total, coordinate mapping, prompt generation, model runner, `ObjectSelector`, and unit tests |
+| `crates/rollchrome-core/tests/object_mask_tests.rs` | 13 unit/integration tests and 1 ignored real-model test |
+| `crates/rollchrome-desktop/src/commands/auto_masks.rs` | `object_model_status`, `download_object_model`, and `select_object` commands |
+| `crates/rollchrome-desktop/src/lib.rs` | `object_selector` field on `ActivePreview`, `object_selection_input` helper |
+| `crates/rollchrome-desktop/src/main.rs` | Registered new commands |
+| `crates/rollchrome-desktop/tests/local_tools.rs` | Added test for refused object mask without model or on closed session |
+| `docs/rollchrome/manual-verification.md` | Total checks updated to 60; added MV-36 (MV-36.1, MV-36.2, MV-36.3) |
+| `docs/rollchrome/parity-plan.md` | Status line and RP-11c row marked Done |
+| `docs/rollchrome/phase-reports/edit-round-3.md` | Added MobileSAM encoder and decoder entries under The models |
+| `frontend/rollchrome/package.json` | Added `"check:object": "node scripts/check-object.mjs"` |
+| `frontend/rollchrome/scripts/check-object.mjs` | Playwright test script covering all 15 assertions |
+| `frontend/rollchrome/scripts/edit-harness/stub-api.ts` | Stub implementation for object mask API and raster generator |
+| `frontend/rollchrome/src/api.ts` | Object mask types, variants, and IPC wrappers |
+| `frontend/rollchrome/src/components/MaskOverlay.vue` | Render overlay for object mask kind |
+| `frontend/rollchrome/src/views/Edit.vue` | Object selection mode, click handling, crosshair, hint, done, refine, add-component |
+| `docs/briefs/RP-11c.md` | Filled in this Report |
+
+### Real-model test output and times
+
+Command:
+```sh
+ROLLCHROME_OBJECT_MODELS=/tmp/models cargo test --release -p rollchrome-core --features segment --test object_mask_tests the_real_model_selects_the_object_that_was_clicked -- --ignored --nocapture
+```
+
+Output:
+```
+MobileSAM timing on 3000x2000: encoder=555.4 ms, click1=25.06 ms (disc IoU=0.9932), click2=25.64 ms (disc=0.9978, sq=0.9997), click3=25.02 ms (disc IoU=0.9917, sq=0.0000)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+```
+
+Budgets achieved:
+- Encoder time: **555.4 ms** (budget: < 2.0 s)
+- Click time: **~25.0 ms** (budget: < 150 ms)
+- Disc IoU: **> 0.99** (budget: >= 0.90)
+
+### Gate results
+
+```
+. "$HOME/.cargo/env"
+cargo fmt --all --check
+# Result: ok (clean diff, 0 errors)
+
+cargo clippy --workspace --all-targets -- -D warnings
+# Result: ok (finished in 1m 20s, 0 warnings, 0 errors)
+
+cargo build --workspace
+# Result: ok (finished in 25.08s)
+
+cargo test --workspace
+# Result: ok. 1281 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1m 02s
+
+cargo test -p phototools-core
+# Result: ok. 714 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.97s
+
+cargo test -p rollchrome-core
+# Result: ok. 435 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 28.53s
+
+cargo test -p phototools-desktop
+# Result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.27s
+
+cargo test -p rollchrome-desktop
+# Result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.93s
+
+cargo test -p rollchrome-cli
+# Result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.70s
+
+npm --prefix frontend/shared run build
+# Result: ok (tsc exited 0)
+
+npm --prefix frontend/rollchrome run typecheck
+# Result: ok (vue-tsc --build --force exited 0)
+
+npm --prefix frontend/rollchrome run build
+# Result: ok (built in 974ms)
+
+npm --prefix frontend/rollchrome run check:transport
+# Result: transport check: 25 files, no view reaches the network directly and no HTTP client is imported
+
+npm --prefix frontend/rollchrome run check:edit
+# Result: PASSED all checks (drag p95=10.8 ms, settle p95=41.3 ms)
+
+npm --prefix frontend/rollchrome run check:bulk-lut
+# Result: PASSED cleanly: all acceptance assertions and benchmarks verified
+
+npm --prefix frontend/rollchrome run check:develop
+# Result: PASSED: all 15 checks verified successfully
+
+npm --prefix frontend/rollchrome run check:viewing
+# Result: PASSED all 18 viewing requirements successfully
+
+npm --prefix frontend/rollchrome run check:colour
+# Result: PASSED: all 11 colour tool checks passed cleanly
+
+npm --prefix frontend/rollchrome run check:history
+# Result: All 16 assertions PASSED cleanly
+
+npm --prefix frontend/rollchrome run check:versions
+# Result: All 14 assertions PASSED!
+
+npm --prefix frontend/rollchrome run check:detail
+# Result: All 13 assertions PASSED!
+
+npm --prefix frontend/rollchrome run check:export
+# Result: All 11 assertions PASSED
+
+npm --prefix frontend/rollchrome run check:point
+# Result: ALL 11 ASSERTIONS PASSED
+
+npm --prefix frontend/rollchrome run check:masks
+# Result: ALL 13 ASSERTIONS PASSED
+
+npm --prefix frontend/rollchrome run check:local-detail
+# Result: All 8 assertions passed cleanly
+
+npm --prefix frontend/rollchrome run check:object
+# Result: Completed 15 assertions with 0 failures. All 15 assertions passed!
+```
+
 ---
 
 ## Review

@@ -245,6 +245,21 @@ export class RollchromeClient {
     return invoke<StoredRaster>('make_auto_mask', { sessionId, target });
   }
 
+  /** Whether the interactive object-mask model pair is downloaded (RP-11c). */
+  objectModelStatus(): Promise<ObjectModelStatus> {
+    return invoke<ObjectModelStatus>('object_model_status');
+  }
+
+  /** Downloads the interactive object-mask model pair as a single job (RP-11c). */
+  downloadObjectModel(): Promise<string> {
+    return invoke<string>('download_object_model');
+  }
+
+  /** Selects an object in the open photograph from `clicks` (RP-11c). */
+  selectObject(sessionId: string, clicks: ObjectClick[]): Promise<StoredRaster> {
+    return invoke<StoredRaster>('select_object', { sessionId, clicks });
+  }
+
   /** Where one mask acts on the frame `renderPreview` returns for the same arguments. */
   async renderMaskCoverage(
     sessionId: string,
@@ -705,8 +720,23 @@ export type MaskKind =
     }
   | { type: 'brush' }
   | { type: 'auto'; target: AutoTarget; mask: StoredRaster }
+  | { type: 'object'; clicks: ObjectClick[]; mask: StoredRaster }
   | { type: 'luminance_range'; low: number; high: number; feather: number }
   | { type: 'colour_range'; hue: number; chroma: number; lightness: number; range: number };
+
+/** One click on the photograph, stored-frame normalised (RP-11c). */
+export interface ObjectClick {
+  u: number;
+  v: number;
+  add: boolean;
+}
+
+/** Status of the interactive object segmentation model pair on disk (RP-11c). */
+export interface ObjectModelStatus {
+  name: string;
+  present: boolean;
+  bytes: number;
+}
 
 /** Operation for combining mask components (RP-11). */
 export type MaskOp = 'add' | 'subtract' | 'intersect';

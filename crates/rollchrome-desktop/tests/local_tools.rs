@@ -501,3 +501,44 @@ fn auto_tone_refuses_an_unknown_session() {
         "error must mention session failure; got: {err}"
     );
 }
+
+#[test]
+fn an_object_mask_without_its_model_or_for_a_closed_session_is_refused() {
+    use rollchrome_core::media::edit::ObjectClick;
+
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = rollchrome_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let status = rollchrome_desktop::commands::auto_masks::object_model_status_impl(&state);
+    assert!(!status.present);
+    assert_eq!(status.bytes, 44_653_652);
+    assert!(status.name.contains("MobileSAM"));
+
+    let img_path = f.root.join("photo.jpg");
+    image::RgbImage::new(64, 48).save(&img_path).unwrap();
+    let session = rollchrome_desktop::commands::edit::open_preview_impl(
+        &state,
+        img_path.to_string_lossy().to_string(),
+    )
+    .unwrap()
+    .session_id;
+
+    let clicks = [ObjectClick {
+        u: 0.5,
+        v: 0.5,
+        add: true,
+    }];
+    let err =
+        rollchrome_desktop::commands::auto_masks::select_object_impl(&state, &session, &clicks)
+            .unwrap_err();
+    assert!(err.contains("not downloaded"), "got: {err}");
+
+    let err = rollchrome_desktop::commands::auto_masks::select_object_impl(
+        &state,
+        "not-a-session",
+        &clicks,
+    )
+    .unwrap_err();
+    assert!(err.contains("closed or replaced"), "got: {err}");
+}

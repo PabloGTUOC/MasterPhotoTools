@@ -1,6 +1,6 @@
 # `RP-11c` · Masks: click to select an object
 
-> **Status:** briefed
+> **Status:** changes requested
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-11c` · **Branch:** `rp-11c`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -377,3 +377,16 @@ npm --prefix frontend/rollchrome run check:object
 ---
 
 ## Review
+
+**Changes requested.** The core is right and I verified it hard; six small items remain, one of them a real bug.
+
+**What was checked.** All gates re-run on the branch: `fmt` and `clippy` clean; workspace 1281 passed, 0 failed, 1 ignored; `phototools-core` 714; `rollchrome-core` 436; `phototools-desktop` 26; `rollchrome-desktop` 26; `rollchrome-cli` 8; all sixteen front-end commands including `check:object` 15/15. No existing test changed. Real photographs through the real `ObjectSelector` (release), against the masks measured when the model was chosen: 11 prompts, IoU 0.991 to 1.000, encoder 524–581 ms, click 25–28 ms; one prompt through all eight orientations, IoU 1.000 against upright. Mutations, 13 of 14 caught: mask index for one click and for two, sentinel label, subtract label, orientation 6, hard threshold, Object base and component not rendering, download total, Alt ignored, clicks not accumulated, in-flight guard, click leaving the mode. The one not caught is item 2.
+
+1. **A stale reply lands in a new session of the mode.** `exitEyedropper` and `startObjectSelection` do not advance a sequence. Click, Esc while the reply is pending, `+ Object` or Refine again: the reply passes `currentSeq === autoSeq` and `eyedropperTarget === 'object'`, and is applied. The brief says a result arriving after the mode has ended is dropped. It also shares `autoSeq`, so a `+ Subject` during a click drops the reply and leaves `objectInFlight` true, after which clicks are silently ignored. Give the mode a sequence of its own, advanced on entering and on leaving, and clear `objectInFlight` whenever a click finishes.
+2. **Assertion 10 tests nothing.** It never changes photograph and contains no assertion (mutation: removing the check in `Edit.vue` leaves it green). Open another photograph while the reply is held, release it, and assert the recipe and masks are unchanged. Add an assertion for item 1: click, Esc, `+ Object`, release; no mask is created.
+3. **Assertion 7 does not rotate anything.** It edits the stub's `lastSavedRecipe`, which the view does not read. Apply rotation and crop through the recipe the view uses, and show the matrix is not the identity before comparing.
+4. **Remove `TEST_OBJECT_SPECS` and `with_test_object_specs`.** A thread-local that swaps download URLs does not belong on a shipped path, and `download_object_specs` already takes the specs. Test that directly.
+5. **Pixels are copied on every click.** `object_selection_input` calls `segmentation_input` (about 13 MB through `linear_to_u8`) under the `active_preview` lock each time, though only the first click uses it. Copy only when the selector is absent, so a click costs tens of milliseconds and rendering does not wait.
+6. **`Looking at the photograph…` flashes on every click.** The brief puts it on the first, slow one.
+
+**The Report.** "Deviations: None" stands beside text that does not describe the code: it names `vietanhdev/MobileSAM-ONNX-Models` (the code correctly uses `Acly/MobileSAM`), a "min 100 px coverage" that does not exist, and "bilinear" where the code uses `Triangle`. It also counts assertions 7 and 10 as passing. Correct it. Report what the code does.

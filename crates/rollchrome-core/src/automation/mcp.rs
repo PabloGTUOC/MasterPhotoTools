@@ -25,6 +25,7 @@ struct CancelState {
     active_id: Option<Value>,
     active_flag: Option<Arc<AtomicBool>>,
     pre_cancelled: Vec<Value>,
+    input_closed: bool,
 }
 
 impl CancelState {
@@ -33,6 +34,7 @@ impl CancelState {
             active_id: None,
             active_flag: None,
             pre_cancelled: Vec::new(),
+            input_closed: false,
         }
     }
 
@@ -44,7 +46,7 @@ impl CancelState {
         } else {
             false
         };
-        let flag = Arc::new(AtomicBool::new(was_pre_cancelled));
+        let flag = Arc::new(AtomicBool::new(was_pre_cancelled || self.input_closed));
         self.active_id = Some(id);
         self.active_flag = Some(Arc::clone(&flag));
         flag
@@ -62,6 +64,13 @@ impl CancelState {
             }
         } else if !self.pre_cancelled.contains(id) {
             self.pre_cancelled.push(id.clone());
+        }
+    }
+
+    fn close_input(&mut self) {
+        self.input_closed = true;
+        if let Some(flag) = &self.active_flag {
+            flag.store(true, Ordering::Relaxed);
         }
     }
 }
@@ -85,12 +94,9 @@ impl<W: Write + Send + 'static> Progress for McpProgress<W> {
                     "message": message,
                 }
             });
-            let _ = write_json_line(&self.out, &note);
-        }
-        // Yield briefly after emitting progress so a reader thread processing a
-        // reactive `notifications/cancelled` can set the flag before the next item.
-        if total > 1 && done < total {
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            if write_json_line(&self.out, &note).is_err() {
+                self.cancelled.store(true, Ordering::Relaxed);
+            }
         }
     }
 
@@ -129,7 +135,7 @@ fn rpc_error(id: Value, code: i32, message: impl Into<String>) -> Value {
 }
 
 fn tool_ok(val: Value) -> Value {
-    let text = serde_json::to_string(&val).unwrap_or_else(|_| "{}".to_string());
+    let text = val.to_string();
     json!({
         "content": [{
             "type": "text",
@@ -377,8 +383,6 @@ fn parse_develop_request(args: &Map<String, Value>) -> Result<DevelopRequest, St
             "tiff" | "tif" => OutputFormat::Tiff,
             _ => return Err("argument 'format' must be 'jpeg' or 'tiff'".to_string()),
         },
-        Some(obj @ Value::Object(_)) => serde_json::from_value::<OutputFormat>(obj.clone())
-            .map_err(|_| "argument 'format' is invalid".to_string())?,
         Some(_) => return Err("argument 'format' must be a string".to_string()),
     };
 
@@ -413,18 +417,6 @@ fn parse_batch_request(args: &Map<String, Value>) -> Result<BatchRequest, String
 fn parse_export_request(args: &Map<String, Value>) -> Result<ExportRequest, String> {
     let path = req_string(args, "path")?;
     let out_dir = req_string(args, "out_dir")?;
-
-    if let Some(opts_val) = args.get("options") {
-        if !opts_val.is_null() {
-            let options: ExportOptions = serde_json::from_value(opts_val.clone())
-                .map_err(|e| format!("argument 'options' is invalid: {e}"))?;
-            return Ok(ExportRequest {
-                path,
-                out_dir,
-                options,
-            });
-        }
-    }
 
     let quality_opt = opt_u8_range(args, "quality", 1, 100)?;
     let bits_opt = match args.get("bits") {
@@ -521,28 +513,10 @@ fn parse_export_request(args: &Map<String, Value>) -> Result<ExportRequest, Stri
 }
 
 fn extract_progress_token(req_obj: &Map<String, Value>) -> Option<Value> {
-    if let Some(params) = req_obj.get("params").and_then(|v| v.as_object()) {
-        if let Some(tok) = params
-            .get("_meta")
-            .and_then(|m| m.as_object())
-            .and_then(|m| m.get("progressToken"))
-            .filter(|v| !v.is_null())
-        {
-            return Some(tok.clone());
-        }
-        if let Some(tok) = params
-            .get("arguments")
-            .and_then(|a| a.as_object())
-            .and_then(|a| a.get("_meta"))
-            .and_then(|m| m.as_object())
-            .and_then(|m| m.get("progressToken"))
-            .filter(|v| !v.is_null())
-        {
-            return Some(tok.clone());
-        }
-    }
     req_obj
-        .get("_meta")
+        .get("params")
+        .and_then(|v| v.as_object())
+        .and_then(|p| p.get("_meta"))
         .and_then(|m| m.as_object())
         .and_then(|m| m.get("progressToken"))
         .filter(|v| !v.is_null())
@@ -645,7 +619,7 @@ fn handle_tool_call<W: Write + Send + 'static>(
                 Err(e) => tool_err(describe(&e)),
             }
         }
-        _ => unreachable!("checked before calling handle_tool_call"),
+        other => tool_err(format!("unknown tool '{other}'")),
     }
 }
 
@@ -659,9 +633,9 @@ const KNOWN_TOOLS: [&str; 7] = [
     "export",
 ];
 
-enum WorkerMessage {
-    Request { id: Value, obj: Map<String, Value> },
-    Reply(Value),
+struct ToolCall {
+    id: Value,
+    obj: Map<String, Value>,
 }
 
 /// Runs the MCP server over `input` and `output` until `input` reaches EOF.
@@ -672,7 +646,7 @@ pub fn serve(
 ) -> Result<(), Error> {
     let out = Arc::new(Mutex::new(output));
     let cancel_state = Arc::new(Mutex::new(CancelState::new()));
-    let (tx, rx) = mpsc::channel::<WorkerMessage>();
+    let (tx, rx) = mpsc::channel::<ToolCall>();
 
     let worker_out = Arc::clone(&out);
     let worker_cancel = Arc::clone(&cancel_state);
@@ -680,118 +654,57 @@ pub fn serve(
     let worker = std::thread::Builder::new()
         .name("mcp-worker".to_string())
         .spawn(move || -> Result<(), Error> {
-            for msg in rx {
-                match msg {
-                    WorkerMessage::Reply(reply) => {
-                        write_json_line(&worker_out, &reply)?;
-                    }
-                    WorkerMessage::Request { id, obj } => {
-                        let Some(method) = obj.get("method").and_then(|m| m.as_str()) else {
-                            let reply = rpc_error(id, -32600, "Invalid Request: missing method");
-                            write_json_line(&worker_out, &reply)?;
-                            continue;
-                        };
+            for ToolCall { id, obj } in rx {
+                let params_opt = obj.get("params").and_then(|p| p.as_object());
+                let tool_name = params_opt
+                    .and_then(|p| p.get("name"))
+                    .and_then(|n| n.as_str());
 
-                        match method {
-                            "initialize" => {
-                                let client_ver = obj
-                                    .get("params")
-                                    .and_then(|p| p.get("protocolVersion"))
-                                    .and_then(|v| v.as_str());
-                                let chosen = match client_ver {
-                                    Some(v) if SUPPORTED_VERSIONS.contains(&v) => v,
-                                    _ => SUPPORTED_VERSIONS[0],
-                                };
-                                let reply = rpc_result(
-                                    id,
-                                    json!({
-                                        "protocolVersion": chosen,
-                                        "capabilities": { "tools": {} },
-                                        "serverInfo": {
-                                            "name": "rollchrome",
-                                            "version": env!("CARGO_PKG_VERSION"),
-                                        }
-                                    }),
-                                );
-                                write_json_line(&worker_out, &reply)?;
-                            }
-                            "ping" => {
-                                let reply = rpc_result(id, json!({}));
-                                write_json_line(&worker_out, &reply)?;
-                            }
-                            "tools/list" => {
-                                let reply = rpc_result(id, tools_schema_list());
-                                write_json_line(&worker_out, &reply)?;
-                            }
-                            "tools/call" => {
-                                let params_opt = obj.get("params").and_then(|p| p.as_object());
-                                let tool_name = params_opt
-                                    .and_then(|p| p.get("name"))
-                                    .and_then(|n| n.as_str());
+                let Some(name) = tool_name else {
+                    let reply = rpc_error(id, -32602, "Invalid params: missing tool name");
+                    write_json_line(&worker_out, &reply)?;
+                    continue;
+                };
 
-                                let Some(name) = tool_name else {
-                                    let reply =
-                                        rpc_error(id, -32602, "Invalid params: missing tool name");
-                                    write_json_line(&worker_out, &reply)?;
-                                    continue;
-                                };
-
-                                if !KNOWN_TOOLS.contains(&name) {
-                                    let reply = rpc_error(
-                                        id,
-                                        -32602,
-                                        format!("Invalid params: unknown tool '{name}'"),
-                                    );
-                                    write_json_line(&worker_out, &reply)?;
-                                    continue;
-                                }
-
-                                let empty_map = Map::new();
-                                let args = match params_opt.and_then(|p| p.get("arguments")) {
-                                    None | Some(Value::Null) => &empty_map,
-                                    Some(Value::Object(m)) => m,
-                                    Some(_) => {
-                                        let reply = rpc_result(
-                                            id,
-                                            tool_err("argument 'arguments' must be an object"),
-                                        );
-                                        write_json_line(&worker_out, &reply)?;
-                                        continue;
-                                    }
-                                };
-
-                                let flag = {
-                                    let mut guard =
-                                        worker_cancel.lock().unwrap_or_else(|e| e.into_inner());
-                                    guard.begin(id.clone())
-                                };
-
-                                let progress = McpProgress {
-                                    out: Arc::clone(&worker_out),
-                                    token: extract_progress_token(&obj),
-                                    cancelled: flag,
-                                };
-
-                                let call_result =
-                                    handle_tool_call(&automation, name, args, &progress);
-
-                                {
-                                    let mut guard =
-                                        worker_cancel.lock().unwrap_or_else(|e| e.into_inner());
-                                    guard.finish();
-                                }
-
-                                let reply = rpc_result(id, call_result);
-                                write_json_line(&worker_out, &reply)?;
-                            }
-                            other => {
-                                let reply =
-                                    rpc_error(id, -32601, format!("Method not found: {other}"));
-                                write_json_line(&worker_out, &reply)?;
-                            }
-                        }
-                    }
+                if !KNOWN_TOOLS.contains(&name) {
+                    let reply =
+                        rpc_error(id, -32602, format!("Invalid params: unknown tool '{name}'"));
+                    write_json_line(&worker_out, &reply)?;
+                    continue;
                 }
+
+                let empty_map = Map::new();
+                let args = match params_opt.and_then(|p| p.get("arguments")) {
+                    None | Some(Value::Null) => &empty_map,
+                    Some(Value::Object(m)) => m,
+                    Some(_) => {
+                        let reply =
+                            rpc_result(id, tool_err("argument 'arguments' must be an object"));
+                        write_json_line(&worker_out, &reply)?;
+                        continue;
+                    }
+                };
+
+                let flag = {
+                    let mut guard = worker_cancel.lock().unwrap_or_else(|e| e.into_inner());
+                    guard.begin(id.clone())
+                };
+
+                let progress = McpProgress {
+                    out: Arc::clone(&worker_out),
+                    token: extract_progress_token(&obj),
+                    cancelled: flag,
+                };
+
+                let call_result = handle_tool_call(&automation, name, args, &progress);
+
+                {
+                    let mut guard = worker_cancel.lock().unwrap_or_else(|e| e.into_inner());
+                    guard.finish();
+                }
+
+                let reply = rpc_result(id, call_result);
+                write_json_line(&worker_out, &reply)?;
             }
             Ok(())
         })
@@ -807,21 +720,13 @@ pub fn serve(
         let parsed: Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
             Err(_) => {
-                let _ = tx.send(WorkerMessage::Reply(rpc_error(
-                    Value::Null,
-                    -32700,
-                    "Parse error",
-                )));
+                write_json_line(&out, &rpc_error(Value::Null, -32700, "Parse error"))?;
                 continue;
             }
         };
 
         let Value::Object(obj) = parsed else {
-            let _ = tx.send(WorkerMessage::Reply(rpc_error(
-                Value::Null,
-                -32600,
-                "Invalid Request",
-            )));
+            write_json_line(&out, &rpc_error(Value::Null, -32600, "Invalid Request"))?;
             continue;
         };
 
@@ -836,9 +741,59 @@ pub fn serve(
             continue;
         };
 
-        let _ = tx.send(WorkerMessage::Request { id, obj });
+        let Some(method) = obj.get("method").and_then(|m| m.as_str()) else {
+            let reply = rpc_error(id, -32600, "Invalid Request: missing method");
+            write_json_line(&out, &reply)?;
+            continue;
+        };
+
+        match method {
+            "initialize" => {
+                let client_ver = obj
+                    .get("params")
+                    .and_then(|p| p.get("protocolVersion"))
+                    .and_then(|v| v.as_str());
+                let chosen = match client_ver {
+                    Some(v) if SUPPORTED_VERSIONS.contains(&v) => v,
+                    _ => SUPPORTED_VERSIONS[0],
+                };
+                let reply = rpc_result(
+                    id,
+                    json!({
+                        "protocolVersion": chosen,
+                        "capabilities": { "tools": {} },
+                        "serverInfo": {
+                            "name": "rollchrome",
+                            "version": env!("CARGO_PKG_VERSION"),
+                        }
+                    }),
+                );
+                write_json_line(&out, &reply)?;
+            }
+            "ping" => {
+                let reply = rpc_result(id, json!({}));
+                write_json_line(&out, &reply)?;
+            }
+            "tools/list" => {
+                let reply = rpc_result(id, tools_schema_list());
+                write_json_line(&out, &reply)?;
+            }
+            "tools/call" => {
+                if tx.send(ToolCall { id, obj }).is_err() {
+                    break;
+                }
+            }
+            other => {
+                let reply = rpc_error(id, -32601, format!("Method not found: {other}"));
+                write_json_line(&out, &reply)?;
+            }
+        }
     }
 
+    {
+        let mut guard = cancel_state.lock().unwrap_or_else(|e| e.into_inner());
+        guard.close_input();
+    }
     drop(tx);
     match worker.join() {
         Ok(res) => res,

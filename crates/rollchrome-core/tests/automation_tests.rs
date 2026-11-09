@@ -571,3 +571,37 @@ fn a_cancelled_run_stops_and_reports_what_it_did() {
     assert!(!f.root.join("Developed/DSCF0002.jpg").exists());
     assert!(!f.root.join("Developed/DSCF0003.jpg").exists());
 }
+
+#[test]
+fn a_look_changed_after_the_plan_refuses_the_develop_run() {
+    let f = TestFixture::new();
+    let auto = Automation::new(f.config.clone());
+    f.write_dng(&f.root, "DSCF0001.dng", 2500);
+
+    let cube_src = f.write_cube(&f.root, "CustomFilm.cube", 1.0);
+    let lut_dir = rollchrome_core::config::lut_dir(&f.config);
+    import_lut(&lut_dir, &cube_src).expect("import LUT into library");
+    fs::remove_file(&cube_src).expect("remove source cube from RAW folder");
+
+    let req = DevelopRequest {
+        folder: f.root.to_string_lossy().to_string(),
+        look: "CustomFilm.cube".to_string(),
+        exposure_ev: 0.0,
+        format: OutputFormat::Jpeg { quality: 92 },
+        only: Vec::new(),
+    };
+
+    let reviewed = auto
+        .plan_develop(&req)
+        .expect("plan_develop with cube look");
+    assert_eq!(reviewed.plan.actions.len(), 1);
+
+    // Change the .cube file inside the library after the plan was reviewed
+    f.write_cube(&lut_dir, "CustomFilm.cube", 0.5);
+
+    let err = auto
+        .run_develop(&req, Some(&reviewed.plan_sha256), &NoopProgress)
+        .unwrap_err();
+    assert!(matches!(err, Error::Refused(_)));
+    assert!(!f.root.join("Developed").exists());
+}

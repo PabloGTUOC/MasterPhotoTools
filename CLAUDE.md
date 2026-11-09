@@ -121,9 +121,9 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 1261 passing
+cargo test --workspace          # 1264 passing
 cargo test -p phototools-core   # 714 passing — G2
-cargo test -p rollchrome-core   # 417 passing — G2
+cargo test -p rollchrome-core   # 420 passing — G2
 cargo test -p phototools-desktop   # 26 passing
 cargo test -p rollchrome-desktop   # 25 passing
 cargo test -p rollchrome-cli       # 8 passing

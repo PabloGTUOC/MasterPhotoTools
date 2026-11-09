@@ -481,7 +481,10 @@ fn main() -> ExitCode {
             ExitCode::from(0)
         }
         Command::Looks { json } => {
-            let config = Config::load().unwrap_or_default();
+            let config = match load_config_for(false) {
+                Ok(c) => c,
+                Err(code) => return code,
+            };
             let auto = Automation::new(config);
             let looks = auto.list_looks();
             if json {
@@ -558,7 +561,10 @@ fn main() -> ExitCode {
                         }
                         let code = if summary.failures.is_empty() { 0 } else { 1 };
                         if json {
-                            let _ = print_json(&summary);
+                            let print_code = print_json(&summary);
+                            if print_code != ExitCode::from(0) {
+                                return print_code;
+                            }
                         } else {
                             for out in &summary.developed {
                                 println!("developed: Developed/{out}");
@@ -621,7 +627,10 @@ fn main() -> ExitCode {
                         }
                         let code = if summary.failures.is_empty() { 0 } else { 1 };
                         if json {
-                            let _ = print_json(&summary);
+                            let print_code = print_json(&summary);
+                            if print_code != ExitCode::from(0) {
+                                return print_code;
+                            }
                         } else {
                             for out in &summary.written {
                                 println!("written: {}", out.display());

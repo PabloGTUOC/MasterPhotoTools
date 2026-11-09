@@ -5,7 +5,7 @@ mod support;
 
 use std::collections::VecDeque;
 use std::fs;
-use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -120,47 +120,76 @@ impl Read for PipeReader {
     }
 }
 
-#[derive(Clone, Default)]
-struct SharedBuffer {
-    inner: Arc<Mutex<Vec<u8>>>,
-}
+fn run_session_lines(config: Config, input_lines: &[String]) -> Vec<String> {
+    let expected_replies = input_lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .filter(|l| match serde_json::from_str::<Value>(l) {
+            Ok(Value::Object(m)) => m.contains_key("id"),
+            _ => true,
+        })
+        .count();
 
-impl SharedBuffer {
-    fn lines(&self) -> Vec<String> {
-        let bytes = self.inner.lock().unwrap().clone();
-        String::from_utf8(bytes)
-            .expect("valid UTF-8")
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(ToString::to_string)
-            .collect()
+    let (mut client_to_server, server_input) = memory_pipe();
+    let (server_output, server_to_client) = memory_pipe();
+
+    let server_thread = thread::spawn(move || {
+        serve(
+            BufReader::new(server_input),
+            server_output,
+            Automation::new(config),
+        )
+        .expect("mcp serve");
+    });
+
+    for line in input_lines {
+        writeln!(client_to_server, "{line}").unwrap();
     }
 
-    fn json_lines(&self) -> Vec<Value> {
-        self.lines()
-            .into_iter()
-            .map(|l| serde_json::from_str(&l).expect("valid JSON line"))
-            .collect()
-    }
-}
+    let mut client_reader = BufReader::new(server_to_client);
+    let mut out_lines = Vec::new();
+    let mut replies_seen = 0usize;
 
-impl Write for SharedBuffer {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
+    while replies_seen < expected_replies {
+        let mut line = String::new();
+        let n = client_reader.read_line(&mut line).unwrap();
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim_end_matches(&['\r', '\n'][..]).to_string();
+        if trimmed.trim().is_empty() {
+            continue;
+        }
+        if let Ok(val) = serde_json::from_str::<Value>(&trimmed) {
+            if val.get("method").is_none() {
+                replies_seen += 1;
+            }
+        }
+        out_lines.push(trimmed);
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+    drop(client_to_server);
+    loop {
+        let mut line = String::new();
+        let n = client_reader.read_line(&mut line).unwrap();
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim_end_matches(&['\r', '\n'][..]).to_string();
+        if !trimmed.trim().is_empty() {
+            out_lines.push(trimmed);
+        }
     }
+
+    server_thread.join().unwrap();
+    out_lines
 }
 
 fn run_session(config: Config, input_lines: &[String]) -> Vec<Value> {
-    let payload = format!("{}\n", input_lines.join("\n"));
-    let reader = Cursor::new(payload.into_bytes());
-    let output = SharedBuffer::default();
-    serve(reader, output.clone(), Automation::new(config)).expect("mcp serve");
-    output.json_lines()
+    run_session_lines(config, input_lines)
+        .into_iter()
+        .map(|l| serde_json::from_str(&l).expect("valid JSON line"))
+        .collect()
 }
 
 #[test]
@@ -738,16 +767,7 @@ fn every_line_written_is_one_json_rpc_message() {
         .to_string(),
     ];
 
-    let payload = format!("{}\n", session_inputs.join("\n"));
-    let output = SharedBuffer::default();
-    serve(
-        Cursor::new(payload.into_bytes()),
-        output.clone(),
-        Automation::new(f.config),
-    )
-    .expect("serve full session");
-
-    let lines = output.lines();
+    let lines = run_session_lines(f.config, &session_inputs);
     assert!(lines.len() >= 6);
     for line in &lines {
         assert!(!line.contains('\n'));
@@ -755,4 +775,215 @@ fn every_line_written_is_one_json_rpc_message() {
         assert!(parsed.is_object(), "each line must be a JSON object");
         assert_eq!(parsed["jsonrpc"], json!("2.0"));
     }
+}
+
+#[test]
+fn ping_is_answered_while_a_tool_runs() {
+    let f = TestFixture::new();
+    for i in 1..=6 {
+        f.write_dng(&f.root, &format!("DSCF000{i}.dng"), 2600);
+    }
+
+    let auto = Automation::new(f.config.clone());
+    let (mut client_to_server, server_input) = memory_pipe();
+    let (server_output, server_to_client) = memory_pipe();
+
+    let server_thread = thread::spawn(move || {
+        serve(BufReader::new(server_input), server_output, auto).expect("serve");
+    });
+
+    let mut client_reader = BufReader::new(server_to_client);
+
+    // 1. Plan develop
+    let plan_req = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "plan_develop",
+            "arguments": {
+                "folder": f.root.to_string_lossy(),
+                "look": "builtin:fujifilm-classic-chrome"
+            }
+        }
+    });
+    writeln!(client_to_server, "{plan_req}").unwrap();
+
+    let mut line = String::new();
+    client_reader.read_line(&mut line).unwrap();
+    let plan_resp: Value = serde_json::from_str(&line).unwrap();
+    let plan_sha256 = plan_resp["result"]["structuredContent"]["plan_sha256"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // 2. Start run_develop (id: 50)
+    let run_req = json!({
+        "jsonrpc": "2.0",
+        "id": 50,
+        "method": "tools/call",
+        "params": {
+            "name": "run_develop",
+            "arguments": {
+                "folder": f.root.to_string_lossy(),
+                "look": "builtin:fujifilm-classic-chrome",
+                "plan_sha256": plan_sha256
+            },
+            "_meta": {
+                "progressToken": "ping-tok"
+            }
+        }
+    });
+    writeln!(client_to_server, "{run_req}").unwrap();
+
+    let mut sent_ping = false;
+    let mut ping_answered_before_tool_finished = false;
+    let mut tool_finished = false;
+
+    loop {
+        line.clear();
+        let n = client_reader.read_line(&mut line).unwrap();
+        if n == 0 {
+            break;
+        }
+        let msg: Value = serde_json::from_str(&line).unwrap();
+        if msg["method"] == json!("notifications/progress") && !sent_ping {
+            // Tool is actively running on the worker; send ping (id: 51)
+            let ping_req = json!({
+                "jsonrpc": "2.0",
+                "id": 51,
+                "method": "ping"
+            });
+            writeln!(client_to_server, "{ping_req}").unwrap();
+            sent_ping = true;
+        } else if msg["id"] == json!(51) {
+            assert_eq!(msg["result"], json!({}));
+            if !tool_finished {
+                ping_answered_before_tool_finished = true;
+            }
+            // Cancel the tool now that ping has been answered
+            let cancel_notif = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/cancelled",
+                "params": { "requestId": 50 }
+            });
+            writeln!(client_to_server, "{cancel_notif}").unwrap();
+        } else if msg["id"] == json!(50) {
+            tool_finished = true;
+            if sent_ping && ping_answered_before_tool_finished {
+                break;
+            }
+        }
+        if tool_finished && sent_ping && msg["id"] == json!(51) {
+            break;
+        }
+    }
+
+    drop(client_to_server);
+    server_thread.join().unwrap();
+
+    assert!(
+        ping_answered_before_tool_finished,
+        "expected ping (id 51) to be answered while run_develop (id 50) was still running"
+    );
+}
+
+#[test]
+fn closing_the_input_stops_a_running_tool() {
+    let f = TestFixture::new();
+    for i in 1..=6 {
+        f.write_dng(&f.root, &format!("DSCF000{i}.dng"), 2600);
+    }
+
+    let auto = Automation::new(f.config.clone());
+    let (mut client_to_server, server_input) = memory_pipe();
+    let (server_output, server_to_client) = memory_pipe();
+
+    let server_thread = thread::spawn(move || {
+        serve(BufReader::new(server_input), server_output, auto).expect("serve");
+    });
+
+    let mut client_reader = BufReader::new(server_to_client);
+
+    // 1. Plan develop
+    let plan_req = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "plan_develop",
+            "arguments": {
+                "folder": f.root.to_string_lossy(),
+                "look": "builtin:fujifilm-classic-chrome"
+            }
+        }
+    });
+    writeln!(client_to_server, "{plan_req}").unwrap();
+
+    let mut line = String::new();
+    client_reader.read_line(&mut line).unwrap();
+    let plan_resp: Value = serde_json::from_str(&line).unwrap();
+    let plan_sha256 = plan_resp["result"]["structuredContent"]["plan_sha256"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let planned_count = plan_resp["result"]["structuredContent"]["plan"]["actions"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(planned_count, 6);
+
+    // 2. Start run_develop (id: 60) with progress token
+    let run_req = json!({
+        "jsonrpc": "2.0",
+        "id": 60,
+        "method": "tools/call",
+        "params": {
+            "name": "run_develop",
+            "arguments": {
+                "folder": f.root.to_string_lossy(),
+                "look": "builtin:fujifilm-classic-chrome",
+                "plan_sha256": plan_sha256
+            },
+            "_meta": {
+                "progressToken": "eof-tok"
+            }
+        }
+    });
+    writeln!(client_to_server, "{run_req}").unwrap();
+
+    // Wait for the first progress notification, then immediately close the input pipe
+    let mut closed_input = false;
+    let mut final_reply: Option<Value> = None;
+    let mut maybe_client_to_server = Some(client_to_server);
+
+    loop {
+        line.clear();
+        let n = client_reader.read_line(&mut line).unwrap();
+        if n == 0 {
+            break;
+        }
+        let msg: Value = serde_json::from_str(&line).unwrap();
+        if msg["method"] == json!("notifications/progress") && !closed_input {
+            drop(maybe_client_to_server.take());
+            closed_input = true;
+        } else if msg["id"] == json!(60) {
+            final_reply = Some(msg);
+            break;
+        }
+    }
+
+    drop(maybe_client_to_server);
+    server_thread.join().unwrap();
+
+    let reply = final_reply.expect("final reply for request 60");
+    assert_eq!(reply["result"]["isError"], json!(false));
+    let developed = reply["result"]["structuredContent"]["developed"]
+        .as_array()
+        .expect("developed array");
+    assert!(
+        !developed.is_empty() && developed.len() < planned_count,
+        "expected closing input to stop run_develop before all {planned_count} photographs developed, got {}",
+        developed.len()
+    );
 }

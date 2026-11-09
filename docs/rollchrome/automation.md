@@ -105,7 +105,20 @@ Exports a single JPEG or TIFF photograph using its saved `.photoedit` sidecar re
 
 ### Registering with an MCP Client
 
-Add `rollchrome` to your MCP client configuration (for example, `claude_desktop_config.json` or `.mcp.json`):
+Add `rollchrome` to your MCP client configuration (for example, `claude_desktop_config.json` or `.mcp.json`). The server reads your existing Rollchrome / PhotoTools `config.json` and uses its configured folders:
+
+```json
+{
+  "mcpServers": {
+    "rollchrome": {
+      "command": "/ABSOLUTE/PATH/TO/target/release/rollchrome-cli",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+When no `config.json` exists on the machine, you can supply the paths via environment variables instead:
 
 ```json
 {
@@ -122,5 +135,3 @@ Add `rollchrome` to your MCP client configuration (for example, `claude_desktop_
   }
 }
 ```
-
-If you have already configured roots in the Rollchrome desktop application (`config.json`), the `env` block can be omitted and `rollchrome-cli mcp` will use your existing configuration file automatically.

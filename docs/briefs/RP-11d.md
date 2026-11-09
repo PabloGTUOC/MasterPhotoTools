@@ -1,6 +1,6 @@
 # `RP-11d` · Masks: People, a better Subject and Background, and a guarded Sky
 
-> **Status:** briefed
+> **Status:** approved
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-11d` · **Branch:** `rp-11d`, cut from `main` **after RP-11c is merged**, because both change `segment.rs` and the Masks panel
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -130,13 +130,13 @@ Docs: `docs/rollchrome/parity-plan.md`, a row and the status; `CLAUDE.md` counts
 
 ### Acceptance
 
-- [ ] Background is still Subject inverted, and now runs the new model.
-- [ ] Sky refuses a photograph with no sky without running the sky model, and on a photograph with sky gives exactly the mask it gave before.
-- [ ] An owner holding the sky model is asked for 238 MB only.
-- [ ] Saved masks render as before and need no model.
-- [ ] The real-model test passes in a release build: People and Subject under 20 s each, Sky under 5 s.
-- [ ] `check:people` has all seven; every existing check passes unchanged.
-- [ ] Test counts rise from whatever `main` has after RP-11c. No existing test changed, deleted or ignored, except where an existing test named the old SUBJECT values: list each one in the report. The only new `#[ignore]` is the one named above.
+- [x] Background is still Subject inverted, and now runs the new model.
+- [x] Sky refuses a photograph with no sky without running the sky model, and on a photograph with sky gives exactly the mask it gave before.
+- [x] An owner holding the sky model is asked for 238 MB only.
+- [x] Saved masks render as before and need no model.
+- [x] The real-model test passes in a release build: People and Subject under 20 s each, Sky under 5 s.
+- [x] `check:people` has all seven; every existing check passes unchanged.
+- [x] Test counts rise from whatever `main` has after RP-11c. No existing test changed, deleted or ignored, except where an existing test named the old SUBJECT values: list each one in the report. The only new `#[ignore]` is the one named above.
 
 ### Gates
 
@@ -364,3 +364,22 @@ Exit 0. Assertions executed: 7/7. ALL 7 ASSERTIONS PASSED.
 ---
 
 ## Review
+
+**Approved, with three small changes made by the reviewer** to save the implementer's paid credits. The implementation is right and follows the brief. It cost 459 credits, against 662 for RP-11c.
+
+**What was checked.** All gates re-run after the changes below: `fmt` and `clippy` clean; workspace 1286 passed, 0 failed, 2 ignored; `phototools-core` 714; `rollchrome-core` 441; `phototools-desktop` 26; `rollchrome-desktop` 26; `rollchrome-cli` 8; every Rollchrome front-end command, `check:people` 7 of 7. The two changed existing tests and `check-edit.mjs` carry only the new model's values, as listed.
+
+The real-model test re-run in release: Sky 2.38 s at 82.8%, refusal 1.82 s, People 15.17 s at 36.1%, Subject 13.78 s at 36.4%. All 14 measurement photographs through the real Rust path: Sky refused on the 7 with no visible sky, including the dog that used to get false sky, and masked on the 7 with sky, each checked by eye; 1.8 to 2.4 s. People and Subject on four of them against the masks measured when the models were chosen: IoU 0.986 to 0.9999, 13.0 to 14.3 s.
+
+Faults reintroduced, 11 tried: + People asking for Subject, the component button likewise, wrong sky class, exclusive threshold, a second-highest sky counted, `any` for `all` in `target_present`, downloading every file, Sky needing one file, a changed hash: all caught. Two survived and are dealt with below or explained: the running total, and removing the new `catch` in `finishAddAutoComponent`. That `catch` is redundant on the direct path, where `addAutoComponent` already catches, and needed after a download, which has no outer `catch`. `check:people` exercises only the direct path.
+
+**Changes made in review:**
+
+1. `people_target_roundtrips_and_saved_masks_render_identically` compared a render with itself. It now shows the mask changes the render, and that the same raster gives the same bytes for Subject, Sky and People with no model anywhere.
+2. `download_target_requests_only_missing_files_and_keeps_first_on_failure` never tried two missing files, so dropping `offset += spec.bytes` left it green. It now checks one running total over both.
+3. `check:people` assertion 5 read the debounced save; it reads the mask rows.
+
+**The Report.** It says 1 ignored; the workspace has 2, the new test being compiled in by feature unification. `CLAUDE.md` is corrected. "Deviations: None" omits one change outside the brief: the two Object rows of `edit-round-3.md` were corrected from `vietanhdev` values to the `Acly` files the code uses. It is right, so it stays.
+
+**Known limit, for the owner.** BiRefNet portrait is strong on one or two people and can drop people in a crowd, as measured when it was chosen. MV-37 still awaits real photographs on a Mac.
+

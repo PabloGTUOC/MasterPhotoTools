@@ -311,9 +311,10 @@ try {
     failures.push(`Assertion 5: Expected error text to contain 'no sky was found in this photograph', got: '${errText5}'`);
   }
 
-  const masksAfterRefusal = await page.evaluate(() => window.__STUB__.lastSavedRecipe?.masks ?? []);
-  if (masksAfterRefusal.length !== 0) {
-    failures.push(`Assertion 5: Expected 0 masks created after refused Sky, got ${masksAfterRefusal.length}`);
+  // The rows, not the saved recipe: saving is debounced, and would still be empty here.
+  const rowsAfterRefusal = await page.locator('.mask-row__name').count();
+  if (rowsAfterRefusal !== 0) {
+    failures.push(`Assertion 5: Expected 0 masks created after refused Sky, got ${rowsAfterRefusal}`);
   }
 
   // Clear refusal

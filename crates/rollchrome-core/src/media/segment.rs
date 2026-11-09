@@ -1338,6 +1338,28 @@ mod tests {
             assert_eq!(total, body2.len() as u64);
         }
 
+        // Two files missing: one running total over both, so the bar never goes backwards.
+        let dir_both = tempfile::tempdir().unwrap();
+        let both1 = test_spec(
+            "m1.onnx",
+            serve_once(body1.clone()),
+            sha(&body1),
+            body1.len() as u64,
+        );
+        let both2 = test_spec(
+            "m2.onnx",
+            serve_once(body2.clone()),
+            sha(&body2),
+            body2.len() as u64,
+        );
+        let both_progress = CollectingProgress::default();
+        download_specs(dir_both.path(), &[&both1, &both2], &both_progress).unwrap();
+        let events = both_progress.events.lock().unwrap().clone();
+        let sum = (body1.len() + body2.len()) as u64;
+        assert!(events.iter().all(|&(_, total)| total == sum));
+        assert!(events.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+        assert_eq!(events.last().unwrap().0, sum);
+
         // 2. A bad second file leaves the first
         let dir2 = tempfile::tempdir().unwrap();
         let spec1_fresh = test_spec(
@@ -1398,25 +1420,40 @@ mod tests {
         let deserialized: AutoTarget = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized, AutoTarget::People);
 
-        // A saved Subject and Sky mask render the same bytes without needing models
+        // Saved masks name these targets; renaming one would orphan every sidecar.
+        assert_eq!(
+            serde_json::to_string(&AutoTarget::Subject).unwrap(),
+            "\"subject\""
+        );
+        assert_eq!(serde_json::to_string(&AutoTarget::Sky).unwrap(), "\"sky\"");
+
+        // A stored mask is never recomputed: with no model anywhere, it renders from its raster
+        // alone, so the same raster gives the same bytes whichever target it was made for.
         let (w, h) = (64u32, 48u32);
         let img = RgbImage::from_pixel(w, h, image::Rgb([100, 150, 200]));
         let dir = tempfile::tempdir().unwrap();
         let img_path = dir.path().join("frame.jpg");
         img.save(&img_path).unwrap();
-
-        let mask_data: Vec<u8> = (0..w * h)
-            .map(|i| if i % 2 == 0 { 255 } else { 0 })
+        let mask_data: Vec<u8> = (0..h)
+            .flat_map(|_| (0..w).map(move |x| if x < w / 2 { 255 } else { 0 }))
             .collect();
-        let raster_sub = StoredRaster::encode(w, h, &mask_data, "sub-sha").unwrap();
-        let raster_sky = StoredRaster::encode(w, h, &mask_data, "sky-sha").unwrap();
-
-        let mask_sub = Mask {
-            id: "m_sub".into(),
-            name: "Subject".into(),
+        let session = PreviewSession::open(&img_path).unwrap();
+        let render = |masks: Vec<Mask>| {
+            let recipe = AdjustmentRecipe {
+                masks,
+                ..Default::default()
+            };
+            session
+                .render(&recipe, None, PreviewStage::Drag)
+                .unwrap()
+                .bytes
+        };
+        let mask_for = |target: AutoTarget| Mask {
+            id: "m".into(),
+            name: "Saved".into(),
             kind: MaskKind::Auto {
-                target: AutoTarget::Subject,
-                mask: raster_sub,
+                target,
+                mask: StoredRaster::encode(w, h, &mask_data, "sha").unwrap(),
             },
             invert: false,
             opacity: 1.0,
@@ -1430,35 +1467,14 @@ mod tests {
             detail: Default::default(),
         };
 
-        let mask_sky = Mask {
-            id: "m_sky".into(),
-            name: "Sky".into(),
-            kind: MaskKind::Auto {
-                target: AutoTarget::Sky,
-                mask: raster_sky,
-            },
-            invert: false,
-            opacity: 1.0,
-            enabled: true,
-            adjustments: LocalAdjustments {
-                exposure: -1.0,
-                ..Default::default()
-            },
-            strokes: Vec::new(),
-            components: Vec::new(),
-            detail: Default::default(),
-        };
-
-        let recipe = AdjustmentRecipe {
-            masks: vec![mask_sub, mask_sky],
-            ..Default::default()
-        };
-
-        let session = PreviewSession::open(&img_path).unwrap();
-        let rendered1 = session.render(&recipe, None, PreviewStage::Drag).unwrap();
-        let rendered2 = session.render(&recipe, None, PreviewStage::Drag).unwrap();
-        assert_eq!(rendered1.bytes, rendered2.bytes);
-        assert!(!rendered1.bytes.is_empty());
+        let subject = render(vec![mask_for(AutoTarget::Subject)]);
+        assert_ne!(
+            subject,
+            render(Vec::new()),
+            "the mask must change the render"
+        );
+        assert_eq!(subject, render(vec![mask_for(AutoTarget::Sky)]));
+        assert_eq!(subject, render(vec![mask_for(AutoTarget::People)]));
     }
 
     #[test]

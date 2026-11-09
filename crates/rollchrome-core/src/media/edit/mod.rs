@@ -35,7 +35,7 @@ pub use looks::{aces_narkowicz, apply_looks_linear, LookEffects, HALATION_TINT};
 pub use lut::{Lut, MAX_LUT_SIZE, MIN_LUT_SIZE};
 pub use masks::{
     blend_local_detail, AutoTarget, CompiledMask, CompiledMasks, LocalAdjustments, LocalDetail,
-    Mask, MaskComponent, MaskKind, MaskOp,
+    Mask, MaskComponent, MaskKind, MaskOp, ObjectClick,
 };
 pub use pipeline::{
     apply_recipe, apply_recipe_with_orientation, decode_image, linear_to_srgb, linear_to_u16,

@@ -90,6 +90,14 @@ impl LocalDetail {
     }
 }
 
+/// One click on the photograph, stored-frame normalised like every mask position.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ObjectClick {
+    pub u: f32,
+    pub v: f32,
+    pub add: bool,
+}
+
 /// The shape of a mask, in stored-frame coordinates (see the module documentation).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -115,6 +123,11 @@ pub enum MaskKind {
     /// Made by a model from the photograph's own pixels and stored with it (`raster`, ED-23).
     Auto {
         target: AutoTarget,
+        mask: StoredRaster,
+    },
+    /// Made by clicking an object on the photograph and stored with its clicks (`segment`, RP-11c).
+    Object {
+        clicks: Vec<ObjectClick>,
         mask: StoredRaster,
     },
     /// Luminance range: 0..1 on sqrt of linear Rec.709 luminance (RP-11).
@@ -805,13 +818,17 @@ fn compile_mask(
     rasters: &mut dyn MaskRasters,
 ) -> Result<CompiledMask, Error> {
     let shape = match &m.kind {
-        MaskKind::Auto { mask, .. } => Shape::Raster(rasters.stored(m, None, mask)?),
+        MaskKind::Auto { mask, .. } | MaskKind::Object { mask, .. } => {
+            Shape::Raster(rasters.stored(m, None, mask)?)
+        }
         kind => compile_shape(kind, ax, ay),
     };
     let mut compiled_components = Vec::with_capacity(m.components.len());
     for (i, comp) in m.components.iter().enumerate() {
         let shape = match &comp.kind {
-            MaskKind::Auto { mask, .. } => Shape::Raster(rasters.stored(m, Some(i), mask)?),
+            MaskKind::Auto { mask, .. } | MaskKind::Object { mask, .. } => {
+                Shape::Raster(rasters.stored(m, Some(i), mask)?)
+            }
             kind => compile_shape(kind, ax, ay),
         };
         compiled_components.push(CompiledComponent {
@@ -841,7 +858,7 @@ fn compile_mask(
 fn compile_shape(kind: &MaskKind, ax: f32, ay: f32) -> Shape {
     match *kind {
         // Resolved in `compile_mask`, which can reach the decoded pixels.
-        MaskKind::Brush | MaskKind::Auto { .. } => Shape::Empty,
+        MaskKind::Brush | MaskKind::Auto { .. } | MaskKind::Object { .. } => Shape::Empty,
         MaskKind::Linear { start, end } => {
             let (sx, sy) = (start[0] * ax, start[1] * ay);
             let (vx, vy) = ((end[0] - start[0]) * ax, (end[1] - start[1]) * ay);

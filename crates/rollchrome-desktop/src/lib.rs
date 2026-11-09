@@ -42,6 +42,7 @@ pub struct ActivePreview {
     pub session_id: String,
     pub path: PathBuf,
     pub session: PreviewSession,
+    pub object_selector: Arc<Mutex<Option<rollchrome_core::media::segment::ObjectSelector>>>,
 }
 
 struct CachedDevelopPreview {
@@ -116,6 +117,7 @@ impl AppState {
             session_id: session_id.clone(),
             path,
             session,
+            object_selector: Arc::new(Mutex::new(None)),
         });
         Ok(PreviewSessionInfo {
             session_id,
@@ -195,6 +197,47 @@ impl AppState {
         }
         Ok((
             active.session.segmentation_input(),
+            active.session.orientation,
+        ))
+    }
+
+    /// Clones the open photograph's `object_selector` slot, and copies its stored pixels only
+    /// if the selector is not known to be built: they are about 13 MB through `linear_to_u8`
+    /// under the lock rendering needs, and only the encoder uses them (RP-11c). `try_lock`
+    /// because a click in progress holds that slot for as long as the model runs; not knowing
+    /// means copying, in case that click's build fails.
+    #[allow(clippy::type_complexity)]
+    pub fn object_selection_input(
+        &self,
+        session_id: &str,
+    ) -> Result<
+        (
+            Arc<Mutex<Option<rollchrome_core::media::segment::ObjectSelector>>>,
+            Option<rollchrome_core::media::segment::RgbImage>,
+            u32,
+        ),
+        Error,
+    > {
+        let slot = self
+            .active_preview
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let active = slot
+            .as_ref()
+            .ok_or_else(|| Error::Refused("No active preview session is open".into()))?;
+        if active.session_id != session_id {
+            return Err(Error::Refused(
+                "The preview session has been closed or replaced by another preview".into(),
+            ));
+        }
+        let built = active
+            .object_selector
+            .try_lock()
+            .is_ok_and(|selector| selector.is_some());
+        let input = (!built).then(|| active.session.segmentation_input());
+        Ok((
+            Arc::clone(&active.object_selector),
+            input,
             active.session.orientation,
         ))
     }

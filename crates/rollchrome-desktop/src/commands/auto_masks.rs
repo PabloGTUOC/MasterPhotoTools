@@ -7,9 +7,11 @@
 
 use super::{describe, CommandResult};
 use crate::AppState;
-use rollchrome_core::media::edit::{AutoTarget, StoredRaster};
+use rollchrome_core::media::edit::{AutoTarget, ObjectClick, StoredRaster};
 use rollchrome_core::media::segment;
 use serde::Serialize;
+use std::path::Path;
+use std::sync::Mutex;
 use tauri::State;
 
 /// One model, as the Masks panel shows it.
@@ -94,4 +96,100 @@ pub fn make_auto_mask_impl(
         &rollchrome_core::config::models_dir(&state.config()),
     )
     .map_err(describe)
+}
+
+/// The object segmentation model pair, as the Masks panel shows it (RP-11c).
+#[derive(Debug, Clone, Serialize)]
+pub struct ObjectModelStatus {
+    pub name: String,
+    pub present: bool,
+    pub bytes: u64,
+}
+
+#[tauri::command]
+pub fn object_model_status(state: State<'_, AppState>) -> CommandResult<ObjectModelStatus> {
+    Ok(object_model_status_impl(&state))
+}
+
+pub fn object_model_status_impl(state: &AppState) -> ObjectModelStatus {
+    let dir = rollchrome_core::config::models_dir(&state.config());
+    ObjectModelStatus {
+        name: segment::OBJECT_MODEL_NAME.to_string(),
+        present: segment::object_model_present(&dir),
+        bytes: segment::OBJECT_MODEL_BYTES,
+    }
+}
+
+/// Downloads the object segmentation model pair as a single job.
+#[tauri::command]
+pub fn download_object_model(state: State<'_, AppState>) -> CommandResult<String> {
+    download_object_model_impl(&state)
+}
+
+pub fn download_object_model_impl(state: &AppState) -> CommandResult<String> {
+    let dir = rollchrome_core::config::models_dir(&state.config());
+    state
+        .jobs
+        .spawn(
+            "download_object_model",
+            segment::OBJECT_MODEL_BYTES,
+            move |progress| {
+                segment::download_object_model(&dir, progress)?;
+                Ok(format!("Downloaded {}", segment::OBJECT_MODEL_NAME))
+            },
+        )
+        .map_err(describe)
+}
+
+/// Runs one selection, building the photograph's `ObjectSelector` first if this is the first
+/// click on it. `input` is absent only when the selector was already seen to be built.
+fn run_object_selection(
+    slot: &Mutex<Option<segment::ObjectSelector>>,
+    input: Option<segment::RgbImage>,
+    orientation: u32,
+    dir: &Path,
+    clicks: &[ObjectClick],
+) -> Result<StoredRaster, phototools_core::error::Error> {
+    let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.is_none() {
+        let input = input.ok_or_else(|| {
+            phototools_core::error::Error::Internal("object selector has no pixels".into())
+        })?;
+        *guard = Some(segment::ObjectSelector::new(&input, orientation, dir)?);
+    }
+    guard
+        .as_mut()
+        .ok_or_else(|| phototools_core::error::Error::Internal("object selector missing".into()))?
+        .select(clicks)
+}
+
+/// Selects an object in preview session `session_id` from `clicks`, building the
+/// photograph's `ObjectSelector` on the first click and reusing it after.
+#[tauri::command]
+pub async fn select_object(
+    session_id: String,
+    clicks: Vec<ObjectClick>,
+    state: State<'_, AppState>,
+) -> CommandResult<StoredRaster> {
+    let (slot, input, orientation) = state
+        .object_selection_input(&session_id)
+        .map_err(describe)?;
+    let dir = rollchrome_core::config::models_dir(&state.config());
+    tauri::async_runtime::spawn_blocking(move || {
+        run_object_selection(&slot, input, orientation, &dir, &clicks)
+    })
+    .await
+    .map_err(|e| format!("the object could not be selected: {e}"))?
+    .map_err(describe)
+}
+
+/// `select_object` without the async runtime, for tests.
+pub fn select_object_impl(
+    state: &AppState,
+    session_id: &str,
+    clicks: &[ObjectClick],
+) -> CommandResult<StoredRaster> {
+    let (slot, input, orientation) = state.object_selection_input(session_id).map_err(describe)?;
+    let dir = rollchrome_core::config::models_dir(&state.config());
+    run_object_selection(&slot, input, orientation, &dir, clicks).map_err(describe)
 }

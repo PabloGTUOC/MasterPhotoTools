@@ -19,7 +19,8 @@
     "check:export": "node scripts/check-export.mjs",
     "check:point": "node scripts/check-point.mjs",
     "check:masks": "node scripts/check-masks.mjs",
-    "check:local-detail": "node scripts/check-local-detail.mjs"
+    "check:local-detail": "node scripts/check-local-detail.mjs",
+    "check:object": "node scripts/check-object.mjs"
   },
   "dependencies": {
     "@phototools/shared": "file:../shared",

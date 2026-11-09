@@ -30,6 +30,7 @@ import type {
   MaskKind,
   MaskOp,
   NormalizedCrop,
+  ObjectClick,
   PointColour,
   PresetList,
   OpenPreviewResult,
@@ -107,10 +108,21 @@ const BRUSH_MIN = 0.5;
 
 // ED-23: automatic masks. A model is downloaded once, with the person's say-so; a mask is
 // a few seconds' work, which can be stopped (its result is then discarded).
-const autoBusy = ref<AutoTarget | null>(null);
-const autoDownload = ref<{ target: AutoTarget; name: string; jobId: string | null; asBackground?: boolean; componentForMaskId?: string } | null>(null);
+const autoBusy = ref<AutoTarget | 'object' | null>(null);
+const autoDownload = ref<{ target: AutoTarget | 'object'; name: string; jobId: string | null; asBackground?: boolean; componentForMaskId?: string } | null>(null);
 let autoSeq = 0;
-const AUTO_LABEL: Record<AutoTarget, string> = { subject: 'Subject', sky: 'Sky' };
+const AUTO_LABEL: Record<AutoTarget | 'object', string> = { subject: 'Subject', sky: 'Sky', object: 'Object' };
+const objectTargetState = ref<{ maskId: string | null; componentIndex: number | null }>({ maskId: null, componentIndex: null });
+let objectInFlight = false;
+// The mode's own count, advanced on entering and on leaving: a reply belongs to the stretch of
+// the mode that asked for it. Shared with the automatic masks, `+ Subject` would drop a click's
+// reply and leave the mode refusing clicks; advanced only per click, Esc then `+ Object` would
+// let the old reply land in the new selection.
+let objectSeq = 0;
+// Only the first click on a photograph runs the encoder; later ones take tens of milliseconds
+// and a notice would only flash.
+const OBJECT_LOOKING = 'Looking at the photograph…';
+let objectEncodedSession: string | null = null;
 const BRUSH_MAX = 25;
 let coverageSeq = 0;
 let lastRendered: { recipe: AdjustmentRecipe; stage: PreviewStage } | null = null;
@@ -322,6 +334,7 @@ type EyedropperTarget =
   | 'colour-range-mask'
   | 'colour-range-repick'
   | 'colour-range-component'
+  | 'object'
   | null;
 const eyedropperTarget = ref<EyedropperTarget>(null);
 const isEyedropperActive = computed(() => eyedropperTarget.value !== null);
@@ -354,6 +367,17 @@ function startColourRangeComponentEyedropper() {
 
 function exitEyedropper() {
   eyedropperTarget.value = null;
+  objectTargetState.value = { maskId: null, componentIndex: null };
+  objectSeq += 1;
+  objectInFlight = false;
+}
+
+function startObjectSelection(maskId: string | null = null, componentIndex: number | null = null) {
+  if (isCropMode.value || isBefore.value || compareMode.value !== 'off' || !sessionId.value) return;
+  eyedropperTarget.value = 'object';
+  objectTargetState.value = { maskId, componentIndex };
+  objectSeq += 1;
+  objectInFlight = false;
 }
 
 const selectedPointIndex = ref<number>(-1);
@@ -446,9 +470,121 @@ async function onEyedropperSample(e: MouseEvent | PointerEvent) {
   const storedX = a * uFrame + b * vFrame + c;
   const storedY = d * uFrame + ee * vFrame + f;
   const target = eyedropperTarget.value;
-  exitEyedropper();
+  if (target !== 'object') {
+    exitEyedropper();
+  }
 
-  if (target === 'white-balance') {
+  if (target === 'object') {
+    if (objectInFlight) return;
+    objectInFlight = true;
+    const add = !e.altKey;
+    const currentSeq = objectSeq;
+    const currentSession = sessionId.value;
+    const clickCoord: ObjectClick = {
+      u: Math.max(0, Math.min(1, storedX)),
+      v: Math.max(0, Math.min(1, storedY)),
+      add,
+    };
+
+    const targetInfo = { ...objectTargetState.value };
+    let existingClicks: ObjectClick[] = [];
+    if (targetInfo.maskId) {
+      const m = masks.value.find((x) => x.id === targetInfo.maskId);
+      if (m) {
+        if (targetInfo.componentIndex !== null && m.components?.[targetInfo.componentIndex]) {
+          const comp = m.components[targetInfo.componentIndex];
+          if (comp.kind.type === 'object') {
+            existingClicks = [...comp.kind.clicks];
+          }
+        } else if (m.kind.type === 'object') {
+          existingClicks = [...m.kind.clicks];
+        }
+      }
+    }
+
+    const clicksToSend = [...existingClicks, clickCoord];
+    if (objectEncodedSession !== currentSession) showNotice(OBJECT_LOOKING);
+
+    try {
+      const raster = await desktop.selectObject(currentSession, clicksToSend);
+      // Before the staleness test: the encoder ran whether or not this reply is still wanted.
+      objectEncodedSession = currentSession;
+      if (currentSeq !== objectSeq || currentSession !== sessionId.value || eyedropperTarget.value !== 'object') {
+        return;
+      }
+
+      if (!targetInfo.maskId) {
+        // Creating a new Object mask
+        maskSeq += 1;
+        const count = masks.value.filter((m) => m.kind.type === 'object').length + 1;
+        const newMask: Mask = {
+          id: `m${Date.now().toString(36)}${maskSeq}`,
+          name: `Object ${count}`,
+          kind: {
+            type: 'object',
+            clicks: clicksToSend,
+            mask: raster,
+          },
+          invert: false,
+          opacity: 1,
+          enabled: true,
+          adjustments: { ...ZERO_LOCAL },
+          detail: { ...ZERO_LOCAL_DETAIL },
+          strokes: [],
+        };
+        recipe.value.masks = [...masks.value, newMask];
+        selectedMaskId.value = newMask.id;
+        selectedComponentIndex.value = null;
+        objectTargetState.value = { maskId: newMask.id, componentIndex: null };
+        showMaskOverlay.value = true;
+        commitRecipeChange('Masks');
+      } else {
+        const m = masks.value.find((x) => x.id === targetInfo.maskId);
+        if (!m) return;
+        if (targetInfo.componentIndex !== null) {
+          if (!m.components) m.components = [];
+          if (m.components[targetInfo.componentIndex]) {
+            const comp = m.components[targetInfo.componentIndex];
+            if (comp.kind.type === 'object') {
+              comp.kind.clicks = clicksToSend;
+              comp.kind.mask = raster;
+            }
+          } else {
+            // First click for a new component
+            const newComp: MaskComponent = {
+              op: 'add',
+              kind: {
+                type: 'object',
+                clicks: clicksToSend,
+                mask: raster,
+              },
+              invert: false,
+            };
+            m.components.push(newComp);
+            selectedComponentIndex.value = m.components.length - 1;
+            objectTargetState.value = { maskId: m.id, componentIndex: m.components.length - 1 };
+          }
+        } else if (m.kind.type === 'object') {
+          m.kind.clicks = clicksToSend;
+          m.kind.mask = raster;
+        }
+        showMaskOverlay.value = true;
+        commitRecipeChange('Masks');
+      }
+    } catch (err: unknown) {
+      if (currentSeq !== objectSeq || currentSession !== sessionId.value || eyedropperTarget.value !== 'object') {
+        return;
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      showNotice(msg);
+    } finally {
+      // A newer stretch of the mode has already cleared this, and may have a click of its own out.
+      if (currentSeq === objectSeq) {
+        objectInFlight = false;
+      }
+      if (notice.value?.text === OBJECT_LOOKING) dismissNotice();
+    }
+  } else if (target === 'white-balance') {
     try {
       const pick = await desktop.whiteBalanceAt(sessionId.value, storedX, storedY);
       const before = JSON.parse(JSON.stringify(recipe.value));
@@ -1617,6 +1753,13 @@ function applyRestoredRecipe(restored: AdjustmentRecipe) {
     selectedMaskId.value = null;
     painting.value = false;
   }
+  if (
+    eyedropperTarget.value === 'object' &&
+    objectTargetState.value.maskId &&
+    !recipe.value.masks?.some((m) => m.id === objectTargetState.value.maskId)
+  ) {
+    exitEyedropper();
+  }
 
   requestRender('Settle');
   triggerSaveWithoutHistory();
@@ -2325,6 +2468,7 @@ async function openImage(path: string) {
   if (!path.trim()) return;
   // Undo belongs to the photograph it was offered on.
   dismissNotice();
+  exitEyedropper();
   selectedPreset.value = null;
   selectedMaskId.value = null;
   stopAutoMask();
@@ -2769,6 +2913,21 @@ watch(selectedMaskId, async (id, previous) => {
   panel.scrollTop += offset;
 });
 
+async function addObjectMask() {
+  if (!sessionId.value || masks.value.length >= MASK_LIMIT) return;
+  error.value = null;
+  try {
+    const status = await desktop.objectModelStatus();
+    if (!status.present) {
+      autoDownload.value = { target: 'object', name: status.name, jobId: null };
+      return;
+    }
+    startObjectSelection(null, null);
+  } catch (err: unknown) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
 async function addAutoMask(target: AutoTarget) {
   if (!sessionId.value || masks.value.length >= MASK_LIMIT || autoBusy.value) return;
   error.value = null;
@@ -2790,7 +2949,11 @@ async function startModelDownload() {
   const d = autoDownload.value;
   if (!d) return;
   try {
-    d.jobId = await desktop.downloadMaskModel(d.target);
+    if (d.target === 'object') {
+      d.jobId = await desktop.downloadObjectModel();
+    } else {
+      d.jobId = await desktop.downloadMaskModel(d.target);
+    }
   } catch (err: unknown) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -2805,6 +2968,21 @@ async function cancelModelDownload() {
 async function onModelDownloaded() {
   const d = autoDownload.value;
   if (!d) return;
+  if (d.target === 'object') {
+    const status = await desktop.objectModelStatus();
+    if (status?.present) {
+      const compFor = d.componentForMaskId;
+      autoDownload.value = null;
+      if (compFor) {
+        const m = masks.value.find((x) => x.id === compFor);
+        const compIdx = m?.components ? m.components.length : 0;
+        startObjectSelection(compFor, compIdx);
+      } else {
+        startObjectSelection(null, null);
+      }
+    }
+    return;
+  }
   const model = (await desktop.autoMaskModels()).find((m) => m.target === d.target);
   if (model?.present) {
     autoDownload.value = null;
@@ -2936,11 +3114,15 @@ function deleteComponent(index: number) {
   commitRecipeChange('Masks');
 }
 
-function addComponent(type: 'linear' | 'radial' | 'luminance_range' | 'colour_range' | 'subject' | 'sky') {
+function addComponent(type: 'linear' | 'radial' | 'luminance_range' | 'colour_range' | 'subject' | 'sky' | 'object') {
   const m = selectedMask.value;
   if (!m) return;
   if (type === 'colour_range') {
     startColourRangeComponentEyedropper();
+    return;
+  }
+  if (type === 'object') {
+    addObjectComponent();
     return;
   }
   if (type === 'subject' || type === 'sky') {
@@ -3047,7 +3229,39 @@ function setColourRangeField(field: 'range', val: number, settle: boolean) {
   else requestRender('Drag');
 }
 
+async function addObjectComponent() {
+  if (!sessionId.value) return;
+  const m = selectedMask.value;
+  if (!m) return;
+  error.value = null;
+  try {
+    const status = await desktop.objectModelStatus();
+    const compIdx = m.components ? m.components.length : 0;
+    if (!status.present) {
+      autoDownload.value = { target: 'object', name: status.name, jobId: null, componentForMaskId: m.id };
+      return;
+    }
+    startObjectSelection(m.id, compIdx);
+  } catch (err: unknown) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+function refineObjectMask() {
+  const m = selectedMask.value;
+  if (!m) return;
+  if (selectedComponentIndex.value !== null && m.components?.[selectedComponentIndex.value]) {
+    const comp = m.components[selectedComponentIndex.value];
+    if (comp.kind.type === 'object') {
+      startObjectSelection(m.id, selectedComponentIndex.value);
+    }
+  } else if (m.kind.type === 'object') {
+    startObjectSelection(m.id, null);
+  }
+}
+
 function componentSummary(comp: MaskComponent): string {
+  if (comp.kind.type === 'object') return 'Object';
   if (comp.kind.type === 'luminance_range') {
     const low = Math.round((comp.kind.low ?? 0.25) * 100);
     const high = Math.round((comp.kind.high ?? 0.75) * 100);
@@ -3064,6 +3278,7 @@ function componentSummary(comp: MaskComponent): string {
 }
 
 function baseShapeSummary(mask: Mask): string {
+  if (mask.kind.type === 'object') return 'Object';
   if (mask.kind.type === 'linear') return 'Linear';
   if (mask.kind.type === 'radial') return 'Radial';
   if (mask.kind.type === 'brush') return 'Brush';
@@ -4123,9 +4338,24 @@ onUnmounted(() => {
             <span class="mask-editing__title">
               Editing mask <strong data-testid="mask-editing-name">{{ selectedMask.name }}</strong>
             </span>
-            <button type="button" class="primary" data-testid="mask-done" @click="finishMaskEditing">
-              Done
-            </button>
+            <div class="mask-editing__actions">
+              <button
+                v-if="
+                  (selectedComponentIndex === null && selectedMask.kind.type === 'object') ||
+                  (selectedComponentIndex !== null && selectedMask.components?.[selectedComponentIndex]?.kind.type === 'object')
+                "
+                type="button"
+                class="secondary"
+                data-testid="refine-object"
+                :disabled="eyedropperTarget === 'object'"
+                @click="refineObjectMask"
+              >
+                Refine
+              </button>
+              <button type="button" class="primary" data-testid="mask-done" @click="finishMaskEditing">
+                Done
+              </button>
+            </div>
           </header>
           <p class="mask-note">
             These sliders act only where the mask covers. Done (or Esc) returns to the whole
@@ -4243,6 +4473,15 @@ onUnmounted(() => {
                 @click="addComponent('subject')"
               >
                 + Subject
+              </button>
+              <button
+                type="button"
+                class="ghost"
+                data-testid="add-component-object"
+                :disabled="!sessionId || isReadOnly"
+                @click="addComponent('object')"
+              >
+                + Object
               </button>
               <button
                 type="button"
@@ -4813,6 +5052,16 @@ onUnmounted(() => {
                 <button
                   type="button"
                   class="secondary"
+                  data-testid="add-object-mask"
+                  title="Select an object by clicking on it"
+                  :disabled="!sessionId || isReadOnly || masks.length >= MASK_LIMIT"
+                  @click="addObjectMask"
+                >
+                  + Object
+                </button>
+                <button
+                  type="button"
+                  class="secondary"
                   data-testid="add-sky-mask"
                   title="Find the sky (a model, downloaded once)"
                   :disabled="!sessionId || isReadOnly || masks.length >= MASK_LIMIT || !!autoBusy"
@@ -4830,6 +5079,22 @@ onUnmounted(() => {
                 >
                   + Background
                 </button>
+              </div>
+
+              <div v-if="eyedropperTarget === 'object'" class="effects-group" data-testid="object-hint-group">
+                <p class="mask-note" data-testid="object-hint">
+                  Click the object. Click again to add, Alt-click to take away.
+                </p>
+                <div class="brush-tool__row">
+                  <button
+                    type="button"
+                    class="primary"
+                    data-testid="object-done"
+                    @click="exitEyedropper"
+                  >
+                    Done
+                  </button>
+                </div>
               </div>
 
               <div v-if="autoDownload" class="effects-group" data-testid="auto-download">
@@ -7220,6 +7485,17 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
+}
+
+.mask-editing__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mask-editing__actions button {
+  min-height: 40px;
+  padding: 0 var(--space-4);
 }
 
 .mask-editing__title {

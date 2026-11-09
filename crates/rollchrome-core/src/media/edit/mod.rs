@@ -23,7 +23,7 @@ pub use color::{
     linear_srgb_to_oklab, oklab_to_linear_srgb, rotate_hue_oklch, rotate_hue_oklch_sincos,
 };
 pub use curves::{CurvePoint, CurveTable, MonotoneSpline, ToneCurves, ToneCurvesTable};
-pub use detail::{apply_detail, Detail};
+pub use detail::{apply_detail, combine_detail, Detail};
 pub use geometry::{
     aspect_ratio_from_preset, largest_inscribed_rect, preset_to_normalized_crop, Geometry,
     GeometryPlan, NormalizedCrop, MIN_CROP_DIMENSION,
@@ -34,7 +34,8 @@ pub use hsl::{BlackAndWhite, CompiledHslTable, HslAdjustments, HslBand};
 pub use looks::{aces_narkowicz, apply_looks_linear, LookEffects, HALATION_TINT};
 pub use lut::{Lut, MAX_LUT_SIZE, MIN_LUT_SIZE};
 pub use masks::{
-    AutoTarget, CompiledMasks, LocalAdjustments, Mask, MaskComponent, MaskKind, MaskOp,
+    blend_local_detail, AutoTarget, CompiledMask, CompiledMasks, LocalAdjustments, LocalDetail,
+    Mask, MaskComponent, MaskKind, MaskOp,
 };
 pub use pipeline::{
     apply_recipe, apply_recipe_with_orientation, decode_image, linear_to_srgb, linear_to_u16,

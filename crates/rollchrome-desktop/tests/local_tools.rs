@@ -274,6 +274,7 @@ fn mask_coverage_is_served_for_the_open_preview() {
             adjustments: LocalAdjustments::default(),
             strokes: Vec::new(),
             components: Vec::new(),
+            detail: Default::default(),
         }],
         ..Default::default()
     };

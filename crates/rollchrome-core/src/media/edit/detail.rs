@@ -85,6 +85,19 @@ impl Detail {
     }
 }
 
+/// Combines a global detail recipe with a mask's local detail (RP-11b).
+/// Clarity, texture and dehaze add and clamp to -100..100.
+/// Sharpen amount gains sharpness * 1.5 and clamps to 0..150.
+/// Radius, masking, noise reduction and hot pixels stay as in global Detail.
+pub fn combine_detail(global: Option<&Detail>, local: &super::masks::LocalDetail) -> Detail {
+    let mut d = global.cloned().unwrap_or_default();
+    d.clarity = (d.clarity + local.clarity).clamp(-100.0, 100.0);
+    d.texture = (d.texture + local.texture).clamp(-100.0, 100.0);
+    d.dehaze = (d.dehaze + local.dehaze).clamp(-100.0, 100.0);
+    d.sharpen_amount = (d.sharpen_amount + local.sharpness.max(0.0) * 1.5).clamp(0.0, 150.0);
+    d
+}
+
 /// Applies detail processing (hot pixels, noise reduction, sharpening) to a linear buffer.
 /// `scale` is this buffer's long edge over the source's: 1.0 for an export.
 pub fn apply_detail(src: &LinearBuffer, detail: &Detail, scale: f32) -> LinearBuffer {

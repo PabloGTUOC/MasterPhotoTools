@@ -5,7 +5,7 @@ from [`../manual-verification.md`](../manual-verification.md) when the editor le
 (RC-3), and **their ids are unchanged**, so anything that names MV-20.4 still finds it.
 
 How to work through them — tick the box, replace **Result:** with what actually happened, and a
-failed check is a result — is as described at the top of that file. **49 checks**, none done yet
+failed check is a result — is as described at the top of that file. **54 checks**, none done yet
 (2026-11-06). They all need a Mac with real photographs, and MV-20.7 also a card and a mounted
 share.
 
@@ -333,4 +333,34 @@ the automated check drives the screen against a stub.
       **Run:** in Edit on a portrait or subject photo, click `+ Background`. If the subject model is not cached, verify download intent and auto-generation create an inverted subject mask named "Background". Adjust exposure and saturation on the mask.
       **Pass:** the subject remains untouched while the entire surround/background is adjusted cleanly without haloing around edges.
       **Result:**
+
+## MV-34 — Masks: local detail (RP-11b)
+
+[`../briefs/RP-11b.md`](../briefs/RP-11b.md). Real photographs in the real application.
+
+- [ ] **MV-34.1 — Local clarity inside a mask.**
+      **Run:** in Edit, open a real photograph and add a Linear gradient or Brush mask over a midtone texture region (e.g. foliage, architecture, or fabric). In the mask panel, adjust the local Clarity slider to +50 while keeping global Clarity at 0. Scrub exposure to verify cached frames render without delay.
+      **Pass:** midtone local contrast increases smoothly only within the mask coverage; unmasked regions are completely unchanged; scrubbing exposure is smooth.
+      **Result:**
+
+- [ ] **MV-34.2 — Local texture inside a mask.**
+      **Run:** in Edit, create a mask over fine details (e.g. hair, pores, wood grain). Increase local Texture to +60. Then test with Texture at -60 on skin.
+      **Pass:** high-frequency fine surface details are accentuated or smoothed without affecting coarse tonal edges or introducing halos outside the mask.
+      **Result:**
+
+- [ ] **MV-34.3 — Local dehaze inside a mask.**
+      **Run:** in Edit, create a mask over a hazy distant mountain or background. Increase local Dehaze to +40. Then create a mask over shadows with Dehaze +100 and apply a +1 EV exposure boost.
+      **Pass:** atmospheric haze is penetrated only in the masked region; shadow range coverage is preserved and does not shrink or move under dehaze.
+      **Result:**
+
+- [ ] **MV-34.4 — Local sharpness inside a mask.**
+      **Run:** in Edit, create a mask over a primary subject's eyes or focal point. Increase local Sharpness to +50 while global sharpening is at default.
+      **Pass:** the masked region exhibits crisp high-frequency edge definition matching combined amount with global sharpening; unmasked areas retain standard sharpness.
+      **Result:**
+
+- [ ] **MV-34.5 — Export matches preview with local detail.**
+      **Run:** on an image with two masks each using Clarity, Texture, Dehaze, and Sharpness, export the photograph to full-resolution 16-bit TIFF and 8-bit JPEG. Open the exported TIFF beside the Rollchrome 100% zoom preview.
+      **Pass:** tone, local contrast, edge sharpness, and haze reduction in the exported file match the preview visually within tolerance.
+      **Result:**
+
 

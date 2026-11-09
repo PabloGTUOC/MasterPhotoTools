@@ -26,8 +26,10 @@
 
 use super::brush::{BrushRaster, Stroke};
 use super::geometry::Geometry;
+use super::pipeline::LinearBuffer;
 use super::raster::{CoverageRaster, StoredRaster};
 use phototools_core::error::Error;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -65,6 +67,26 @@ impl LocalAdjustments {
         self.tint += w * other.tint;
         self.saturation += w * other.saturation;
         self.vibrance += w * other.vibrance;
+    }
+}
+
+/// Local detail adjustments evaluated per mask (RP-11b).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LocalDetail {
+    /// Clarity: -100..100, default 0.
+    pub clarity: f32,
+    /// Texture: -100..100, default 0.
+    pub texture: f32,
+    /// Dehaze: -100..100, default 0.
+    pub dehaze: f32,
+    /// Sharpness: 0..100, default 0.
+    pub sharpness: f32,
+}
+
+impl LocalDetail {
+    pub fn is_zero(&self) -> bool {
+        self.clarity == 0.0 && self.texture == 0.0 && self.dehaze == 0.0 && self.sharpness == 0.0
     }
 }
 
@@ -214,6 +236,9 @@ pub struct Mask {
     pub enabled: bool,
     #[serde(default)]
     pub adjustments: LocalAdjustments,
+    /// Local detail adjustments: clarity, texture, dehaze and sharpness (RP-11b).
+    #[serde(default, skip_serializing_if = "LocalDetail::is_zero")]
+    pub detail: LocalDetail,
     /// Brush strokes refining the shape, in order, after `invert` (`brush`, ED-21): an
     /// added stroke always adds effect where it is painted, whatever the shape or invert.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -226,7 +251,9 @@ pub struct Mask {
 impl Mask {
     /// True when the mask cannot change any pixel.
     pub fn is_identity(&self) -> bool {
-        !self.enabled || self.opacity <= 0.0 || self.adjustments.is_zero()
+        !self.enabled
+            || self.opacity <= 0.0
+            || (self.adjustments.is_zero() && self.detail.is_zero())
     }
 }
 
@@ -372,7 +399,9 @@ struct CompiledComponent {
 }
 
 #[derive(Debug, Clone)]
-struct CompiledMask {
+pub struct CompiledMask {
+    pub id: String,
+    pub detail: LocalDetail,
     shape: Shape,
     components: Vec<CompiledComponent>,
     invert: bool,
@@ -415,7 +444,7 @@ impl CompiledMask {
     }
 
     #[inline(always)]
-    fn weight(&self, x: f32, y: f32, y_sqrt: f32, oklch: (f32, f32, f32)) -> f32 {
+    pub fn weight(&self, x: f32, y: f32, y_sqrt: f32, oklch: (f32, f32, f32)) -> f32 {
         let c = self.coverage(x, y, y_sqrt, oklch);
         let c = match &self.brush {
             Some(b) => b.apply(c, x / self.ax, y / self.ay),
@@ -509,6 +538,16 @@ impl CompiledMasks {
             needs_colour,
             masks: compiled,
         }))
+    }
+
+    /// True if any active mask carries non-zero local detail (RP-11b).
+    pub fn has_local_detail(&self) -> bool {
+        self.masks.iter().any(|m| !m.detail.is_zero())
+    }
+
+    /// The active compiled masks.
+    pub fn active_masks(&self) -> &[CompiledMask] {
+        &self.masks
     }
 
     /// Where a row of `out_w` output pixels at output row `y` starts in aspect-scaled stored
@@ -664,6 +703,83 @@ pub fn coverage_frame(
     Ok(out)
 }
 
+/// Blends local detail frames into `base` linear buffer according to mask coverage (RP-11b).
+/// With `B` the base frame and `w` a mask's full weight at that pixel,
+/// the composite is `B + Σ w × (D − B)` over the masks with local detail.
+/// Selection of range masks always reads `base` (`B`), never `D` or the composite.
+pub fn blend_local_detail(
+    base: &LinearBuffer,
+    detail_frames: &[(&CompiledMask, &LinearBuffer)],
+    masks: &CompiledMasks,
+) -> LinearBuffer {
+    if detail_frames.is_empty() {
+        return base.clone();
+    }
+
+    let w = base.width as usize;
+    let mut out = base.clone();
+
+    out.data
+        .par_chunks_exact_mut(w * 3)
+        .enumerate()
+        .for_each(|(y, row_out)| {
+            let cursor = masks.row(y as u32, base.width, base.height);
+            let row_start = y * w * 3;
+            let base_row = &base.data[row_start..row_start + w * 3];
+
+            for x in 0..w {
+                let px_idx = x * 3;
+                let (mx, my) = cursor.at(x);
+
+                let r_b = base_row[px_idx];
+                let g_b = base_row[px_idx + 1];
+                let b_b = base_row[px_idx + 2];
+
+                let (y_sqrt, oklch) = if masks.has_range_masks {
+                    let y_sqrt = if masks.needs_luminance {
+                        (0.2126 * r_b + 0.7152 * g_b + 0.0722 * b_b).max(0.0).sqrt()
+                    } else {
+                        0.0
+                    };
+                    let oklch = if masks.needs_colour {
+                        let (l, a, b_val) =
+                            crate::media::edit::color::linear_srgb_to_oklab(r_b, g_b, b_b);
+                        let c = (a * a + b_val * b_val).sqrt();
+                        let h = b_val.atan2(a).to_degrees().rem_euclid(360.0);
+                        (h, c, l)
+                    } else {
+                        (0.0, 0.0, 0.0)
+                    };
+                    (y_sqrt, oklch)
+                } else {
+                    (0.0, (0.0, 0.0, 0.0))
+                };
+
+                let mut sum_r = 0.0f32;
+                let mut sum_g = 0.0f32;
+                let mut sum_b = 0.0f32;
+
+                for (compiled_mask, d_buf) in detail_frames {
+                    let weight = compiled_mask.weight(mx, my, y_sqrt, oklch);
+                    if weight > 0.0 {
+                        let r_d = d_buf.data[row_start + px_idx];
+                        let g_d = d_buf.data[row_start + px_idx + 1];
+                        let b_d = d_buf.data[row_start + px_idx + 2];
+                        sum_r += weight * (r_d - r_b);
+                        sum_g += weight * (g_d - g_b);
+                        sum_b += weight * (b_d - b_b);
+                    }
+                }
+
+                row_out[px_idx] = r_b + sum_r;
+                row_out[px_idx + 1] = g_b + sum_g;
+                row_out[px_idx + 2] = b_b + sum_b;
+            }
+        });
+
+    out
+}
+
 /// A position along one output row, in aspect-scaled stored coordinates.
 #[derive(Debug, Clone, Copy)]
 pub struct RowCursor {
@@ -705,6 +821,8 @@ fn compile_mask(
         });
     }
     Ok(CompiledMask {
+        id: m.id.clone(),
+        detail: m.detail,
         shape,
         components: compiled_components,
         invert: m.invert,
@@ -802,6 +920,7 @@ mod tests {
             },
             strokes: Vec::new(),
             components: Vec::new(),
+            detail: LocalDetail::default(),
         }
     }
 

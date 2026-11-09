@@ -746,6 +746,14 @@ export interface BrushStroke {
   erase: boolean;
 }
 
+/** Local detail adjustments for a mask (RP-11b). */
+export interface LocalDetail {
+  clarity?: number;
+  texture?: number;
+  dehaze?: number;
+  sharpness?: number;
+}
+
 export interface Mask {
   id: string;
   name: string;
@@ -754,6 +762,8 @@ export interface Mask {
   opacity: number;
   enabled: boolean;
   adjustments: LocalAdjustments;
+  /** Local detail enhancements (RP-11b). */
+  detail?: LocalDetail;
   /** Painted after the shape and its invert, in order (ED-21). */
   strokes?: BrushStroke[];
   /** Components modifying this mask's coverage (RP-11). */

@@ -193,13 +193,19 @@ pub fn encode_preview_frame(frame: &RgbaFrame) -> Vec<u8> {
 struct CachedGeometry {
     geometry: super::geometry::Geometry,
     detail: Option<super::detail::Detail>,
-    drag_transformed: Option<LinearBuffer>,
-    settle_transformed: Option<LinearBuffer>,
-    full_transformed: Option<LinearBuffer>,
+    drag_transformed: Option<Arc<LinearBuffer>>,
+    settle_transformed: Option<Arc<LinearBuffer>>,
+    full_transformed: Option<Arc<LinearBuffer>>,
 }
 
 type StoredMaskKey = (String, Option<usize>);
 type StoredMaskEntry = (u64, Arc<CoverageRaster>);
+type LocalDetailKey = (String, PreviewStage);
+type LocalDetailEntry = (
+    super::detail::Detail,
+    Option<super::geometry::Geometry>,
+    Arc<LinearBuffer>,
+);
 
 /// An interactive preview session constructed once per image.
 ///
@@ -233,12 +239,22 @@ pub struct PreviewSession {
     brushes: Mutex<HashMap<(String, PreviewStage), BrushCache>>,
     /// Decoded automatic masks per (mask, component), with a hash of the PNG they came from (ED-23, RP-11).
     stored: Mutex<HashMap<StoredMaskKey, StoredMaskEntry>>,
+    /// Cached local detail frames per (mask, stage) with combined Detail and geometry (RP-11b).
+    local_detail_cache: Mutex<HashMap<LocalDetailKey, LocalDetailEntry>>,
 }
 
 impl PreviewSession {
     /// Number of auto mask rasters currently held in the session's raster cache (RP-11).
     pub fn cached_raster_count(&self) -> usize {
         self.stored.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    /// Number of local detail frames currently held in the session's cache (RP-11b).
+    pub fn cached_local_detail_count(&self) -> usize {
+        self.local_detail_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 }
 
@@ -318,6 +334,7 @@ impl PreviewSession {
             detail_recompute_count: AtomicUsize::new(0),
             brushes: Mutex::new(HashMap::new()),
             stored: Mutex::new(HashMap::new()),
+            local_detail_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -367,6 +384,7 @@ impl PreviewSession {
             detail_recompute_count: AtomicUsize::new(0),
             brushes: Mutex::new(HashMap::new()),
             stored: Mutex::new(HashMap::new()),
+            local_detail_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -475,6 +493,14 @@ impl PreviewSession {
         Ok(linear)
     }
 
+    fn raw_stage_linear(&self, stage: PreviewStage) -> Result<Arc<LinearBuffer>, Error> {
+        match stage {
+            PreviewStage::Drag => Ok(self.drag_linear.clone()),
+            PreviewStage::Settle => Ok(self.settle_linear.clone()),
+            PreviewStage::Full => self.ensure_full_linear(),
+        }
+    }
+
     /// Renders an RGBA8 frame for the requested preview stage with the specified recipe and LUT.
     ///
     /// Validates LUT presence and hash equality via `validate_lut`.
@@ -500,7 +526,9 @@ impl PreviewSession {
             recipe
         };
 
-        if let Some(geom) = recipe_ref.geometry.as_ref() {
+        let (proxy, to_stored, frame_orientation, geom_opt) = if let Some(geom) =
+            recipe_ref.geometry.as_ref()
+        {
             let active_detail = recipe_ref
                 .detail
                 .as_ref()
@@ -527,42 +555,110 @@ impl PreviewSession {
                 PreviewStage::Drag => {
                     if c.drag_transformed.is_none() {
                         let input = self.stage_linear(stage, recipe_ref.detail.as_ref())?;
-                        c.drag_transformed = Some(geom.apply_to_linear(&input, self.orientation)?);
+                        c.drag_transformed =
+                            Some(Arc::new(geom.apply_to_linear(&input, self.orientation)?));
                     }
                 }
                 PreviewStage::Settle => {
                     if c.settle_transformed.is_none() {
                         let input = self.stage_linear(stage, recipe_ref.detail.as_ref())?;
                         c.settle_transformed =
-                            Some(geom.apply_to_linear(&input, self.orientation)?);
+                            Some(Arc::new(geom.apply_to_linear(&input, self.orientation)?));
                     }
                 }
                 PreviewStage::Full => {
                     if c.full_transformed.is_none() {
                         let input = self.stage_linear(stage, recipe_ref.detail.as_ref())?;
-                        c.full_transformed = Some(geom.apply_to_linear(&input, self.orientation)?);
+                        c.full_transformed =
+                            Some(Arc::new(geom.apply_to_linear(&input, self.orientation)?));
                     }
                 }
             }
             let proxy = match stage {
-                PreviewStage::Drag => c.drag_transformed.as_ref().unwrap(),
-                PreviewStage::Settle => c.settle_transformed.as_ref().unwrap(),
-                PreviewStage::Full => c.full_transformed.as_ref().unwrap(),
+                PreviewStage::Drag => c.drag_transformed.clone().unwrap(),
+                PreviewStage::Settle => c.settle_transformed.clone().unwrap(),
+                PreviewStage::Full => c.full_transformed.clone().unwrap(),
             };
             let (stored_w, stored_h) = self.stored_dims(stage);
-            let masks = self.compile_masks(recipe_ref, Some(geom), stage)?;
-            let mut frame = render_rgba_frame_masked(proxy, recipe_ref, lut, masks.as_ref())?;
-            frame.orientation = 1;
-            frame.to_stored =
+            let to_stored =
                 super::masks::output_to_stored(Some(geom), stored_w, stored_h, self.orientation)?;
-            Ok(frame)
+            (proxy, to_stored, 1, Some(geom))
         } else {
             let proxy = self.stage_linear(stage, recipe_ref.detail.as_ref())?;
-            let masks = self.compile_masks(recipe_ref, None, stage)?;
-            let mut frame = render_rgba_frame_masked(&proxy, recipe_ref, lut, masks.as_ref())?;
-            frame.orientation = self.orientation;
-            Ok(frame)
-        }
+            (
+                proxy,
+                [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                self.orientation,
+                None,
+            )
+        };
+
+        let masks = self.compile_masks(recipe_ref, geom_opt, stage)?;
+
+        let (frame_buf, base_ref) = if masks.as_ref().is_some_and(|m| m.has_local_detail()) {
+            let compiled_masks = masks.as_ref().unwrap();
+            let raw_source = self.raw_stage_linear(stage)?;
+            let scale =
+                (raw_source.width.max(raw_source.height) as f32) / (self.source_long_edge as f32);
+
+            let mut detail_frames = Vec::new();
+            let mut cache = self
+                .local_detail_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+
+            for m in compiled_masks.active_masks() {
+                if !m.detail.is_zero() {
+                    let combined =
+                        super::detail::combine_detail(recipe_ref.detail.as_ref(), &m.detail);
+                    let geom_opt_cloned = recipe_ref.geometry.clone();
+                    let key = (m.id.clone(), stage);
+
+                    let hit = match cache.get(&key) {
+                        Some((d, g, _)) => d == &combined && g == &geom_opt_cloned,
+                        None => false,
+                    };
+
+                    if !hit {
+                        self.detail_recompute_count
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let d_buf = super::detail::apply_detail(&raw_source, &combined, scale);
+                        let d_post = if let Some(geom) = &recipe_ref.geometry {
+                            geom.apply_to_linear(&d_buf, self.orientation)?
+                        } else {
+                            d_buf
+                        };
+                        cache.insert(key.clone(), (combined, geom_opt_cloned, Arc::new(d_post)));
+                    }
+
+                    let entry = cache.get(&key).unwrap();
+                    detail_frames.push((m, entry.2.clone()));
+                }
+            }
+            drop(cache);
+
+            let borrowed_frames: Vec<(&super::masks::CompiledMask, &LinearBuffer)> = detail_frames
+                .iter()
+                .map(|(m, buf)| (*m, buf.as_ref()))
+                .collect();
+
+            let composite =
+                super::masks::blend_local_detail(&proxy, &borrowed_frames, compiled_masks);
+            (Arc::new(composite), Some(proxy.clone()))
+        } else {
+            (proxy.clone(), None)
+        };
+
+        let mut frame = render_rgba_frame_masked_with_base(
+            &frame_buf,
+            recipe_ref,
+            lut,
+            masks.as_ref(),
+            base_ref.as_deref(),
+        )?;
+        frame.orientation = frame_orientation;
+        frame.to_stored = to_stored;
+        Ok(frame)
     }
 
     /// The photograph's stored pixels, 8-bit sRGB, from the settle proxy, for an automatic
@@ -601,6 +697,10 @@ impl PreviewSession {
             .unwrap_or_else(|e| e.into_inner())
             .retain(|(id, _), _| recipe.masks.iter().any(|m| &m.id == id));
         self.stored
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|(id, _), _| recipe.masks.iter().any(|m| &m.id == id));
+        self.local_detail_cache
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .retain(|(id, _), _| recipe.masks.iter().any(|m| &m.id == id));
@@ -1154,12 +1254,24 @@ impl PixelParams {
 }
 
 /// `render_rgba_frame` with masks compiled against the geometry that produced `proxy`.
-#[allow(clippy::uninit_vec)]
 pub fn render_rgba_frame_masked(
     proxy: &LinearBuffer,
     recipe: &AdjustmentRecipe,
     lut: Option<&Lut>,
     masks: Option<&CompiledMasks>,
+) -> Result<RgbaFrame, Error> {
+    render_rgba_frame_masked_with_base(proxy, recipe, lut, masks, None)
+}
+
+/// As `render_rgba_frame_masked`, reading incoming linear RGB from `base` (when provided)
+/// for range mask evaluation, while adjusting `proxy` (RP-11b).
+#[allow(clippy::uninit_vec)]
+pub fn render_rgba_frame_masked_with_base(
+    proxy: &LinearBuffer,
+    recipe: &AdjustmentRecipe,
+    lut: Option<&Lut>,
+    masks: Option<&CompiledMasks>,
+    base: Option<&LinearBuffer>,
 ) -> Result<RgbaFrame, Error> {
     let w = proxy.width;
     let h = proxy.height;
@@ -1345,6 +1457,10 @@ pub fn render_rgba_frame_masked(
                 super::grain::RowGrainParams::default()
             };
             let mask_row = masks.map(|m| (m, m.row(y as u32, w, h)));
+            let base_row = base.map(|b| {
+                let start = y * (w as usize) * 3;
+                &b.data[start..start + (w as usize) * 3]
+            });
             const CHUNK_SIZE: usize = 64;
             let mut lin_buf = [[0.0f32; 3]; CHUNK_SIZE];
 
@@ -1366,7 +1482,14 @@ pub fn render_rgba_frame_masked(
                     let p = match mask_row {
                         Some((m, cursor)) => {
                             let (mx, my) = cursor.at(base_x + i);
-                            let local = m.local_at(mx, my, in_px[0], in_px[1], in_px[2]);
+                            let (r_base, g_base, b_base) = match base_row {
+                                Some(br) => {
+                                    let idx = (base_x + i) * 3;
+                                    (br[idx], br[idx + 1], br[idx + 2])
+                                }
+                                None => (in_px[0], in_px[1], in_px[2]),
+                            };
+                            let local = m.local_at(mx, my, r_base, g_base, b_base);
                             if local.is_zero() {
                                 &global
                             } else {

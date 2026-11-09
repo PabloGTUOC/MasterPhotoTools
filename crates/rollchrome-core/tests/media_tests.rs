@@ -676,6 +676,7 @@ fn benchmark_edit_preview() {
             adjustments: adj,
             strokes: Vec::new(),
             components: Vec::new(),
+            detail: Default::default(),
         };
         let mut r = recipe.clone();
         r.masks = vec![
@@ -762,6 +763,7 @@ fn benchmark_edit_preview() {
                 erase: false,
             }],
             components: Vec::new(),
+            detail: Default::default(),
         }
     }];
     let mut paint_times = Vec::with_capacity(200);
@@ -2016,6 +2018,7 @@ fn radial_mask(center: [f32; 2], radius: f32, exposure: f32) -> rollchrome_core:
         },
         strokes: Vec::new(),
         components: Vec::new(),
+        detail: Default::default(),
     }
 }
 
@@ -2250,6 +2253,7 @@ fn export_matches_preview_with_masks_within_delta_e_1_5() {
         },
         strokes: Vec::new(),
         components: Vec::new(),
+        detail: Default::default(),
     };
     let mut face = radial_mask([0.6, 0.4], 0.12, 0.7);
     face.adjustments.contrast = 15.0;
@@ -2410,6 +2414,7 @@ fn brush_mask(
         },
         strokes,
         components: Vec::new(),
+        detail: Default::default(),
     }
 }
 
@@ -2620,6 +2625,7 @@ fn a_stored_automatic_mask_acts_where_it_covers_and_a_damaged_one_is_refused() {
         },
         strokes: Vec::new(),
         components: Vec::new(),
+        detail: Default::default(),
     };
 
     let img = marked_frame(1500, 1000, [0.3, 0.35]);
@@ -2818,6 +2824,7 @@ fn the_full_stage_applies_crop_and_masks_as_settle_does() {
         },
         strokes: vec![],
         components: Vec::new(),
+        detail: Default::default(),
     };
     let recipe = AdjustmentRecipe {
         geometry: Some(geom),

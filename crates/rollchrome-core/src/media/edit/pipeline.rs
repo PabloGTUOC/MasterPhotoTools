@@ -642,6 +642,17 @@ impl LinearBuffer {
         recipe: &AdjustmentRecipe,
         masks: Option<&super::masks::CompiledMasks>,
     ) {
+        self.apply_adjustments_masked_with_base(recipe, masks, None);
+    }
+
+    /// As `apply_adjustments_masked`, reading incoming linear RGB from `base` (when provided)
+    /// for range mask evaluation, while adjusting `self` (RP-11b).
+    pub fn apply_adjustments_masked_with_base(
+        &mut self,
+        recipe: &AdjustmentRecipe,
+        masks: Option<&super::masks::CompiledMasks>,
+        base: Option<&LinearBuffer>,
+    ) {
         let global = LinearParams::new(recipe, &super::masks::LocalAdjustments::default());
         let touches = |f: fn(&super::masks::CompiledMasks) -> bool| masks.is_some_and(f);
         let flags = StageFlags {
@@ -669,12 +680,20 @@ impl LinearBuffer {
             .enumerate()
             .for_each(|(y, row)| {
                 let cursor = masks.map(|m| (m, m.row(y as u32, w, h)));
+                let base_row = base.map(|b| {
+                    let start = y * (w as usize) * 3;
+                    &b.data[start..start + (w as usize) * 3]
+                });
                 for (x, px) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
                     let local_params;
                     let p = match cursor {
                         Some((m, c)) => {
                             let (mx, my) = c.at(x);
-                            let local = m.local_at(mx, my, px[0], px[1], px[2]);
+                            let (r_base, g_base, b_base) = match base_row {
+                                Some(br) => (br[x * 3], br[x * 3 + 1], br[x * 3 + 2]),
+                                None => (px[0], px[1], px[2]),
+                            };
+                            let local = m.local_at(mx, my, r_base, g_base, b_base);
                             if local.is_zero() {
                                 &global
                             } else {
@@ -1021,12 +1040,16 @@ pub fn apply_recipe_with_orientation(
 ) -> Result<ImageBuffer, Error> {
     validate_lut(recipe, lut)?;
 
-    let mut linear = LinearBuffer::from_image_buffer(image);
-    if let Some(detail) = &recipe.detail {
+    let raw_source = LinearBuffer::from_image_buffer(image);
+    let mut linear = if let Some(detail) = &recipe.detail {
         if !detail.is_identity() {
-            linear = super::detail::apply_detail(&linear, detail, 1.0);
+            super::detail::apply_detail(&raw_source, detail, 1.0)
+        } else {
+            raw_source.clone()
         }
-    }
+    } else {
+        raw_source.clone()
+    };
     let masks = super::masks::CompiledMasks::compile(
         &recipe.masks,
         recipe.geometry.as_ref(),
@@ -1037,7 +1060,31 @@ pub fn apply_recipe_with_orientation(
     if let Some(geom) = &recipe.geometry {
         linear = geom.apply_to_linear(&linear, orientation)?;
     }
-    linear.apply_adjustments_masked(recipe, masks.as_ref());
+
+    if masks.as_ref().is_some_and(|m| m.has_local_detail()) {
+        let compiled = masks.as_ref().unwrap();
+        let base = linear;
+        let mut detail_frames = Vec::new();
+        for m in compiled.active_masks() {
+            if !m.detail.is_zero() {
+                let combined = super::detail::combine_detail(recipe.detail.as_ref(), &m.detail);
+                let d_raw = super::detail::apply_detail(&raw_source, &combined, 1.0);
+                let d_post = if let Some(geom) = &recipe.geometry {
+                    geom.apply_to_linear(&d_raw, orientation)?
+                } else {
+                    d_raw
+                };
+                detail_frames.push((m, d_post));
+            }
+        }
+        let borrowed: Vec<(&super::masks::CompiledMask, &LinearBuffer)> =
+            detail_frames.iter().map(|(m, buf)| (*m, buf)).collect();
+        let mut composite = super::masks::blend_local_detail(&base, &borrowed, compiled);
+        composite.apply_adjustments_masked_with_base(recipe, masks.as_ref(), Some(&base));
+        linear = composite;
+    } else {
+        linear.apply_adjustments_masked(recipe, masks.as_ref());
+    }
     if let Some(vignette) = &recipe.vignette {
         super::vignette::apply_vignette(&mut linear, vignette);
     }

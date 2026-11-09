@@ -23,6 +23,7 @@ import type {
   HslAdjustments,
   LutLibraryList,
   LocalAdjustments,
+  LocalDetail,
   LutRef,
   Mask,
   MaskComponent,
@@ -514,6 +515,7 @@ async function onEyedropperSample(e: MouseEvent | PointerEvent) {
         opacity: 1,
         enabled: true,
         adjustments: { ...ZERO_LOCAL },
+        detail: { ...ZERO_LOCAL_DETAIL },
       };
       recipe.value.masks = [...masks.value, mask];
       selectedMaskId.value = mask.id;
@@ -2150,6 +2152,13 @@ const ZERO_LOCAL: LocalAdjustments = {
   vibrance: 0,
 };
 
+const ZERO_LOCAL_DETAIL: LocalDetail = {
+  clarity: 0,
+  texture: 0,
+  dehaze: 0,
+  sharpness: 0,
+};
+
 /** A mask from disk with every field the panel binds, as core's serde defaults fill them. */
 function normaliseMask(m: Mask): Mask {
   const kind: MaskKind =
@@ -2165,6 +2174,7 @@ function normaliseMask(m: Mask): Mask {
     opacity: m.opacity ?? 1,
     enabled: m.enabled ?? true,
     adjustments: { ...ZERO_LOCAL, ...(m.adjustments ?? {}) },
+    detail: { ...ZERO_LOCAL_DETAIL, ...(m.detail ?? {}) },
     strokes: (m.strokes ?? []).map((st) => ({
       points: st.points.map((pt) => [pt[0], pt[1]] as [number, number]),
       radius: st.radius,
@@ -2192,6 +2202,15 @@ function cleanRecipeForSave(r: AdjustmentRecipe): AdjustmentRecipe {
     for (const m of copy.masks) {
       if (!m.components || m.components.length === 0) {
         delete m.components;
+      }
+      if (
+        !m.detail ||
+        ((m.detail.clarity ?? 0) === 0 &&
+          (m.detail.texture ?? 0) === 0 &&
+          (m.detail.dehaze ?? 0) === 0 &&
+          (m.detail.sharpness ?? 0) === 0)
+      ) {
+        delete m.detail;
       }
     }
   }
@@ -2617,6 +2636,7 @@ function addMask(type: 'linear' | 'radial' | 'brush') {
     opacity: 1,
     enabled: true,
     adjustments: { ...ZERO_LOCAL },
+    detail: { ...ZERO_LOCAL_DETAIL },
   };
   recipe.value.masks = [...masks.value, mask];
   selectedMaskId.value = mask.id;
@@ -2643,6 +2663,7 @@ function addLuminanceMask() {
     opacity: 1,
     enabled: true,
     adjustments: { ...ZERO_LOCAL },
+    detail: { ...ZERO_LOCAL_DETAIL },
   };
   recipe.value.masks = [...masks.value, mask];
   selectedMaskId.value = mask.id;
@@ -2816,6 +2837,7 @@ async function runAutoMask(target: AutoTarget, asBackground = false) {
       opacity: 1,
       enabled: true,
       adjustments: { ...ZERO_LOCAL },
+      detail: { ...ZERO_LOCAL_DETAIL },
       strokes: [],
     };
     recipe.value.masks = [...masks.value, mask];
@@ -3102,6 +3124,27 @@ function setMaskLocal(key: keyof LocalAdjustments, value: number, settle: boolea
   m.adjustments[key] = value;
   if (settle) onRecipeValueChange();
   else requestRender('Drag');
+}
+
+function setMaskDetail(key: keyof LocalDetail, value: number, settle: boolean) {
+  const m = selectedMask.value;
+  if (!m) return;
+  if (!m.detail) {
+    m.detail = { ...ZERO_LOCAL_DETAIL };
+  }
+  m.detail[key] = value;
+  if (settle) onRecipeValueChange();
+  else requestRender('Drag');
+}
+
+function resetSelectedMask() {
+  const m = selectedMask.value;
+  if (!m) return;
+  const before = cloneRecipe(recipe.value);
+  m.adjustments = { ...ZERO_LOCAL };
+  m.detail = { ...ZERO_LOCAL_DETAIL };
+  commitRecipeChange('Masks');
+  showNotice(`Reset adjustments on mask ${m.name}.`, before);
 }
 
 function setMaskField(field: 'opacity' | 'feather', percent: number, settle: boolean) {
@@ -4090,9 +4133,14 @@ onUnmounted(() => {
             <span class="mask-editing__title">
               Editing mask <strong data-testid="mask-editing-name">{{ selectedMask.name }}</strong>
             </span>
-            <button type="button" class="primary" data-testid="mask-done" @click="finishMaskEditing">
-              Done
-            </button>
+            <div class="mask-editing__actions">
+              <button type="button" class="ghost" data-testid="mask-reset" @click="resetSelectedMask">
+                Reset
+              </button>
+              <button type="button" class="primary" data-testid="mask-done" @click="finishMaskEditing">
+                Done
+              </button>
+            </div>
           </header>
           <p class="mask-note">
             These sliders act only where the mask covers. Done (or Esc) returns to the whole
@@ -4435,6 +4483,58 @@ onUnmounted(() => {
             test-id="mask-feather"
             @update:model-value="(v) => setMaskField('feather', v, false)"
             @change="(v) => setMaskField('feather', v, true)"
+          />
+        </div>
+
+        <div class="effects-group" data-testid="mask-detail-controls">
+          <span class="effects-group-title">Detail</span>
+          <AdjustmentSlider
+            label="Clarity"
+            :model-value="selectedMask.detail?.clarity ?? 0"
+            :min="-100"
+            :max="100"
+            :step="1"
+            :default-value="0"
+            :disabled="isReadOnly"
+            test-id="mask-clarity"
+            @update:model-value="(v) => setMaskDetail('clarity', v, false)"
+            @change="(v) => setMaskDetail('clarity', v, true)"
+          />
+          <AdjustmentSlider
+            label="Texture"
+            :model-value="selectedMask.detail?.texture ?? 0"
+            :min="-100"
+            :max="100"
+            :step="1"
+            :default-value="0"
+            :disabled="isReadOnly"
+            test-id="mask-texture"
+            @update:model-value="(v) => setMaskDetail('texture', v, false)"
+            @change="(v) => setMaskDetail('texture', v, true)"
+          />
+          <AdjustmentSlider
+            label="Dehaze"
+            :model-value="selectedMask.detail?.dehaze ?? 0"
+            :min="-100"
+            :max="100"
+            :step="1"
+            :default-value="0"
+            :disabled="isReadOnly"
+            test-id="mask-dehaze"
+            @update:model-value="(v) => setMaskDetail('dehaze', v, false)"
+            @change="(v) => setMaskDetail('dehaze', v, true)"
+          />
+          <AdjustmentSlider
+            label="Sharpness"
+            :model-value="selectedMask.detail?.sharpness ?? 0"
+            :min="0"
+            :max="100"
+            :step="1"
+            :default-value="0"
+            :disabled="isReadOnly"
+            test-id="mask-sharpness"
+            @update:model-value="(v) => setMaskDetail('sharpness', v, false)"
+            @change="(v) => setMaskDetail('sharpness', v, true)"
           />
         </div>
         </section>
@@ -7148,6 +7248,12 @@ onUnmounted(() => {
 .mask-editing__title strong {
   color: var(--accent);
   font-weight: normal;
+}
+
+.mask-editing__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .mask-editing__head button {

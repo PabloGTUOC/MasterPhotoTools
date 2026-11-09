@@ -24,6 +24,7 @@ fn test_mask(kind: MaskKind, exposure: f32) -> Mask {
         },
         strokes: Vec::new(),
         components: Vec::new(),
+        detail: Default::default(),
     }
 }
 
@@ -733,6 +734,7 @@ fn two_auto_components_in_one_mask_keep_their_own_rasters() {
                 invert: false,
             },
         ],
+        detail: Default::default(),
     };
 
     let recipe = AdjustmentRecipe {

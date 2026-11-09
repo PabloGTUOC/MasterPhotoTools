@@ -1,6 +1,6 @@
 # `RP-11b` · Masks: local clarity, texture, dehaze and sharpness
 
-> **Status:** briefed
+> **Status:** changes requested
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-11b` · **Branch:** `rp-11b`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -992,3 +992,23 @@ All 8 assertions passed cleanly.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+### Review 1: changes requested
+
+**What was checked.** Every gate re-run on the branch: workspace 1227, `phototools-core` 714, `rollchrome-core` 391, `phototools-desktop` 26, `rollchrome-desktop` 25, all fifteen front-end gates passing, 54 manual checks counted. The whole diff read against the design.
+
+**What holds.** The design is followed: `combine_detail`, one `blend_local_detail` called by both pipelines, selection reading `B`, the cache holding combined `Detail` and geometry, pruning in `compile_masks`. The `EXPECTED_*` literals were reproduced by `main`'s own code in a separate tree. Scratch tests on a noisy frame gave: full-coverage local Clarity + Dehaze equal to global at 0 levels under crop and rotation, preview and export, orientations 1 and 6; 1488 changed pixels inside a mask and 0 outside under crop and rotation; and identical selected pixels at Dehaze 10 and 100 (14874 of 19200 selected, 0 differing). Temporarily reading the composite in each pipeline fails the range test. Independent release timing, 6000×4000, two masks with Clarity and Dehaze: Drag 6.8 ms cached and 30.6 ms with one mask's Clarity moving, Settle 25.1 and 72.2 ms; 1.8 and 6.5 ms with no masks. All are inside the budgets.
+
+**What must change.** The picture is right; the problems are one breach of the design, one addition nobody asked for, and tests that cannot catch what they are named for.
+
+1. **Export makes a second full buffer when there is no local detail (design point 5).** `pipeline.rs` `apply_recipe_with_orientation` does `raw_source.clone()` whenever global detail is absent or identity, and holds `raw_source` alive when it is not, for every export of every photograph. That is 288 MB at 24 MP and 480 MB at 40 MP. The brief says "no composite, no second buffer". Decide from `recipe.masks` whether any active mask has non-zero local detail before building the frame; keep the undetailed source only in that case.
+2. **Remove the Reset button (G11, and "do not change product behaviour to get a check through").** `mask-reset`, `resetSelectedMask` and `.mask-editing__actions` are not in the brief, and assertion 5 was built on them. The Report lists the button but does not call it a deviation. Assertion 5 sets the four sliders to zero through the sliders, then asserts no `detail` in the save payload. Take `mask-reset` out of assertion 8.
+3. **`local_detail_follows_a_crop_and_a_rotation` cannot fail for the reason in its name.** Removing the geometry from `D` in `preview.rs`, and separately in `pipeline.rs`, leaves all fourteen tests passing: it only asserts that the bytes differ. Rewrite it, keeping the name, to assert under a crop and a rotation: (a) full-coverage local Clarity and Dehaze equal the same global values within 1 level, preview and export; (b) every pixel changed by a Radial mask's local detail is also changed by the same mask carrying only exposure, with at least 50 changed. Confirm that removing the geometry in each pipeline fails it, and say so in the Report.
+4. **`a_range_mask_does_not_move_with_its_own_dehaze` is not the test briefed.** The brief says "the same pixels are affected at Dehaze 10 and 100, preview and export". The test compares exposure on and off at Dehaze 100 on a single pixel. Build the set of pixels the mask's exposure changes at Dehaze 10 and at Dehaze 100, assert the sets are equal, in preview and export, on a frame where a meaningful number are selected and at least one is not. Remove the stale `[0.4, 0.6]` comment. Repeat the composite mutation in each pipeline.
+5. **Assertion 4 never checks the label.** Open the history list and assert that one release adds exactly one entry and that its label is `Masks`, as `check-history` does, then undo as now.
+6. **Assertion 7 cannot fail.** With `normaliseMask` changed to discard `detail`, all eight assertions still pass, so "reopening" the same path does not reload the saved recipe. Open a different photograph first, then return, and assert the values. Confirm that the same mutation fails assertion 7, and say so in the Report.
+7. **Assertion 8 lowers the bar.** It uses 30 px and 38 px and passes if height **or** width clears it. The brief says 40. Assert height ≥ 40 and width ≥ 40 for every new control, as `check-detail` does. (I ran it strict and the controls pass, so no product change is needed.)
+8. **Three new bare `unwrap()` on a shipped path (G10):** `masks.as_ref().unwrap()` in `pipeline.rs` and `preview.rs`, `cache.get(&key).unwrap()` in `preview.rs`. Use `let`-`else`/`if let`, or keep the `Arc` you just inserted.
+9. **The Report must be accurate and complete.** It says `LocalDetail::is_zero` checks within 1e-4 (the code uses exact `==`, which is what is wanted), gives the cache key as `(mask_id, stage, LocalDetail, Option<Detail>)` (it is `(mask, stage)` with the combined `Detail` and geometry held in the value), and describes a luminance range in terms of OkLab L. Report 2 must have a **Deviations** section and a **Could not verify** section, even if each says "none" and that is true.
+
+Counts stay at 1227 / 714 / 391 / 26 / 25, and `check:local-detail` stays at eight numbered assertions. Fill in **Report 2** under a new heading below this review, with every gate's actual output. Do not delete anything above it.

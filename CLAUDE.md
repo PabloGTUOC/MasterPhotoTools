@@ -123,7 +123,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
 cargo test --workspace          # 1281 passing (1 ignored)
 cargo test -p phototools-core   # 714 passing — G2
-cargo test -p rollchrome-core   # 435 passing — G2
+cargo test -p rollchrome-core   # 436 passing — G2
 cargo test -p phototools-desktop   # 26 passing
 cargo test -p rollchrome-desktop   # 26 passing
 cargo test -p rollchrome-cli       # 8 passing

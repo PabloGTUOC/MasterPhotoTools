@@ -406,29 +406,6 @@ impl Progress for OffsetProgress<'_> {
     }
 }
 
-thread_local! {
-    static TEST_OBJECT_SPECS: std::cell::Cell<Option<(ObjectModelSpec, ObjectModelSpec)>> =
-        const { std::cell::Cell::new(None) };
-}
-
-/// Temporarily overrides `OBJECT_ENCODER` and `OBJECT_DECODER` on the current thread so
-/// `download_object_model` can be tested against a local server.
-pub fn with_test_object_specs<R>(
-    encoder: ObjectModelSpec,
-    decoder: ObjectModelSpec,
-    f: impl FnOnce() -> R,
-) -> R {
-    struct Guard(Option<(ObjectModelSpec, ObjectModelSpec)>);
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            TEST_OBJECT_SPECS.with(|c| c.set(self.0));
-        }
-    }
-    let prev = TEST_OBJECT_SPECS.with(|c| c.replace(Some((encoder, decoder))));
-    let _guard = Guard(prev);
-    f()
-}
-
 /// Downloads both object model files sequentially through `fetch`, reporting one running
 /// total over both files' bytes, stopping on cancel, and keeping each file only if it
 /// verifies. If the second fails, the first stays on disk.
@@ -436,9 +413,7 @@ pub fn download_object_model(
     dir: &Path,
     progress: &dyn Progress,
 ) -> Result<(PathBuf, PathBuf), Error> {
-    let (encoder, decoder) =
-        TEST_OBJECT_SPECS.with(|c| c.get().unwrap_or((OBJECT_ENCODER, OBJECT_DECODER)));
-    download_object_specs(dir, &encoder, &decoder, progress)
+    download_object_specs(dir, &OBJECT_ENCODER, &OBJECT_DECODER, progress)
 }
 
 /// Downloads `encoder` then `decoder` into `dir` with a single running byte total.
@@ -993,9 +968,8 @@ mod tests {
             }
         }
         let progress = CollectingProgress::default();
-        let (enc_path, dec_path) = with_test_object_specs(enc_spec, dec_spec, || {
-            download_object_model(dir.path(), &progress).unwrap()
-        });
+        let (enc_path, dec_path) =
+            download_object_specs(dir.path(), &enc_spec, &dec_spec, &progress).unwrap();
         assert_eq!(std::fs::read(&enc_path).unwrap(), enc_body);
         assert_eq!(std::fs::read(&dec_path).unwrap(), dec_body);
         let events = progress.events.lock().unwrap().clone();
@@ -1025,9 +999,7 @@ mod tests {
             dec_body.len() as u64,
         );
         let progress = InMemoryProgress::default();
-        let err = with_test_object_specs(enc_spec, dec_spec, || {
-            download_object_model(dir.path(), &progress).unwrap_err()
-        });
+        let err = download_object_specs(dir.path(), &enc_spec, &dec_spec, &progress).unwrap_err();
         assert!(err.to_string().contains("not the one expected"));
         let enc_dest = object_model_path(dir.path(), &OBJECT_ENCODER);
         let dec_dest = object_model_path(dir.path(), &OBJECT_DECODER);

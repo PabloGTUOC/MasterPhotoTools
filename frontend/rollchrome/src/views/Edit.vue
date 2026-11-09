@@ -114,6 +114,15 @@ let autoSeq = 0;
 const AUTO_LABEL: Record<AutoTarget | 'object', string> = { subject: 'Subject', sky: 'Sky', object: 'Object' };
 const objectTargetState = ref<{ maskId: string | null; componentIndex: number | null }>({ maskId: null, componentIndex: null });
 let objectInFlight = false;
+// The mode's own count, advanced on entering and on leaving: a reply belongs to the stretch of
+// the mode that asked for it. Shared with the automatic masks, `+ Subject` would drop a click's
+// reply and leave the mode refusing clicks; advanced only per click, Esc then `+ Object` would
+// let the old reply land in the new selection.
+let objectSeq = 0;
+// Only the first click on a photograph runs the encoder; later ones take tens of milliseconds
+// and a notice would only flash.
+const OBJECT_LOOKING = 'Looking at the photograph…';
+let objectEncodedSession: string | null = null;
 const BRUSH_MAX = 25;
 let coverageSeq = 0;
 let lastRendered: { recipe: AdjustmentRecipe; stage: PreviewStage } | null = null;
@@ -359,6 +368,7 @@ function startColourRangeComponentEyedropper() {
 function exitEyedropper() {
   eyedropperTarget.value = null;
   objectTargetState.value = { maskId: null, componentIndex: null };
+  objectSeq += 1;
   objectInFlight = false;
 }
 
@@ -366,6 +376,7 @@ function startObjectSelection(maskId: string | null = null, componentIndex: numb
   if (isCropMode.value || isBefore.value || compareMode.value !== 'off' || !sessionId.value) return;
   eyedropperTarget.value = 'object';
   objectTargetState.value = { maskId, componentIndex };
+  objectSeq += 1;
   objectInFlight = false;
 }
 
@@ -467,7 +478,7 @@ async function onEyedropperSample(e: MouseEvent | PointerEvent) {
     if (objectInFlight) return;
     objectInFlight = true;
     const add = !e.altKey;
-    const currentSeq = ++autoSeq;
+    const currentSeq = objectSeq;
     const currentSession = sessionId.value;
     const clickCoord: ObjectClick = {
       u: Math.max(0, Math.min(1, storedX)),
@@ -492,14 +503,15 @@ async function onEyedropperSample(e: MouseEvent | PointerEvent) {
     }
 
     const clicksToSend = [...existingClicks, clickCoord];
-    showNotice('Looking at the photograph…');
+    if (objectEncodedSession !== currentSession) showNotice(OBJECT_LOOKING);
 
     try {
       const raster = await desktop.selectObject(currentSession, clicksToSend);
-      if (currentSeq !== autoSeq || currentSession !== sessionId.value || eyedropperTarget.value !== 'object') {
+      // Before the staleness test: the encoder ran whether or not this reply is still wanted.
+      objectEncodedSession = currentSession;
+      if (currentSeq !== objectSeq || currentSession !== sessionId.value || eyedropperTarget.value !== 'object') {
         return;
       }
-      dismissNotice();
 
       if (!targetInfo.maskId) {
         // Creating a new Object mask
@@ -560,15 +572,17 @@ async function onEyedropperSample(e: MouseEvent | PointerEvent) {
         commitRecipeChange('Masks');
       }
     } catch (err: unknown) {
-      if (currentSeq !== autoSeq || currentSession !== sessionId.value || eyedropperTarget.value !== 'object') {
+      if (currentSeq !== objectSeq || currentSession !== sessionId.value || eyedropperTarget.value !== 'object') {
         return;
       }
       const msg = err instanceof Error ? err.message : String(err);
       showNotice(msg);
     } finally {
-      if (currentSeq === autoSeq) {
+      // A newer stretch of the mode has already cleared this, and may have a click of its own out.
+      if (currentSeq === objectSeq) {
         objectInFlight = false;
       }
+      if (notice.value?.text === OBJECT_LOOKING) dismissNotice();
     }
   } else if (target === 'white-balance') {
     try {

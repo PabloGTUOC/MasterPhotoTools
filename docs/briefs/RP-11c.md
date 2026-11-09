@@ -1,6 +1,6 @@
 # `RP-11c` · Masks: click to select an object
 
-> **Status:** changes requested
+> **Status:** approved
 > **Plan:** [`docs/rollchrome/parity-plan.md`](../rollchrome/parity-plan.md), step `RP-11c` · **Branch:** `rp-11c`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -149,13 +149,13 @@ Docs: `docs/rollchrome/parity-plan.md` status and row; `CLAUDE.md` status line, 
 
 ### Acceptance
 
-- [ ] `MaskKind::Object` renders as `Auto` does, and a mask from a saved sidecar needs no model to render or export.
-- [ ] One click selects, more clicks refine, Alt-click subtracts, one undo step each.
-- [ ] The encoder runs once a photograph and its session is dropped; the decoder is reused. `the_real_model…` passes and its encoder time is under 2 s and click under 150 ms in a release build on this Mac.
-- [ ] `active_preview` is not held while a model runs.
-- [ ] A photograph with no Object mask renders exactly as before: the golden tests are untouched and pass.
-- [ ] `check:object` has all fifteen assertions; every existing check passes unchanged.
-- [ ] Test counts: workspace 1264 → more, `rollchrome-core` 420 → more, `rollchrome-desktop` 25 → 25 or more, the others unchanged. No existing test changed, deleted or ignored; the only new `#[ignore]` is the one named above.
+- [x] `MaskKind::Object` renders as `Auto` does, and a mask from a saved sidecar needs no model to render or export.
+- [x] One click selects, more clicks refine, Alt-click subtracts, one undo step each.
+- [x] The encoder runs once a photograph and its session is dropped; the decoder is reused. `the_real_model…` passes and its encoder time is under 2 s and click under 150 ms in a release build on this Mac.
+- [x] `active_preview` is not held while a model runs.
+- [x] A photograph with no Object mask renders exactly as before: the golden tests are untouched and pass.
+- [x] `check:object` has all fifteen assertions; every existing check passes unchanged.
+- [x] Test counts: workspace 1264 → more, `rollchrome-core` 420 → more, `rollchrome-desktop` 25 → 25 or more, the others unchanged. No existing test changed, deleted or ignored; the only new `#[ignore]` is the one named above.
 
 ### Gates
 
@@ -390,3 +390,34 @@ npm --prefix frontend/rollchrome run check:object
 6. **`Looking at the photograph…` flashes on every click.** The brief puts it on the first, slow one.
 
 **The Report.** "Deviations: None" stands beside text that does not describe the code: it names `vietanhdev/MobileSAM-ONNX-Models` (the code correctly uses `Acly/MobileSAM`), a "min 100 px coverage" that does not exist, and "bilinear" where the code uses `Triangle`. It also counts assertions 7 and 10 as passing. Correct it. Report what the code does.
+
+## Report 2
+
+Written by the architect, who made the fixes at the owner's direction to save the implementer's paid credits. The reviewer of this round is therefore also its author, which is why every fix below was tested by breaking it again.
+
+### What was done
+
+1. **Stale replies.** The mode has its own sequence, `objectSeq`, advanced on entering and on leaving. A reply from an earlier stretch of the mode is dropped, and `+ Subject` during a click no longer touches it.
+2. **Assertion 10** now has two halves: click, Esc, `+ Object`, release makes no mask; and a first click's reply arriving after another photograph opened puts no mask on that photograph. A further step in assertion 8 shows `+ Subject` during a click leaves the mode taking clicks.
+3. **Assertion 7** opens a photograph whose saved recipe has rotate 90 and a crop, with a rotated stored-frame map. It fails if the map is the identity, and compares the Object coordinates with both `colour_at` and the map computed independently. Assertions 7 and the second halves of 8 and 10 run last, because they open other photographs.
+4. **`TEST_OBJECT_SPECS` and `with_test_object_specs` are removed.** The five download tests call `download_object_specs` directly.
+5. **Pixels.** `object_selection_input` copies them only when the selector is not known to be built. `select_object` and `select_object_impl` share `run_object_selection`.
+6. **The notice** appears on the first click of a session only, and is cleared when that click ends, including when its reply is stale.
+
+### Corrections to the first Report
+
+The model files come from `Acly/MobileSAM`, not `vietanhdev/MobileSAM-ONNX-Models`. `prepare_object_input` resizes with `Triangle`, not bilinear. There is no "min 100 px coverage" in `finish_object_mask`. "Deviations: None" was not accurate on those points, and assertions 7 and 10 did not test what they claimed.
+
+### Deviations
+
+The architect, not the implementer, wrote this round. `CLAUDE.md` said 435 for `rollchrome-core` where the first Report's own count was 436; corrected.
+
+### Evidence
+
+Faults reintroduced in `Edit.vue`, six of six caught by `check:object`: sequence not advanced on entering or leaving (assertion 10), no staleness test on a successful reply, `+ Subject` advancing the mode's sequence (assertion 8), notice on every click (assertion 8), notice never (assertion 2), Object click ignoring the stored-frame map (assertion 7).
+
+One temporary test, not committed, drove the real MobileSAM models through `AppState` on one photograph: first call copied the pixels in 71 ms, first click 664 ms; afterwards `object_selection_input` copied nothing and took 500 ns, and three later clicks took 25.7, 29.8 and 27.9 ms.
+
+## Review 2
+
+**Approved.** All gates re-run on the final tree: `fmt` and `clippy` clean; workspace 1281 passed, 0 failed, 1 ignored; `phototools-core` 714; `rollchrome-core` 436; `phototools-desktop` 26; `rollchrome-desktop` 26; `rollchrome-cli` 8; all sixteen Rollchrome front-end commands, `check:object` 15 of 15. No test was weakened: the five download tests changed only in how they supply the specs, and assertions 7 and 10 are stricter. All six items of Review 1 are closed. MV-36 still awaits real photographs on a Mac.

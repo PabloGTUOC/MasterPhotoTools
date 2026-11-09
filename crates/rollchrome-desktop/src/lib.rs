@@ -201,8 +201,11 @@ impl AppState {
         ))
     }
 
-    /// Clones the open photograph's `object_selector` slot and copies its stored pixels and
-    /// orientation so object selection never holds `active_preview` while a model runs (RP-11c).
+    /// Clones the open photograph's `object_selector` slot, and copies its stored pixels only
+    /// if the selector is not known to be built: they are about 13 MB through `linear_to_u8`
+    /// under the lock rendering needs, and only the encoder uses them (RP-11c). `try_lock`
+    /// because a click in progress holds that slot for as long as the model runs; not knowing
+    /// means copying, in case that click's build fails.
     #[allow(clippy::type_complexity)]
     pub fn object_selection_input(
         &self,
@@ -210,7 +213,7 @@ impl AppState {
     ) -> Result<
         (
             Arc<Mutex<Option<rollchrome_core::media::segment::ObjectSelector>>>,
-            rollchrome_core::media::segment::RgbImage,
+            Option<rollchrome_core::media::segment::RgbImage>,
             u32,
         ),
         Error,
@@ -227,9 +230,14 @@ impl AppState {
                 "The preview session has been closed or replaced by another preview".into(),
             ));
         }
+        let built = active
+            .object_selector
+            .try_lock()
+            .is_ok_and(|selector| selector.is_some());
+        let input = (!built).then(|| active.session.segmentation_input());
         Ok((
             Arc::clone(&active.object_selector),
-            active.session.segmentation_input(),
+            input,
             active.session.orientation,
         ))
     }

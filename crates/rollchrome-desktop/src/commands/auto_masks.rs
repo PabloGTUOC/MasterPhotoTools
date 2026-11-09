@@ -10,6 +10,8 @@ use crate::AppState;
 use rollchrome_core::media::edit::{AutoTarget, ObjectClick, StoredRaster};
 use rollchrome_core::media::segment;
 use serde::Serialize;
+use std::path::Path;
+use std::sync::Mutex;
 use tauri::State;
 
 /// One model, as the Masks panel shows it.
@@ -139,6 +141,28 @@ pub fn download_object_model_impl(state: &AppState) -> CommandResult<String> {
         .map_err(describe)
 }
 
+/// Runs one selection, building the photograph's `ObjectSelector` first if this is the first
+/// click on it. `input` is absent only when the selector was already seen to be built.
+fn run_object_selection(
+    slot: &Mutex<Option<segment::ObjectSelector>>,
+    input: Option<segment::RgbImage>,
+    orientation: u32,
+    dir: &Path,
+    clicks: &[ObjectClick],
+) -> Result<StoredRaster, phototools_core::error::Error> {
+    let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.is_none() {
+        let input = input.ok_or_else(|| {
+            phototools_core::error::Error::Internal("object selector has no pixels".into())
+        })?;
+        *guard = Some(segment::ObjectSelector::new(&input, orientation, dir)?);
+    }
+    guard
+        .as_mut()
+        .ok_or_else(|| phototools_core::error::Error::Internal("object selector missing".into()))?
+        .select(clicks)
+}
+
 /// Selects an object in preview session `session_id` from `clicks`, building the
 /// photograph's `ObjectSelector` on the first click and reusing it after.
 #[tauri::command]
@@ -147,24 +171,13 @@ pub async fn select_object(
     clicks: Vec<ObjectClick>,
     state: State<'_, AppState>,
 ) -> CommandResult<StoredRaster> {
-    let (selector_arc, input, orientation) = state
+    let (slot, input, orientation) = state
         .object_selection_input(&session_id)
         .map_err(describe)?;
     let dir = rollchrome_core::config::models_dir(&state.config());
-    tauri::async_runtime::spawn_blocking(
-        move || -> Result<StoredRaster, phototools_core::error::Error> {
-            let mut guard = selector_arc.lock().unwrap_or_else(|e| e.into_inner());
-            if guard.is_none() {
-                *guard = Some(segment::ObjectSelector::new(&input, orientation, &dir)?);
-            }
-            guard
-                .as_mut()
-                .ok_or_else(|| {
-                    phototools_core::error::Error::Internal("object selector missing".into())
-                })?
-                .select(&clicks)
-        },
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        run_object_selection(&slot, input, orientation, &dir, &clicks)
+    })
     .await
     .map_err(|e| format!("the object could not be selected: {e}"))?
     .map_err(describe)
@@ -176,16 +189,7 @@ pub fn select_object_impl(
     session_id: &str,
     clicks: &[ObjectClick],
 ) -> CommandResult<StoredRaster> {
-    let (selector_arc, input, orientation) =
-        state.object_selection_input(session_id).map_err(describe)?;
+    let (slot, input, orientation) = state.object_selection_input(session_id).map_err(describe)?;
     let dir = rollchrome_core::config::models_dir(&state.config());
-    let mut guard = selector_arc.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.is_none() {
-        *guard = Some(segment::ObjectSelector::new(&input, orientation, &dir).map_err(describe)?);
-    }
-    guard
-        .as_mut()
-        .ok_or_else(|| "object selector missing".to_string())?
-        .select(clicks)
-        .map_err(describe)
+    run_object_selection(&slot, input, orientation, &dir, clicks).map_err(describe)
 }

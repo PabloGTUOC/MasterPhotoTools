@@ -524,6 +524,10 @@ fn an_object_mask_without_its_model_or_for_a_closed_session_is_refused() {
     .unwrap()
     .session_id;
 
+    // No selector yet, so the first click has the pixels to build one from.
+    let (_, input, _) = state.object_selection_input(&session).unwrap();
+    assert!(input.is_some());
+
     let clicks = [ObjectClick {
         u: 0.5,
         v: 0.5,

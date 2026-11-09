@@ -12,7 +12,7 @@
  * 7. With the photograph rotated 90° and cropped, the coordinates sent equal what the eyedropper's `colour_at` receives for the same point.
  * 8. A click while one is in flight sends nothing more (hold the stub's reply).
  * 9. A refused first click creates no mask and shows the words; a refused later click leaves clicks and raster unchanged.
- * 10. A reply that arrives after a change of photograph changes nothing.
+ * 10. A reply that arrives after the mode was left and started again, or after a change of photograph, changes nothing.
  * 11. Model absent: the download is asked for with this model's name, and after it completes the mode starts.
  * 12. Refine on a saved Object mask sends its saved clicks plus the new one.
  * 13. Add component → Object makes a component with `op: add`, the base shape unchanged.
@@ -121,6 +121,22 @@ try {
     }
   };
 
+  const holdReplies = () => page.evaluate(() => {
+    window.__STUB__.selectObjectHold = new Promise((resolve) => {
+      window.__STUB__.resolveSelectObjectHold = resolve;
+    });
+  });
+  const releaseReplies = () => page.evaluate(() => {
+    window.__STUB__.resolveSelectObjectHold?.();
+    window.__STUB__.selectObjectHold = null;
+    window.__STUB__.resolveSelectObjectHold = null;
+  });
+  const selectCallCount = () => page.evaluate(() => window.__STUB__.selectObjectCalls.length);
+  const waitForSelectCalls = (n) => page.waitForFunction(
+    (want) => window.__STUB__.selectObjectCalls.length === want, n, { timeout: 4000 });
+  const lookingNoticeShown = () => page.evaluate(() =>
+    document.querySelector('[data-testid="edit-notice"]')?.textContent?.includes('Looking at the photograph') ?? false);
+
   await page.evaluate(() => {
     window.__STUB__.orientation = 1;
     window.__STUB__.toStoredOverride = null;
@@ -193,10 +209,15 @@ try {
   const clickX = cBox.x + cBox.width * 0.4;
   const clickY = cBox.y + cBox.height * 0.3;
 
+  await holdReplies();
   await page.mouse.click(clickX, clickY);
   await page.waitForFunction(() => {
     return (window.__STUB__.selectObjectCalls?.length ?? 0) === 1;
   }, { timeout: 4000 });
+  if (!(await lookingNoticeShown())) {
+    failures.push('Assertion 2: The first click on a photograph should say it is looking at the photograph');
+  }
+  await releaseReplies();
 
   const calls2 = await page.evaluate(() => window.__STUB__.selectObjectCalls);
   if (calls2.length !== 1) {
@@ -326,65 +347,6 @@ try {
   }
 
   // -------------------------------------------------------------------------
-  // 7. With photograph rotated 90° and cropped, coords equal colour_at coords
-  // -------------------------------------------------------------------------
-  assertionsRun += 1;
-  console.log('Asserting 7: Rotated and cropped coordinates match colour_at...');
-  // Apply rotation 90 and crop directly on recipe to match exact geometry mapping
-  await page.evaluate(() => {
-    window.__STUB__.colourAtCalls = [];
-    window.__STUB__.selectObjectCalls = [];
-  });
-
-  // Rotate 90 CW and crop via recipe
-  await page.evaluate(() => {
-    const r = window.__STUB__.lastSavedRecipe;
-    if (r) {
-      r.geometry = {
-        crop: { x: 0.1, y: 0.15, width: 0.8, height: 0.7 },
-        rotate: 90,
-        straighten: 0,
-        flip_h: false,
-        flip_v: false,
-        aspect: null,
-      };
-    }
-  });
-
-  // Click eyedropper (via + Colour range in Masks panel) on canvas point (0.35, 0.45)
-  const sampleX = cBox.x + cBox.width * 0.35;
-  const sampleY = cBox.y + cBox.height * 0.45;
-
-  const colourMaskBtn = page.locator('button[data-testid="add-colour-mask"]');
-  await colourMaskBtn.scrollIntoViewIfNeeded();
-  await colourMaskBtn.click();
-  await page.waitForTimeout(100);
-  await page.mouse.click(sampleX, sampleY);
-  await page.waitForFunction(() => (window.__STUB__.colourAtCalls?.length ?? 0) > 0, { timeout: 3000 });
-  const colourCall = await page.evaluate(() => window.__STUB__.colourAtCalls[window.__STUB__.colourAtCalls.length - 1]);
-
-  // Click with + Object on the same point
-  await ensureMasksSectionOpen();
-  const mask1SelectBtn = page.locator('button[data-testid="mask-select-Object 1"], .mask-row__name').first();
-  if (await mask1SelectBtn.isVisible()) {
-    await mask1SelectBtn.click();
-    await page.waitForTimeout(100);
-  }
-  await refineBtn.scrollIntoViewIfNeeded();
-  await refineBtn.click();
-  await page.waitForTimeout(100);
-  await page.mouse.click(sampleX, sampleY);
-  await page.waitForFunction(() => (window.__STUB__.selectObjectCalls?.length ?? 0) > 0, { timeout: 3000 });
-  const objCall = await page.evaluate(() => window.__STUB__.selectObjectCalls[window.__STUB__.selectObjectCalls.length - 1]);
-
-  const objClick = objCall?.clicks?.[objCall.clicks.length - 1];
-  if (!colourCall || !objClick || Math.abs(colourCall.x - objClick.u) > 0.001 || Math.abs(colourCall.y - objClick.v) > 0.001) {
-    failures.push(`Assertion 7: Mismatch between colour_at coords (${colourCall?.x}, ${colourCall?.y}) and Object coords (${objClick?.u}, ${objClick?.v})`);
-  }
-  await page.locator('button[data-testid="object-done"]').click();
-  await page.waitForTimeout(150);
-
-  // -------------------------------------------------------------------------
   // 8. Click while one in flight sends nothing more
   // -------------------------------------------------------------------------
   assertionsRun += 1;
@@ -410,6 +372,10 @@ try {
   const inFlightCalls = await page.evaluate(() => window.__STUB__.selectObjectCalls.length);
   if (inFlightCalls !== 1) {
     failures.push(`Assertion 8: Expected 1 call while in flight, got ${inFlightCalls}`);
+  }
+  // Not the first click on this photograph: the encoder has already run.
+  if (await lookingNoticeShown()) {
+    failures.push('Assertion 8: A later click should not flash the looking-at-the-photograph notice');
   }
 
   // Release hold
@@ -483,36 +449,37 @@ try {
   await page.waitForTimeout(150);
 
   // -------------------------------------------------------------------------
-  // 10. Reply arriving after change of photograph changes nothing
+  // 10 (first half). A reply to a stretch of the mode that was left changes nothing, even with
+  // the mode started again. The change of photograph is at the end: nothing after it could run.
   // -------------------------------------------------------------------------
   assertionsRun += 1;
-  console.log('Asserting 10: Reply arriving after change of photograph changes nothing...');
-  await page.evaluate(() => {
-    window.__STUB__.selectObjectHold = new Promise((resolve) => {
-      window.__STUB__.resolveSelectObjectHold = resolve;
-    });
-  });
-
-  await refineBtn.click();
+  console.log('Asserting 10: A reply from before Esc does not land in the mode started after it...');
+  // The rows, not the saved recipe: saving is debounced, and would still be the old one here.
+  const maskRows = page.locator('.mask-row__name');
+  const rowsBeforeStale = await maskRows.count();
+  await holdReplies();
+  const staleCallsBefore = await selectCallCount();
+  await addObjectBtn.click();
   await page.waitForTimeout(100);
   await page.mouse.click(cBox.x + cBox.width * 0.3, cBox.y + cBox.height * 0.3);
-  await page.waitForTimeout(50);
-
-  // Simulate change of photograph / session
-  await page.evaluate(() => {
-    window.__STUB__.orientation = 1;
-  });
-  // Navigate/reopen image via window.__STUB__ or UI
-  // Trigger openImage
-  await page.evaluate(async () => {
-    window.__STUB__.selectObjectCalls = [];
-    // Release hold after exiting
-    window.__STUB__.resolveSelectObjectHold?.();
-    window.__STUB__.selectObjectHold = null;
-    window.__STUB__.resolveSelectObjectHold = null;
-  });
+  await waitForSelectCalls(staleCallsBefore + 1);
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(100);
+  await addObjectBtn.click();
+  await page.waitForTimeout(100);
+  await releaseReplies();
+  await page.waitForTimeout(300);
+  const rowsAfterStale = await maskRows.count();
+  if (rowsAfterStale !== rowsBeforeStale) {
+    failures.push(`Assertion 10: A reply from before Esc made a mask after + Object started the mode again (${rowsBeforeStale} rows became ${rowsAfterStale})`);
+  }
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  // Refine is only offered on a selected mask, and the assertions below use it.
+  if (!(await refineBtn.isVisible())) {
+    await page.locator('.mask-row__name').first().click();
+    await page.waitForTimeout(100);
+  }
 
   // -------------------------------------------------------------------------
   // 11. Model absent: download asked with model's name, mode starts after download
@@ -667,6 +634,109 @@ try {
   // Take proof screenshot
   await page.screenshot({ path: join(OUT, 'rp11c-object-masks.png') });
   console.log(`Saved screenshot to ${join(OUT, 'rp11c-object-masks.png')}`);
+
+  // -------------------------------------------------------------------------
+  // 8 (second half). An automatic mask during a click neither loses the click nor jams the mode.
+  // -------------------------------------------------------------------------
+  console.log('Asserting 8: + Subject during a click leaves the mode taking clicks...');
+  await holdReplies();
+  const beforeSubject = await selectCallCount();
+  await page.mouse.click(cBox.x + cBox.width * 0.4, cBox.y + cBox.height * 0.4);
+  await waitForSelectCalls(beforeSubject + 1);
+  await page.locator('button[data-testid="add-subject-mask"]').click();
+  await page.waitForFunction(() => window.__STUB__.autoMaskCalls.includes('subject'), { timeout: 4000 });
+  await releaseReplies();
+  await page.waitForTimeout(300);
+  await page.mouse.click(cBox.x + cBox.width * 0.6, cBox.y + cBox.height * 0.6);
+  await page.waitForTimeout(300);
+  if ((await selectCallCount()) !== beforeSubject + 2) {
+    failures.push(`Assertion 8: After + Subject during a click, the next click was not sent (${(await selectCallCount()) - beforeSubject} of 2)`);
+  }
+  await page.locator('button[data-testid="object-done"]').click();
+  await page.waitForTimeout(150);
+
+  // -------------------------------------------------------------------------
+  // 7. Rotated and cropped: the coordinates sent are the eyedropper's, through a map that is
+  // not the identity. Opened from a saved recipe, because the view reads its own recipe.
+  // -------------------------------------------------------------------------
+  assertionsRun += 1;
+  console.log('Asserting 7: Rotated and cropped coordinates match colour_at...');
+  const rotatedToStored = [0, 0.6, 0.1, -0.8, 0, 0.9]; // 90 degrees, and the recipe's crop
+  await page.evaluate((m) => {
+    window.__STUB__.toStoredOverride = m;
+    window.__STUB__.colourAtCalls = [];
+    window.__STUB__.selectObjectCalls = [];
+  }, rotatedToStored);
+  await pathInput.fill('/Volumes/Photos/v2_edits.jpg'); // its recipe has rotate 90 and a crop
+  await pathInput.press('Enter');
+  await page.waitForTimeout(300);
+  await blurAll();
+  await ensureMasksSectionOpen();
+  const box7 = await canvas.boundingBox();
+  if (!box7) throw new Error('Canvas bounding box missing after opening the rotated photograph');
+  const [u7, v7] = [0.35, 0.45];
+  const sampleX = box7.x + box7.width * u7;
+  const sampleY = box7.y + box7.height * v7;
+  const expectedU = rotatedToStored[0] * u7 + rotatedToStored[1] * v7 + rotatedToStored[2];
+  const expectedV = rotatedToStored[3] * u7 + rotatedToStored[4] * v7 + rotatedToStored[5];
+
+  const colourMaskBtn = page.locator('button[data-testid="add-colour-mask"]');
+  await colourMaskBtn.scrollIntoViewIfNeeded();
+  await colourMaskBtn.click();
+  await page.waitForTimeout(100);
+  await page.mouse.click(sampleX, sampleY);
+  await page.waitForFunction(() => (window.__STUB__.colourAtCalls?.length ?? 0) > 0, { timeout: 3000 });
+  const colourCall = await page.evaluate(() => window.__STUB__.colourAtCalls.at(-1));
+
+  await addObjectBtn.scrollIntoViewIfNeeded();
+  await addObjectBtn.click();
+  await page.waitForTimeout(100);
+  await page.mouse.click(sampleX, sampleY);
+  await waitForSelectCalls(1);
+  const objClick = await page.evaluate(() => window.__STUB__.selectObjectCalls[0]?.clicks?.at(-1));
+
+  if (Math.abs(expectedU - u7) < 0.05 && Math.abs(expectedV - v7) < 0.05) {
+    failures.push('Assertion 7: The map under test is the identity, so this proves nothing');
+  }
+  if (!colourCall || !objClick
+      || Math.abs(colourCall.x - objClick.u) > 0.001 || Math.abs(colourCall.y - objClick.v) > 0.001) {
+    failures.push(`Assertion 7: colour_at (${colourCall?.x}, ${colourCall?.y}) differs from Object (${objClick?.u}, ${objClick?.v})`);
+  }
+  if (!objClick || Math.abs(objClick.u - expectedU) > 0.001 || Math.abs(objClick.v - expectedV) > 0.001) {
+    failures.push(`Assertion 7: Object coords (${objClick?.u}, ${objClick?.v}) are not the mapped point (${expectedU}, ${expectedV})`);
+  }
+  await page.waitForTimeout(150);
+  await page.locator('button[data-testid="object-done"]').click();
+  await page.waitForTimeout(150);
+  await page.evaluate(() => { window.__STUB__.toStoredOverride = null; });
+
+  // -------------------------------------------------------------------------
+  // 10 (second half). A first click's reply arriving after another photograph opened makes no
+  // mask on that photograph. A first click, because a refinement would find no mask to change.
+  // -------------------------------------------------------------------------
+  console.log('Asserting 10: A reply arriving after a change of photograph changes nothing...');
+  await holdReplies();
+  const beforeOpen = await selectCallCount();
+  await addObjectBtn.click();
+  await page.waitForTimeout(100);
+  await page.mouse.click(cBox.x + cBox.width * 0.3, cBox.y + cBox.height * 0.3);
+  await waitForSelectCalls(beforeOpen + 1);
+  await pathInput.fill('/Volumes/Photos/another_photo.jpg');
+  await pathInput.press('Enter');
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { window.__STUB__.renders = []; window.__STUB__.saveCalls = []; });
+  await releaseReplies();
+  await page.waitForTimeout(400);
+  const objectMasksAfter = await page.evaluate(() => {
+    const seen = [...window.__STUB__.renders.map((r) => r.recipe), ...window.__STUB__.saveCalls.map((c) => c.recipe)];
+    return seen.flatMap((r) => r.masks ?? []).filter((m) => m.kind?.type === 'object').length;
+  });
+  if (objectMasksAfter !== 0) {
+    failures.push(`Assertion 10: A reply from the previous photograph put ${objectMasksAfter} object mask(s) on the new one`);
+  }
+  if (await page.locator('.mask-row__name').count()) {
+    failures.push('Assertion 10: The new photograph shows a mask it never had');
+  }
 
 } catch (err) {
   failures.push(`Unexpected check exception: ${err.stack || err.message}`);

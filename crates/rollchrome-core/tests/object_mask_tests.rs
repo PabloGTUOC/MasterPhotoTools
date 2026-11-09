@@ -6,9 +6,9 @@ use rollchrome_core::media::edit::{
     MaskOp, ObjectClick, PreviewSession, PreviewStage, StoredRaster,
 };
 use rollchrome_core::media::segment::{
-    choose_object_mask, download_object_model, finish_object_mask, object_model_path,
-    object_prompt, prepare_object_input, to_upright, upright_click, with_test_object_specs,
-    ObjectModelSpec, OBJECT_DECODER, OBJECT_ENCODER,
+    choose_object_mask, download_object_specs, finish_object_mask, object_model_path,
+    object_prompt, prepare_object_input, to_upright, upright_click, ObjectModelSpec,
+    OBJECT_DECODER, OBJECT_ENCODER,
 };
 use rollchrome_core::tools::edit::{export_edited_image, load_recipe, save_recipe};
 use rollchrome_core::tools::presets::{load_preset, save_preset};
@@ -303,9 +303,7 @@ fn download_object_model_over_a_local_server_verifies_both_files_handles_failure
         let s1 = make_spec(OBJECT_ENCODER.file, u1, sha(&b1), b1.len() as u64);
         let s2 = make_spec(OBJECT_DECODER.file, u2, sha(&b2), b2.len() as u64);
         let progress = TestProgress::default();
-        let (p1, p2) = with_test_object_specs(s1, s2, || {
-            download_object_model(dir.path(), &progress).unwrap()
-        });
+        let (p1, p2) = download_object_specs(dir.path(), &s1, &s2, &progress).unwrap();
         assert_eq!(std::fs::read(&p1).unwrap(), b1);
         assert_eq!(std::fs::read(&p2).unwrap(), b2);
         let events = progress.events.lock().unwrap().clone();
@@ -329,9 +327,7 @@ fn download_object_model_over_a_local_server_verifies_both_files_handles_failure
             b2.len() as u64,
         );
         let progress = TestProgress::default();
-        let err = with_test_object_specs(s1, s2, || {
-            download_object_model(dir.path(), &progress).unwrap_err()
-        });
+        let err = download_object_specs(dir.path(), &s1, &s2, &progress).unwrap_err();
         assert!(err.to_string().contains("not the one expected"));
         let enc_path = object_model_path(dir.path(), &OBJECT_ENCODER);
         let dec_path = object_model_path(dir.path(), &OBJECT_DECODER);
@@ -367,9 +363,7 @@ fn download_object_model_over_a_local_server_verifies_both_files_handles_failure
             calls: AtomicUsize::new(0),
             first_bytes: b1.len() as u64,
         };
-        let err = with_test_object_specs(s1, s2, || {
-            download_object_model(dir.path(), &progress).unwrap_err()
-        });
+        let err = download_object_specs(dir.path(), &s1, &s2, &progress).unwrap_err();
         assert!(err.to_string().contains("cancelled"), "got: {err}");
         let enc_path = object_model_path(dir.path(), &OBJECT_ENCODER);
         let dec_path = object_model_path(dir.path(), &OBJECT_DECODER);

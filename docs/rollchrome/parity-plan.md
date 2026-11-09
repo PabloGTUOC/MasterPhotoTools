@@ -1,6 +1,6 @@
 # Rollchrome towards a Lightroom replacement — plan
 
-> **Status (2026-11-09):** RP-1 to RP-13, RP-2b, RP-11b and RP-11c done (MV-24 to MV-36 await real files and an MCP client: no real XZ-1, D60 or X100VI file has been developed in the desktop UI yet). Steps have stable ids (`RP-4`), each built from a
+> **Status (2026-11-09):** RP-1 to RP-13, RP-2b, RP-11b, RP-11c and RP-11d done (MV-24 to MV-37 await real files and an MCP client: no real XZ-1, D60 or X100VI file has been developed in the desktop UI yet). Steps have stable ids (`RP-4`), each built from a
 > brief in [`docs/briefs/`](../briefs/).
 
 **The owner's goal is to stop paying for a Lightroom subscription.** The list comes from comparing
@@ -49,6 +49,7 @@ be right before anything is built on top of it. Later steps get their brief when
 | **RP-11** | Masks | Colour and luminance range, add/subtract/intersect, background | Medium |
 | **RP-11b** | Local neighbourhood controls | Clarity, texture, dehaze and sharpness inside a mask | Medium |
 | **RP-11c** | Click selection | Click on something to select it, MobileSAM image encoder and mask decoder | Medium, done |
+| **RP-11d** | Masks: People, Subject and Sky | BiRefNet portrait for people, full BiRefNet for subject/background, UperNet ConvNeXt tiny sky guard | Medium, done |
 | **RP-12** | The owner's cameras | Olympus XZ-1 (ORF, accepted; no real file developed yet), Nikon D60 (NEF) and Fujifilm X100VI (RAF, 40 MP). Linear preview cached upright, draft scrubbing; D60 and X100VI await real files for manual verification (camera support written and wired). CR3, RW2, PEF and SRW left out | Small, D60 and X100VI await a real capture |
 | **RP-13** | Automation | A command line (`rollchrome-cli`) and an MCP server (`rollchrome_core::automation::mcp`) over `rollchrome-core` ([`automation.md`](automation.md), [RP-13](../briefs/RP-13.md); MV-35 awaits a real folder and MCP client) | Medium, done |
 

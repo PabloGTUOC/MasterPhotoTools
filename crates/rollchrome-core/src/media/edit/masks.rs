@@ -176,6 +176,7 @@ pub struct MaskComponent {
 pub enum AutoTarget {
     Subject,
     Sky,
+    People,
 }
 
 /// Where compiling a mask gets its pixels: the brush rasters of a mask's strokes and the

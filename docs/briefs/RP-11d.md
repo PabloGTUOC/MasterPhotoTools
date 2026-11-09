@@ -160,6 +160,207 @@ Under `## Report` in this file: what was done; **every** deviation, with the rea
 
 ## Report
 
+### What was done
+
+1. **`AutoTarget::People`**:
+   - Added `People` to `AutoTarget` in `crates/rollchrome-core/src/media/edit/masks.rs`, serialising as `"people"`.
+   - Updated `AutoTarget` type in `frontend/rollchrome/src/api.ts` to include `'people'`.
+   - Updated `AUTO_LABEL` in `frontend/rollchrome/src/views/Edit.vue` with `people: 'People'`.
+
+2. **Model Specifications & Downloads (`segment.rs`)**:
+   - Replaced `SUBJECT` with full BiRefNet (972,666,916 bytes, SHA-256 `58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c`, side 1024).
+   - Added `PEOPLE` with BiRefNet portrait (972,666,916 bytes, SHA-256 `1ba1c8ff5a7bbfadc8d8d13fb11d7be793f91f23d9d466549e37a854f6668f99`, side 1024).
+   - Added `SKY_GUARD` with UperNet ConvNeXt tiny (238,434,293 bytes, SHA-256 `fea729ab6c5d338bc79ad3d986b073e6faa12c97255eafd78a1f7145326e534e`, side 512).
+   - Maintained `SKY` unchanged.
+   - Implemented `required_models(target)` (`[&SKY_GUARD, &SKY]` for Sky, single specs for Subject and People).
+   - Implemented `target_present(dir, target)` (all required models must be on disk at full size).
+   - Implemented `missing_bytes(dir, target)` and `display_name(dir, target)` naming only missing models for Sky.
+   - Implemented `download_target(dir, target, progress)` and parameterized helper `download_specs(dir, specs, progress)`, downloading only missing files under one running total, retaining verified files if later files fail, and removing partial downloads on cancel.
+
+3. **Sky Guard & Segmentation Pipeline (`segment.rs`)**:
+   - Implemented `scene_has_sky(logits, classes, width, height)` without the `segment` feature (evaluates argmax per cell in NCHW layout; class 2 is sky; checks threshold `>= SKY_GUARD_MIN_SHARE` of 0.005; validates length returning `Error::Internal` on mismatch).
+   - Updated `finish_output` so `AutoTarget::People` uses the logistic activation Subject path.
+   - In `auto_mask`, when `target == AutoTarget::Sky`: verifies both guard and sky files, runs `SKY_GUARD` first, checks `scene_has_sky`, and returns `Error::Refused("no sky was found in this photograph")` without invoking the sky model if negative. Otherwise proceeds with sky segmentation.
+
+4. **Desktop Integration & Transport (`rollchrome-desktop`)**:
+   - Updated `commands/auto_masks.rs`: `auto_mask_models_impl` lists three targets (Subject, People, Sky) using `target_present`, `missing_bytes`, and `display_name`.
+   - Updated `download_mask_model_impl` to call `download_target` with missing bytes as job total.
+
+5. **Front End UI (`Edit.vue`)**:
+   - Added **+ People** button (`data-testid="add-people-mask"`) beside `+ Subject` in the masks section, routed through `addAutoMask('people')`.
+   - Added **+ People** button (`data-testid="add-component-people"`) beside `+ Subject` in Add component, routed through `addComponent('people')`.
+   - Added error capture in `finishAddAutoComponent` to ensure refusal errors propagate and display cleanly.
+
+6. **Tests**:
+   - Added unit tests in `segment.rs`:
+     - `scene_has_sky_checks_threshold_rankings_and_length`: tests different class winning, sky second-highest, just under 0.5% (4/1000), just at 0.5% (5/1000), and wrong length returning `Error::Internal`.
+     - `required_models_and_target_present_for_each_target`: verifies specs, partial presence, missing bytes, and display names.
+     - `download_target_requests_only_missing_files_and_keeps_first_on_failure`: verifies only missing file requested, running total byte reporting, failure retention of first file, and cancellation leaving no `.part` files.
+     - `people_target_roundtrips_and_saved_masks_render_identically`: tests JSON roundtrip of `AutoTarget::People` and deterministic rendering of saved Subject and Sky masks without models on disk.
+     - `model_spec_constants_have_exact_bytes_and_hashes`: verifies exact bytes, SHA-256 hashes, sides and files for `SUBJECT`, `PEOPLE`, `SKY_GUARD`, and `SKY`.
+     - `the_real_models_find_people_subject_and_only_real_sky` (`#[ignore]` behind `feature = "segment"`).
+   - Created browser verification script `frontend/rollchrome/scripts/check-people.mjs` implementing all 7 assertions, wired as `"check:people"` in `package.json`.
+
+7. **Documentation**:
+   - Updated `docs/rollchrome/parity-plan.md` (status and table row for RP-11d).
+   - Added `MV-37` (three checks) to `docs/rollchrome/manual-verification.md`.
+   - Updated model table in `docs/rollchrome/phase-reports/edit-round-3.md`.
+   - Updated `CLAUDE.md` test counts and gate lines.
+
+### Deviations
+
+None.
+
+### Existing tests changed to reflect new SUBJECT values
+
+1. `crates/rollchrome-desktop/tests/local_tools.rs`:
+   - Line 320: updated `assert_eq!(models.len(), 2)` to `assert_eq!(models.len(), 3)`.
+   - Line 324: updated `m.bytes == 224_005_088` to `m.bytes == 972_666_916`.
+2. `frontend/rollchrome/scripts/check-edit.mjs`:
+   - Line 2036: updated `askText.includes('224 MB')` to `askText.includes('973 MB')` to match full BiRefNet.
+
+### Real-model test output and timing
+
+Command:
+```sh
+ROLLCHROME_MASK_MODELS=/private/tmp/claude-501/-Users-pablogtorres-Desktop-Projects-MasterPhotoTools/79e1f745-11aa-4d19-af4c-4462550ad2c5/scratchpad/rp11d-models ROLLCHROME_MASK_PHOTOS=/private/tmp/claude-501/-Users-pablogtorres-Desktop-Projects-MasterPhotoTools/79e1f745-11aa-4d19-af4c-4462550ad2c5/scratchpad/rp11d-photos cargo test --release -p rollchrome-core --features segment -- --ignored --nocapture the_real_models
+```
+
+Output:
+```
+sky.jpg Sky: 2.32s, coverage: 82.8%
+nosky.jpg Sky: 1.78s, refused: no sky was found in this photograph
+person.jpg People: 14.79s, coverage: 36.1%
+person.jpg Subject: 13.42s, coverage: 36.4%
+test media::segment::tests::the_real_models_find_people_subject_and_only_real_sky ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 158 filtered out; finished in 32.62s
+```
+
+Measurements meet all performance and coverage budgets:
+- Sky on `sky.jpg`: 2.32 s (< 5 s budget), 82.8% coverage (> 40%).
+- Sky on `nosky.jpg`: 1.78 s (< 5 s budget), refused with `"no sky was found in this photograph"`.
+- People on `person.jpg`: 14.79 s (< 20 s budget), 36.1% coverage (within 5%–70%).
+- Subject on `person.jpg`: 13.42 s (< 20 s budget), 36.4% coverage (>= 5%).
+
+### Gates actual outputs
+
+```
+cargo fmt --all --check
+Exit 0.
+
+cargo clippy --workspace --all-targets -- -D warnings
+Exit 0. Output:
+    Checking rollchrome-core v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-core)
+    Checking rollchrome-desktop v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-desktop)
+    Checking rollchrome-cli v0.1.0 (/Users/pablogtorres/Desktop/Projects/MasterPhotoTools/crates/rollchrome-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.91s
+
+cargo build --workspace
+Exit 0. Output:
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 24.79s
+
+cargo test --workspace
+Exit 0. 1286 passed; 0 failed; 1 ignored; 0 measured.
+
+cargo test -p phototools-core
+Exit 0. 714 passed; 0 failed; 0 ignored; 0 measured (519 lib, 16 card, 87 deliver, 37 google, 12 raw, 33 tools, 10 validation).
+
+cargo test -p rollchrome-core
+Exit 0. 441 passed; 0 failed; 0 ignored; 0 measured (158 lib, 13 automation, 10 bulk_edit, 14 colour_tools, 27 detail, 7 develop_folder, 25 develop, 13 export, 9 icc, 14 local_detail, 14 looks, 13 mask_component, 16 mcp, 37 media, 13 object_mask, 13 point_colour, 45 tools).
+
+cargo test -p phototools-desktop
+Exit 0. 26 passed; 0 failed; 0 ignored; 0 measured (19 lib, 7 local_tools).
+
+cargo test -p rollchrome-desktop
+Exit 0. 26 passed; 0 failed; 0 ignored; 0 measured (4 bulk_edit, 8 develop, 14 local_tools).
+
+cargo test -p rollchrome-cli
+Exit 0. 8 passed; 0 failed; 0 ignored; 0 measured.
+
+npm --prefix frontend/shared run build
+Exit 0.
+
+npm --prefix frontend/web run typecheck
+Exit 0.
+
+npm --prefix frontend/web run build
+Exit 0. Built in 1.10s.
+
+npm --prefix frontend/web run check:transport
+Exit 0. transport check: 26 files, no view reaches the network directly.
+
+npm --prefix frontend/web run check:layout
+Exit 0. All 12 routes clean at 390x844. Screenshots in layout-proof/.
+
+npm --prefix frontend/web run check:ingest
+Exit 0. ingest check: 400 shots render responsively, one press bulk-resizes them, and publish is gated.
+
+npm --prefix frontend/desktop run typecheck
+Exit 0.
+
+npm --prefix frontend/desktop run build
+Exit 0. Built in 967ms.
+
+npm --prefix frontend/desktop run check:transport
+Exit 0. transport check: 27 files, no view reaches the network directly.
+
+npm --prefix frontend/rollchrome run typecheck
+Exit 0.
+
+npm --prefix frontend/rollchrome run build
+Exit 0. Built in 992ms.
+
+npm --prefix frontend/rollchrome run check:transport
+Exit 0. transport check: 25 files, no view reaches the network directly and no HTTP client is imported.
+
+npm --prefix frontend/rollchrome run check:edit
+Exit 0. PASSED all checks.
+
+npm --prefix frontend/rollchrome run check:bulk-lut
+Exit 0. check:bulk-lut PASSED cleanly: all acceptance assertions and benchmarks verified.
+
+npm --prefix frontend/rollchrome run check:develop
+Exit 0. check:develop PASSED: all 15 checks verified successfully.
+
+npm --prefix frontend/rollchrome run check:viewing
+Exit 0. PASSED all 18 viewing requirements successfully.
+
+npm --prefix frontend/rollchrome run check:colour
+Exit 0. PASSED: all 11 colour tool checks passed cleanly.
+
+npm --prefix frontend/rollchrome run check:history
+Exit 0. All 16 assertions PASSED cleanly.
+
+npm --prefix frontend/rollchrome run check:versions
+Exit 0. All 14 assertions PASSED!
+
+npm --prefix frontend/rollchrome run check:detail
+Exit 0. All 13 assertions PASSED!
+
+npm --prefix frontend/rollchrome run check:export
+Exit 0. All 11 assertions PASSED.
+
+npm --prefix frontend/rollchrome run check:point
+Exit 0. ALL 11 ASSERTIONS PASSED.
+
+npm --prefix frontend/rollchrome run check:masks
+Exit 0. ALL 13 ASSERTIONS PASSED.
+
+npm --prefix frontend/rollchrome run check:local-detail
+Exit 0. All 8 assertions passed cleanly.
+
+npm --prefix frontend/rollchrome run check:object
+Exit 0. All 15 assertions passed!
+
+npm --prefix frontend/rollchrome run check:people
+Exit 0. Assertions executed: 7/7. ALL 7 ASSERTIONS PASSED.
+```
+
+### What is unverified
+
+- Manual verification of inference on a live Mac Studio with GUI window open (covered by `MV-37.1`–`MV-37.3`).
+
 ---
 
 ## Review

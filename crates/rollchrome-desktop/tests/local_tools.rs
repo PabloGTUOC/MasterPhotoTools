@@ -317,11 +317,11 @@ fn an_automatic_mask_without_its_model_is_refused_by_name() {
     let state = rollchrome_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
 
     let models = rollchrome_desktop::commands::auto_masks::auto_mask_models_impl(&state);
-    assert_eq!(models.len(), 2);
+    assert_eq!(models.len(), 3);
     assert!(models.iter().all(|m| !m.present));
     assert!(models
         .iter()
-        .any(|m| m.target == AutoTarget::Subject && m.bytes == 224_005_088));
+        .any(|m| m.target == AutoTarget::Subject && m.bytes == 972_666_916));
 
     let img_path = f.root.join("photo.jpg");
     image::RgbImage::new(64, 48).save(&img_path).unwrap();

@@ -2033,7 +2033,7 @@ try {
     await page.locator('[data-testid="auto-download-cancel"]').click();
   }
   const afterNotNow = await page.evaluate(() => ({ downloads: window.__STUB__.downloads.length, calls: window.__STUB__.autoMaskCalls }));
-  if (!askText.includes('224 MB') || afterNotNow.downloads !== 0 || afterNotNow.calls.includes('subject')) {
+  if (!askText.includes('973 MB') || afterNotNow.downloads !== 0 || afterNotNow.calls.includes('subject')) {
     failures.push(`A missing model should be explained with its size and not downloaded without consent; got "${askText}", ${JSON.stringify(afterNotNow)}`);
   }
 

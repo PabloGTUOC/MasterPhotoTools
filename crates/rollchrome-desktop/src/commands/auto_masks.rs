@@ -30,16 +30,13 @@ pub fn auto_mask_models(state: State<'_, AppState>) -> CommandResult<Vec<MaskMod
 
 pub fn auto_mask_models_impl(state: &AppState) -> Vec<MaskModel> {
     let dir = rollchrome_core::config::models_dir(&state.config());
-    [AutoTarget::Subject, AutoTarget::Sky]
+    [AutoTarget::Subject, AutoTarget::People, AutoTarget::Sky]
         .into_iter()
-        .map(|target| {
-            let spec = segment::spec(target);
-            MaskModel {
-                target,
-                name: spec.name.to_string(),
-                present: segment::model_present(&dir, spec),
-                bytes: spec.bytes,
-            }
+        .map(|target| MaskModel {
+            target,
+            name: segment::display_name(&dir, target),
+            present: segment::target_present(&dir, target),
+            bytes: segment::missing_bytes(&dir, target),
         })
         .collect()
 }
@@ -55,12 +52,13 @@ pub fn download_mask_model(
 
 pub fn download_mask_model_impl(state: &AppState, target: AutoTarget) -> CommandResult<String> {
     let dir = rollchrome_core::config::models_dir(&state.config());
-    let spec = segment::spec(target);
+    let missing = segment::missing_bytes(&dir, target);
+    let name = segment::display_name(&dir, target);
     state
         .jobs
-        .spawn("download_mask_model", spec.bytes, move |progress| {
-            segment::download_model(&dir, spec, progress)?;
-            Ok(format!("Downloaded {}", spec.name))
+        .spawn("download_mask_model", missing, move |progress| {
+            segment::download_target(&dir, target, progress)?;
+            Ok(format!("Downloaded {name}"))
         })
         .map_err(describe)
 }

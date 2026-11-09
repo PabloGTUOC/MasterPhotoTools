@@ -82,7 +82,7 @@ const stubState: StubState = {
   presetErrors: [],
   toStoredOverride: null,
   maskCoverageRequests: [],
-  modelsPresent: { subject: false, sky: true },
+  modelsPresent: { subject: false, sky: true, people: true },
   objectModelPresent: true,
   downloads: [],
   cancelledJobs: [],
@@ -465,8 +465,9 @@ export class StubDesktopApiClient {
 
   async autoMaskModels(): Promise<Array<{ target: string; name: string; present: boolean; bytes: number }>> {
     return [
-      { target: 'subject', name: 'BiRefNet lite (MIT), 224 MB', present: stubState.modelsPresent.subject, bytes: 224005088 },
-      { target: 'sky', name: 'U²-Net sky segmentation (MIT), 176 MB', present: stubState.modelsPresent.sky, bytes: 175997079 },
+      { target: 'subject', name: 'BiRefNet (MIT), 973 MB', present: !!stubState.modelsPresent.subject, bytes: 972666916 },
+      { target: 'people', name: 'BiRefNet portrait (MIT), 973 MB', present: !!stubState.modelsPresent.people, bytes: 972666916 },
+      { target: 'sky', name: 'U²-Net sky segmentation (MIT), 176 MB', present: !!stubState.modelsPresent.sky, bytes: 175997079 },
     ];
   }
 

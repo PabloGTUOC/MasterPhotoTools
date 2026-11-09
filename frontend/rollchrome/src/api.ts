@@ -749,7 +749,7 @@ export interface MaskComponent {
 }
 
 /** What an automatic mask finds (ED-23). */
-export type AutoTarget = 'subject' | 'sky';
+export type AutoTarget = 'subject' | 'sky' | 'people';
 
 /** An automatic mask's pixels as the sidecar keeps them: 8-bit PNG, base64, stored frame. */
 export interface StoredRaster {

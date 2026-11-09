@@ -401,6 +401,26 @@ the automated check drives the screen against a stub.
       **Pass:** the object is added as a component with `op: add`; clicking Refine enters object selection mode with all saved clicks restored, allowing further prompt clicks to refine the boundary; saving and reopening the photograph preserves the raster and clicks without requiring the model.
       **Result:**
 
+## MV-37 — Masks: People, Subject and Background, and Sky guard ([RP-11d](../briefs/RP-11d.md))
+
+[`edit-plan.md`](edit-plan.md), built. Needs a Mac running Rollchrome (`crates/rollchrome-desktop`, `cargo tauri dev`) with real photographs.
+
+- [ ] **MV-37.1 — People mask isolates people; Subject and Background use full BiRefNet.**
+      **Run:** in Edit, open a photograph containing people and other distinct foreground objects (e.g. a person with a bicycle). Click **+ People**. Note the mask boundary. Then add a **+ Subject** mask or **+ Background** mask.
+      **Pass:** People mask cleanly isolates the person and omits non-person foreground objects (like the bicycle); Subject mask cleanly isolates the subject including fine hair details; Background correctly inverts the full subject mask.
+      **Result:**
+
+- [ ] **MV-37.2 — Guarded Sky mask rejects photograph without sky.**
+      **Run:** open an indoor photograph or landscape with no sky. Click **+ Sky**.
+      **Pass:** Sky segmentation is refused immediately with "no sky was found in this photograph"; no mask is created, and the sky segmentation model is not run; opening a photograph with sky segments the sky cleanly as before.
+      **Result:**
+
+- [ ] **MV-37.3 — Missing model downloads only required files.**
+      **Run:** with `skyseg.onnx` present but `sky_guard.onnx` missing, click **+ Sky**. Confirm the prompt asks for 238 MB (UperNet ConvNeXt tiny) rather than the combined total. Approve download.
+      **Pass:** only the missing guard model (238 MB) is downloaded; progress reports the single file's progress; once downloaded, the sky mask completes normally.
+      **Result:**
+
+
 
 
 

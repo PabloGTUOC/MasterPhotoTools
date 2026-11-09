@@ -1,9 +1,10 @@
-//! Automatic subject and sky masks (ED-23).
+//! Automatic subject, people and sky masks (ED-23, RP-11d).
 //!
-//! Two models, chosen and measured in ED-22 (edit plan, Round 3): BiRefNet lite at full
-//! precision for the main subject, and a U²-Net trained on skies. Both are MIT-licensed,
-//! downloaded once into `rollchrome_core::config::models_dir` and checked against the SHA-256 recorded
-//! here before every use, so a truncated or substituted file is refused rather than run.
+//! Four models: BiRefNet for the main subject, BiRefNet portrait for people, UperNet ConvNeXt
+//! tiny scene segmentation to guard sky detection, and U²-Net trained on skies. All are
+//! MIT-licensed, downloaded once into `rollchrome_core::config::models_dir` and checked
+//! against the SHA-256 recorded here before every use, so a truncated or substituted file
+//! is refused rather than run.
 //!
 //! Inference runs on the CPU through ONNX Runtime. ED-22 found CoreML hung with its
 //! defaults, could not compile BiRefNet, and ran it some thirty times slower on the GPU.
@@ -31,7 +32,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 /// One model: where it comes from, what it must hash to, and what it expects.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ModelSpec {
     pub target: AutoTarget,
     /// For the person: what is being downloaded, and its licence.
@@ -46,12 +47,33 @@ pub struct ModelSpec {
 
 pub const SUBJECT: ModelSpec = ModelSpec {
     target: AutoTarget::Subject,
-    name: "BiRefNet lite (MIT), 224 MB",
-    file: "birefnet_lite.onnx",
-    url: "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model.onnx",
-    sha256: "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333",
-    bytes: 224_005_088,
+    name: "BiRefNet (MIT), 973 MB",
+    file: "birefnet_general.onnx",
+    url: "https://huggingface.co/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx",
+    sha256: "58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c",
+    bytes: 972_666_916,
     side: 1024,
+};
+
+pub const PEOPLE: ModelSpec = ModelSpec {
+    target: AutoTarget::People,
+    name: "BiRefNet portrait (MIT), 973 MB",
+    file: "birefnet_portrait.onnx",
+    url:
+        "https://huggingface.co/onnx-community/BiRefNet-portrait-ONNX/resolve/main/onnx/model.onnx",
+    sha256: "1ba1c8ff5a7bbfadc8d8d13fb11d7be793f91f23d9d466549e37a854f6668f99",
+    bytes: 972_666_916,
+    side: 1024,
+};
+
+pub const SKY_GUARD: ModelSpec = ModelSpec {
+    target: AutoTarget::Sky,
+    name: "UperNet ConvNeXt tiny (MIT), 238 MB",
+    file: "sky_guard.onnx",
+    url: "https://huggingface.co/JElvis/upernet-convnext-tiny-ade-onnx/resolve/main/model.onnx",
+    sha256: "fea729ab6c5d338bc79ad3d986b073e6faa12c97255eafd78a1f7145326e534e",
+    bytes: 238_434_293,
+    side: 512,
 };
 
 pub const SKY: ModelSpec = ModelSpec {
@@ -67,7 +89,16 @@ pub const SKY: ModelSpec = ModelSpec {
 pub fn spec(target: AutoTarget) -> &'static ModelSpec {
     match target {
         AutoTarget::Subject => &SUBJECT,
+        AutoTarget::People => &PEOPLE,
         AutoTarget::Sky => &SKY,
+    }
+}
+
+pub fn required_models(target: AutoTarget) -> &'static [&'static ModelSpec] {
+    match target {
+        AutoTarget::Subject => &[&SUBJECT],
+        AutoTarget::People => &[&PEOPLE],
+        AutoTarget::Sky => &[&SKY_GUARD, &SKY],
     }
 }
 
@@ -78,6 +109,85 @@ pub fn model_path(dir: &Path, spec: &ModelSpec) -> PathBuf {
 /// True when the model is on disk at its full size. The hash is checked when it is used.
 pub fn model_present(dir: &Path, spec: &ModelSpec) -> bool {
     std::fs::metadata(model_path(dir, spec)).is_ok_and(|m| m.len() == spec.bytes)
+}
+
+/// True only when every required file for `target` is on disk at full size.
+pub fn target_present(dir: &Path, target: AutoTarget) -> bool {
+    required_models(target)
+        .iter()
+        .all(|spec| model_present(dir, spec))
+}
+
+/// Sum of byte sizes of models required for `target` that are not yet on disk at full size.
+pub fn missing_bytes(dir: &Path, target: AutoTarget) -> u64 {
+    required_models(target)
+        .iter()
+        .filter(|spec| !model_present(dir, spec))
+        .map(|spec| spec.bytes)
+        .sum()
+}
+
+/// Human-facing name of the model(s) required for `target`, naming only what is missing for Sky.
+pub fn display_name(dir: &Path, target: AutoTarget) -> String {
+    let missing: Vec<&ModelSpec> = required_models(target)
+        .iter()
+        .copied()
+        .filter(|s| !model_present(dir, s))
+        .collect();
+    if missing.is_empty() {
+        spec(target).name.to_string()
+    } else {
+        missing
+            .iter()
+            .map(|s| s.name)
+            .collect::<Vec<_>>()
+            .join(" + ")
+    }
+}
+
+/// Downloads only the missing files for `target` into `dir`, reporting one running total.
+pub fn download_target(
+    dir: &Path,
+    target: AutoTarget,
+    progress: &dyn Progress,
+) -> Result<Vec<PathBuf>, Error> {
+    download_specs(dir, required_models(target), progress)
+}
+
+/// Downloads only the missing specs into `dir` with a single running byte total.
+pub fn download_specs(
+    dir: &Path,
+    specs: &[&ModelSpec],
+    progress: &dyn Progress,
+) -> Result<Vec<PathBuf>, Error> {
+    let missing: Vec<&ModelSpec> = specs
+        .iter()
+        .copied()
+        .filter(|s| !model_present(dir, s))
+        .collect();
+    if missing.is_empty() {
+        return Ok(specs.iter().map(|s| model_path(dir, s)).collect());
+    }
+    let total: u64 = missing.iter().map(|s| s.bytes).sum();
+    let mut offset = 0u64;
+    let mut downloaded = Vec::new();
+    for spec in missing {
+        let p = OffsetProgress {
+            inner: progress,
+            offset,
+            total,
+        };
+        let path = fetch(
+            spec.url,
+            &model_path(dir, spec),
+            spec.sha256,
+            spec.bytes,
+            &p,
+        )?;
+        offset += spec.bytes;
+        downloaded.push(path);
+    }
+    Ok(specs.iter().map(|s| model_path(dir, s)).collect())
 }
 
 /// Downloads `spec` into `dir`, reporting bytes, stopping when cancelled, and keeping the
@@ -225,6 +335,52 @@ pub fn prepare_input(upright: &RgbImage, side: u32) -> Vec<f32> {
     out
 }
 
+pub const SKY_GUARD_MIN_SHARE: f32 = 0.005;
+pub const SKY_GUARD_CLASSES: usize = 150;
+pub const SKY_GUARD_CLASS_SKY: usize = 2;
+pub const SKY_GUARD_WIDTH: usize = 128;
+pub const SKY_GUARD_HEIGHT: usize = 128;
+
+/// True when at least `SKY_GUARD_MIN_SHARE` (0.005) of the scene model's cells are sky.
+pub fn scene_has_sky(
+    logits: &[f32],
+    classes: usize,
+    width: usize,
+    height: usize,
+) -> Result<bool, Error> {
+    let cells = width * height;
+    let expected = classes * cells;
+    if logits.len() != expected || expected == 0 {
+        return Err(Error::Internal(format!(
+            "the sky guard model returned {} values, not {}",
+            logits.len(),
+            expected
+        )));
+    }
+    if classes <= SKY_GUARD_CLASS_SKY {
+        return Err(Error::Internal(
+            "the sky guard model has no sky class".into(),
+        ));
+    }
+    let mut sky_cells = 0usize;
+    for cell in 0..cells {
+        let mut best_class = 0usize;
+        let mut best_val = logits[cell];
+        for c in 1..classes {
+            let val = logits[c * cells + cell];
+            if val > best_val {
+                best_val = val;
+                best_class = c;
+            }
+        }
+        if best_class == SKY_GUARD_CLASS_SKY {
+            sky_cells += 1;
+        }
+    }
+    let share = sky_cells as f32 / cells as f32;
+    Ok(share >= SKY_GUARD_MIN_SHARE)
+}
+
 /// The model's raw output as a stored mask: to [0, 1] as each model's reference code does
 /// (BiRefNet gives logits; the sky model a map normalised by its own range), back to the
 /// photograph's proportions at most `STORED_MASK_EDGE` on the long edge, then into the
@@ -246,7 +402,9 @@ pub fn finish_output(
         )));
     }
     let values: Vec<f32> = match spec.target {
-        AutoTarget::Subject => raw.iter().map(|v| 1.0 / (1.0 + (-v).exp())).collect(),
+        AutoTarget::Subject | AutoTarget::People => {
+            raw.iter().map(|v| 1.0 / (1.0 + (-v).exp())).collect()
+        }
         AutoTarget::Sky => {
             let (lo, hi) = raw
                 .iter()
@@ -313,13 +471,33 @@ pub fn auto_mask(
     target: AutoTarget,
     models_dir: &Path,
 ) -> Result<StoredRaster, Error> {
-    let spec = spec(target);
-    let path = model_path(models_dir, spec);
-    verify_model(&path, spec)?;
     let upright = to_upright(stored, orientation);
-    let input = prepare_input(&upright, spec.side);
-    let raw = run_model(&path, spec, input)?;
-    finish_output(&raw, spec, upright.width(), upright.height(), orientation)
+    if target == AutoTarget::Sky {
+        let guard_path = model_path(models_dir, &SKY_GUARD);
+        let sky_path = model_path(models_dir, &SKY);
+        verify_model(&guard_path, &SKY_GUARD)?;
+        verify_model(&sky_path, &SKY)?;
+        let guard_input = prepare_input(&upright, SKY_GUARD.side);
+        let guard_raw = run_model(&guard_path, &SKY_GUARD, guard_input)?;
+        if !scene_has_sky(
+            &guard_raw,
+            SKY_GUARD_CLASSES,
+            SKY_GUARD_WIDTH,
+            SKY_GUARD_HEIGHT,
+        )? {
+            return Err(Error::Refused("no sky was found in this photograph".into()));
+        }
+        let input = prepare_input(&upright, SKY.side);
+        let raw = run_model(&sky_path, &SKY, input)?;
+        finish_output(&raw, &SKY, upright.width(), upright.height(), orientation)
+    } else {
+        let spec = spec(target);
+        let path = model_path(models_dir, spec);
+        verify_model(&path, spec)?;
+        let input = prepare_input(&upright, spec.side);
+        let raw = run_model(&path, spec, input)?;
+        finish_output(&raw, spec, upright.width(), upright.height(), orientation)
+    }
 }
 
 /// One of the two files that make up the interactive object segmentation model (RP-11c).
@@ -1006,5 +1184,428 @@ mod tests {
         assert_eq!(std::fs::read(&enc_dest).unwrap(), enc_body);
         assert!(!dec_dest.exists());
         assert!(!dec_dest.with_extension("part").exists());
+    }
+
+    #[test]
+    fn scene_has_sky_checks_threshold_rankings_and_length() {
+        let classes = 150;
+        let (w, h) = (10, 100);
+        let cells = w * h; // 1000 cells
+
+        // 1. A different class winning everywhere is false
+        let mut logits = vec![0.0f32; classes * cells];
+        // Class 0 gets 10.0 everywhere
+        for val in logits.iter_mut().take(cells) {
+            *val = 10.0;
+        }
+        assert!(!scene_has_sky(&logits, classes, w, h).unwrap());
+
+        // 2. A cell where sky (class 2) is second-highest is not sky
+        // Set sky to 9.0 in all cells, but class 0 is 10.0
+        for cell in 0..cells {
+            logits[2 * cells + cell] = 9.0;
+        }
+        assert!(!scene_has_sky(&logits, classes, w, h).unwrap());
+
+        // 3. Just under 0.5% (4 cells out of 1000 = 0.004 < 0.005)
+        for cell in 0..4 {
+            logits[2 * cells + cell] = 20.0;
+        }
+        assert!(!scene_has_sky(&logits, classes, w, h).unwrap());
+
+        // 4. Just at 0.5% (5 cells out of 1000 = 0.005 >= 0.005)
+        logits[2 * cells + 4] = 20.0;
+        assert!(scene_has_sky(&logits, classes, w, h).unwrap());
+
+        // 5. Wrong length is an error
+        let wrong = vec![0.0f32; classes * cells - 1];
+        let err = scene_has_sky(&wrong, classes, w, h).unwrap_err();
+        assert!(matches!(err, Error::Internal(_)));
+    }
+
+    #[test]
+    fn required_models_and_target_present_for_each_target() {
+        assert_eq!(required_models(AutoTarget::Subject), &[&SUBJECT]);
+        assert_eq!(required_models(AutoTarget::People), &[&PEOPLE]);
+        assert_eq!(required_models(AutoTarget::Sky), &[&SKY_GUARD, &SKY]);
+
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!target_present(dir.path(), AutoTarget::Sky));
+        assert_eq!(
+            missing_bytes(dir.path(), AutoTarget::Sky),
+            SKY_GUARD.bytes + SKY.bytes
+        );
+        assert_eq!(
+            display_name(dir.path(), AutoTarget::Sky),
+            format!("{} + {}", SKY_GUARD.name, SKY.name)
+        );
+
+        // Only SKY present: target_present false, missing_bytes is SKY_GUARD.bytes, display_name is SKY_GUARD.name
+        let sky_file = dir.path().join(SKY.file);
+        std::fs::File::create(&sky_file)
+            .unwrap()
+            .set_len(SKY.bytes)
+            .unwrap();
+        assert!(
+            !target_present(dir.path(), AutoTarget::Sky),
+            "sky guard is missing"
+        );
+        assert_eq!(missing_bytes(dir.path(), AutoTarget::Sky), SKY_GUARD.bytes);
+        assert_eq!(display_name(dir.path(), AutoTarget::Sky), SKY_GUARD.name);
+
+        // Only SKY_GUARD present: target_present false
+        std::fs::remove_file(&sky_file).unwrap();
+        let guard_file = dir.path().join(SKY_GUARD.file);
+        std::fs::File::create(&guard_file)
+            .unwrap()
+            .set_len(SKY_GUARD.bytes)
+            .unwrap();
+        assert!(
+            !target_present(dir.path(), AutoTarget::Sky),
+            "skyseg is missing"
+        );
+        assert_eq!(missing_bytes(dir.path(), AutoTarget::Sky), SKY.bytes);
+        assert_eq!(display_name(dir.path(), AutoTarget::Sky), SKY.name);
+
+        // Both present: target_present true, missing_bytes 0
+        std::fs::File::create(&sky_file)
+            .unwrap()
+            .set_len(SKY.bytes)
+            .unwrap();
+        assert!(target_present(dir.path(), AutoTarget::Sky));
+        assert_eq!(missing_bytes(dir.path(), AutoTarget::Sky), 0);
+        assert_eq!(display_name(dir.path(), AutoTarget::Sky), SKY.name);
+    }
+
+    fn test_spec(file: &'static str, url: String, sha256: String, bytes: u64) -> ModelSpec {
+        ModelSpec {
+            target: AutoTarget::Sky,
+            name: "test model",
+            file,
+            url: leak_str(url),
+            sha256: leak_str(sha256),
+            bytes,
+            side: 512,
+        }
+    }
+
+    #[test]
+    fn download_target_requests_only_missing_files_and_keeps_first_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let body1: Vec<u8> = (0..60_000u32).map(|i| (i % 251) as u8).collect();
+        let body2: Vec<u8> = (0..40_000u32).map(|i| ((i * 5) % 251) as u8).collect();
+
+        // 1. One file already present at full size: only the other is requested
+        let spec1 = test_spec(
+            "m1.onnx",
+            "http://127.0.0.1:9/unreachable".into(),
+            sha(&body1),
+            body1.len() as u64,
+        );
+        std::fs::write(model_path(dir.path(), &spec1), &body1).unwrap();
+
+        let spec2 = test_spec(
+            "m2.onnx",
+            serve_once(body2.clone()),
+            sha(&body2),
+            body2.len() as u64,
+        );
+
+        #[derive(Default)]
+        struct CollectingProgress {
+            events: std::sync::Mutex<Vec<(u64, u64)>>,
+        }
+        impl phototools_core::jobs::Progress for CollectingProgress {
+            fn report(&self, done: u64, total: u64, _msg: &str) {
+                self.events.lock().unwrap().push((done, total));
+            }
+            fn cancelled(&self) -> bool {
+                false
+            }
+        }
+        let progress = CollectingProgress::default();
+        let paths = download_specs(dir.path(), &[&spec1, &spec2], &progress).unwrap();
+        assert_eq!(paths.len(), 2);
+        assert_eq!(
+            std::fs::read(model_path(dir.path(), &spec2)).unwrap(),
+            body2
+        );
+
+        let events = progress.events.lock().unwrap().clone();
+        assert!(!events.is_empty());
+        for &(_done, total) in &events {
+            // Total should only be spec2's bytes!
+            assert_eq!(total, body2.len() as u64);
+        }
+
+        // 2. A bad second file leaves the first
+        let dir2 = tempfile::tempdir().unwrap();
+        let spec1_fresh = test_spec(
+            "m1.onnx",
+            serve_once(body1.clone()),
+            sha(&body1),
+            body1.len() as u64,
+        );
+        let spec2_bad = test_spec(
+            "m2.onnx",
+            serve_once(body2.clone()),
+            sha(b"invalid hash"),
+            body2.len() as u64,
+        );
+        let err = download_specs(
+            dir2.path(),
+            &[&spec1_fresh, &spec2_bad],
+            &InMemoryProgress::default(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("not the one expected"));
+        assert_eq!(
+            std::fs::read(model_path(dir2.path(), &spec1_fresh)).unwrap(),
+            body1
+        );
+        assert!(!model_path(dir2.path(), &spec2_bad).exists());
+        assert!(!model_path(dir2.path(), &spec2_bad)
+            .with_extension("part")
+            .exists());
+
+        // 3. Cancel leaves no .part
+        let dir3 = tempfile::tempdir().unwrap();
+        let spec_cancel = test_spec(
+            "m_cancel.onnx",
+            serve_once(vec![3u8; 1_000_000]),
+            sha(&vec![3u8; 1_000_000]),
+            1_000_000,
+        );
+        let prog_cancel = InMemoryProgress::default();
+        prog_cancel.cancel();
+        let err = download_specs(dir3.path(), &[&spec_cancel], &prog_cancel).unwrap_err();
+        assert!(err.to_string().contains("cancelled"));
+        assert!(!model_path(dir3.path(), &spec_cancel).exists());
+        assert!(!model_path(dir3.path(), &spec_cancel)
+            .with_extension("part")
+            .exists());
+    }
+
+    #[test]
+    fn people_target_roundtrips_and_saved_masks_render_identically() {
+        use crate::media::edit::masks::{LocalAdjustments, Mask, MaskKind};
+        use crate::media::edit::{AdjustmentRecipe, PreviewSession};
+        use crate::media::PreviewStage;
+
+        // AutoTarget::People roundtrips as "people"
+        let serialized = serde_json::to_string(&AutoTarget::People).unwrap();
+        assert_eq!(serialized, "\"people\"");
+        let deserialized: AutoTarget = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized, AutoTarget::People);
+
+        // A saved Subject and Sky mask render the same bytes without needing models
+        let (w, h) = (64u32, 48u32);
+        let img = RgbImage::from_pixel(w, h, image::Rgb([100, 150, 200]));
+        let dir = tempfile::tempdir().unwrap();
+        let img_path = dir.path().join("frame.jpg");
+        img.save(&img_path).unwrap();
+
+        let mask_data: Vec<u8> = (0..w * h)
+            .map(|i| if i % 2 == 0 { 255 } else { 0 })
+            .collect();
+        let raster_sub = StoredRaster::encode(w, h, &mask_data, "sub-sha").unwrap();
+        let raster_sky = StoredRaster::encode(w, h, &mask_data, "sky-sha").unwrap();
+
+        let mask_sub = Mask {
+            id: "m_sub".into(),
+            name: "Subject".into(),
+            kind: MaskKind::Auto {
+                target: AutoTarget::Subject,
+                mask: raster_sub,
+            },
+            invert: false,
+            opacity: 1.0,
+            enabled: true,
+            adjustments: LocalAdjustments {
+                exposure: 1.0,
+                ..Default::default()
+            },
+            strokes: Vec::new(),
+            components: Vec::new(),
+            detail: Default::default(),
+        };
+
+        let mask_sky = Mask {
+            id: "m_sky".into(),
+            name: "Sky".into(),
+            kind: MaskKind::Auto {
+                target: AutoTarget::Sky,
+                mask: raster_sky,
+            },
+            invert: false,
+            opacity: 1.0,
+            enabled: true,
+            adjustments: LocalAdjustments {
+                exposure: -1.0,
+                ..Default::default()
+            },
+            strokes: Vec::new(),
+            components: Vec::new(),
+            detail: Default::default(),
+        };
+
+        let recipe = AdjustmentRecipe {
+            masks: vec![mask_sub, mask_sky],
+            ..Default::default()
+        };
+
+        let session = PreviewSession::open(&img_path).unwrap();
+        let rendered1 = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+        let rendered2 = session.render(&recipe, None, PreviewStage::Drag).unwrap();
+        assert_eq!(rendered1.bytes, rendered2.bytes);
+        assert!(!rendered1.bytes.is_empty());
+    }
+
+    #[test]
+    fn model_spec_constants_have_exact_bytes_and_hashes() {
+        assert_eq!(SUBJECT.bytes, 972_666_916);
+        assert_eq!(
+            SUBJECT.sha256,
+            "58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c"
+        );
+        assert_eq!(SUBJECT.file, "birefnet_general.onnx");
+        assert_eq!(SUBJECT.side, 1024);
+
+        assert_eq!(PEOPLE.bytes, 972_666_916);
+        assert_eq!(
+            PEOPLE.sha256,
+            "1ba1c8ff5a7bbfadc8d8d13fb11d7be793f91f23d9d466549e37a854f6668f99"
+        );
+        assert_eq!(PEOPLE.file, "birefnet_portrait.onnx");
+        assert_eq!(PEOPLE.side, 1024);
+
+        assert_eq!(SKY_GUARD.bytes, 238_434_293);
+        assert_eq!(
+            SKY_GUARD.sha256,
+            "fea729ab6c5d338bc79ad3d986b073e6faa12c97255eafd78a1f7145326e534e"
+        );
+        assert_eq!(SKY_GUARD.file, "sky_guard.onnx");
+        assert_eq!(SKY_GUARD.side, 512);
+
+        assert_eq!(SKY.bytes, 175_997_079);
+        assert_eq!(
+            SKY.sha256,
+            "ab9c34c64c3d821220a2886a4a06da4642ffa14d5b30e8d5339056a089aa1d39"
+        );
+        assert_eq!(SKY.file, "skyseg.onnx");
+        assert_eq!(SKY.side, 320);
+    }
+
+    #[test]
+    #[ignore]
+    #[cfg(feature = "segment")]
+    fn the_real_models_find_people_subject_and_only_real_sky() {
+        use std::time::Instant;
+
+        let models_dir_str = std::env::var("ROLLCHROME_MASK_MODELS")
+            .expect("ROLLCHROME_MASK_MODELS must be set to the folder containing model files");
+        let photos_dir_str = std::env::var("ROLLCHROME_MASK_PHOTOS")
+            .expect("ROLLCHROME_MASK_PHOTOS must be set to the folder containing test photographs");
+
+        let models_dir = Path::new(&models_dir_str);
+        let photos_dir = Path::new(&photos_dir_str);
+
+        let load_photo = |name: &str| -> (RgbImage, u32) {
+            let path = photos_dir.join(name);
+            let orientation = phototools_core::media::read_meta(&path)
+                .map(|m| m.orientation as u32)
+                .unwrap_or(1);
+            let decoded = crate::media::edit::decode_image(&path)
+                .unwrap_or_else(|e| panic!("failed to decode {name}: {e}"));
+            let rgb = match decoded {
+                crate::media::edit::ImageBuffer::Rgb8 {
+                    width,
+                    height,
+                    data,
+                } => RgbImage::from_raw(width, height, data).unwrap(),
+                _ => {
+                    let rgb16 = decoded.as_rgb16().unwrap();
+                    let dyn_img = image::DynamicImage::ImageRgb16(
+                        image::ImageBuffer::from_raw(
+                            decoded.width(),
+                            decoded.height(),
+                            rgb16.to_vec(),
+                        )
+                        .unwrap(),
+                    );
+                    dyn_img.to_rgb8()
+                }
+            };
+            (rgb, orientation)
+        };
+
+        let coverage = |raster: &StoredRaster| -> f64 {
+            let cov = raster.decode().unwrap();
+            let sum: u64 = cov.data.iter().map(|&b| b as u64).sum();
+            sum as f64 / (cov.data.len() as f64 * 255.0)
+        };
+
+        // 1. sky.jpg: Sky covers more than 40%.
+        let (sky_img, sky_orient) = load_photo("sky.jpg");
+        let t0 = Instant::now();
+        let sky_raster = auto_mask(&sky_img, sky_orient, AutoTarget::Sky, models_dir).unwrap();
+        let sky_elapsed = t0.elapsed();
+        let sky_cov = coverage(&sky_raster);
+        println!(
+            "sky.jpg Sky: {:.2}s, coverage: {:.1}%",
+            sky_elapsed.as_secs_f64(),
+            sky_cov * 100.0
+        );
+        assert!(
+            sky_cov > 0.40,
+            "sky.jpg: Sky coverage must be > 40%, got {:.1}%",
+            sky_cov * 100.0
+        );
+
+        // 2. nosky.jpg: Sky is refused with "no sky was found in this photograph".
+        let (nosky_img, nosky_orient) = load_photo("nosky.jpg");
+        let t0 = Instant::now();
+        let nosky_err =
+            auto_mask(&nosky_img, nosky_orient, AutoTarget::Sky, models_dir).unwrap_err();
+        let nosky_elapsed = t0.elapsed();
+        println!(
+            "nosky.jpg Sky: {:.2}s, refused: {nosky_err}",
+            nosky_elapsed.as_secs_f64()
+        );
+        assert_eq!(nosky_err.to_string(), "no sky was found in this photograph");
+
+        // 3. person.jpg: People covers between 5% and 70%, and Subject covers at least as much as 5%.
+        let (person_img, person_orient) = load_photo("person.jpg");
+        let t0 = Instant::now();
+        let people_raster =
+            auto_mask(&person_img, person_orient, AutoTarget::People, models_dir).unwrap();
+        let people_elapsed = t0.elapsed();
+        let people_cov = coverage(&people_raster);
+        println!(
+            "person.jpg People: {:.2}s, coverage: {:.1}%",
+            people_elapsed.as_secs_f64(),
+            people_cov * 100.0
+        );
+        assert!(
+            (0.05..=0.70).contains(&people_cov),
+            "person.jpg: People coverage must be between 5% and 70%, got {:.1}%",
+            people_cov * 100.0
+        );
+
+        let t1 = Instant::now();
+        let subject_raster =
+            auto_mask(&person_img, person_orient, AutoTarget::Subject, models_dir).unwrap();
+        let subject_elapsed = t1.elapsed();
+        let subject_cov = coverage(&subject_raster);
+        println!(
+            "person.jpg Subject: {:.2}s, coverage: {:.1}%",
+            subject_elapsed.as_secs_f64(),
+            subject_cov * 100.0
+        );
+        assert!(
+            subject_cov >= 0.05,
+            "person.jpg: Subject coverage must be at least 5%, got {:.1}%",
+            subject_cov * 100.0
+        );
     }
 }

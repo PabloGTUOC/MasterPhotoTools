@@ -111,7 +111,7 @@ const BRUSH_MIN = 0.5;
 const autoBusy = ref<AutoTarget | 'object' | null>(null);
 const autoDownload = ref<{ target: AutoTarget | 'object'; name: string; jobId: string | null; asBackground?: boolean; componentForMaskId?: string } | null>(null);
 let autoSeq = 0;
-const AUTO_LABEL: Record<AutoTarget | 'object', string> = { subject: 'Subject', sky: 'Sky', object: 'Object' };
+const AUTO_LABEL: Record<AutoTarget | 'object', string> = { subject: 'Subject', sky: 'Sky', people: 'People', object: 'Object' };
 const objectTargetState = ref<{ maskId: string | null; componentIndex: number | null }>({ maskId: null, componentIndex: null });
 let objectInFlight = false;
 // The mode's own count, advanced on entering and on leaving: a reply belongs to the stretch of
@@ -3114,7 +3114,7 @@ function deleteComponent(index: number) {
   commitRecipeChange('Masks');
 }
 
-function addComponent(type: 'linear' | 'radial' | 'luminance_range' | 'colour_range' | 'subject' | 'sky' | 'object') {
+function addComponent(type: 'linear' | 'radial' | 'luminance_range' | 'colour_range' | 'subject' | 'sky' | 'people' | 'object') {
   const m = selectedMask.value;
   if (!m) return;
   if (type === 'colour_range') {
@@ -3125,7 +3125,7 @@ function addComponent(type: 'linear' | 'radial' | 'luminance_range' | 'colour_ra
     addObjectComponent();
     return;
   }
-  if (type === 'subject' || type === 'sky') {
+  if (type === 'subject' || type === 'sky' || type === 'people') {
     addAutoComponent(type);
     return;
   }
@@ -3192,6 +3192,8 @@ async function finishAddAutoComponent(target: AutoTarget, maskId: string) {
     selectedMaskId.value = m.id;
     selectedComponentIndex.value = m.components.length - 1;
     commitRecipeChange('Masks');
+  } catch (err: unknown) {
+    if (seq === autoSeq) error.value = err instanceof Error ? err.message : String(err);
   } finally {
     if (seq === autoSeq) autoBusy.value = null;
   }
@@ -4477,6 +4479,15 @@ onUnmounted(() => {
               <button
                 type="button"
                 class="ghost"
+                data-testid="add-component-people"
+                :disabled="!sessionId || isReadOnly || !!autoBusy"
+                @click="addComponent('people')"
+              >
+                + People
+              </button>
+              <button
+                type="button"
+                class="ghost"
                 data-testid="add-component-object"
                 :disabled="!sessionId || isReadOnly"
                 @click="addComponent('object')"
@@ -5048,6 +5059,16 @@ onUnmounted(() => {
                   @click="addAutoMask('subject')"
                 >
                   + Subject
+                </button>
+                <button
+                  type="button"
+                  class="secondary"
+                  data-testid="add-people-mask"
+                  title="Find people (a model, downloaded once)"
+                  :disabled="!sessionId || isReadOnly || masks.length >= MASK_LIMIT || !!autoBusy"
+                  @click="addAutoMask('people')"
+                >
+                  + People
                 </button>
                 <button
                   type="button"

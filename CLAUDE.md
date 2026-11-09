@@ -36,7 +36,7 @@ structured half of that work — 96 for PhotoTools, eight done, and 60 for Rollc
 | [`docs/timeline-plan.md`](docs/timeline-plan.md) | The Timeline tab: the track library on a map, and points placed by hand. Stage A built; MV-17 awaits a browser. Google's location history is Stages B–C, not built |
 | [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
-| [`docs/rollchrome/parity-plan.md`](docs/rollchrome/parity-plan.md) | Rollchrome towards replacing Lightroom: three tabs (Develop, Edit, Batch) and the small and medium gaps, RP-1 to RP-13. RP-1 to RP-13, RP-2b, RP-11b and RP-11c done (MV-24 to MV-36 await real files, models and an MCP client) |
+| [`docs/rollchrome/parity-plan.md`](docs/rollchrome/parity-plan.md) | Rollchrome towards replacing Lightroom: three tabs (Develop, Edit, Batch) and the small and medium gaps, RP-1 to RP-13. RP-1 to RP-13, RP-2b, RP-11b, RP-11c and RP-11d done (MV-24 to MV-37 await real files, models and an MCP client) |
 | [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | Splitting Edit and Batch Grade out into Rollchrome, a desktop-only film emulator. RC-1 to RC-3 done; Develop next |
 | [`docs/develop-plan.md`](docs/develop-plan.md) | Rollchrome's third screen, Develop: RAW files to finished JPEG or TIFF, a film look each. DV-1 to DV-3 done: the function and twelve built-in looks; the screen came with RP-1 (MV-23 and MV-24 await real files) |
 | [`docs/rollchrome/edit-plan.md`](docs/rollchrome/edit-plan.md) | Rollchrome's Edit and Batch Grade screens: non-destructive exposure adjustments and 3D LUT grading. Rounds 1 and 2 built (ED-1–ED-18); MV-20 and MV-21 await a Mac. Round 3, masks (ED-19–ED-24), built; MV-20 to MV-22 await the Mac Studio |
@@ -121,9 +121,9 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 1281 passing (1 ignored)
+cargo test --workspace          # 1286 passing (1 ignored)
 cargo test -p phototools-core   # 714 passing — G2
-cargo test -p rollchrome-core   # 436 passing — G2
+cargo test -p rollchrome-core   # 441 passing — G2
 cargo test -p phototools-desktop   # 26 passing
 cargo test -p rollchrome-desktop   # 26 passing
 cargo test -p rollchrome-cli       # 8 passing
@@ -160,10 +160,11 @@ npm --prefix frontend/rollchrome run check:point    # RP-10 point colour accepta
 npm --prefix frontend/rollchrome run check:masks    # RP-11 masks acceptance, measured in a browser
 npm --prefix frontend/rollchrome run check:local-detail # RP-11b local detail acceptance, measured in a browser
 npm --prefix frontend/rollchrome run check:object   # RP-11c object mask acceptance, measured in a browser
+npm --prefix frontend/rollchrome run check:people   # RP-11d people mask acceptance, measured in a browser
 ```
 
 `check:layout` and `check:ingest` drive Chromium and write screenshots to
-`frontend/web/layout-proof/`; `check:edit`, `check:bulk-lut`, `check:develop`, `check:viewing`, `check:colour`, `check:history`, `check:versions`, `check:detail`, `check:export`, `check:point`, `check:masks`, `check:local-detail` and `check:object` drive Chromium and write screenshots to
+`frontend/web/layout-proof/`; `check:edit`, `check:bulk-lut`, `check:develop`, `check:viewing`, `check:colour`, `check:history`, `check:versions`, `check:detail`, `check:export`, `check:point`, `check:masks`, `check:local-detail`, `check:object` and `check:people` drive Chromium and write screenshots to
 `frontend/rollchrome/layout-proof/`. They assert **numbers**, not shapes — a change that makes the grid
 or preview slower or unwindows it fails them.
 

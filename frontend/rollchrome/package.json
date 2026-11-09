@@ -20,7 +20,8 @@
     "check:point": "node scripts/check-point.mjs",
     "check:masks": "node scripts/check-masks.mjs",
     "check:local-detail": "node scripts/check-local-detail.mjs",
-    "check:object": "node scripts/check-object.mjs"
+    "check:object": "node scripts/check-object.mjs",
+    "check:people": "node scripts/check-people.mjs"
   },
   "dependencies": {
     "@phototools/shared": "file:../shared",

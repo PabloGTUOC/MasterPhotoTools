@@ -36,10 +36,12 @@ Not dependencies of the build: downloaded at run time, with the person's consent
 
 | Mask | Model | Licence | Bytes | SHA-256 |
 |---|---|---|---|---|
-| Subject | BiRefNet lite, full precision (`onnx-community/BiRefNet_lite-ONNX`, `onnx/model.onnx`) | MIT (ZhengPeng7/BiRefNet) | 224,005,088 | `5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333` |
+| Subject (RP-11d) | BiRefNet (`onnx-community/BiRefNet-ONNX`, `birefnet_general.onnx`) | MIT (ZhengPeng7/BiRefNet) | 972,666,916 | `58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c` |
+| People (RP-11d) | BiRefNet portrait (`onnx-community/BiRefNet-portrait-ONNX`, `birefnet_portrait.onnx`) | MIT (ZhengPeng7/BiRefNet) | 972,666,916 | `1ba1c8ff5a7bbfadc8d8d13fb11d7be793f91f23d9d466549e37a854f6668f99` |
+| Sky guard (RP-11d) | UperNet ConvNeXt tiny (`JElvis/upernet-convnext-tiny-ade-onnx`, `sky_guard.onnx`) | MIT | 238,434,293 | `fea729ab6c5d338bc79ad3d986b073e6faa12c97255eafd78a1f7145326e534e` |
 | Sky | U²-Net sky segmentation (`JianyuanWang/skyseg`, `skyseg.onnx`) | MIT (xiongzhu666/Sky-Segmentation-and-Post-processing) | 175,997,079 | `ab9c34c64c3d821220a2886a4a06da4642ffa14d5b30e8d5339056a089aa1d39` |
-| Object (RP-11c) | MobileSAM encoder (`vietanhdev/MobileSAM-ONNX-Models`, `mobile_sam_image_encoder.onnx`) | Apache-2.0 (ChaoningZhang/MobileSAM) | 39,267,823 | `6e61f1c713b918f706fae9d40e1cfc531d052be5186b86cfdc9fce4076378c80` |
-| Object (RP-11c) | MobileSAM multi-mask decoder (`vietanhdev/MobileSAM-ONNX-Models`, `sam_mask_decoder_multi.onnx`) | Apache-2.0 (ChaoningZhang/MobileSAM) | 16,846,944 | `5ca444d3fa542713f0ae91b1ea7383bbd705c1d6837fb4e5a91448dd4b6f1201` |
+| Object (RP-11c) | MobileSAM encoder (`Acly/MobileSAM`, `mobile_sam_image_encoder.onnx`) | Apache-2.0 / MIT | 28,157,093 | `580f5fb648ea1062c0aabc26217aed56921985f03f0cbbd852bba81d760cc749` |
+| Object (RP-11c) | MobileSAM multi-mask decoder (`Acly/MobileSAM`, `sam_mask_decoder_multi.onnx`) | Apache-2.0 / MIT | 16,496,559 | `8976b90a87ba50a6a72217a5ff994f7d25ce16f2229fcc1ed259e1294c622ffe` |
 
 ## What is unverified
 

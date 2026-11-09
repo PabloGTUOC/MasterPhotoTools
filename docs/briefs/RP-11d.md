@@ -142,6 +142,16 @@ Docs: `docs/rollchrome/parity-plan.md`, a row and the status; `CLAUDE.md` counts
 
 The gate list in `CLAUDE.md` in full, plus `npm --prefix frontend/rollchrome run check:people`.
 
+### How to work: every step costs money
+
+The build is paid for by the step, and the last brief spent 145 of its steps checking on commands that were still running. These rules are part of the brief:
+
+1. **Run every command in the foreground and wait for it to return.** Never start a command in the background and check on it, and never loop or sleep waiting for one. A long build is one step if you wait for it.
+2. **While working, run only what covers the change:** `cargo check -p <crate>`, `cargo test -p rollchrome-core <test name>`, `npm --prefix frontend/rollchrome run check:people`.
+3. **Run the full list under Gates once, at the end.** If one gate fails, fix it and re-run that gate, not the list.
+4. **Read each file once**, using a line range or `grep` for large ones such as `Edit.vue` and `segment.rs`. Do not re-read a file to confirm an edit you just made.
+5. **Do not change approach silently.** If the same failure survives two attempts, stop, say what you tried in the Report, and commit what works.
+
 ### Report back
 
 Under `## Report` in this file: what was done; **every** deviation, with the reason ("None" only if true); every gate's actual output, counts not "passed"; the real-model test's output and times; anything unverified. Commit on `rp-11d`. Do not merge.

@@ -595,8 +595,9 @@ impl PreviewSession {
 
         let masks = self.compile_masks(recipe_ref, geom_opt, stage)?;
 
-        let (frame_buf, base_ref) = if masks.as_ref().is_some_and(|m| m.has_local_detail()) {
-            let compiled_masks = masks.as_ref().unwrap();
+        let (frame_buf, base_ref) = if let Some(compiled_masks) =
+            masks.as_ref().filter(|m| m.has_local_detail())
+        {
             let raw_source = self.raw_stage_linear(stage)?;
             let scale =
                 (raw_source.width.max(raw_source.height) as f32) / (self.source_long_edge as f32);
@@ -614,25 +615,23 @@ impl PreviewSession {
                     let geom_opt_cloned = recipe_ref.geometry.clone();
                     let key = (m.id.clone(), stage);
 
-                    let hit = match cache.get(&key) {
-                        Some((d, g, _)) => d == &combined && g == &geom_opt_cloned,
-                        None => false,
+                    let arc_buf = match cache.get(&key) {
+                        Some((d, g, buf)) if d == &combined && g == &geom_opt_cloned => buf.clone(),
+                        _ => {
+                            self.detail_recompute_count
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let d_buf = super::detail::apply_detail(&raw_source, &combined, scale);
+                            let d_post = if let Some(geom) = &recipe_ref.geometry {
+                                geom.apply_to_linear(&d_buf, self.orientation)?
+                            } else {
+                                d_buf
+                            };
+                            let arc = Arc::new(d_post);
+                            cache.insert(key, (combined, geom_opt_cloned, arc.clone()));
+                            arc
+                        }
                     };
-
-                    if !hit {
-                        self.detail_recompute_count
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let d_buf = super::detail::apply_detail(&raw_source, &combined, scale);
-                        let d_post = if let Some(geom) = &recipe_ref.geometry {
-                            geom.apply_to_linear(&d_buf, self.orientation)?
-                        } else {
-                            d_buf
-                        };
-                        cache.insert(key.clone(), (combined, geom_opt_cloned, Arc::new(d_post)));
-                    }
-
-                    let entry = cache.get(&key).unwrap();
-                    detail_frames.push((m, entry.2.clone()));
+                    detail_frames.push((m, arc_buf));
                 }
             }
             drop(cache);

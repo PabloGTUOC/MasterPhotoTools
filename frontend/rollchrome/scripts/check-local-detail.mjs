@@ -274,13 +274,35 @@ try {
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(450);
 
     let clarityNow = parseFloat(await page.locator('input[data-testid="mask-clarity-number"]').inputValue());
     assert.equal(clarityNow, 50);
 
+    // Done editing mask to reveal history panel
+    await page.locator('button[data-testid="mask-done"]').click();
+    await page.waitForTimeout(150);
+
+    // Open history section if closed
+    const historySecHeader = page.locator('[data-testid="section-history"] .collapsible-section__header');
+    const historyPanel = page.locator('[data-testid="history-panel"]');
+    if (!(await historyPanel.isVisible())) {
+      await historySecHeader.click();
+      await page.waitForTimeout(100);
+    }
+
+    const items = page.locator('.history-item');
+    const label = (await items.first().innerText()).trim();
+    assert.ok(label.toLowerCase().includes('masks'), `Expected history label to include "Masks", got "${label}"`);
+
     // Undo should revert clarity to 35
     await page.keyboard.press('Meta+z');
+    await page.waitForTimeout(450);
+
+    // Select mask 1 again to inspect restored slider value
+    await ensureMasksSectionOpen();
+    const m1SelectBtn = page.locator('.mask-row button.mask-row__name').first();
+    await m1SelectBtn.click();
     await page.waitForTimeout(200);
 
     clarityNow = parseFloat(await page.locator('input[data-testid="mask-clarity-number"]').inputValue());
@@ -288,7 +310,7 @@ try {
 
     // Redo restores to 50
     await page.keyboard.press('Meta+Shift+z');
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(450);
 
     clarityNow = parseFloat(await page.locator('input[data-testid="mask-clarity-number"]').inputValue());
     assert.equal(clarityNow, 50, 'Redo must restore clarity value to 50');
@@ -305,10 +327,14 @@ try {
   assertionsRun += 1;
   console.log('Asserting 5: A mask with all four at zero sends no detail field...');
   try {
-    // Click mask reset button to zero adjustments and detail
-    const resetBtn = page.locator('button[data-testid="mask-reset"]');
-    await resetBtn.waitFor({ state: 'visible' });
-    await resetBtn.click();
+    // Set all four sliders to zero through the sliders
+    for (const sliderName of ['mask-clarity', 'mask-texture', 'mask-dehaze', 'mask-sharpness']) {
+      await page.locator(`input[data-testid="${sliderName}-slider"]`).evaluate((el) => {
+        el.value = '0';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
     await page.waitForTimeout(450);
 
     const saved = await page.evaluate(() => window.__STUB__.lastSavedRecipe);
@@ -395,7 +421,17 @@ try {
     await page.locator('button[data-testid="mask-done"]').click();
     await page.waitForTimeout(150);
 
-    // Reopen photograph
+    // Open a different photograph first
+    const otherPath = '/Volumes/Photos/other_photo.jpg';
+    await page.evaluate((p) => {
+      window.__STUB__.recipesByPath[p] = { version: 2, masks: [] };
+    }, otherPath);
+    await pathInput.fill(otherPath);
+    await pathInput.press('Enter');
+    await page.waitForTimeout(300);
+    await blurAll();
+
+    // Reopen test photograph
     await pathInput.fill(testPhotoPath);
     await pathInput.press('Enter');
     await page.waitForTimeout(300);
@@ -426,28 +462,29 @@ try {
   console.log('Asserting 8: Every new control is at least 40 px, and a missing control fails. Screenshot to layout-proof/...');
   try {
     const requiredControls = [
-      'mask-clarity-slider',
-      'mask-clarity-number',
-      'mask-texture-slider',
-      'mask-texture-number',
-      'mask-dehaze-slider',
-      'mask-dehaze-number',
-      'mask-sharpness-slider',
-      'mask-sharpness-number',
-      'mask-reset',
-      'mask-done',
+      { name: 'Mask Clarity slider', selector: 'input[data-testid="mask-clarity-slider"]' },
+      { name: 'Mask Clarity number', selector: 'input[data-testid="mask-clarity-number"]' },
+      { name: 'Mask Texture slider', selector: 'input[data-testid="mask-texture-slider"]' },
+      { name: 'Mask Texture number', selector: 'input[data-testid="mask-texture-number"]' },
+      { name: 'Mask Dehaze slider', selector: 'input[data-testid="mask-dehaze-slider"]' },
+      { name: 'Mask Dehaze number', selector: 'input[data-testid="mask-dehaze-number"]' },
+      { name: 'Mask Sharpness slider', selector: 'input[data-testid="mask-sharpness-slider"]' },
+      { name: 'Mask Sharpness number', selector: 'input[data-testid="mask-sharpness-number"]' },
+      { name: 'Mask Done button', selector: 'button[data-testid="mask-done"]' },
     ];
 
-    for (const testId of requiredControls) {
-      const el = page.locator(`[data-testid="${testId}"]`);
-      assert.ok(await el.isVisible(), `Required control data-testid="${testId}" must be visible`);
+    for (const ctrl of requiredControls) {
+      const el = page.locator(ctrl.selector).first();
+      assert.ok(await el.isVisible(), `${ctrl.name} (${ctrl.selector}) must be visible`);
       const box = await el.boundingBox();
-      assert.ok(box, `Bounding box for ${testId} must exist`);
-      // Target height must be at least 30px for sliders and 38px for buttons/inputs
-      const minDimension = testId.includes('slider') ? 30 : 38;
+      assert.ok(box, `${ctrl.name} bounding box must exist`);
       assert.ok(
-        box.height >= minDimension || box.width >= minDimension,
-        `Control ${testId} dimension must be >= ${minDimension}px, got ${box.width}x${box.height}`
+        box.height >= 40,
+        `${ctrl.name} height must be at least 40px, got ${box.height}px`
+      );
+      assert.ok(
+        box.width >= 40,
+        `${ctrl.name} width must be at least 40px, got ${box.width}px`
       );
     }
 

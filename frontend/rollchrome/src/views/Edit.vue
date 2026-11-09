@@ -3137,16 +3137,6 @@ function setMaskDetail(key: keyof LocalDetail, value: number, settle: boolean) {
   else requestRender('Drag');
 }
 
-function resetSelectedMask() {
-  const m = selectedMask.value;
-  if (!m) return;
-  const before = cloneRecipe(recipe.value);
-  m.adjustments = { ...ZERO_LOCAL };
-  m.detail = { ...ZERO_LOCAL_DETAIL };
-  commitRecipeChange('Masks');
-  showNotice(`Reset adjustments on mask ${m.name}.`, before);
-}
-
 function setMaskField(field: 'opacity' | 'feather', percent: number, settle: boolean) {
   const m = selectedMask.value;
   if (!m) return;
@@ -4133,14 +4123,9 @@ onUnmounted(() => {
             <span class="mask-editing__title">
               Editing mask <strong data-testid="mask-editing-name">{{ selectedMask.name }}</strong>
             </span>
-            <div class="mask-editing__actions">
-              <button type="button" class="ghost" data-testid="mask-reset" @click="resetSelectedMask">
-                Reset
-              </button>
-              <button type="button" class="primary" data-testid="mask-done" @click="finishMaskEditing">
-                Done
-              </button>
-            </div>
+            <button type="button" class="primary" data-testid="mask-done" @click="finishMaskEditing">
+              Done
+            </button>
           </header>
           <p class="mask-note">
             These sliders act only where the mask covers. Done (or Esc) returns to the whole
@@ -7248,12 +7233,6 @@ onUnmounted(() => {
 .mask-editing__title strong {
   color: var(--accent);
   font-weight: normal;
-}
-
-.mask-editing__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
 }
 
 .mask-editing__head button {

@@ -5,7 +5,7 @@ use rollchrome_core::media::edit::masks::{
     CompiledMasks, LocalAdjustments, LocalDetail, Mask, MaskKind,
 };
 use rollchrome_core::media::edit::pipeline::{
-    apply_recipe_with_orientation, AdjustmentRecipe, ImageBuffer, LinearBuffer,
+    apply_recipe_with_orientation, AdjustmentRecipe, ImageBuffer,
 };
 use rollchrome_core::media::edit::preview::{PreviewSession, PreviewStage};
 use rollchrome_core::media::edit::Detail;
@@ -554,30 +554,36 @@ fn half_opacity_gives_half_the_change() {
 
 #[test]
 fn a_range_mask_does_not_move_with_its_own_dehaze() {
-    // Synthetic 16x16 buffer with alternating midtone and shadow blocks
-    let mut buf = LinearBuffer::new(16, 16);
-    for (i, px) in buf.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
-        let v = if i % 2 == 0 { 0.25 } else { 0.04 };
-        px[0] = v;
-        px[1] = v;
-        px[2] = v;
+    let w = 64u32;
+    let h = 64u32;
+    let mut data = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            // Smooth luminance ramp from ~40 to ~220 with slight channel offset so dehaze
+            // has a non-zero dark channel across every local window and shifts tones strongly.
+            let base = 40.0 + (x as f32 / (w - 1) as f32) * 180.0;
+            let wave = ((y as f32 * 0.3).sin()) * 6.0;
+            let r = (base + wave).clamp(0.0, 255.0) as u8;
+            let g = (base + wave + 4.0).clamp(0.0, 255.0) as u8;
+            let b = (base + wave + 8.0).clamp(0.0, 255.0) as u8;
+            data.extend_from_slice(&[r, g, b]);
+        }
     }
     let image = ImageBuffer::Rgb8 {
-        width: 16,
-        height: 16,
-        data: buf.data.iter().map(|&v| (v.sqrt() * 255.0) as u8).collect(),
+        width: w,
+        height: h,
+        data,
     };
     let session = PreviewSession::new(&image).unwrap();
 
-    // Range mask selecting only midtones ([0.4, 0.6]), with exposure +1.0
     let make_recipe = |dehaze: f32, exposure: f32| AdjustmentRecipe {
         masks: vec![Mask {
             id: "range_m".into(),
             name: "Luminance Range".into(),
             kind: MaskKind::LuminanceRange {
-                low: 0.15,
-                high: 0.25,
-                feather: 0.01,
+                low: 0.45,
+                high: 0.75,
+                feather: 0.0,
             },
             invert: false,
             opacity: 1.0,
@@ -596,32 +602,94 @@ fn a_range_mask_does_not_move_with_its_own_dehaze() {
         ..Default::default()
     };
 
-    let recipe_dehaze100_exp1 = make_recipe(100.0, 1.0);
-    let recipe_dehaze100_exp0 = make_recipe(100.0, 0.0);
+    let total_pixels = (w * h) as usize;
 
-    let exp1 = apply_recipe_with_orientation(&image, &recipe_dehaze100_exp1, None, 1).unwrap();
-    let exp0 = apply_recipe_with_orientation(&image, &recipe_dehaze100_exp0, None, 1).unwrap();
-    let d1 = exp1.as_rgb8().unwrap();
-    let d0 = exp0.as_rgb8().unwrap();
+    // Export sets at Dehaze 10 and Dehaze 100
+    let exp_10_0 = apply_recipe_with_orientation(&image, &make_recipe(10.0, 0.0), None, 1)
+        .unwrap()
+        .as_rgb8()
+        .unwrap()
+        .to_vec();
+    let exp_10_1 = apply_recipe_with_orientation(&image, &make_recipe(10.0, -1.0), None, 1)
+        .unwrap()
+        .as_rgb8()
+        .unwrap()
+        .to_vec();
+    let exp_100_0 = apply_recipe_with_orientation(&image, &make_recipe(100.0, 0.0), None, 1)
+        .unwrap()
+        .as_rgb8()
+        .unwrap()
+        .to_vec();
+    let exp_100_1 = apply_recipe_with_orientation(&image, &make_recipe(100.0, -1.0), None, 1)
+        .unwrap()
+        .as_rgb8()
+        .unwrap()
+        .to_vec();
 
-    let prev1 = session
-        .render(&recipe_dehaze100_exp1, None, PreviewStage::Drag)
-        .unwrap();
-    let prev0 = session
-        .render(&recipe_dehaze100_exp0, None, PreviewStage::Drag)
-        .unwrap();
+    let affected_export = |a: &[u8], b: &[u8]| -> Vec<usize> {
+        (0..total_pixels)
+            .filter(|&px| {
+                let i = px * 3;
+                a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2]
+            })
+            .collect()
+    };
 
-    // Shadow pixel (index 1) in base frame has sqrt(0.04) = 0.20, which is covered by [0.15, 0.25].
-    // If the mask reads base B, coverage is 1.0 so exposure +1.0 doubles the pixel, making d1 > d0.
-    // If the mask read composite C, dehaze 100 crushes the pixel below 0.15, coverage drops to 0,
-    // and d1 == d0!
+    let exp_set_10 = affected_export(&exp_10_0, &exp_10_1);
+    let exp_set_100 = affected_export(&exp_100_0, &exp_100_1);
+
     assert!(
-        d1[3] > d0[3],
-        "export: shadow pixel with dehaze 100 must still receive exposure adjustment from base coverage"
+        exp_set_10.len() >= 500 && exp_set_10.len() < total_pixels,
+        "export: a meaningful subset of pixels must be selected (got {} of {})",
+        exp_set_10.len(),
+        total_pixels
     );
+    assert_eq!(
+        exp_set_10,
+        exp_set_100,
+        "export: affected pixel set at Dehaze 10 ({}) must equal set at Dehaze 100 ({})",
+        exp_set_10.len(),
+        exp_set_100.len()
+    );
+
+    // Preview sets at Dehaze 10 and Dehaze 100
+    let prev_10_0 = session
+        .render(&make_recipe(10.0, 0.0), None, PreviewStage::Drag)
+        .unwrap();
+    let prev_10_1 = session
+        .render(&make_recipe(10.0, -1.0), None, PreviewStage::Drag)
+        .unwrap();
+    let prev_100_0 = session
+        .render(&make_recipe(100.0, 0.0), None, PreviewStage::Drag)
+        .unwrap();
+    let prev_100_1 = session
+        .render(&make_recipe(100.0, -1.0), None, PreviewStage::Drag)
+        .unwrap();
+
+    let affected_preview = |a: &[u8], b: &[u8]| -> Vec<usize> {
+        (0..total_pixels)
+            .filter(|&px| {
+                let i = px * 4;
+                a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2]
+            })
+            .collect()
+    };
+
+    let prev_set_10 = affected_preview(&prev_10_0.bytes, &prev_10_1.bytes);
+    let prev_set_100 = affected_preview(&prev_100_0.bytes, &prev_100_1.bytes);
+
     assert!(
-        prev1.bytes[4] > prev0.bytes[4],
-        "preview: shadow pixel with dehaze 100 must still receive exposure adjustment from base coverage"
+        prev_set_10.len() >= 500 && prev_set_10.len() < total_pixels,
+        "preview: a meaningful subset of pixels must be selected (got {} of {})",
+        prev_set_10.len(),
+        total_pixels
+    );
+    assert_eq!(
+        prev_set_10,
+        prev_set_100,
+        "preview: affected pixel set at Dehaze 10 ({}) must equal set at Dehaze 100 ({})",
+        prev_set_10.len(),
+        prev_set_100.len()
     );
 }
 
@@ -629,29 +697,6 @@ fn a_range_mask_does_not_move_with_its_own_dehaze() {
 fn local_detail_follows_a_crop_and_a_rotation() {
     let buf = test_image(80, 80);
     let session = PreviewSession::new(&buf).unwrap();
-
-    // Mask at [0.25, 0.75] which falls into the crop under 90 deg rotation
-    let mask = Mask {
-        id: "quadrant_mask".into(),
-        name: "Quadrant Mask".into(),
-        kind: MaskKind::Radial {
-            center: [0.25, 0.75],
-            radius_x: 0.2,
-            radius_y: 0.2,
-            feather: 0.1,
-            angle: 0.0,
-        },
-        invert: false,
-        opacity: 1.0,
-        enabled: true,
-        adjustments: LocalAdjustments::default(),
-        detail: LocalDetail {
-            clarity: 50.0,
-            ..Default::default()
-        },
-        strokes: Vec::new(),
-        components: Vec::new(),
-    };
 
     // Crop top-left quadrant: [0.0, 0.0, 0.5, 0.5] and rotate 90 deg clockwise
     let geom = Geometry {
@@ -665,29 +710,194 @@ fn local_detail_follows_a_crop_and_a_rotation() {
         ..Default::default()
     };
 
+    // (a) Full-coverage local Clarity and Dehaze equal the same global values within 1 level, preview and export
+    let recipe_global = AdjustmentRecipe {
+        geometry: Some(geom.clone()),
+        detail: Some(Detail {
+            clarity: 40.0,
+            dehaze: 30.0,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let recipe_full_local = AdjustmentRecipe {
+        geometry: Some(geom.clone()),
+        masks: vec![full_coverage_mask(LocalDetail {
+            clarity: 40.0,
+            dehaze: 30.0,
+            ..Default::default()
+        })],
+        ..Default::default()
+    };
+
+    let prev_global = session
+        .render(&recipe_global, None, PreviewStage::Drag)
+        .unwrap();
+    let prev_full_local = session
+        .render(&recipe_full_local, None, PreviewStage::Drag)
+        .unwrap();
+    let max_prev_diff = prev_global
+        .bytes
+        .iter()
+        .zip(prev_full_local.bytes.iter())
+        .map(|(&a, &b)| (a as i32 - b as i32).abs())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        max_prev_diff <= 1,
+        "preview: full-coverage local clarity+dehaze under crop & rotation must equal global within 1 level (got {max_prev_diff})"
+    );
+
+    let exp_global = apply_recipe_with_orientation(&buf, &recipe_global, None, 1)
+        .unwrap()
+        .as_rgb8()
+        .unwrap()
+        .to_vec();
+    let exp_full_local = apply_recipe_with_orientation(&buf, &recipe_full_local, None, 1)
+        .unwrap()
+        .as_rgb8()
+        .unwrap()
+        .to_vec();
+    let max_exp_diff = exp_global
+        .iter()
+        .zip(exp_full_local.iter())
+        .map(|(&a, &b)| (a as i32 - b as i32).abs())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        max_exp_diff <= 1,
+        "export: full-coverage local clarity+dehaze under crop & rotation must equal global within 1 level (got {max_exp_diff})"
+    );
+
+    // (b) Every pixel changed by a Radial mask's local detail is also changed by the same mask carrying only exposure, with at least 50 changed
+    let radial_kind = MaskKind::Radial {
+        center: [0.25, 0.75],
+        radius_x: 0.15,
+        radius_y: 0.15,
+        feather: 0.1,
+        angle: 0.0,
+    };
+
+    let mask_detail = Mask {
+        id: "rad_det".into(),
+        name: "Radial Detail".into(),
+        kind: radial_kind.clone(),
+        invert: false,
+        opacity: 1.0,
+        enabled: true,
+        adjustments: LocalAdjustments::default(),
+        detail: LocalDetail {
+            clarity: 60.0,
+            dehaze: 40.0,
+            ..Default::default()
+        },
+        strokes: Vec::new(),
+        components: Vec::new(),
+    };
+
+    let mask_exposure = Mask {
+        id: "rad_exp".into(),
+        name: "Radial Exposure".into(),
+        kind: radial_kind,
+        invert: false,
+        opacity: 1.0,
+        enabled: true,
+        adjustments: LocalAdjustments {
+            exposure: 1.5,
+            ..Default::default()
+        },
+        detail: LocalDetail::default(),
+        strokes: Vec::new(),
+        components: Vec::new(),
+    };
+
     let recipe_plain = AdjustmentRecipe {
         geometry: Some(geom.clone()),
         ..Default::default()
     };
-
-    let recipe_masked = AdjustmentRecipe {
+    let recipe_det = AdjustmentRecipe {
+        geometry: Some(geom.clone()),
+        masks: vec![mask_detail],
+        ..Default::default()
+    };
+    let recipe_exp = AdjustmentRecipe {
         geometry: Some(geom),
-        masks: vec![mask],
+        masks: vec![mask_exposure],
         ..Default::default()
     };
 
+    // Preview check for (b)
     let f_plain = session
         .render(&recipe_plain, None, PreviewStage::Drag)
         .unwrap();
-    let f_masked = session
-        .render(&recipe_masked, None, PreviewStage::Drag)
+    let f_det = session
+        .render(&recipe_det, None, PreviewStage::Drag)
+        .unwrap();
+    let f_exp = session
+        .render(&recipe_exp, None, PreviewStage::Drag)
         .unwrap();
 
-    assert_eq!(f_plain.width, f_masked.width);
-    assert_eq!(f_plain.height, f_masked.height);
-    assert_ne!(
-        f_plain.bytes, f_masked.bytes,
-        "masked render must alter pixels in cropped/rotated frame"
+    let n_prev_px = (f_plain.width * f_plain.height) as usize;
+    let mut prev_det_changed = 0usize;
+    for px in 0..n_prev_px {
+        let i = px * 4;
+        let det_differs = f_det.bytes[i] != f_plain.bytes[i]
+            || f_det.bytes[i + 1] != f_plain.bytes[i + 1]
+            || f_det.bytes[i + 2] != f_plain.bytes[i + 2];
+        if det_differs {
+            prev_det_changed += 1;
+            let exp_differs = f_exp.bytes[i] != f_plain.bytes[i]
+                || f_exp.bytes[i + 1] != f_plain.bytes[i + 1]
+                || f_exp.bytes[i + 2] != f_plain.bytes[i + 2];
+            assert!(
+                exp_differs,
+                "preview: pixel {px} changed by radial local detail was not changed by radial exposure"
+            );
+        }
+    }
+    assert!(
+        prev_det_changed >= 50,
+        "preview: expected at least 50 pixels changed by radial local detail, got {prev_det_changed}"
+    );
+
+    // Export check for (b)
+    let e_plain = apply_recipe_with_orientation(&buf, &recipe_plain, None, 1)
+        .unwrap()
+        .as_rgb8()
+        .unwrap()
+        .to_vec();
+    let e_det = apply_recipe_with_orientation(&buf, &recipe_det, None, 1)
+        .unwrap()
+        .as_rgb8()
+        .unwrap()
+        .to_vec();
+    let e_exp = apply_recipe_with_orientation(&buf, &recipe_exp, None, 1)
+        .unwrap()
+        .as_rgb8()
+        .unwrap()
+        .to_vec();
+
+    let n_exp_px = e_plain.len() / 3;
+    let mut exp_det_changed = 0usize;
+    for px in 0..n_exp_px {
+        let i = px * 3;
+        let det_differs = e_det[i] != e_plain[i]
+            || e_det[i + 1] != e_plain[i + 1]
+            || e_det[i + 2] != e_plain[i + 2];
+        if det_differs {
+            exp_det_changed += 1;
+            let exp_differs = e_exp[i] != e_plain[i]
+                || e_exp[i + 1] != e_plain[i + 1]
+                || e_exp[i + 2] != e_plain[i + 2];
+            assert!(
+                exp_differs,
+                "export: pixel {px} changed by radial local detail was not changed by radial exposure"
+            );
+        }
+    }
+    assert!(
+        exp_det_changed >= 50,
+        "export: expected at least 50 pixels changed by radial local detail, got {exp_det_changed}"
     );
 }
 

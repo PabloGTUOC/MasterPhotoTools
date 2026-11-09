@@ -1040,15 +1040,37 @@ pub fn apply_recipe_with_orientation(
 ) -> Result<ImageBuffer, Error> {
     validate_lut(recipe, lut)?;
 
-    let raw_source = LinearBuffer::from_image_buffer(image);
-    let mut linear = if let Some(detail) = &recipe.detail {
+    let has_local_detail = recipe
+        .masks
+        .iter()
+        .any(|m| m.enabled && !m.detail.is_zero());
+
+    let (mut linear, raw_source) = if let Some(detail) = &recipe.detail {
         if !detail.is_identity() {
-            super::detail::apply_detail(&raw_source, detail, 1.0)
+            let raw = LinearBuffer::from_image_buffer(image);
+            let linear = super::detail::apply_detail(&raw, detail, 1.0);
+            if has_local_detail {
+                (linear, Some(raw))
+            } else {
+                (linear, None)
+            }
         } else {
-            raw_source.clone()
+            let linear = LinearBuffer::from_image_buffer(image);
+            if has_local_detail {
+                let raw = linear.clone();
+                (linear, Some(raw))
+            } else {
+                (linear, None)
+            }
         }
     } else {
-        raw_source.clone()
+        let linear = LinearBuffer::from_image_buffer(image);
+        if has_local_detail {
+            let raw = linear.clone();
+            (linear, Some(raw))
+        } else {
+            (linear, None)
+        }
     };
     let masks = super::masks::CompiledMasks::compile(
         &recipe.masks,
@@ -1061,14 +1083,16 @@ pub fn apply_recipe_with_orientation(
         linear = geom.apply_to_linear(&linear, orientation)?;
     }
 
-    if masks.as_ref().is_some_and(|m| m.has_local_detail()) {
-        let compiled = masks.as_ref().unwrap();
+    if let (Some(compiled), Some(raw)) = (
+        masks.as_ref().filter(|m| m.has_local_detail()),
+        raw_source.as_ref(),
+    ) {
         let base = linear;
         let mut detail_frames = Vec::new();
         for m in compiled.active_masks() {
             if !m.detail.is_zero() {
                 let combined = super::detail::combine_detail(recipe.detail.as_ref(), &m.detail);
-                let d_raw = super::detail::apply_detail(&raw_source, &combined, 1.0);
+                let d_raw = super::detail::apply_detail(raw, &combined, 1.0);
                 let d_post = if let Some(geom) = &recipe.geometry {
                     geom.apply_to_linear(&d_raw, orientation)?
                 } else {

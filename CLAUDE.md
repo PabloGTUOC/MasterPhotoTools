@@ -22,7 +22,7 @@ cause: **the tools had only ever been exercised with typed file paths, and the f
 pointing at a folder the normal gesture.**
 
 The numbered checks in [`manual-verification.md`](docs/manual-verification.md) remain the
-structured half of that work — 96 for PhotoTools, eight done, and 54 for Rollchrome in
+structured half of that work — 96 for PhotoTools, eight done, and 57 for Rollchrome in
 [`docs/rollchrome/manual-verification.md`](docs/rollchrome/manual-verification.md), same ids.
 
 | Read this | For |
@@ -36,7 +36,7 @@ structured half of that work — 96 for PhotoTools, eight done, and 54 for Rollc
 | [`docs/timeline-plan.md`](docs/timeline-plan.md) | The Timeline tab: the track library on a map, and points placed by hand. Stage A built; MV-17 awaits a browser. Google's location history is Stages B–C, not built |
 | [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
-| [`docs/rollchrome/parity-plan.md`](docs/rollchrome/parity-plan.md) | Rollchrome towards replacing Lightroom: three tabs (Develop, Edit, Batch) and the small and medium gaps, RP-1 to RP-13. RP-1 to RP-12, RP-2b and RP-11b done (MV-24 to MV-34 await real files); RP-13 briefed; RP-11c remains |
+| [`docs/rollchrome/parity-plan.md`](docs/rollchrome/parity-plan.md) | Rollchrome towards replacing Lightroom: three tabs (Develop, Edit, Batch) and the small and medium gaps, RP-1 to RP-13. RP-1 to RP-13, RP-2b and RP-11b done (MV-24 to MV-35 await real files and an MCP client); RP-11c remains |
 | [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | Splitting Edit and Batch Grade out into Rollchrome, a desktop-only film emulator. RC-1 to RC-3 done; Develop next |
 | [`docs/develop-plan.md`](docs/develop-plan.md) | Rollchrome's third screen, Develop: RAW files to finished JPEG or TIFF, a film look each. DV-1 to DV-3 done: the function and twelve built-in looks; the screen came with RP-1 (MV-23 and MV-24 await real files) |
 | [`docs/rollchrome/edit-plan.md`](docs/rollchrome/edit-plan.md) | Rollchrome's Edit and Batch Grade screens: non-destructive exposure adjustments and 3D LUT grading. Rounds 1 and 2 built (ED-1–ED-18); MV-20 and MV-21 await a Mac. Round 3, masks (ED-19–ED-24), built; MV-20 to MV-22 await the Mac Studio |
@@ -121,11 +121,12 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 1227 passing
+cargo test --workspace          # 1261 passing
 cargo test -p phototools-core   # 714 passing — G2
-cargo test -p rollchrome-core   # 391 passing — G2
+cargo test -p rollchrome-core   # 417 passing — G2
 cargo test -p phototools-desktop   # 26 passing
 cargo test -p rollchrome-desktop   # 25 passing
+cargo test -p rollchrome-cli       # 8 passing
 ```
 
 Front ends:
@@ -179,8 +180,8 @@ performance figure taken without that section is meaningless.
 ## Shape
 
 Two applications in one workspace. **PhotoTools**: one Rust library, two binaries, two front ends
-over shared components. **Rollchrome**, the editor: one library on top of PhotoTools', one binary,
-one front end, Tauri only.
+over shared components. **Rollchrome**, the editor: one library on top of PhotoTools', two binaries
+(the Tauri desktop app and `rollchrome-cli`), one front end.
 
 ```
 crates/core               PhotoTools' functionality — no web framework, no UI, no platform assumptions
@@ -188,9 +189,10 @@ crates/server             axum, on the NAS in Docker. Owns the ledger and Google
                           Also serves the built web front end from WEB_ROOT (§2.2).
 crates/desktop            Tauri v2 on macOS. Reads the card, processes locally, hands off.
 
-crates/rollchrome-core    the editor: adjustment pipeline, LUTs, masks, presets, batch grading.
+crates/rollchrome-core    the editor: adjustment pipeline, LUTs, masks, presets, batch grading, automation.
                           Depends on core for decoding, RAW and metadata; core never depends on it.
 crates/rollchrome-desktop Tauri v2 on macOS. Rollchrome's commands and preview session.
+crates/rollchrome-cli     command-line interface and stdio MCP server over rollchrome-core.
 
 frontend/shared           the API client (compiled), the shared views (source), the design language
 frontend/web              served by the server; archive tools and publishing

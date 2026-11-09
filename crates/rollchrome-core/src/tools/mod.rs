@@ -13,7 +13,7 @@ pub use develop::{
     execute_develop, plan_develop, DevelopAction, DevelopItem, DevelopPlan, DevelopStore,
     DevelopSummary,
 };
-pub use develop_folder::FolderStore;
+pub use develop_folder::{refuse_card_folder, FolderStore};
 pub use edit::{
     exclusive_create_target, export_edited_image, export_edited_image_with_options,
     export_edited_image_with_options_with_resolver, export_edited_image_with_resolver,

@@ -198,6 +198,19 @@ impl DevelopStore for FolderStore {
     }
 }
 
+/// G5: Develop writes beside its RAW files, so a folder on a card is refused before anything runs.
+pub fn refuse_card_folder<F>(folder: &Path, resolve_root: F) -> Result<(), Error>
+where
+    F: Fn(&Path) -> Option<PathBuf>,
+{
+    if crate::tools::edit::is_card_volume_with_resolver(folder, resolve_root) {
+        return Err(Error::Refused(
+            "Cannot develop on a card volume: card media is read-only (G5)".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Returns the list of RAW file names in `folder`, non-recursive, sorted by name (RP-1).
 pub fn raw_names(folder: &Path) -> Result<Vec<String>, Error> {
     if !folder.is_dir() {

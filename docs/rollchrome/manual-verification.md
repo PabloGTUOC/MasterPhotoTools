@@ -5,7 +5,7 @@ from [`../manual-verification.md`](../manual-verification.md) when the editor le
 (RC-3), and **their ids are unchanged**, so anything that names MV-20.4 still finds it.
 
 How to work through them — tick the box, replace **Result:** with what actually happened, and a
-failed check is a result — is as described at the top of that file. **54 checks**, none done yet
+failed check is a result — is as described at the top of that file. **57 checks**, none done yet
 (2026-11-06). They all need a Mac with real photographs, and MV-20.7 also a card and a mounted
 share.
 
@@ -362,5 +362,25 @@ the automated check drives the screen against a stub.
       **Run:** on an image with two masks each using Clarity, Texture, Dehaze, and Sharpness, export the photograph to full-resolution 16-bit TIFF and 8-bit JPEG. Open the exported TIFF beside the Rollchrome 100% zoom preview.
       **Pass:** tone, local contrast, edge sharpness, and haze reduction in the exported file match the preview visually within tolerance.
       **Result:**
+
+## MV-35 — Automation: Command Line and MCP Server ([RP-13](../briefs/RP-13.md))
+
+[`automation.md`](automation.md), built. Needs a Mac with a real RAW folder and an MCP client (such as Claude Code or Claude Desktop).
+
+- [ ] **MV-35.1 — Command-line develop matches desktop application.**
+      **Run:** run `rollchrome-cli develop <folder> --look builtin:fujifilm-classic-chrome --apply` on a real RAW folder, then develop one of the same RAW files with `builtin:fujifilm-classic-chrome` in the Rollchrome desktop application and compare the two outputs.
+      **Pass:** the command line writes into `<folder>/Developed/` without touching originals, and the resulting photograph matches the desktop application's output for the same look and exposure.
+      **Result:**
+
+- [ ] **MV-35.2 — MCP server plan-to-run workflow.**
+      **Run:** register `rollchrome-cli mcp` with a real MCP client, inspect the available tools, ask the client to plan RAW development on a folder (`plan_develop`), review the plan, and instruct the client to execute it (`run_develop`) using the returned `plan_sha256`.
+      **Pass:** the client discovers all seven tools, presents the dry-run plan before writing anything, and completes `run_develop` with the reviewed `plan_sha256`, writing the developed files into `Developed/`.
+      **Result:**
+
+- [ ] **MV-35.3 — MCP server cancellation from client.**
+      **Run:** start a `run_develop` or `run_batch` tool call on a multi-photograph folder from the MCP client and cancel the in-flight request mid-run.
+      **Pass:** the server honours `notifications/cancelled`, stops after the current photograph finishes without leaving partial files, and reports the photographs developed before cancellation.
+      **Result:**
+
 
 

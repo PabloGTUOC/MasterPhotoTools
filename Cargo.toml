@@ -5,6 +5,7 @@ members = [
     "crates/server",
     "crates/desktop",
     "crates/rollchrome-desktop",
+    "crates/rollchrome-cli",
 ]
 resolver = "2"
 

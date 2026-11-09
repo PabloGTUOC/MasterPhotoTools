@@ -148,6 +148,11 @@ pub fn plan_develop_impl(
 ) -> CommandResult<DevelopPlan> {
     let config = state.config();
     let resolved_folder = resolve_input(&config, &folder)?;
+    rollchrome_core::tools::develop_folder::refuse_card_folder(
+        &resolved_folder,
+        rollchrome_core::tools::edit::find_volume_root,
+    )
+    .map_err(describe)?;
     let dev_folder = resolved_folder.join("Developed");
     resolve_output(&config, &dev_folder.to_string_lossy())?;
 
@@ -175,6 +180,11 @@ pub fn apply_develop_impl(
 ) -> CommandResult<String> {
     let config = state.config();
     let resolved_folder = resolve_input(&config, &folder)?;
+    rollchrome_core::tools::develop_folder::refuse_card_folder(
+        &resolved_folder,
+        rollchrome_core::tools::edit::find_volume_root,
+    )
+    .map_err(describe)?;
     let dev_folder = resolved_folder.join("Developed");
     resolve_output(&config, &dev_folder.to_string_lossy())?;
 

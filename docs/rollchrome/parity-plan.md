@@ -1,6 +1,6 @@
 # Rollchrome towards a Lightroom replacement — plan
 
-> **Status (2026-11-08):** RP-1 to RP-12, RP-2b and RP-11b done (MV-24 to MV-34 await real files: no real XZ-1, D60 or X100VI file has been developed yet); RP-13 briefed; RP-11c remains. Steps have stable ids (`RP-4`), each built from a
+> **Status (2026-11-09):** RP-1 to RP-13, RP-2b and RP-11b done (MV-24 to MV-35 await real files and an MCP client: no real XZ-1, D60 or X100VI file has been developed in the desktop UI yet); RP-11c remains. Steps have stable ids (`RP-4`), each built from a
 > brief in [`docs/briefs/`](../briefs/).
 
 **The owner's goal is to stop paying for a Lightroom subscription.** The list comes from comparing
@@ -50,7 +50,7 @@ be right before anything is built on top of it. Later steps get their brief when
 | **RP-11b** | Local neighbourhood controls | Clarity, texture, dehaze and sharpness inside a mask | Medium |
 | **RP-11c** | Click selection | Click on something to select it, which needs a further model | Medium |
 | **RP-12** | The owner's cameras | Olympus XZ-1 (ORF, accepted; no real file developed yet), Nikon D60 (NEF) and Fujifilm X100VI (RAF, 40 MP). Linear preview cached upright, draft scrubbing; D60 and X100VI await real files for manual verification (camera support written and wired). CR3, RW2, PEF and SRW left out | Small, D60 and X100VI await a real capture |
-| **RP-13** | Automation | A command line and an MCP server over `rollchrome-core` | Medium |
+| **RP-13** | Automation | A command line (`rollchrome-cli`) and an MCP server (`rollchrome_core::automation::mcp`) over `rollchrome-core` ([`automation.md`](automation.md), [RP-13](../briefs/RP-13.md); MV-35 awaits a real folder and MCP client) | Medium, done |
 
 **The risk across RP-7 and RP-8.** Today's pipeline works pixel by pixel. Sharpening, noise reduction,
 clarity and dehaze look at neighbours, and `check:edit` holds the preview to a timing budget that

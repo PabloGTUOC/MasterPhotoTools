@@ -361,7 +361,59 @@ fn slides_are_scanned_without_paper() {
         for p in &rendered {
             assert!(p[0].is_finite() && p[1].is_finite() && p[2].is_finite());
         }
+
+        // The claim, not a proxy: the render is the engine's own scan of the film, and is not
+        // what printing the film on paper would give. Both references are built here directly
+        // from spektrafilm, with the settings the brief fixes, on the deterministic CPU backend.
+        let scanned = engine_reference(&data_dir, stock, true, &linear, width, height);
+        let printed = engine_reference(&data_dir, stock, false, &linear, width, height);
+        assert_eq!(
+            rendered, scanned,
+            "{stock} must be the engine's direct scan of the slide"
+        );
+        assert_ne!(
+            rendered, printed,
+            "{stock} must not be printed: the two paths must differ for this test to mean anything"
+        );
     }
+}
+
+/// spektrafilm run directly, without Rollchrome's film module: grain off, 0 EV, sRGB out, CPU.
+/// A slide is its own print, as in spektrafilm's command-line `--scan-film`.
+fn engine_reference(
+    data_dir: &std::path::Path,
+    stock: &str,
+    scan_film: bool,
+    linear: &[[f32; 3]],
+    width: usize,
+    height: usize,
+) -> Vec<[f32; 3]> {
+    let film =
+        spektrafilm_core::profile::load_profile_by_name(data_dir, stock).expect("film profile");
+    let print =
+        spektrafilm_core::profile::load_profile_by_name(data_dir, stock).expect("print profile");
+    let mut params = spektrafilm_core::params::RuntimeParams::default();
+    params.io.scan_film = scan_film;
+    params.io.input_color_space = "ProPhoto RGB".to_string();
+    params.io.input_cctf_decoding = false;
+    params.io.output_color_space = "sRGB".to_string();
+    params.io.output_cctf_encoding = true;
+    params.film_render.grain.active = false;
+    let pipeline =
+        spektrafilm_core::pipeline::Pipeline::new_with_spectral(film, print, params, data_dir)
+            .expect("reference pipeline");
+    let input: Vec<f64> = linear
+        .iter()
+        .flat_map(|p| [p[0] as f64, p[1] as f64, p[2] as f64])
+        .collect();
+    let image = spektrafilm_math::image::ImageBuf::from_data(width as u32, height as u32, input);
+    let out = pipeline.process(image, &spektrafilm_gpu::cpu_backend::CpuBackend);
+    out.data
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|c| [c[0] as f32, c[1] as f32, c[2] as f32])
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -461,7 +513,8 @@ fn a_film_tiff_is_16_bit_prophoto_with_its_profile() {
     let dng_bytes = DngBuilder::new_bayer(width, height).build(&pixels);
     fs::write(raw_dir.join("photo.dng"), dng_bytes).unwrap();
 
-    let mut store = FolderStore::with_film_data(raw_dir.clone(), lut_dir, Some(film_dir));
+    let mut store = FolderStore::with_film_data(raw_dir.clone(), lut_dir, Some(film_dir.clone()));
+    let store_film_dir = film_dir;
 
     let items = vec![DevelopItem {
         name: "photo.dng".to_string(),
@@ -520,6 +573,47 @@ fn a_film_tiff_is_16_bit_prophoto_with_its_profile() {
     assert_eq!(
         actual_normalized, expected_profile,
         "TIFF ICC profile must match ProPhoto RGB profile"
+    );
+
+    // The pixels, not only the container: decoding the TIFF's ROMM values must give the engine's
+    // linear ProPhoto output. The export may run on the GPU, so this compares with the CPU render
+    // within a tolerance far below the gap a display-encoded (sRGB) output would leave.
+    let decoded: Vec<f32> = match decoder.read_image().expect("decode TIFF pixels") {
+        tiff::decoder::DecodingResult::U16(v) => v
+            .into_iter()
+            .map(|c| rollchrome_core::media::develop::tone::prophoto_decode(c as f32 / 65535.0))
+            .collect(),
+        _ => panic!("expected 16-bit samples"),
+    };
+    let raw = fs::read(raw_dir.join("photo.dng")).expect("read DNG");
+    let linear = rollchrome_core::media::develop::develop_linear(
+        &raw,
+        &rollchrome_core::media::develop::DevelopOptions { exposure_ev: 0.0 },
+    )
+    .expect("develop linear");
+    let reference = render_film(
+        &linear.pixels,
+        linear.width,
+        linear.height,
+        "kodak_portra_160",
+        Grain::Off,
+        0.0,
+        FilmOutput::ProPhotoLinear,
+        FilmBackend::Cpu,
+        &store_film_dir,
+    )
+    .expect("reference render");
+    let reference: Vec<f32> = reference.iter().flatten().map(|v| v.max(0.0)).collect();
+    assert_eq!(decoded.len(), reference.len());
+    let mean_abs = decoded
+        .iter()
+        .zip(&reference)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / decoded.len() as f32;
+    assert!(
+        mean_abs < 0.01,
+        "TIFF pixels must be the engine's linear ProPhoto output (mean difference {mean_abs})"
     );
 }
 

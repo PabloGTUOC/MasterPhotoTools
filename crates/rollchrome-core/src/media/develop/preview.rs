@@ -154,10 +154,10 @@ impl DevelopPreview {
         let preview_look = look;
 
         if let Some(PreviewLook::Film(stock)) = preview_look {
-            let default_dir = dirs::data_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("masterphototools/film-data");
-            let effective_dir = data_dir.unwrap_or(&default_dir);
+            // No silent default folder for the film data (G10): the caller names it.
+            let effective_dir = data_dir.ok_or_else(|| {
+                Error::Refused("no folder for the film simulation data was given".to_string())
+            })?;
 
             let rendered_pixels = render_film(
                 &source.pixels,
@@ -240,64 +240,36 @@ impl DevelopPreview {
 }
 
 fn resize_linear(
-    src_w: u32,
-    src_h: u32,
-    src_pixels: &[[f32; 3]],
+    w: u32,
+    h: u32,
+    pixels: &[[f32; 3]],
     max_edge: u32,
 ) -> Result<(u32, u32, Vec<[f32; 3]>), Error> {
-    let longest = src_w.max(src_h);
-    if longest <= max_edge || max_edge == 0 {
-        return Ok((src_w, src_h, src_pixels.to_vec()));
+    let long = w.max(h);
+    if max_edge == 0 || long <= max_edge {
+        return Ok((w, h, pixels.to_vec()));
     }
 
-    let scale = max_edge as f32 / longest as f32;
-    let dst_w = ((src_w as f32 * scale).round() as u32).max(1);
-    let dst_h = ((src_h as f32 * scale).round() as u32).max(1);
+    let ratio = max_edge as f64 / long as f64;
+    let new_w = ((w as f64 * ratio).floor() as u32).max(1);
+    let new_h = ((h as f64 * ratio).floor() as u32).max(1);
 
-    let mut src_flat = Vec::with_capacity(src_pixels.len() * 3);
-    for p in src_pixels {
-        src_flat.push(p[0]);
-        src_flat.push(p[1]);
-        src_flat.push(p[2]);
+    let byte_slice =
+        unsafe { std::slice::from_raw_parts(pixels.as_ptr() as *const u8, pixels.len() * 12) };
+    let src = fr::images::ImageRef::new(w, h, byte_slice, fr::PixelType::F32x3)
+        .map_err(|e| Error::Internal(format!("resize linear preview source: {e:?}")))?;
+    let mut dst = fr::images::Image::new(new_w, new_h, fr::PixelType::F32x3);
+    fr::Resizer::new()
+        .resize(&src, &mut dst, None)
+        .map_err(|e| Error::Internal(format!("resize linear preview: {e:?}")))?;
+
+    let dst_bytes = dst.into_vec();
+    let mut out = Vec::with_capacity((new_w * new_h) as usize);
+    for chunk in dst_bytes.as_chunks::<12>().0 {
+        let r = f32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        let g = f32::from_ne_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
+        let b = f32::from_ne_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
+        out.push([r, g, b]);
     }
-
-    let src_img = fr::images::ImageRef::new(
-        src_w,
-        src_h,
-        bytemuck_cast_slice(&src_flat),
-        fr::PixelType::F32x3,
-    )
-    .map_err(|e| Error::Internal(format!("fast_image_resize src init failed: {e}")))?;
-
-    let mut dst_flat = vec![0f32; (dst_w * dst_h * 3) as usize];
-    let mut dst_img = fr::images::Image::new(dst_w, dst_h, fr::PixelType::F32x3);
-
-    let mut resizer = fr::Resizer::new();
-    resizer
-        .resize(
-            &src_img,
-            &mut dst_img,
-            &fr::ResizeOptions::new()
-                .resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Bilinear)),
-        )
-        .map_err(|e| Error::Internal(format!("fast_image_resize resize failed: {e}")))?;
-
-    let dst_bytes = dst_img.buffer();
-    let dst_f32: &[f32] = bytemuck_cast_slice_back(dst_bytes);
-    dst_flat.copy_from_slice(dst_f32);
-
-    let mut pixels = Vec::with_capacity((dst_w * dst_h) as usize);
-    for chunk in dst_flat.as_chunks::<3>().0 {
-        pixels.push([chunk[0], chunk[1], chunk[2]]);
-    }
-
-    Ok((dst_w, dst_h, pixels))
-}
-
-fn bytemuck_cast_slice(f: &[f32]) -> &[u8] {
-    unsafe { std::slice::from_raw_parts(f.as_ptr() as *const u8, f.len() * 4) }
-}
-
-fn bytemuck_cast_slice_back(b: &[u8]) -> &[f32] {
-    unsafe { std::slice::from_raw_parts(b.as_ptr() as *const f32, b.len() / 4) }
+    Ok((new_w, new_h, out))
 }

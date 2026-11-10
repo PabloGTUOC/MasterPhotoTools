@@ -359,10 +359,15 @@ pub fn execute_develop(
                     }
                 };
 
-                let default_dir = dirs::data_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join("masterphototools/film-data");
-                let data_dir = store.film_data_dir().unwrap_or(&default_dir);
+                // No silent default: a store that cannot say where film data lives must not
+                // have it written somewhere the user never chose (G10).
+                let Some(data_dir) = store.film_data_dir() else {
+                    summary.failures.push(Skip {
+                        file: action.source,
+                        reason: "no folder for the film simulation data was given".to_string(),
+                    });
+                    continue;
+                };
 
                 match plan.format {
                     OutputFormat::Jpeg { quality } => {

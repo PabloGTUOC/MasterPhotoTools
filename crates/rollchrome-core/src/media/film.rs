@@ -353,6 +353,9 @@ static CPU_BACKEND: std::sync::OnceLock<
     std::sync::Mutex<Box<dyn spektrafilm_gpu::ComputeBackend>>,
 > = std::sync::OnceLock::new();
 
+// The locks recover from poisoning: a render that panicked is already reported as an error by
+// `catch_unwind`, and a poisoned lock would otherwise refuse every later film render until the
+// program restarted (G10). Neither the backend nor the cache is left half-updated by a panic.
 #[cfg(feature = "film")]
 fn backend_lock(
     backend: FilmBackend,
@@ -399,9 +402,15 @@ fn get_or_build_pipeline(
     };
 
     {
-        let mut cache = PIPELINE_CACHE.lock().unwrap();
-        if let Some(pos) = cache.entries.iter().position(|(k, _)| k == &key) {
-            let (k, p) = cache.entries.remove(pos).unwrap();
+        let mut cache = PIPELINE_CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((k, p)) = cache
+            .entries
+            .iter()
+            .position(|(k, _)| k == &key)
+            .and_then(|pos| cache.entries.remove(pos))
+        {
             let clone = p.clone();
             cache.entries.push_back((k, p));
             return Ok(clone);
@@ -468,7 +477,9 @@ fn get_or_build_pipeline(
             })?;
 
     {
-        let mut cache = PIPELINE_CACHE.lock().unwrap();
+        let mut cache = PIPELINE_CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if cache.entries.len() >= 4 {
             cache.entries.pop_front();
         }
@@ -514,7 +525,9 @@ pub fn render_film(
         let input_buf = spektrafilm_math::image::ImageBuf::from_data(width, height, input_f64);
 
         let lock = backend_lock(backend);
-        let backend_guard = lock.lock().unwrap();
+        let backend_guard = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let result_buf = pipeline.process(input_buf, backend_guard.as_ref());
 
         let out_pixels: Vec<[f32; 3]> = result_buf

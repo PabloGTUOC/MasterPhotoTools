@@ -1,6 +1,6 @@
 # Develop — RAW files to finished photographs, a film look each
 
-> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 done ([brief](briefs/DV-3.md)): 12 built-in looks ship; Velvia and Astia did not pass. RP-1 built ([brief](briefs/RP-1.md)): Develop screen exists with preview, look picker, exposure slider, dry run, and export.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
+> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 done ([brief](briefs/DV-3.md)): 12 built-in looks ship; Velvia and Astia did not pass. RP-1 built ([brief](briefs/RP-1.md)): Develop screen exists with preview, look picker, exposure slider, dry run, and export. DV-4 briefed ([brief](briefs/DV-4.md)): 18 film stocks simulated by spektrafilm-rs; the repository becomes GPL-3.0-or-later.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
 > ([`rollchrome-plan.md`](rollchrome-plan.md)). DV-1 needs RC-1. Nothing here touches PhotoTools.
 >
 > **Functionality first.** The screen is discussed with the owner before it becomes a step
@@ -153,8 +153,9 @@ frame; it diffuses within the emulsion, so a small bright area darkens its surro
 contrast, the adjacency effect); and periodic agitation mixes the layer with a reservoir of fresh
 developer. Its controls are few — film size, drama, highlight roll-off.
 
-**It is GPL-3.0-or-later.** This repository has no licence, and Rollchrome may one day go to the App
-Store, so **no Filmulator code comes in, not even translated**. The description above is the
+**It is GPL-3.0-or-later.** When this was written the repository had no licence and Rollchrome might
+one day go to the App Store, so **no Filmulator code was to come in, not even translated**. The
+repository is GPL-3.0-or-later since DV-4, so that reason no longer holds. The description above is the
 specification; DV-4 works from it and not from the C++.
 
 It lends Develop two more things. Its order of operations — demosaic, highlight recovery, white
@@ -225,10 +226,21 @@ saturation is beyond the model. Whether to fit those two with a richer model is 
 Re-run `cargo run --release -p rollchrome-core --example fit_looks -- <sources>` whenever the base
 tone changes; the sources stay outside the repository.
 
-### `DV-4` · Film development, after Filmulator — only if the owner wants it
+### `DV-4` · Film stocks, simulated by spektrafilm
 
-The model described above, as a stage between exposure and base tone, with its few controls, and
-an answer to how it sits with the fitted looks. Not started without the owner's say-so.
+**Briefed: [`briefs/DV-4.md`](briefs/DV-4.md).** The owner asked for film stocks rather than camera
+settings — Portra 160, Ektar 100, Ektachrome 100, Vision3 250D (2026-11-09). None of the material
+above can give them: there is no camera JPEG of a chart for a film. [spektrafilm](https://github.com/andreavolpato/spektrafilm)
+can, by simulating the film from its datasheet — negative, enlarger, paper, scanner, with grain and
+halation — and its Rust port, [spektrafilm-rs](https://github.com/turbasvin/spektrafilm-rs), reads the
+same linear ProPhoto RGB that DV-1 produces. Run by hand on six of the owner's XZ-1 RAWs it gave
+results the owner accepted; on the GPU it takes 50 ms for a 1600-pixel preview and 1.5 s for 40 MP.
+
+It replaces what this step used to be, a development stage after Filmulator: spektrafilm models
+development too, as the film's own curves and couplers. **The repository becomes GPL-3.0-or-later**
+(owner, 2026-11-09: Rollchrome will be open source), which is what lets the engine in; the section
+above on Filmulator was written before that decision. Eighteen colour stocks ship, among them Velvia
+100 and Provia 100F — the film, which the camera looks of the same name failed to fit in DV-3.
 
 ### The screen — RP-1
 

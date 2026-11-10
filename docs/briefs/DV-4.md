@@ -1,6 +1,6 @@
 # `DV-4` · Film stocks in Develop, simulated by spektrafilm
 
-> **Status:** briefed
+> **Status:** approved
 > **Plan:** [`docs/develop-plan.md`](../develop-plan.md), step `DV-4` · **Branch:** `dv-4`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -208,14 +208,14 @@ Outside the feature: one test in `develop_tests.rs`, `a_film_look_is_refused_whe
 
 ### Acceptance
 
-- [ ] The 18 stocks appear in Develop and render in preview and export; LUT looks render exactly as before.
-- [ ] Exposure is the engine's compensation over auto exposure; grain has three settings, Fine by default.
-- [ ] The data is embedded, materialised once, repaired when damaged; the directory holds only what is needed.
-- [ ] `cargo test -p rollchrome-core` passes **without** the feature (G2); `cargo test -p rollchrome-core --features film`
+- [x] The 18 stocks appear in Develop and render in preview and export; LUT looks render exactly as before.
+- [x] Exposure is the engine's compensation over auto exposure; grain has three settings, Fine by default.
+- [x] The data is embedded, materialised once, repaired when damaged; the directory holds only what is needed.
+- [x] `cargo test -p rollchrome-core` passes **without** the feature (G2); `cargo test -p rollchrome-core --features film`
       passes with it; tests 1–11 pass; test 12 passes when run by hand on the Mac (`--release -- --ignored`).
-- [ ] `check:develop` reports 19 checks; every other check passes unchanged.
-- [ ] GPL-3.0-or-later in `LICENSE` and every manifest; spektrafilm credited in `CREDITS.md` and on screen.
-- [ ] Test counts rise from `main`'s (1286 workspace, 2 ignored; rollchrome-core 441; rollchrome-desktop 26). No existing
+- [x] `check:develop` reports 19 checks; every other check passes unchanged.
+- [x] GPL-3.0-or-later in `LICENSE` and every manifest; spektrafilm credited in `CREDITS.md` and on screen.
+- [x] Test counts rise from `main`'s (1286 workspace, 2 ignored; rollchrome-core 441; rollchrome-desktop 26). No existing
       test changed, deleted or ignored; the only new `#[ignore]` is test 12.
 
 ### Gates
@@ -447,3 +447,53 @@ Every gate was executed in the foreground with actual counts recorded:
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved**, after the architect's fixes in `6c0ff0a`.
+
+**Gates, re-run on `dv-4` after those fixes.** All pass:
+- fmt, clippy (`-D warnings`) and build are clean.
+- Workspace: **1299 passed, 3 ignored**. phototools-core 714; rollchrome-core **442** without `film` (G2) and **453 passed, 1 ignored** with it; phototools-desktop 26; rollchrome-desktop **27**; rollchrome-cli 8.
+- Every Rollchrome front-end check passes, `check:develop` with **19** checks. Web and desktop typecheck, build and `check:transport` pass.
+- Test 12 in a release build: warm 1600×1200 preview 73 ms; the 40 MP export is within its 4 s budget; GPU–CPU mean difference with grain off 0.000274.
+- `check:layout` and `check:ingest` (PhotoTools web) were not re-run: DV-4 touches only `package.json`'s licence field there.
+
+**What was checked.**
+- The diff, file by file.
+- Every change to an existing test: they only add the `grain` field and argument; nothing was weakened.
+- The film module against the brief's decisions: auto exposure with compensation, grain mapped to `film_format_mm`, slides scanned, input and output spaces, the pipeline cache and `catch_unwind`.
+- `LICENSE` is byte-for-byte the GPL-3.0 text at the pinned commit.
+- Six breakages were run against `film_tests`, plus one more after the fixes:
+  - **Caught:** removing the exposure compensation, Fine set to 35 mm, grain left on for Off, and the cache ignoring grain.
+  - **Survived at first:** slides printed instead of scanned, and the TIFF written with display-encoded sRGB. Both are caught now (see 5).
+
+**Fixed by the architect, in `6c0ff0a`:**
+
+1. **The preview downscale was rewritten outside the brief (G11), and the report did not say so.**
+   - The new `resize_linear` changed the filter to bilinear and the rounding, which changed every preview, not only film ones.
+   - It added `bytemuck_cast_slice_back`, an unaligned cast from `&[u8]` to `&[f32]`, which is undefined behaviour.
+   - `main`'s function is restored unchanged.
+2. **Bare `lock().unwrap()` on the backend and pipeline-cache mutexes (G10).** After one panic, every later film render would have failed until restart. The locks now recover from poisoning, with the reason in a comment.
+3. **A silent default folder (G10).** A store or preview without a film data folder wrote to `dirs::data_dir()/masterphototools/film-data`. It now refuses, naming the problem. Every real caller (desktop, automation, CLI) already passes `config::film_data_dir`.
+4. **The licence and credits.**
+   - `SPEKTRAFILM_LICENSE.txt` was the GPL text, not spektrafilm's CC BY-SA licence for the profiles. The brief was at fault: that file is in spektrafilm, not in the port. It is now copied unmodified from spektrafilm at `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`.
+   - The root `CREDITS.md`, which the brief did not ask for, credited the port to "Victor Turbas", a name no source gives (the author appears only as `turbasvin`). It is removed.
+   - `film-data/CREDITS.md` now says where every file comes from.
+5. **Two checks that a wrong implementation passed.**
+   - `slides_are_scanned_without_paper` now compares each slide with spektrafilm run directly: equal to the scan path, different from the print path.
+   - `a_film_tiff_is_16_bit_prophoto_with_its_profile` now decodes the TIFF's pixels and compares them with the engine's linear ProPhoto output.
+
+**Also corrected in the documents:** `develop-plan.md`'s *Still open* said "None". It now lists the real files, the film names before publishing, and Astia.
+
+**The report.** "Deviations: None" was not true (item 1). Its account of the work also describes things the code does not do:
+- grain as `(grain_amount, grain_size)` tuples;
+- a `FilmBackend::Gpu`;
+- a `spektrafilm-model` dependency;
+- "ColorPlus" and "Superia" stocks.
+
+The code follows the brief on all of these; the report did not. **Cost: 840 credits** (1,379 → 539).
+
+**Unverified:**
+- Real RAWs in the application (MV-38).
+- The Linux CI build with OpenBLAS, until the next push.
+- Memory use on a 40 MP export, which holds several f64 copies of the image.
+

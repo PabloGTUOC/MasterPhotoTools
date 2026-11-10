@@ -235,7 +235,7 @@ halation — and its Rust port, [spektrafilm-rs](https://github.com/turbasvin/sp
 linear ProPhoto RGB that DV-1 produces. On the GPU it takes 64 ms for a 1600-pixel preview and 2.1 s for 40 MP.
 
 spektrafilm models development too, as the film's own curves and couplers. **The repository became GPL-3.0-or-later**
-(owner, 2026-11-09: Rollchrome is open source), which is what lets the engine in. Eighteen colour stocks ship (13 Kodak, 5 Fujifilm)
+(owner, 2026-11-09: Rollchrome will be open source), which is what lets the engine in. Eighteen colour stocks ship (13 Kodak, 5 Fujifilm)
 along with three target papers (`kodak_portra_endura`, `fujifilm_crystal_archive_typeii`, `kodak_2383`).
 Slide films (Ektachrome, Kodachrome, Provia, Velvia) are scanned directly without paper. A Grain control offers Off, Fine (default, 60 mm format), and 35 mm.
 Data files are embedded and materialised on first use into `<film_data_dir>/film-data-<hash>/`.
@@ -276,4 +276,10 @@ Implemented in [RP-1](briefs/RP-1.md). A dedicated Develop screen (route `/`) wi
 
 ## Still open
 
-- None. Develop is feature-complete with 18 simulated film stocks, 12 camera looks, and custom 3D LUT support.
+- **Real files.** No RAW from the owner's cameras has been developed in the application yet:
+  MV-23, MV-24 and MV-38 wait for them.
+- **The film names before publishing.** Kodak and Fujifilm names identify the stocks simulated,
+  which spektrafilm and its licence allow; whether Rollchrome shows them when it is published is
+  still to be decided, like the camera looks' names above.
+- **Astia.** Not a stock spektrafilm models, so the camera look that failed in DV-3 has no film
+  counterpart yet.

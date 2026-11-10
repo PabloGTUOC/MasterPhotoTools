@@ -249,6 +249,15 @@ the screen starts at 25, scripts at 0). It reuses Edit's guided-filter noise red
 RAW before any look, so the film's own grain is never smoothed. The architect measured it on one owner file: fine
 noise after Portra 160 fell from 4.7 to 2.1 at 25, colour noise from 4.5 to 0.5, and brightness was unchanged.
 
+### `DV-6` · Save a film stock as a LUT
+
+**Briefed in [DV-6](briefs/DV-6.md).** The owner also edits in Photomator. LUTs of Portra 400 and Vision3 500T
+made by hand (2026-11-10) looked right there, so Develop gets a **Save as LUT** button for the selected film
+stock. The LUT is a 33-point `.cube` with sRGB in and sRGB out, written into the folder's `Developed`. It cannot
+hold grain, halation, DIR couplers or auto exposure. Tungsten stocks get an optional neutral-grey print filter,
+found automatically. The engine's own `export-lut` is unusable as it stands: it skips the print calibration, and
+its LUTs come out two stops dark.
+
 ### The screen — RP-1
 
 Implemented in [RP-1](briefs/RP-1.md). A dedicated Develop screen (route `/`) with thumbnail grid, look picker, exposure slider, upright preview, dry-run discipline, and background development to JPEG/TIFF into `<folder>/Developed`.

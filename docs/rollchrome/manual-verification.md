@@ -437,3 +437,12 @@ the automated check drives the screen against a stub.
       **Run:** develop two of the owner's ISO 400 XZ-1 files in Portra 160, grain Off, at Noise reduction 0, 25 and 50.
       **Pass:** at 25 the colour speckle is gone and skin and fabric stay detailed at 100%; the preview and the exported file match by eye.
       **Result:**
+
+## MV-40 — Film stock LUTs in another editor (DV-6)
+
+[`develop-plan.md`](../develop-plan.md), briefed. Needs a Mac running Rollchrome and Photomator.
+
+- [ ] **MV-40.1 — Save Portra 400 and Vision3 500T (neutral) as LUTs and apply them in Photomator.**
+      **Run:** in Develop, choose each stock for a photograph, press Save as LUT, then load the file from `Developed` in Photomator on the same photograph's JPEG.
+      **Pass:** Photomator accepts both files. The colours match Rollchrome's grain-off preview by eye. 500T neutral is not blue on a daylight photograph.
+      **Result:**

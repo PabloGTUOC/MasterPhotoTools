@@ -503,6 +503,7 @@ fn a_builtin_look_never_reaches_the_library() {
             look: "builtin:fujifilm-classic-chrome".to_string(),
             exposure_ev: 0.0,
             grain: rollchrome_core::media::film::Grain::Fine,
+            noise_reduction: 0.0,
         }],
         skipped: Vec::new(),
     };
@@ -538,6 +539,7 @@ fn an_unknown_builtin_look_is_skipped_with_its_reason() {
             look: "builtin:nonexistent-look-id".to_string(),
             exposure_ev: 0.0,
             grain: rollchrome_core::media::film::Grain::Fine,
+            noise_reduction: 0.0,
         }],
         skipped: Vec::new(),
     };

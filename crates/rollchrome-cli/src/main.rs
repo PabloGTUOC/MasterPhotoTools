@@ -22,7 +22,7 @@ const HELP_TEXT: &str = "\
 Usage:
   rollchrome-cli looks [--json]
   rollchrome-cli luts [--json]
-  rollchrome-cli develop <folder> --look <id> [--exposure <ev>] [--grain off|fine|standard] [--format jpeg|tiff] [--quality <1..100, default 92>] [--only <name>]... [--apply] [--json]
+  rollchrome-cli develop <folder> --look <id> [--exposure <ev>] [--noise <0..100>] [--grain off|fine|standard] [--format jpeg|tiff] [--quality <1..100, default 92>] [--only <name>]... [--apply] [--json]
   rollchrome-cli batch <input>... --lut <name|sha256|path> --out <dir> [--intensity <0..1, default 1>] [--recursive] [--apply] [--json]
   rollchrome-cli export <photo> --out <dir> [--format as-source|jpeg|tiff|png|webp|avif] [--quality <n>] [--bits <8|16>] [--long-edge <n>|--megapixels <n>] [--sharpen off|screen|print] [--template <t>] [--metadata all|no-location|none] [--json]
   rollchrome-cli mcp
@@ -131,6 +131,7 @@ fn parse_develop(args: &[String]) -> Result<Command, String> {
     let mut folder: Option<String> = None;
     let mut look: Option<String> = None;
     let mut exposure_ev: f32 = 0.0;
+    let mut noise_reduction: f32 = 0.0;
     let mut grain = Grain::Fine;
     let mut format_str = "jpeg".to_string();
     let mut quality: u8 = 92;
@@ -150,6 +151,12 @@ fn parse_develop(args: &[String]) -> Result<Command, String> {
                 exposure_ev = raw
                     .parse::<f32>()
                     .map_err(|_| format!("invalid --exposure value '{raw}'"))?;
+            }
+            "--noise" => {
+                let raw = next_val(args, &mut i, "--noise")?;
+                noise_reduction = raw
+                    .parse::<f32>()
+                    .map_err(|_| format!("invalid --noise value '{raw}'"))?;
             }
             "--grain" => {
                 let raw = next_val(args, &mut i, "--grain")?.to_ascii_lowercase();
@@ -214,6 +221,7 @@ fn parse_develop(args: &[String]) -> Result<Command, String> {
             look,
             exposure_ev,
             grain,
+            noise_reduction,
             format,
             only,
         },

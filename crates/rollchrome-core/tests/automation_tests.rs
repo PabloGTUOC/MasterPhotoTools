@@ -130,6 +130,7 @@ fn a_path_outside_the_roots_is_refused_before_anything_runs() {
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -222,6 +223,7 @@ fn a_develop_plan_writes_nothing() {
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -249,6 +251,7 @@ fn running_develop_needs_the_hash_of_the_plan_that_was_reviewed() {
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -280,6 +283,7 @@ fn a_new_file_in_the_way_changes_the_hash_and_refuses_the_run() {
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -312,6 +316,7 @@ fn develop_writes_into_developed_and_never_overwrites() {
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -329,6 +334,7 @@ fn develop_writes_into_developed_and_never_overwrites() {
         look: "builtin:ricoh-standard".to_string(),
         exposure_ev: 1.5,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -362,6 +368,7 @@ fn develop_on_a_card_is_refused_before_anything_is_written() {
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -568,6 +575,7 @@ fn a_cancelled_run_stops_and_reports_what_it_did() {
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -597,6 +605,7 @@ fn a_look_changed_after_the_plan_refuses_the_develop_run() {
         look: "CustomFilm.cube".to_string(),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };

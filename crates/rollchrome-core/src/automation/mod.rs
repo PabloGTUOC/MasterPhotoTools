@@ -48,6 +48,8 @@ pub struct DevelopRequest {
     pub exposure_ev: f32,
     #[serde(default)]
     pub grain: Grain,
+    #[serde(default)]
+    pub noise_reduction: f32,
     pub format: OutputFormat,
     pub only: Vec<String>,
 }
@@ -171,6 +173,7 @@ impl Automation {
                     look: look_opt.clone(),
                     exposure_ev: r.exposure_ev,
                     grain: r.grain,
+                    noise_reduction: r.noise_reduction,
                 });
             }
         } else {
@@ -186,6 +189,7 @@ impl Automation {
                         look: look_opt.clone(),
                         exposure_ev: r.exposure_ev,
                         grain: r.grain,
+                        noise_reduction: r.noise_reduction,
                     });
                 } else if !resolved_folder.join(name).is_file() {
                     missing_skipped.push(Skip {
@@ -198,6 +202,7 @@ impl Automation {
                         look: look_opt.clone(),
                         exposure_ev: r.exposure_ev,
                         grain: r.grain,
+                        noise_reduction: r.noise_reduction,
                     });
                 }
             }

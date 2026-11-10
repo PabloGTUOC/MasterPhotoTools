@@ -521,6 +521,7 @@ fn a_film_tiff_is_16_bit_prophoto_with_its_profile() {
         look: Some("film:kodak_portra_160".to_string()),
         exposure_ev: 0.0,
         grain: Grain::Off,
+        noise_reduction: 0.0,
     }];
 
     let plan = plan_develop(
@@ -640,6 +641,7 @@ fn a_film_jpeg_is_8_bit_srgb() {
         look: Some("film:kodak_portra_160".to_string()),
         exposure_ev: 0.0,
         grain: Grain::Off,
+        noise_reduction: 0.0,
     }];
 
     let plan = plan_develop(
@@ -700,6 +702,7 @@ fn grain_is_carried_through_the_plan() {
         look: Some("film:kodak_portra_400".to_string()),
         exposure_ev: 0.0,
         grain: Grain::Standard,
+        noise_reduction: 0.0,
     }];
     let plan_std = plan_develop(
         &items_std,
@@ -714,6 +717,7 @@ fn grain_is_carried_through_the_plan() {
         look: Some("film:kodak_portra_400".to_string()),
         exposure_ev: 0.0,
         grain: Grain::Off,
+        noise_reduction: 0.0,
     }];
     let plan_off = plan_develop(
         &items_off,
@@ -729,6 +733,7 @@ fn grain_is_carried_through_the_plan() {
         look: "film:kodak_portra_400".to_string(),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 90 },
         only: vec!["photo.dng".to_string()],
     };
@@ -739,6 +744,7 @@ fn grain_is_carried_through_the_plan() {
         look: "film:kodak_portra_400".to_string(),
         exposure_ev: 0.0,
         grain: Grain::Standard,
+        noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 90 },
         only: vec!["photo.dng".to_string()],
     };
@@ -773,6 +779,7 @@ fn the_preview_renders_a_film_look_upright_at_preview_size() {
             Some(PreviewLook::Film("kodak_portra_160")),
             0.0,
             Grain::Fine,
+            0.0,
             false,
             Some(&data_dir),
         )
@@ -909,4 +916,188 @@ impl phototools_core::jobs::Progress for NoopProgress {
     fn cancelled(&self) -> bool {
         false
     }
+}
+
+// ---------------------------------------------------------------------------
+// DV-5 Tests 9–10: Film Noise Reduction
+// ---------------------------------------------------------------------------
+
+struct Lcg(u64);
+impl Lcg {
+    fn next_u32(&mut self) -> u32 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (self.0 >> 32) as u32
+    }
+    fn next_f32(&mut self) -> f32 {
+        (self.next_u32() >> 8) as f32 / 16777216.0
+    }
+    fn next_gaussian(&mut self, sigma: f32) -> f32 {
+        let u1 = self.next_f32().max(1e-7);
+        let u2 = self.next_f32();
+        (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos() * sigma
+    }
+}
+
+/// 9. `film_noise_reduction_happens_before_the_film`
+#[test]
+fn film_noise_reduction_happens_before_the_film() {
+    let temp = tempfile::tempdir().unwrap();
+    let raw_dir = temp.path().join("raws");
+    let lut_dir = temp.path().join("luts");
+    fs::create_dir_all(&raw_dir).unwrap();
+    fs::create_dir_all(&lut_dir).unwrap();
+
+    let (_dtemp, film_dir) = test_data_dir();
+
+    let width = 64u32;
+    let height = 48u32;
+    let mut rng = Lcg(112233);
+    let mut pixels = Vec::with_capacity((width * height) as usize);
+    for _ in 0..(width * height) {
+        let v = (3000.0 + rng.next_gaussian(400.0)).clamp(512.0, 16000.0) as u16;
+        pixels.push(v);
+    }
+    let dng_bytes = DngBuilder::new_bayer(width, height).build(&pixels);
+    fs::write(raw_dir.join("photo.dng"), &dng_bytes).unwrap();
+
+    let mut store = FolderStore::with_film_data(raw_dir.clone(), lut_dir, Some(film_dir.clone()));
+
+    let items = vec![DevelopItem {
+        name: "photo.dng".to_string(),
+        look: Some("film:kodak_portra_160".to_string()),
+        exposure_ev: 0.0,
+        grain: Grain::Off,
+        noise_reduction: 50.0,
+    }];
+
+    let plan = plan_develop(
+        &items,
+        OutputFormat::Tiff,
+        &store.existing_outputs().unwrap(),
+    );
+    let summary = execute_develop(plan, &mut store, &NoopProgress);
+    assert_eq!(summary.developed, vec!["photo.tif"]);
+    assert!(summary.failures.is_empty());
+
+    let output_path = store.output_dir().join("photo.tif");
+    let file_bytes = fs::read(&output_path).expect("read TIFF bytes");
+    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&file_bytes)).unwrap();
+    let decoded: Vec<f32> = match decoder.read_image().expect("decode TIFF pixels") {
+        tiff::decoder::DecodingResult::U16(v) => v
+            .into_iter()
+            .map(|c| rollchrome_core::media::develop::tone::prophoto_decode(c as f32 / 65535.0))
+            .collect(),
+        _ => panic!("expected 16-bit samples"),
+    };
+
+    let raw = fs::read(raw_dir.join("photo.dng")).expect("read DNG");
+    let linear = rollchrome_core::media::develop::develop_linear(
+        &raw,
+        &rollchrome_core::media::develop::DevelopOptions { exposure_ev: 0.0 },
+    )
+    .expect("develop linear");
+
+    let denoised_pixels = rollchrome_core::media::develop::reduce_noise(
+        linear.width,
+        linear.height,
+        &linear.pixels,
+        50.0,
+        1.0,
+    );
+
+    let oracle_with_nr = render_film(
+        &denoised_pixels,
+        linear.width,
+        linear.height,
+        "kodak_portra_160",
+        Grain::Off,
+        0.0,
+        FilmOutput::ProPhotoLinear,
+        FilmBackend::Cpu,
+        &film_dir,
+    )
+    .expect("oracle with nr");
+    let oracle_flat: Vec<f32> = oracle_with_nr
+        .iter()
+        .flatten()
+        .map(|v| v.max(0.0))
+        .collect();
+
+    let oracle_without_nr = render_film(
+        &linear.pixels,
+        linear.width,
+        linear.height,
+        "kodak_portra_160",
+        Grain::Off,
+        0.0,
+        FilmOutput::ProPhotoLinear,
+        FilmBackend::Cpu,
+        &film_dir,
+    )
+    .expect("oracle without nr");
+    let oracle_no_nr_flat: Vec<f32> = oracle_without_nr
+        .iter()
+        .flatten()
+        .map(|v| v.max(0.0))
+        .collect();
+
+    let mad_with = decoded
+        .iter()
+        .zip(&oracle_flat)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / decoded.len() as f32;
+
+    let mad_without = decoded
+        .iter()
+        .zip(&oracle_no_nr_flat)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / decoded.len() as f32;
+
+    assert!(
+        mad_with < 0.01,
+        "must match CPU oracle with noise reduction within 0.01 (got {mad_with})"
+    );
+    assert!(
+        mad_without > 0.001,
+        "must not match CPU oracle without noise reduction (got {mad_without})"
+    );
+}
+
+/// 10. `noise_reduction_preview_cost_is_printed`
+#[test]
+#[ignore]
+fn noise_reduction_preview_cost_is_printed() {
+    let w = 1600u32;
+    let h = 1067u32;
+    let mut rng = Lcg(4444);
+    let mut pixels = Vec::with_capacity((w * h) as usize);
+    for _ in 0..(w * h) {
+        let r = (0.18 + rng.next_gaussian(0.02)).max(0.0);
+        let g = (0.18 + rng.next_gaussian(0.02)).max(0.0);
+        let b = (0.18 + rng.next_gaussian(0.02)).max(0.0);
+        pixels.push([r, g, b]);
+    }
+
+    let scale = 1.0f32;
+    let _ = rollchrome_core::media::develop::reduce_noise(w, h, &pixels, 50.0, scale);
+
+    let mut times = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let start = std::time::Instant::now();
+        let _ = rollchrome_core::media::develop::reduce_noise(w, h, &pixels, 50.0, scale);
+        times.push(start.elapsed());
+    }
+    times.sort();
+    let median = times[2];
+    println!("noise_reduction_preview_cost: {:?}", median);
+    assert!(
+        median.as_millis() <= 100,
+        "median cost {:?} exceeded 100ms",
+        median
+    );
 }

@@ -357,6 +357,7 @@ export class RollchromeClient {
     exposureEv: number,
     draft: boolean,
     grain?: Grain,
+    noiseReduction?: number,
   ): Promise<Uint8Array> {
     const res = await invoke<ArrayBuffer | Uint8Array>('preview_develop', {
       folder,
@@ -365,6 +366,7 @@ export class RollchromeClient {
       exposureEv,
       draft,
       grain,
+      noiseReduction,
     });
     return res instanceof Uint8Array ? res : new Uint8Array(res);
   }
@@ -920,6 +922,7 @@ export interface DevelopItem {
   look: string | null;
   exposure_ev: number;
   grain?: Grain;
+  noise_reduction?: number;
 }
 
 /** One planned develop action. */

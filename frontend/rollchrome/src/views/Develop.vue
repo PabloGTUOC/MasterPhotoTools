@@ -93,6 +93,7 @@ interface WantedPreviewState {
   exposure_ev: number;
   draft: boolean;
   grain: Grain;
+  noise_reduction: number;
 }
 let previewInFlight = false;
 let pendingPreviewState: WantedPreviewState | null = null;
@@ -229,6 +230,17 @@ const selectedExposure = computed(() => {
   return first;
 });
 
+// Active noise reduction for selection (DV-5)
+const selectedNoiseReduction = computed(() => {
+  if (selection.value.length === 0) return 25;
+  const first = moduleAssignments.value[selection.value[0]]?.noise_reduction ?? 25;
+  const allSame = selection.value.every(
+    (name) => (moduleAssignments.value[name]?.noise_reduction ?? 25) === first,
+  );
+  if (!allSame) return 25;
+  return first;
+});
+
 // ---------------------------------------------------------------------------
 // Actions: folder scan & sequential thumbnail loading
 // ---------------------------------------------------------------------------
@@ -282,7 +294,7 @@ async function loadFolder() {
     const assignments = { ...moduleAssignments.value };
     for (const name of names) {
       if (!assignments[name]) {
-        assignments[name] = { look: null, exposure_ev: 0.0, grain: 'fine' };
+        assignments[name] = { look: null, exposure_ev: 0.0, grain: 'fine', noise_reduction: 25 };
       }
     }
     moduleAssignments.value = assignments;
@@ -376,8 +388,13 @@ function onLookChange(event: Event) {
 
   const updated = { ...moduleAssignments.value };
   for (const name of selection.value) {
-    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine' };
-    updated[name] = { ...existing, look, grain: existing.grain ?? 'fine' };
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine', noise_reduction: 25 };
+    updated[name] = {
+      ...existing,
+      look,
+      grain: existing.grain ?? 'fine',
+      noise_reduction: existing.noise_reduction ?? 25,
+    };
   }
   moduleAssignments.value = updated;
   triggerPreview();
@@ -389,7 +406,7 @@ function onGrainChange(event: Event) {
   const grain = value as Grain;
   const updated = { ...moduleAssignments.value };
   for (const name of selection.value) {
-    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine' };
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine', noise_reduction: 25 };
     updated[name] = { ...existing, grain };
   }
   moduleAssignments.value = updated;
@@ -399,7 +416,7 @@ function onGrainChange(event: Event) {
 function onExposureInput(exposure_ev: number) {
   const updated = { ...moduleAssignments.value };
   for (const name of selection.value) {
-    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine' };
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine', noise_reduction: 25 };
     updated[name] = { ...existing, exposure_ev };
   }
   moduleAssignments.value = updated;
@@ -409,8 +426,28 @@ function onExposureInput(exposure_ev: number) {
 function onExposureChange(exposure_ev: number) {
   const updated = { ...moduleAssignments.value };
   for (const name of selection.value) {
-    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine' };
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine', noise_reduction: 25 };
     updated[name] = { ...existing, exposure_ev };
+  }
+  moduleAssignments.value = updated;
+  triggerPreview(false);
+}
+
+function onNoiseInput(noise_reduction: number) {
+  const updated = { ...moduleAssignments.value };
+  for (const name of selection.value) {
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine', noise_reduction: 25 };
+    updated[name] = { ...existing, noise_reduction };
+  }
+  moduleAssignments.value = updated;
+  triggerPreview(true);
+}
+
+function onNoiseChange(noise_reduction: number) {
+  const updated = { ...moduleAssignments.value };
+  for (const name of selection.value) {
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine', noise_reduction: 25 };
+    updated[name] = { ...existing, noise_reduction };
   }
   moduleAssignments.value = updated;
   triggerPreview(false);
@@ -433,7 +470,7 @@ async function triggerPreview(draft = false) {
     return;
   }
 
-  const assignment = moduleAssignments.value[targetPhoto] ?? { look: null, exposure_ev: 0.0, grain: 'fine' };
+  const assignment = moduleAssignments.value[targetPhoto] ?? { look: null, exposure_ev: 0.0, grain: 'fine', noise_reduction: 25 };
   const wanted: WantedPreviewState = {
     folder: currentPath,
     name: targetPhoto,
@@ -441,6 +478,7 @@ async function triggerPreview(draft = false) {
     exposure_ev: assignment.exposure_ev,
     draft,
     grain: assignment.grain ?? 'fine',
+    noise_reduction: assignment.noise_reduction ?? 25,
   };
 
   if (previewInFlight) {
@@ -466,6 +504,7 @@ async function executePreview(wanted: WantedPreviewState) {
       wanted.exposure_ev,
       wanted.draft,
       wanted.grain,
+      wanted.noise_reduction,
     );
     if (seq === previewSeq) {
       if (previewUrl.value) {
@@ -501,12 +540,13 @@ function makeItems(): DevelopItem[] {
       : photos.value;
 
   return targetPhotos.map((name) => {
-    const a = moduleAssignments.value[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine' };
+    const a = moduleAssignments.value[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine', noise_reduction: 25 };
     return {
       name,
       look: a.look,
       exposure_ev: a.exposure_ev,
       grain: a.grain ?? 'fine',
+      noise_reduction: a.noise_reduction ?? 25,
     };
   });
 }
@@ -893,6 +933,23 @@ onMounted(async () => {
               test-id="exposure-slider"
               @change="onExposureChange"
               @update:model-value="onExposureInput"
+            />
+          </div>
+
+          <!-- Noise reduction adjustment (DV-5) -->
+          <div class="control-row">
+            <AdjustmentSlider
+              label="Noise reduction"
+              :min="0"
+              :max="100"
+              :step="5"
+              :default-value="25"
+              :model-value="selectedNoiseReduction"
+              :disabled="selection.length === 0 || isDeveloping"
+              test-id="noise-slider"
+              data-testid="noise-slider"
+              @change="onNoiseChange"
+              @update:model-value="onNoiseInput"
             />
           </div>
         </div>

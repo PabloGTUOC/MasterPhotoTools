@@ -342,6 +342,52 @@ fn develop_linear_impl(raw: &[u8], options: &DevelopOptions) -> Result<LinearPro
     })
 }
 
+/// Reduces sensor noise on scene-referred linear ProPhoto RGB before look application.
+///
+/// Sensor noise must be removed on the linear RAW before the look is applied because looks
+/// (film simulations, built-in camera looks, and LUTs) set their own exposure, lift dark
+/// tones, and apply contrast or edge effects that amplify speckle. In addition, film simulations
+/// apply physical grain which must not be smoothed away.
+/// At `amount == 0.0`, returns pixels unchanged without performing filtering.
+pub fn reduce_noise(
+    width: u32,
+    height: u32,
+    pixels: &[[f32; 3]],
+    amount: f32,
+    scale: f32,
+) -> Vec<[f32; 3]> {
+    if amount == 0.0 || pixels.is_empty() {
+        return pixels.to_vec();
+    }
+
+    let detail = crate::media::edit::detail::Detail {
+        noise_luminance: amount,
+        noise_colour: amount,
+        ..Default::default()
+    };
+
+    let mut data = Vec::with_capacity(pixels.len() * 3);
+    for p in pixels {
+        data.push(p[0]);
+        data.push(p[1]);
+        data.push(p[2]);
+    }
+
+    let src = crate::media::edit::pipeline::LinearBuffer {
+        width,
+        height,
+        data,
+    };
+
+    let out = crate::media::edit::detail::apply_detail(&src, &detail, scale);
+
+    let mut out_pixels = Vec::with_capacity((width * height) as usize);
+    for chunk in out.data.as_chunks::<3>().0 {
+        out_pixels.push([chunk[0], chunk[1], chunk[2]]);
+    }
+    out_pixels
+}
+
 /// Converts linear ProPhoto RGB pixels to a developed 16-bit ProPhoto RGB image
 /// using the base tone curve and ROMM encoding.
 pub fn linear_to_developed(

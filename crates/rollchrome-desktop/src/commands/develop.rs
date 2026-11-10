@@ -90,7 +90,9 @@ pub fn develop_thumbnail_impl(
     rollchrome_core::tools::develop_folder::thumbnail(&path, 360).map_err(describe)
 }
 
-/// Generates or renders an upright develop preview JPEG for display (DV-4: takes grain).
+/// Generates or renders an upright develop preview JPEG for display (DV-4: takes grain, DV-5: takes noise_reduction).
+// A Tauri command receives its arguments by name from the front end; grouping them would change the IPC contract.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn preview_develop(
     folder: String,
@@ -99,17 +101,29 @@ pub async fn preview_develop(
     exposure_ev: f32,
     draft: bool,
     grain: Option<Grain>,
+    noise_reduction: Option<f32>,
     app: tauri::AppHandle,
 ) -> Result<tauri::ipc::Response, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        preview_develop_impl(&state, folder, name, look, exposure_ev, draft, grain)
+        preview_develop_impl(
+            &state,
+            folder,
+            name,
+            look,
+            exposure_ev,
+            draft,
+            grain,
+            noise_reduction,
+        )
     })
     .await
     .map_err(|e| format!("preview develop panicked: {e}"))?
     .map(tauri::ipc::Response::new)
 }
 
+// A Tauri command receives its arguments by name from the front end; grouping them would change the IPC contract.
+#[allow(clippy::too_many_arguments)]
 pub fn preview_develop_impl(
     state: &AppState,
     folder: String,
@@ -118,6 +132,7 @@ pub fn preview_develop_impl(
     exposure_ev: f32,
     draft: bool,
     grain: Option<Grain>,
+    noise_reduction: Option<f32>,
 ) -> Result<Vec<u8>, String> {
     validate_filename(&name).map_err(describe)?;
     let config = state.config();
@@ -140,11 +155,13 @@ pub fn preview_develop_impl(
         .get_or_create_develop_preview(&path)
         .map_err(describe)?;
     let grain_setting = grain.unwrap_or(Grain::Fine);
+    let nr = noise_reduction.unwrap_or(0.0);
     let rendered = preview
         .render_with_data_dir(
             look_obj.as_ref().map(Into::into),
             exposure_ev,
             grain_setting,
+            nr,
             draft,
             Some(&film_data_dir),
         )

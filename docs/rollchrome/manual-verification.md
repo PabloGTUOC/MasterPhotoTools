@@ -431,7 +431,7 @@ the automated check drives the screen against a stub.
 
 ## MV-39 — Noise reduction in Develop (DV-5)
 
-[`develop-plan.md`](../develop-plan.md), briefed. Needs a Mac running Rollchrome with real photographs.
+[`develop-plan.md`](../develop-plan.md), built. Needs a Mac running Rollchrome with real photographs.
 
 - [ ] **MV-39.1 — High-ISO RAWs through a film stock, with and without noise reduction.**
       **Run:** develop two of the owner's ISO 400 XZ-1 files in Portra 160, grain Off, at Noise reduction 0, 25 and 50.

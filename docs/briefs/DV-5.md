@@ -1,6 +1,6 @@
 # `DV-5` · Noise reduction in Develop, before the look
 
-> **Status:** briefed
+> **Status:** approved
 > **Plan:** [`docs/develop-plan.md`](../develop-plan.md), step `DV-5` · **Branch:** `dv-5`, cut from `main` after this brief
 
 One file per piece of work, three sections, filled in turn: the architect briefs, the implementer
@@ -216,8 +216,66 @@ Commit on `dv-5`. Do not merge.
 
 *Written by the implementer.*
 
+**Not written.** agy (Gemini 3.8 Flash) implemented the whole brief, then ran out of credits during its first
+full clippy run, before writing this section, and committed nothing. The architect committed its work as it stood
+(`f3bfec0`). Five compile and lint errors remained. The owner's local model (Qwen3 Coder 30B, through opencode) fixed
+three of them before LM Studio ran out of GPU memory. The architect fixed the other two (`e58cc5c`). The review
+below is therefore the only account of the gates.
+
 ---
 
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+### Review 1: approved
+
+**Checked.** Every gate re-run on `e58cc5c`:
+
+| Gate | Result |
+|---|---|
+| fmt, clippy, build | clean |
+| `--workspace` | 1309 passed, 4 ignored |
+| `phototools-core` | 714 passed |
+| `rollchrome-core` | 450 passed (442 before) |
+| `rollchrome-core --features film` | 462 passed, 2 ignored (453 and 1 before) |
+| `phototools-desktop` | 26 |
+| `rollchrome-desktop` | 28 (27 before) |
+| `rollchrome-cli` | 8 |
+| Rollchrome front-end checks | all pass; `check:develop` 22 (19 before) |
+| Web and desktop typecheck, build, transport | pass |
+
+Test 10 printed **50.6 ms** against its 100 ms budget. Test 12 printed a 65.9 ms GPU preview, and the GPU and
+CPU renders still differ by a mean of 0.000274.
+
+**`phototools-core` in the first gate run:** 3 failures, 711 passed. DV-5 changes nothing in that crate. The
+same tests passed inside the workspace run, and a re-run passed 714 of 714. The log did not keep the test names,
+so this is recorded as a flaky test under load, not identified.
+
+**Diff read in full.**
+- `reduce_noise` calls `apply_detail` unchanged, with luminance and colour at the same amount. At 0 it returns
+  the input untouched.
+- **Export.** The camera-look branch is now `develop_linear`, then `reduce_noise`, then `linear_to_developed`,
+  which is what `develop()` did, with the noise reduction step added. The film branch removes noise after
+  `develop_linear` at 0 EV and before both `render_film` calls.
+- **Preview.** It records the upright source's long edge, passes `noise_scale`, and validates the range as the
+  plan does.
+- **Transports.** The desktop command, CLI `--noise` and MCP `noise_reduction` only pass the value through (G1).
+  The two `#[allow(clippy::too_many_arguments)]` carry their reason.
+- **Front end.** The slider defaults to 25 for every look, uses the exposure slider's mixed-state rule, and the
+  preview request and the dry run's items carry the value.
+- **Scope.** No other code is touched, and `detail.rs`, `film.rs` and `resize_linear` are unchanged. The existing
+  tests only gained the new field, and one plan test gained an assertion on it.
+
+**Tests checked for what they prove.**
+- Test 6 compares bytes with the code path from before this step.
+- Test 7 uses a noisy RAW, so "differs" means something.
+- Test 9 matches the CPU oracle with noise reduction before the film (mean difference < 0.01) **and** differs
+  from the oracle without it (> 0.001), so the order is proved.
+- Test 8 shows that `scale` changes the result.
+
+**On a real file.** Before briefing, the architect measured the same filter on the owner's ISO 400 XZ-1 file in
+Portra 160 with grain Off. At 25, fine noise fell from 4.7 to 2.1 and colour noise from 4.5 to 0.5, and
+brightness was unchanged. MV-39 checks it in the application.
+
+**Approved.**

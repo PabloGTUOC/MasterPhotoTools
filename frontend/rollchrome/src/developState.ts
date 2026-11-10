@@ -11,6 +11,7 @@ export interface PhotoAssignment {
   look: string | null;
   exposure_ev: number;
   grain?: Grain;
+  noise_reduction?: number;
 }
 
 export const moduleFolder = ref('');

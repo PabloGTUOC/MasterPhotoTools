@@ -16,7 +16,9 @@ use phototools_core::tools::Skip;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::media::develop::{develop, develop_linear, render, DevelopOptions, Look, OutputFormat};
+use crate::media::develop::{
+    develop_linear, linear_to_developed, reduce_noise, render, DevelopOptions, Look, OutputFormat,
+};
 use crate::media::film::{render_film, FilmBackend, FilmOutput, Grain};
 
 /// A single file in the folder presented for development.
@@ -31,6 +33,9 @@ pub struct DevelopItem {
     /// Film grain setting (DV-4).
     #[serde(default)]
     pub grain: Grain,
+    /// Noise reduction amount (0.0..=100.0, default 0.0) (DV-5).
+    #[serde(default)]
+    pub noise_reduction: f32,
 }
 
 /// A planned development step for one photograph.
@@ -43,6 +48,9 @@ pub struct DevelopAction {
     /// Film grain setting (DV-4).
     #[serde(default)]
     pub grain: Grain,
+    /// Noise reduction amount (0.0..=100.0, default 0.0) (DV-5).
+    #[serde(default)]
+    pub noise_reduction: f32,
 }
 
 /// Result of planning a folder's development.
@@ -154,6 +162,15 @@ pub fn plan_develop(
             continue;
         }
 
+        // Noise reduction range check: finite and within [0.0, 100.0] (DV-5)
+        if !item.noise_reduction.is_finite() || !(0.0..=100.0).contains(&item.noise_reduction) {
+            skipped.push(Skip {
+                file: item.name,
+                reason: "noise reduction must be between 0 and 100".to_string(),
+            });
+            continue;
+        }
+
         // Compute output filename: <stem>.<ext>
         let stem = match item.name.rfind('.') {
             Some(idx) => &item.name[..idx],
@@ -187,6 +204,7 @@ pub fn plan_develop(
             look: look.clone(),
             exposure_ev: item.exposure_ev,
             grain: item.grain,
+            noise_reduction: item.noise_reduction,
         });
     }
 
@@ -286,11 +304,36 @@ pub fn execute_develop(
 
         match look {
             ResolvedLook::Look(look) => {
-                let developed = match develop(
+                let linear = match develop_linear(
                     &raw_bytes,
                     &DevelopOptions {
                         exposure_ev: action.exposure_ev,
                     },
+                ) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        summary.failures.push(Skip {
+                            file: action.source,
+                            reason: e.to_string(),
+                        });
+                        continue;
+                    }
+                };
+
+                let denoised_pixels = reduce_noise(
+                    linear.width,
+                    linear.height,
+                    &linear.pixels,
+                    action.noise_reduction,
+                    1.0,
+                );
+
+                let developed = match linear_to_developed(
+                    linear.width,
+                    linear.height,
+                    &denoised_pixels,
+                    linear.orientation,
+                    linear.demosaic,
                 ) {
                     Ok(d) => d,
                     Err(e) => {
@@ -359,6 +402,14 @@ pub fn execute_develop(
                     }
                 };
 
+                let denoised_pixels = reduce_noise(
+                    linear.width,
+                    linear.height,
+                    &linear.pixels,
+                    action.noise_reduction,
+                    1.0,
+                );
+
                 // No silent default: a store that cannot say where film data lives must not
                 // have it written somewhere the user never chose (G10).
                 let Some(data_dir) = store.film_data_dir() else {
@@ -380,7 +431,7 @@ pub fn execute_develop(
                         }
 
                         let rendered_pixels = match render_film(
-                            &linear.pixels,
+                            &denoised_pixels,
                             linear.width,
                             linear.height,
                             stock,
@@ -469,7 +520,7 @@ pub fn execute_develop(
                     }
                     OutputFormat::Tiff => {
                         let rendered_pixels = match render_film(
-                            &linear.pixels,
+                            &denoised_pixels,
                             linear.width,
                             linear.height,
                             stock,
@@ -709,6 +760,7 @@ mod tests {
             look: Some("Astia".to_string()),
             exposure_ev: 0.5,
             grain: Grain::Fine,
+            noise_reduction: 0.0,
         }];
         let existing = BTreeSet::new();
 
@@ -721,6 +773,7 @@ mod tests {
         assert_eq!(plan_jpeg.actions[0].look, "Astia");
         assert_eq!(plan_jpeg.actions[0].exposure_ev, 0.5);
         assert_eq!(plan_jpeg.actions[0].grain, Grain::Fine);
+        assert_eq!(plan_jpeg.actions[0].noise_reduction, 0.0);
 
         // TIFF
         let plan_tiff = plan_develop(&items, OutputFormat::Tiff, &existing);
@@ -729,6 +782,7 @@ mod tests {
         assert_eq!(plan_tiff.actions[0].look, "Astia");
         assert_eq!(plan_tiff.actions[0].exposure_ev, 0.5);
         assert_eq!(plan_tiff.actions[0].grain, Grain::Fine);
+        assert_eq!(plan_tiff.actions[0].noise_reduction, 0.0);
     }
 
     #[test]
@@ -738,6 +792,7 @@ mod tests {
             look: None,
             exposure_ev: 0.0,
             grain: Grain::Fine,
+            noise_reduction: 0.0,
         }];
         let existing = BTreeSet::new();
         let plan = plan_develop(&items, OutputFormat::Tiff, &existing);
@@ -758,6 +813,7 @@ mod tests {
             look: Some("Velvia".to_string()),
             exposure_ev: 0.0,
             grain: Grain::Fine,
+            noise_reduction: 0.0,
         }];
         let plan = plan_develop(&items, OutputFormat::Jpeg { quality: 90 }, &existing);
 
@@ -780,12 +836,14 @@ mod tests {
                 look: Some("ClassicChrome".to_string()),
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
+                noise_reduction: 0.0,
             },
             DevelopItem {
                 name: "IMG_0001.CR2".to_string(),
                 look: Some("ClassicChrome".to_string()),
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
+                noise_reduction: 0.0,
             },
         ];
         let existing = BTreeSet::new();
@@ -811,12 +869,14 @@ mod tests {
                 look: Some("Look".to_string()),
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
+                noise_reduction: 0.0,
             },
             DevelopItem {
                 name: "notes.txt".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
+                noise_reduction: 0.0,
             },
         ];
         let existing = BTreeSet::new();
@@ -838,30 +898,35 @@ mod tests {
                 look: Some("Look".to_string()),
                 exposure_ev: -4.5,
                 grain: Grain::Fine,
+                noise_reduction: 0.0,
             },
             DevelopItem {
                 name: "B.RAF".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: 4.5,
                 grain: Grain::Fine,
+                noise_reduction: 0.0,
             },
             DevelopItem {
                 name: "C.RAF".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: f32::NAN,
                 grain: Grain::Fine,
+                noise_reduction: 0.0,
             },
             DevelopItem {
                 name: "D.RAF".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: -4.0,
                 grain: Grain::Fine,
+                noise_reduction: 0.0,
             },
             DevelopItem {
                 name: "E.RAF".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: 4.0,
                 grain: Grain::Fine,
+                noise_reduction: 0.0,
             },
         ];
         let existing = BTreeSet::new();
@@ -885,18 +950,21 @@ mod tests {
                 look: Some("Look".to_string()),
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
+                noise_reduction: 0.0,
             },
             DevelopItem {
                 name: "a/b.RAF".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
+                noise_reduction: 0.0,
             },
             DevelopItem {
                 name: "".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
+                noise_reduction: 0.0,
             },
         ];
         let existing = BTreeSet::new();
@@ -932,6 +1000,7 @@ mod tests {
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
+                    noise_reduction: 0.0,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -939,6 +1008,7 @@ mod tests {
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
+                    noise_reduction: 0.0,
                 },
             ],
             skipped: Vec::new(),
@@ -989,6 +1059,7 @@ mod tests {
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
+                    noise_reduction: 0.0,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -996,6 +1067,7 @@ mod tests {
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
+                    noise_reduction: 0.0,
                 },
             ],
             skipped: Vec::new(),
@@ -1036,6 +1108,7 @@ mod tests {
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
+                    noise_reduction: 0.0,
                 },
                 DevelopAction {
                     source: "good.dng".to_string(),
@@ -1043,6 +1116,7 @@ mod tests {
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
+                    noise_reduction: 0.0,
                 },
             ],
             skipped: Vec::new(),
@@ -1077,6 +1151,7 @@ mod tests {
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
+                    noise_reduction: 0.0,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1084,6 +1159,7 @@ mod tests {
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
+                    noise_reduction: 0.0,
                 },
             ],
             skipped: Vec::new(),
@@ -1121,6 +1197,7 @@ mod tests {
                     look: "vanished_lut".to_string(),
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
+                    noise_reduction: 0.0,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1128,6 +1205,7 @@ mod tests {
                     look: "vanished_lut".to_string(),
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
+                    noise_reduction: 0.0,
                 },
             ],
             skipped: Vec::new(),

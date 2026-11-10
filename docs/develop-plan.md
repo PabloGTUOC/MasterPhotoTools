@@ -1,6 +1,6 @@
 # Develop — RAW files to finished photographs, a film look each
 
-> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 done ([brief](briefs/DV-3.md)): 12 built-in looks ship; Velvia and Astia did not pass. RP-1 built ([brief](briefs/RP-1.md)): Develop screen exists with preview, look picker, exposure slider, dry run, and export. DV-4 done ([brief](briefs/DV-4.md)): 18 film stocks simulated by spektrafilm-rs with grain control and GPU acceleration; the repository is GPL-3.0-or-later.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
+> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 done ([brief](briefs/DV-3.md)): 12 built-in looks ship; Velvia and Astia did not pass. RP-1 built ([brief](briefs/RP-1.md)): Develop screen exists with preview, look picker, exposure slider, dry run, and export. DV-4 done ([brief](briefs/DV-4.md)): 18 film stocks simulated by spektrafilm-rs with grain control and GPU acceleration; the repository is GPL-3.0-or-later. DV-5 done ([brief](briefs/DV-5.md)): noise reduction before the look.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
 > ([`rollchrome-plan.md`](rollchrome-plan.md)). DV-1 needs RC-1. Nothing here touches PhotoTools.
 >
 > **Functionality first.** The screen is discussed with the owner before it becomes a step
@@ -242,7 +242,7 @@ Data files are embedded and materialised on first use into `<film_data_dir>/film
 
 ### `DV-5` · Noise reduction before the look
 
-**Briefed in [DV-5](briefs/DV-5.md).** On the owner's first real XZ-1 files (ISO 400, low light) the film stocks
+**Built in [DV-5](briefs/DV-5.md).** On the owner's first real XZ-1 files (ISO 400, low light) the film stocks
 looked grainy even with grain Off. The cause was sensor noise, lifted by the film's auto exposure and sharpened by its
 contrast and edge effects, not the simulated grain. Develop gets one Noise reduction setting per photograph (0–100;
 the screen starts at 25, scripts at 0). It reuses Edit's guided-filter noise reduction (RP-7) and runs on the linear

@@ -561,18 +561,21 @@ fn one_exiftool_process_carries_the_whole_batch() {
             look: Some("Identity.cube".to_string()),
             exposure_ev: 0.0,
             grain: Grain::Fine,
+            noise_reduction: 0.0,
         },
         DevelopItem {
             name: "DSCF0002.dng".to_string(),
             look: Some("Identity.cube".to_string()),
             exposure_ev: 0.0,
             grain: Grain::Fine,
+            noise_reduction: 0.0,
         },
         DevelopItem {
             name: "DSCF0003.dng".to_string(),
             look: Some("Identity.cube".to_string()),
             exposure_ev: 0.0,
             grain: Grain::Fine,
+            noise_reduction: 0.0,
         },
     ];
 

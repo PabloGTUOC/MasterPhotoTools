@@ -91,6 +91,8 @@ pub fn develop_thumbnail_impl(
 }
 
 /// Generates or renders an upright develop preview JPEG for display (DV-4: takes grain, DV-5: takes noise_reduction).
+// A Tauri command receives its arguments by name from the front end; grouping them would change the IPC contract.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn preview_develop(
     folder: String,
@@ -120,6 +122,8 @@ pub async fn preview_develop(
     .map(tauri::ipc::Response::new)
 }
 
+// A Tauri command receives its arguments by name from the front end; grouping them would change the IPC contract.
+#[allow(clippy::too_many_arguments)]
 pub fn preview_develop_impl(
     state: &AppState,
     folder: String,

@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 
 use crate::media::develop::OutputFormat;
 use crate::media::edit::lut::Lut;
+use crate::media::film::Grain;
 use crate::media::looks::builtin::{builtin_look_list, BuiltinLookInfo};
 use crate::tools::develop::{
     execute_develop, plan_develop as core_plan_develop, DevelopItem, DevelopPlan, DevelopSummary,
@@ -45,6 +46,8 @@ pub struct DevelopRequest {
     pub folder: String,
     pub look: String,
     pub exposure_ev: f32,
+    #[serde(default)]
+    pub grain: Grain,
     pub format: OutputFormat,
     pub only: Vec<String>,
 }
@@ -131,7 +134,11 @@ impl Automation {
 
     /// Lists all shipped built-in film looks.
     pub fn list_looks(&self) -> Vec<BuiltinLookInfo> {
-        builtin_look_list()
+        #[allow(unused_mut)]
+        let mut looks = builtin_look_list();
+        #[cfg(feature = "film")]
+        looks.extend(crate::media::film::film_look_list());
+        looks
     }
 
     /// Lists all 3D LUTs in the managed LUT library.
@@ -163,6 +170,7 @@ impl Automation {
                     name,
                     look: look_opt.clone(),
                     exposure_ev: r.exposure_ev,
+                    grain: r.grain,
                 });
             }
         } else {
@@ -177,6 +185,7 @@ impl Automation {
                         name: name.clone(),
                         look: look_opt.clone(),
                         exposure_ev: r.exposure_ev,
+                        grain: r.grain,
                     });
                 } else if !resolved_folder.join(name).is_file() {
                     missing_skipped.push(Skip {
@@ -188,13 +197,16 @@ impl Automation {
                         name: name.clone(),
                         look: look_opt.clone(),
                         exposure_ev: r.exposure_ev,
+                        grain: r.grain,
                     });
                 }
             }
         }
 
         let lut_dir = crate::config::lut_dir(&self.config);
-        let store = FolderStore::new(resolved_folder, lut_dir.clone());
+        let film_data_dir = crate::config::film_data_dir(&self.config);
+        let store =
+            FolderStore::with_film_data(resolved_folder, lut_dir.clone(), Some(film_data_dir));
         let existing = store.existing_outputs()?;
         let mut plan = core_plan_develop(&items, r.format, &existing);
         plan.skipped.extend(missing_skipped);
@@ -208,9 +220,9 @@ impl Automation {
             .actions
             .iter()
             .map(|a| a.look.as_str())
-            .filter(|l| !l.starts_with("builtin:"))
+            .filter(|l| !l.starts_with("builtin:") && !l.starts_with("film:"))
             .collect();
-        if !r.look.is_empty() && !r.look.starts_with("builtin:") {
+        if !r.look.is_empty() && !r.look.starts_with("builtin:") && !r.look.starts_with("film:") {
             non_builtin_looks.insert(r.look.as_str());
         }
         for look_id in non_builtin_looks {
@@ -243,7 +255,8 @@ impl Automation {
 
         let resolved_folder = self.resolve_input(&r.folder)?;
         let lut_dir = crate::config::lut_dir(&self.config);
-        let mut store = FolderStore::new(resolved_folder, lut_dir);
+        let film_data_dir = crate::config::film_data_dir(&self.config);
+        let mut store = FolderStore::with_film_data(resolved_folder, lut_dir, Some(film_data_dir));
         Ok(execute_develop(reviewed.plan, &mut store, p))
     }
 

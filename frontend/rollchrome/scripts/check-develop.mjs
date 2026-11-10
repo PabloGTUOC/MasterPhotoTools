@@ -18,6 +18,10 @@
  * 13. Remounting during a run shows its progress and keeps Develop disabled.
  * 14. With Selected only, the items sent to plan_develop are exactly the selection, and changing the selection locks Develop.
  * 15. During an exposure drag the requests carry draft: true, and the release sends one with draft: false and the final exposure.
+ * 16. The picker has a Kodak film group of 13 and a Fujifilm film group of 5, and the existing groups are unchanged.
+ * 17. The Grain select is hidden for a camera look or LUT, shown with Fine for a film look; the credit line shows with it.
+ * 18. Changing grain disables Run until a new dry run, and that dry run's items carry the grain.
+ * 19. Changing grain sends a new preview request carrying look: "film:..." and the grain.
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -716,6 +720,154 @@ try {
       `The release must send one with draft: false and the final exposure (1.5), got: ${JSON.stringify(lastReq)}`,
     );
   }
+
+  // -------------------------------------------------------------------------
+  // 16. Kodak film (13) & Fujifilm film (5) groups present, existing groups unchanged (DV-4)
+  // -------------------------------------------------------------------------
+  console.log('16. Checking look picker groups for Kodak film (13) and Fujifilm film (5)...');
+  const kodakFilmOptions = await lookSelect.locator('optgroup[label="Kodak film"] option').count();
+  const fujiFilmOptions = await lookSelect.locator('optgroup[label="Fujifilm film"] option').count();
+  const neutralOptions16 = await lookSelect.locator('optgroup[label="Neutral"] option').count();
+  const fujiOptions16 = await lookSelect.locator('optgroup[label="Fujifilm"] option').count();
+  const ricohOptions16 = await lookSelect.locator('optgroup[label="Ricoh"] option').count();
+  const lutOptions16 = await lookSelect.locator('optgroup[label="My LUTs"] option').count();
+
+  console.log(
+    `  Picker counts: Kodak film=${kodakFilmOptions}, Fuji film=${fujiFilmOptions}, Neutral=${neutralOptions16}, Fuji=${fujiOptions16}, Ricoh=${ricohOptions16}, LUTs=${lutOptions16}`,
+  );
+
+  if (kodakFilmOptions !== 13) {
+    failures.push(`Picker must offer exactly 13 Kodak film looks, got ${kodakFilmOptions}`);
+  }
+  if (fujiFilmOptions !== 5) {
+    failures.push(`Picker must offer exactly 5 Fujifilm film looks, got ${fujiFilmOptions}`);
+  }
+  if (neutralOptions16 < 1) {
+    failures.push('Picker must offer None (neutral)');
+  }
+  if (fujiOptions16 !== 5) {
+    failures.push(`Picker must still offer exactly 5 Fujifilm camera looks, got ${fujiOptions16}`);
+  }
+  if (ricohOptions16 !== 7) {
+    failures.push(`Picker must still offer exactly 7 Ricoh camera looks, got ${ricohOptions16}`);
+  }
+  if (lutOptions16 !== 2) {
+    failures.push(`Picker must still offer 2 stubbed LUTs, got ${lutOptions16}`);
+  }
+
+  // -------------------------------------------------------------------------
+  // 17. Grain select hidden for camera/LUT look, shown with Fine for film look; credit line shows (DV-4)
+  // -------------------------------------------------------------------------
+  console.log('17. Checking Grain select visibility and default, and credit line visibility...');
+  const grainSelect = page.locator('[data-testid="grain-select"]');
+  const filmCredit = page.locator('[data-testid="film-credit"]');
+
+  // Select photo 1, assign a camera look
+  await page.locator('.thumbnail-card[data-filename="DSCF0001.RAF"]').click();
+  await page.selectOption('[data-testid="look-select"]', 'builtin:fujifilm-classic-chrome');
+  await page.waitForTimeout(100);
+
+  if (await grainSelect.isVisible()) {
+    failures.push('Grain select must be hidden when a camera look is selected');
+  }
+  if (await filmCredit.isVisible()) {
+    failures.push('Film credit line must be hidden when a camera look is selected');
+  }
+
+  // Assign a film look
+  await page.selectOption('[data-testid="look-select"]', 'film:kodak_portra_160');
+  await page.waitForTimeout(100);
+
+  if (!(await grainSelect.isVisible())) {
+    failures.push('Grain select must be visible when a film look is selected');
+  } else {
+    const grainVal = await grainSelect.inputValue();
+    if (grainVal !== 'fine') {
+      failures.push(`Grain select default must be 'fine', got '${grainVal}'`);
+    }
+  }
+
+  if (!(await filmCredit.isVisible())) {
+    failures.push('Film credit line must be visible when a film look is selected');
+  } else {
+    const creditText = await filmCredit.innerText();
+    if (!creditText.includes('Film simulation: spektrafilm (GPL-3.0) · film data CC BY-SA 4.0.')) {
+      failures.push(`Film credit line text mismatch, got: "${creditText}"`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 18. Changing grain disables Run until new dry run, and dry run carries grain (DV-4)
+  // -------------------------------------------------------------------------
+  console.log('18. Checking grain change invalidates dry run and dry run carries grain...');
+  await page.locator('[data-testid="scope-all"]').click();
+  await page.waitForTimeout(100);
+
+  await dryRunBtn.click();
+  await page.waitForSelector('[data-testid="review-section"]', { timeout: 3000 });
+  await page.waitForTimeout(100);
+
+  if (await runBtn.isDisabled()) {
+    failures.push('Run button should be enabled after dry run');
+  }
+
+  // Select photo 1 (which has film:kodak_portra_160)
+  await page.locator('.thumbnail-card[data-filename="DSCF0001.RAF"]').click();
+  await page.waitForTimeout(100);
+
+  // Change grain to standard
+  await page.selectOption('[data-testid="grain-select"]', 'standard');
+  await page.waitForTimeout(100);
+
+  if (!(await runBtn.isDisabled())) {
+    failures.push('Changing grain must disable Run button until a new dry run');
+  }
+
+  // New dry run
+  await dryRunBtn.click();
+  await page.waitForSelector('[data-testid="review-section"]', { timeout: 3000 });
+  await page.waitForTimeout(100);
+
+  if (await runBtn.isDisabled()) {
+    failures.push('Run button should be enabled after new dry run');
+  }
+
+  const dryRunItems = await page.evaluate(() => window.__DEVELOP_STUB__.lastPlanItems);
+  const photo1Planned = dryRunItems?.find((it) => it.name === 'DSCF0001.RAF');
+  if (!photo1Planned || photo1Planned.grain !== 'standard') {
+    failures.push(
+      `Dry run items must carry the changed grain ('standard'), got: ${JSON.stringify(photo1Planned)}`,
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // 19. Changing grain sends preview request carrying look: "film:..." and grain (DV-4)
+  // -------------------------------------------------------------------------
+  console.log('19. Checking grain change triggers preview carrying film look and grain...');
+  await page.evaluate(() => {
+    window.__DEVELOP_STUB__.previewRequests = [];
+  });
+
+  // Change grain from standard to off
+  await page.selectOption('[data-testid="grain-select"]', 'off');
+  await page.waitForTimeout(200);
+
+  const grainPreviewReqs = await page.evaluate(() => window.__DEVELOP_STUB__.previewRequests);
+  console.log(`  Grain preview requests: ${JSON.stringify(grainPreviewReqs)}`);
+
+  const lastGrainReq = grainPreviewReqs[grainPreviewReqs.length - 1];
+  if (!lastGrainReq) {
+    failures.push('Changing grain must trigger a preview request');
+  } else {
+    if (lastGrainReq.look !== 'film:kodak_portra_160') {
+      failures.push(
+        `Preview request must carry film look 'film:kodak_portra_160', got '${lastGrainReq.look}'`,
+      );
+    }
+    if (lastGrainReq.grain !== 'off') {
+      failures.push(`Preview request must carry grain 'off', got '${lastGrainReq.grain}'`);
+    }
+  }
 } catch (err) {
   failures.push(`Test execution threw: ${err instanceof Error ? err.stack : String(err)}`);
 } finally {
@@ -730,5 +882,5 @@ if (failures.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log('\ncheck:develop PASSED: all 15 checks verified successfully.');
+  console.log('\ncheck:develop PASSED: all 19 checks verified successfully.');
 }

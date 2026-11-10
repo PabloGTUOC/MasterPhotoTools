@@ -502,6 +502,7 @@ fn a_builtin_look_never_reaches_the_library() {
             output: "test.tif".to_string(),
             look: "builtin:fujifilm-classic-chrome".to_string(),
             exposure_ev: 0.0,
+            grain: rollchrome_core::media::film::Grain::Fine,
         }],
         skipped: Vec::new(),
     };
@@ -536,6 +537,7 @@ fn an_unknown_builtin_look_is_skipped_with_its_reason() {
             output: "test.tif".to_string(),
             look: "builtin:nonexistent-look-id".to_string(),
             exposure_ev: 0.0,
+            grain: rollchrome_core::media::film::Grain::Fine,
         }],
         skipped: Vec::new(),
     };

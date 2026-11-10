@@ -162,7 +162,7 @@ fn tools_schema_list() -> Value {
         "tools": [
             {
                 "name": "list_looks",
-                "description": "List all shipped built-in film looks for RAW development.",
+                "description": "List all shipped built-in camera looks and film simulation looks for RAW development.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {},
@@ -185,8 +185,9 @@ fn tools_schema_list() -> Value {
                     "type": "object",
                     "properties": {
                         "folder": { "type": "string", "description": "Path to the folder of RAW files" },
-                        "look": { "type": "string", "description": "Look identifier (e.g. builtin:fujifilm-classic-chrome or LUT library name)" },
+                        "look": { "type": "string", "description": "Look identifier (e.g. film:kodak_portra_160, builtin:fujifilm-classic-chrome, or LUT library name)" },
                         "exposure_ev": { "type": "number", "description": "Exposure adjustment in stops (-4.0 to 4.0, default 0.0)" },
+                        "grain": { "type": "string", "enum": ["off", "fine", "standard"], "description": "Film grain simulation setting (off, fine, standard, default fine)" },
                         "format": { "type": "string", "enum": ["jpeg", "tiff"], "description": "Output format (jpeg or tiff, default jpeg)" },
                         "quality": { "type": "integer", "minimum": 1, "maximum": 100, "description": "JPEG quality (1..100, default 92)" },
                         "only": { "type": "array", "items": { "type": "string" }, "description": "Optional list of RAW filenames in the folder to develop" }
@@ -201,8 +202,9 @@ fn tools_schema_list() -> Value {
                     "type": "object",
                     "properties": {
                         "folder": { "type": "string", "description": "Path to the folder of RAW files" },
-                        "look": { "type": "string", "description": "Look identifier (e.g. builtin:fujifilm-classic-chrome or LUT library name)" },
+                        "look": { "type": "string", "description": "Look identifier (e.g. film:kodak_portra_160, builtin:fujifilm-classic-chrome, or LUT library name)" },
                         "exposure_ev": { "type": "number", "description": "Exposure adjustment in stops (-4.0 to 4.0, default 0.0)" },
+                        "grain": { "type": "string", "enum": ["off", "fine", "standard"], "description": "Film grain simulation setting (off, fine, standard, default fine)" },
                         "format": { "type": "string", "enum": ["jpeg", "tiff"], "description": "Output format (jpeg or tiff, default jpeg)" },
                         "quality": { "type": "integer", "minimum": 1, "maximum": 100, "description": "JPEG quality (1..100, default 92)" },
                         "only": { "type": "array", "items": { "type": "string" }, "description": "Optional list of RAW filenames in the folder to develop" },
@@ -373,6 +375,16 @@ fn parse_develop_request(args: &Map<String, Value>) -> Result<DevelopRequest, St
     let folder = req_string(args, "folder")?;
     let look = req_string(args, "look")?;
     let exposure_ev = opt_f32(args, "exposure_ev", 0.0)?;
+    let grain = match args.get("grain") {
+        None | Some(Value::Null) => crate::media::film::Grain::Fine,
+        Some(Value::String(s)) => match s.to_ascii_lowercase().as_str() {
+            "off" => crate::media::film::Grain::Off,
+            "fine" => crate::media::film::Grain::Fine,
+            "standard" => crate::media::film::Grain::Standard,
+            _ => return Err("argument 'grain' must be 'off', 'fine', or 'standard'".to_string()),
+        },
+        Some(_) => return Err("argument 'grain' must be a string".to_string()),
+    };
     let quality = opt_u8_range(args, "quality", 1, 100)?.unwrap_or(92);
     let only = opt_string_array(args, "only")?;
 
@@ -390,6 +402,7 @@ fn parse_develop_request(args: &Map<String, Value>) -> Result<DevelopRequest, St
         folder,
         look,
         exposure_ev,
+        grain,
         format,
         only,
     })

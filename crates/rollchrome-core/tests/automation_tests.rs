@@ -15,6 +15,7 @@ use rollchrome_core::automation::{
 };
 use rollchrome_core::media::develop::OutputFormat;
 use rollchrome_core::media::edit::AdjustmentRecipe;
+use rollchrome_core::media::film::Grain;
 use rollchrome_core::tools::edit::{export_edited_image_with_options, save_recipe, ExportOptions};
 use rollchrome_core::tools::lut_library::import_lut;
 use support::dng::DngBuilder;
@@ -128,6 +129,7 @@ fn a_path_outside_the_roots_is_refused_before_anything_runs() {
         folder: outside.to_string_lossy().to_string(),
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -219,6 +221,7 @@ fn a_develop_plan_writes_nothing() {
         folder: f.root.to_string_lossy().to_string(),
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -245,6 +248,7 @@ fn running_develop_needs_the_hash_of_the_plan_that_was_reviewed() {
         folder: f.root.to_string_lossy().to_string(),
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -275,6 +279,7 @@ fn a_new_file_in_the_way_changes_the_hash_and_refuses_the_run() {
         folder: f.root.to_string_lossy().to_string(),
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -306,6 +311,7 @@ fn develop_writes_into_developed_and_never_overwrites() {
         folder: f.root.to_string_lossy().to_string(),
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -322,6 +328,7 @@ fn develop_writes_into_developed_and_never_overwrites() {
         folder: f.root.to_string_lossy().to_string(),
         look: "builtin:ricoh-standard".to_string(),
         exposure_ev: 1.5,
+        grain: Grain::Fine,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -354,6 +361,7 @@ fn develop_on_a_card_is_refused_before_anything_is_written() {
         folder: dcim_folder.to_string_lossy().to_string(),
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -559,6 +567,7 @@ fn a_cancelled_run_stops_and_reports_what_it_did() {
         folder: f.root.to_string_lossy().to_string(),
         look: "builtin:fujifilm-classic-chrome".to_string(),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };
@@ -587,6 +596,7 @@ fn a_look_changed_after_the_plan_refuses_the_develop_run() {
         folder: f.root.to_string_lossy().to_string(),
         look: "CustomFilm.cube".to_string(),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
     };

@@ -35,7 +35,8 @@ jobs:
             libgtk-3-dev \
             libxdo-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            libopenblas-dev
 
       - name: Verify exiftool version
         run: |
@@ -69,6 +70,10 @@ jobs:
       # G2: isolated library tests for the second library.
       - name: Isolated rollchrome-core tests
         run: cargo test -p rollchrome-core
+
+      # DV-4: spektrafilm-rs film simulation engine
+      - name: Rollchrome core tests with film feature
+        run: cargo test -p rollchrome-core --features film
 
   frontend:
     name: Front end

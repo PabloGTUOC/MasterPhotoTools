@@ -19,6 +19,7 @@ use crate::tools::lut_library::find_lut_by_name_or_sha256;
 pub struct FolderStore {
     folder: PathBuf,
     lut_dir: PathBuf,
+    film_data_dir: Option<PathBuf>,
     exiftool_program: Option<String>,
     writer: Option<ExifWriter>,
 }
@@ -26,14 +27,34 @@ pub struct FolderStore {
 impl FolderStore {
     /// Creates a store targeting `folder` with LUTs resolved from `lut_dir`.
     pub fn new(folder: PathBuf, lut_dir: PathBuf) -> Self {
-        Self::with_exiftool(folder, lut_dir, None)
+        Self::with_film_data(folder, lut_dir, None)
+    }
+
+    /// Creates a store targeting `folder` with LUTs and film simulation data.
+    pub fn with_film_data(
+        folder: PathBuf,
+        lut_dir: PathBuf,
+        film_data_dir: Option<PathBuf>,
+    ) -> Self {
+        Self::with_exiftool_and_film_data(folder, lut_dir, film_data_dir, None)
     }
 
     /// Creates a store with a specific exiftool binary (used for single-process G4 tests).
     pub fn with_exiftool(folder: PathBuf, lut_dir: PathBuf, program: Option<String>) -> Self {
+        Self::with_exiftool_and_film_data(folder, lut_dir, None, program)
+    }
+
+    /// Creates a store with exiftool binary and film data directory.
+    pub fn with_exiftool_and_film_data(
+        folder: PathBuf,
+        lut_dir: PathBuf,
+        film_data_dir: Option<PathBuf>,
+        program: Option<String>,
+    ) -> Self {
         Self {
             folder,
             lut_dir,
+            film_data_dir,
             exiftool_program: program,
             writer: None,
         }
@@ -189,6 +210,10 @@ impl DevelopStore for FolderStore {
         writer.set_tags(&dst_path, &corrections)?;
 
         Ok(())
+    }
+
+    fn film_data_dir(&self) -> Option<&Path> {
+        self.film_data_dir.as_deref()
     }
 
     fn finish(&mut self) {

@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use phototools_core::media::meta::read_meta;
 use phototools_core::media::ExifWriter;
 use rollchrome_core::media::develop::{prophoto_icc_profile, OutputFormat};
+use rollchrome_core::media::film::Grain;
 use rollchrome_core::tools::develop::{execute_develop, plan_develop, DevelopItem};
 use rollchrome_core::tools::develop_folder::FolderStore;
 use support::dng::DngBuilder;
@@ -103,6 +104,7 @@ fn a_developed_jpeg_carries_the_originals_date_camera_and_position() {
         name: "DSCF0001.dng".to_string(),
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
     }];
 
     let plan = plan_develop(
@@ -163,6 +165,7 @@ fn a_developed_jpeg_says_srgb() {
         name: "DSCF0001.dng".to_string(),
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
     }];
 
     let plan = plan_develop(
@@ -307,6 +310,7 @@ fn a_developed_tiff_says_uncalibrated_and_has_no_interop_index() {
         name: "DSCF0001.dng".to_string(),
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
     }];
 
     let plan = plan_develop(
@@ -363,6 +367,7 @@ fn a_developed_tiff_is_not_taken_for_a_dng() {
         name: "DSCF0001.dng".to_string(),
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
     }];
 
     let plan = plan_develop(
@@ -404,6 +409,7 @@ fn the_tiff_keeps_its_own_profile_after_the_metadata_copy() {
         name: "DSCF0001.dng".to_string(),
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
     }];
 
     let plan = plan_develop(
@@ -461,6 +467,7 @@ fn outputs_go_beside_the_raws_in_developed_and_nothing_is_overwritten() {
         name: "DSCF0001.dng".to_string(),
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
     }];
     let plan = plan_develop(
         &items,
@@ -482,6 +489,7 @@ fn outputs_go_beside_the_raws_in_developed_and_nothing_is_overwritten() {
         name: "DSCF0002.dng".to_string(),
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
     }];
     let plan2 = plan_develop(
         &items2,
@@ -545,16 +553,19 @@ fn one_exiftool_process_carries_the_whole_batch() {
             name: "DSCF0001.dng".to_string(),
             look: Some("Identity.cube".to_string()),
             exposure_ev: 0.0,
+            grain: Grain::Fine,
         },
         DevelopItem {
             name: "DSCF0002.dng".to_string(),
             look: Some("Identity.cube".to_string()),
             exposure_ev: 0.0,
+            grain: Grain::Fine,
         },
         DevelopItem {
             name: "DSCF0003.dng".to_string(),
             look: Some("Identity.cube".to_string()),
             exposure_ev: 0.0,
+            grain: Grain::Fine,
         },
     ];
 

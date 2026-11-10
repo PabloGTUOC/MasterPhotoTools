@@ -537,9 +537,11 @@ G8 asks for the reason, not just the addition.
 | `image` | `server`, dev only | One test builds a two-panel fixture with a known divider so the preview route can be asserted against a real image rather than a fabricated JSON body. |
 | `tauri-plugin-autostart` | `desktop` | Launch at login (build plan Phase 14). §2.6 names no mechanism and the macOS one is a LaunchAgent. |
 | `ort` `=2.0.0-rc.13` | `rollchrome-core` (was `core` until RC-1), optional (`segment`), enabled by `rollchrome-desktop` | Automatic subject and sky masks through ONNX Runtime (edit plan ED-22, ED-23); the owner's choice. Raised the MSRV to 1.88. Details and the two models' hashes in [`rollchrome/phase-reports/edit-round-3.md`](rollchrome/phase-reports/edit-round-3.md). |
+| `spektrafilm-core`, `spektrafilm-gpu`, `spektrafilm-math` | `rollchrome-core`, optional (`film`), enabled by `rollchrome-desktop` and `rollchrome-cli` | 18 simulated film stocks for Develop (DV-4), bringing `wgpu` for hardware-accelerated preview/export and BLAS (`accelerate-src` on macOS, `openblas-src` on Linux) for spectral math. |
 
-All three were already in `Cargo.lock` through existing transitive dependencies, so none adds a
-tree that was not being compiled.
+### Linux CI build with OpenBLAS unverified locally
+
+On Linux, spektrafilm links against OpenBLAS. In `crates/rollchrome-core/Cargo.toml`, `[target.'cfg(target_os = "linux")'.dependencies] openblas-src = { version = "0.10", optional = true, features = ["system"] }` is included under the `film` feature, and `.github/workflows/ci.yml` installs `libopenblas-dev`. Local development and verification were conducted on macOS using Apple's Accelerate framework; the Linux OpenBLAS CI build was not verified on a local Linux installation.
 
 ### F5 has a film-strip layout the specification does not describe
 

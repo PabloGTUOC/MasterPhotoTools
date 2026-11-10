@@ -13,6 +13,7 @@ use rollchrome_core::automation::{
     describe, mcp, Automation, BatchRequest, DevelopRequest, ExportRequest,
 };
 use rollchrome_core::media::develop::OutputFormat;
+use rollchrome_core::media::film::Grain;
 use rollchrome_core::tools::edit::{
     ExportFormat, ExportOptions, ExportResize, MetadataPolicy, OutputSharpening,
 };
@@ -21,7 +22,7 @@ const HELP_TEXT: &str = "\
 Usage:
   rollchrome-cli looks [--json]
   rollchrome-cli luts [--json]
-  rollchrome-cli develop <folder> --look <id> [--exposure <ev>] [--format jpeg|tiff] [--quality <1..100, default 92>] [--only <name>]... [--apply] [--json]
+  rollchrome-cli develop <folder> --look <id> [--exposure <ev>] [--grain off|fine|standard] [--format jpeg|tiff] [--quality <1..100, default 92>] [--only <name>]... [--apply] [--json]
   rollchrome-cli batch <input>... --lut <name|sha256|path> --out <dir> [--intensity <0..1, default 1>] [--recursive] [--apply] [--json]
   rollchrome-cli export <photo> --out <dir> [--format as-source|jpeg|tiff|png|webp|avif] [--quality <n>] [--bits <8|16>] [--long-edge <n>|--megapixels <n>] [--sharpen off|screen|print] [--template <t>] [--metadata all|no-location|none] [--json]
   rollchrome-cli mcp
@@ -130,6 +131,7 @@ fn parse_develop(args: &[String]) -> Result<Command, String> {
     let mut folder: Option<String> = None;
     let mut look: Option<String> = None;
     let mut exposure_ev: f32 = 0.0;
+    let mut grain = Grain::Fine;
     let mut format_str = "jpeg".to_string();
     let mut quality: u8 = 92;
     let mut only: Vec<String> = Vec::new();
@@ -148,6 +150,19 @@ fn parse_develop(args: &[String]) -> Result<Command, String> {
                 exposure_ev = raw
                     .parse::<f32>()
                     .map_err(|_| format!("invalid --exposure value '{raw}'"))?;
+            }
+            "--grain" => {
+                let raw = next_val(args, &mut i, "--grain")?.to_ascii_lowercase();
+                grain = match raw.as_str() {
+                    "off" => Grain::Off,
+                    "fine" => Grain::Fine,
+                    "standard" | "35mm" => Grain::Standard,
+                    other => {
+                        return Err(format!(
+                            "--grain must be off, fine, or standard (got '{other}')"
+                        ))
+                    }
+                };
             }
             "--format" => {
                 format_str = next_val(args, &mut i, "--format")?.to_ascii_lowercase();
@@ -198,6 +213,7 @@ fn parse_develop(args: &[String]) -> Result<Command, String> {
             folder,
             look,
             exposure_ev,
+            grain,
             format,
             only,
         },

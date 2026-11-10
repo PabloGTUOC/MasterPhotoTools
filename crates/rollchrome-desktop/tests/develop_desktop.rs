@@ -8,8 +8,9 @@ use phototools_core::config::{Config, Thresholds};
 use phototools_core::jobs::NoEvents;
 use phototools_core::ledger::Ledger;
 use rollchrome_core::media::develop::OutputFormat;
+use rollchrome_core::media::film::Grain;
 use rollchrome_core::tools::develop::DevelopItem;
-use rollchrome_desktop::commands::develop::plan_develop_impl;
+use rollchrome_desktop::commands::develop::{list_film_looks_impl, plan_develop_impl};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -56,6 +57,7 @@ fn plan_develop_refuses_a_folder_outside_the_roots() {
         name: "DSCF0001.dng".to_string(),
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
+        grain: Grain::Fine,
     }];
 
     let err = plan_develop_impl(
@@ -90,16 +92,19 @@ fn plan_develop_plans_a_folder_inside_the_roots() {
             name: "DSCF0001.dng".to_string(),
             look: Some("Identity.cube".to_string()),
             exposure_ev: 0.0,
+            grain: Grain::Fine,
         },
         DevelopItem {
             name: "DSCF0002.dng".to_string(),
             look: Some("Identity.cube".to_string()),
             exposure_ev: 0.5,
+            grain: Grain::Fine,
         },
         DevelopItem {
             name: "notes.txt".to_string(),
             look: Some("Identity.cube".to_string()),
             exposure_ev: 0.0,
+            grain: Grain::Fine,
         },
     ];
 
@@ -136,6 +141,7 @@ fn preview_refuses_a_name_that_leaves_the_folder() {
         None,
         0.0,
         false,
+        None,
     )
     .unwrap_err();
     assert!(err1.contains("path separators or '..'"));
@@ -147,6 +153,7 @@ fn preview_refuses_a_name_that_leaves_the_folder() {
         None,
         0.0,
         false,
+        None,
     )
     .unwrap_err();
     assert!(err2.contains("path separators or '..'"));
@@ -158,6 +165,7 @@ fn preview_refuses_a_name_that_leaves_the_folder() {
         None,
         0.0,
         false,
+        None,
     )
     .unwrap_err();
     assert!(err3.contains("path separators or '..'"));
@@ -177,6 +185,7 @@ fn preview_refuses_a_folder_outside_the_roots() {
         None,
         0.0,
         false,
+        None,
     )
     .unwrap_err();
 
@@ -199,6 +208,7 @@ fn preview_develop_returns_a_jpeg_for_a_synthetic_raw() {
         Some("builtin:fujifilm-classic-chrome".to_string()),
         0.0,
         false,
+        None,
     )
     .expect("preview develop");
 
@@ -227,6 +237,7 @@ fn a_second_look_on_the_same_photo_does_not_develop_it_again() {
         Some("builtin:fujifilm-classic-chrome".to_string()),
         0.0,
         false,
+        None,
     )
     .expect("first look");
 
@@ -240,6 +251,7 @@ fn a_second_look_on_the_same_photo_does_not_develop_it_again() {
         Some("builtin:ricoh-standard".to_string()),
         0.0,
         false,
+        None,
     )
     .expect("second look");
 
@@ -264,6 +276,7 @@ fn changing_exposure_does_not_develop_the_photo_again() {
         None,
         0.0,
         false,
+        None,
     )
     .expect("first render");
 
@@ -276,6 +289,7 @@ fn changing_exposure_does_not_develop_the_photo_again() {
         None,
         1.0,
         false,
+        None,
     )
     .expect("second render with new exposure");
 
@@ -303,6 +317,7 @@ fn going_back_to_a_recent_photo_does_not_develop_it_again() {
         None,
         0.0,
         false,
+        None,
     )
     .expect("photo 1");
     assert_eq!(state.develop_preview_runs(), 1);
@@ -315,6 +330,7 @@ fn going_back_to_a_recent_photo_does_not_develop_it_again() {
         None,
         0.0,
         false,
+        None,
     )
     .expect("photo 2");
     assert_eq!(state.develop_preview_runs(), 2);
@@ -327,7 +343,23 @@ fn going_back_to_a_recent_photo_does_not_develop_it_again() {
         None,
         0.0,
         false,
+        None,
     )
     .expect("photo 1 again");
     assert_eq!(state.develop_preview_runs(), 2);
+}
+
+#[test]
+fn list_film_looks_impl_returns_eighteen_entries_with_film_ids() {
+    let looks = list_film_looks_impl();
+    assert_eq!(looks.len(), 18);
+    for look in &looks {
+        assert!(
+            look.id.starts_with("film:"),
+            "expected film: prefix, got {}",
+            look.id
+        );
+        assert!(!look.name.is_empty());
+        assert!(!look.maker.is_empty());
+    }
 }

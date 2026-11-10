@@ -5,6 +5,7 @@
 use super::{describe, resolve_input, resolve_output, CommandResult};
 use crate::AppState;
 use rollchrome_core::media::develop::OutputFormat;
+use rollchrome_core::media::film::Grain;
 use rollchrome_core::media::looks::builtin::BuiltinLookInfo;
 use rollchrome_core::tools::develop::{
     plan_develop as core_plan_develop, DevelopItem, DevelopPlan,
@@ -34,6 +35,16 @@ pub fn list_builtin_looks() -> CommandResult<Vec<BuiltinLookInfo>> {
 
 pub fn list_builtin_looks_impl() -> Vec<BuiltinLookInfo> {
     rollchrome_core::media::looks::builtin::builtin_look_list()
+}
+
+/// Lists all simulated film stocks (DV-4).
+#[tauri::command]
+pub fn list_film_looks() -> CommandResult<Vec<BuiltinLookInfo>> {
+    Ok(list_film_looks_impl())
+}
+
+pub fn list_film_looks_impl() -> Vec<BuiltinLookInfo> {
+    rollchrome_core::media::film::film_look_list()
 }
 
 /// Lists non-recursive RAW files in a folder, sorted by name.
@@ -79,7 +90,7 @@ pub fn develop_thumbnail_impl(
     rollchrome_core::tools::develop_folder::thumbnail(&path, 360).map_err(describe)
 }
 
-/// Generates or renders an upright develop preview JPEG for display.
+/// Generates or renders an upright develop preview JPEG for display (DV-4: takes grain).
 #[tauri::command]
 pub async fn preview_develop(
     folder: String,
@@ -87,11 +98,12 @@ pub async fn preview_develop(
     look: Option<String>,
     exposure_ev: f32,
     draft: bool,
+    grain: Option<Grain>,
     app: tauri::AppHandle,
 ) -> Result<tauri::ipc::Response, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        preview_develop_impl(&state, folder, name, look, exposure_ev, draft)
+        preview_develop_impl(&state, folder, name, look, exposure_ev, draft, grain)
     })
     .await
     .map_err(|e| format!("preview develop panicked: {e}"))?
@@ -105,15 +117,18 @@ pub fn preview_develop_impl(
     look: Option<String>,
     exposure_ev: f32,
     draft: bool,
+    grain: Option<Grain>,
 ) -> Result<Vec<u8>, String> {
     validate_filename(&name).map_err(describe)?;
     let config = state.config();
     let resolved_folder = resolve_input(&config, &folder)?;
     let path = resolved_folder.join(name);
+    let film_data_dir = rollchrome_core::config::film_data_dir(&config);
 
     let look_obj = if let Some(look_id) = look {
         let lut_dir = rollchrome_core::config::lut_dir(&config);
-        let store = FolderStore::new(resolved_folder, lut_dir);
+        let store =
+            FolderStore::with_film_data(resolved_folder, lut_dir, Some(film_data_dir.clone()));
         let l =
             rollchrome_core::tools::develop::resolve_look(&look_id, &store).map_err(describe)?;
         Some(l)
@@ -124,8 +139,15 @@ pub fn preview_develop_impl(
     let preview = state
         .get_or_create_develop_preview(&path)
         .map_err(describe)?;
+    let grain_setting = grain.unwrap_or(Grain::Fine);
     let rendered = preview
-        .render(look_obj.as_ref(), exposure_ev, draft)
+        .render_with_data_dir(
+            look_obj.as_ref().map(Into::into),
+            exposure_ev,
+            grain_setting,
+            draft,
+            Some(&film_data_dir),
+        )
         .map_err(describe)?;
     Ok(rendered.bytes)
 }
@@ -157,7 +179,8 @@ pub fn plan_develop_impl(
     resolve_output(&config, &dev_folder.to_string_lossy())?;
 
     let lut_dir = rollchrome_core::config::lut_dir(&config);
-    let store = FolderStore::new(resolved_folder, lut_dir);
+    let film_data_dir = rollchrome_core::config::film_data_dir(&config);
+    let store = FolderStore::with_film_data(resolved_folder, lut_dir, Some(film_data_dir));
     let existing = store.existing_outputs().map_err(describe)?;
     Ok(core_plan_develop(&items, format, &existing))
 }
@@ -189,12 +212,14 @@ pub fn apply_develop_impl(
     resolve_output(&config, &dev_folder.to_string_lossy())?;
 
     let lut_dir = rollchrome_core::config::lut_dir(&config);
+    let film_data_dir = rollchrome_core::config::film_data_dir(&config);
     let total = items.len() as u64;
 
     state
         .jobs
         .spawn("develop", total, move |progress| {
-            let mut store = FolderStore::new(resolved_folder, lut_dir);
+            let mut store =
+                FolderStore::with_film_data(resolved_folder, lut_dir, Some(film_data_dir));
             let existing = store.existing_outputs()?;
             let plan = core_plan_develop(&items, format, &existing);
             let skipped = plan.skipped.clone();

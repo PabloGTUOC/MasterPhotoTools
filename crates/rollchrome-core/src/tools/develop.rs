@@ -7,14 +7,17 @@
 //! operations are abstracted behind the `DevelopStore` trait.
 
 use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
 
 use phototools_core::error::Error;
 use phototools_core::jobs::Progress;
 use phototools_core::media::raw::RAW_EXTENSIONS;
 use phototools_core::tools::Skip;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::media::develop::{develop, render, DevelopOptions, Look, OutputFormat};
+use crate::media::develop::{develop, develop_linear, render, DevelopOptions, Look, OutputFormat};
+use crate::media::film::{render_film, FilmBackend, FilmOutput, Grain};
 
 /// A single file in the folder presented for development.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +28,9 @@ pub struct DevelopItem {
     pub look: Option<String>,
     /// Exposure adjustment in stops (-4.0..=4.0 EV).
     pub exposure_ev: f32,
+    /// Film grain setting (DV-4).
+    #[serde(default)]
+    pub grain: Grain,
 }
 
 /// A planned development step for one photograph.
@@ -34,6 +40,9 @@ pub struct DevelopAction {
     pub output: String,
     pub look: String,
     pub exposure_ev: f32,
+    /// Film grain setting (DV-4).
+    #[serde(default)]
+    pub grain: Grain,
 }
 
 /// Result of planning a folder's development.
@@ -65,6 +74,10 @@ pub trait DevelopStore {
     fn read(&self, name: &str) -> Result<Vec<u8>, Error>;
     /// Resolves a LUT by name or sha256 from the library.
     fn look(&self, look: &str) -> Result<Look, Error>;
+    /// Directory where film simulation data is materialised (DV-4).
+    fn film_data_dir(&self) -> Option<&Path> {
+        None
+    }
     /// Writes `bytes` as a new file. Must fail with `Error::Refused` naming the file if it already exists.
     fn create_new(&mut self, output: &str, bytes: &[u8]) -> Result<(), Error>;
     /// Carries metadata from source to output with format-specific corrections.
@@ -173,6 +186,7 @@ pub fn plan_develop(
             output,
             look: look.clone(),
             exposure_ev: item.exposure_ev,
+            grain: item.grain,
         });
     }
 
@@ -183,14 +197,42 @@ pub fn plan_develop(
     }
 }
 
-/// Resolves a look identifier into a `Look` (RP-1).
+/// A resolved look for development: either a 3D LUT look or a film stock (DV-4).
+#[derive(Debug, Clone)]
+pub enum ResolvedLook {
+    Look(Look),
+    Film { stock: String },
+}
+
+/// Resolves a look identifier into a `ResolvedLook` (RP-1, DV-4).
 ///
-/// Resolves `builtin:<id>` itself and everything else through `DevelopStore::look`.
-pub fn resolve_look(id: &str, store: &dyn DevelopStore) -> Result<Look, Error> {
-    if let Some(builtin_id) = id.strip_prefix("builtin:") {
-        crate::media::looks::builtin::builtin_look(builtin_id)
+/// Resolves `film:<stock>`, `builtin:<id>`, and custom LUT identifiers from `DevelopStore::look`.
+pub fn resolve_look(id: &str, store: &dyn DevelopStore) -> Result<ResolvedLook, Error> {
+    if let Some(stock) = id.strip_prefix("film:") {
+        #[cfg(feature = "film")]
+        {
+            if crate::media::film::FILM_STOCKS
+                .iter()
+                .any(|s| s.id == stock)
+            {
+                Ok(ResolvedLook::Film {
+                    stock: stock.to_string(),
+                })
+            } else {
+                Err(Error::Refused(format!("unknown film stock: '{stock}'")))
+            }
+        }
+        #[cfg(not(feature = "film"))]
+        {
+            let _ = stock;
+            Err(Error::Refused(
+                "film simulation is not built into this program".to_string(),
+            ))
+        }
+    } else if let Some(builtin_id) = id.strip_prefix("builtin:") {
+        crate::media::looks::builtin::builtin_look(builtin_id).map(ResolvedLook::Look)
     } else {
-        store.look(id)
+        store.look(id).map(ResolvedLook::Look)
     }
 }
 
@@ -208,7 +250,7 @@ pub fn execute_develop(
         metadata_skipped: Vec::new(),
     };
 
-    let mut look_cache: HashMap<String, Result<Look, String>> = HashMap::new();
+    let mut look_cache: HashMap<String, Result<ResolvedLook, String>> = HashMap::new();
 
     for (done, action) in plan.actions.into_iter().enumerate() {
         if progress.cancelled() {
@@ -242,64 +284,282 @@ pub fn execute_develop(
             }
         };
 
-        let developed = match develop(
-            &raw_bytes,
-            &DevelopOptions {
-                exposure_ev: action.exposure_ev,
-            },
-        ) {
-            Ok(d) => d,
-            Err(e) => {
-                summary.failures.push(Skip {
-                    file: action.source,
-                    reason: e.to_string(),
-                });
-                continue;
-            }
-        };
+        match look {
+            ResolvedLook::Look(look) => {
+                let developed = match develop(
+                    &raw_bytes,
+                    &DevelopOptions {
+                        exposure_ev: action.exposure_ev,
+                    },
+                ) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        summary.failures.push(Skip {
+                            file: action.source,
+                            reason: e.to_string(),
+                        });
+                        continue;
+                    }
+                };
 
-        let rendered = match render(&developed, Some(look), plan.format) {
-            Ok(r) => r,
-            Err(e) => {
-                summary.failures.push(Skip {
-                    file: action.source,
-                    reason: e.to_string(),
-                });
-                continue;
-            }
-        };
+                let rendered = match render(&developed, Some(look), plan.format) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        summary.failures.push(Skip {
+                            file: action.source,
+                            reason: e.to_string(),
+                        });
+                        continue;
+                    }
+                };
 
-        match store.create_new(&action.output, &rendered.bytes) {
-            Ok(()) => {}
-            Err(Error::Refused(reason)) => {
-                summary.skipped.push(Skip {
-                    file: action.source,
-                    reason,
-                });
-                continue;
-            }
-            Err(e) => {
-                summary.failures.push(Skip {
-                    file: action.source,
-                    reason: e.to_string(),
-                });
-                continue;
-            }
-        }
+                match store.create_new(&action.output, &rendered.bytes) {
+                    Ok(()) => {}
+                    Err(Error::Refused(reason)) => {
+                        summary.skipped.push(Skip {
+                            file: action.source,
+                            reason,
+                        });
+                        continue;
+                    }
+                    Err(e) => {
+                        summary.failures.push(Skip {
+                            file: action.source,
+                            reason: e.to_string(),
+                        });
+                        continue;
+                    }
+                }
 
-        summary.developed.push(action.output.clone());
+                summary.developed.push(action.output.clone());
 
-        if let Err(e) = store.carry_metadata(
-            &action.source,
-            &action.output,
-            rendered.width,
-            rendered.height,
-            plan.format,
-        ) {
-            summary.metadata_skipped.push(Skip {
-                file: action.source,
-                reason: e.to_string(),
-            });
+                if let Err(e) = store.carry_metadata(
+                    &action.source,
+                    &action.output,
+                    rendered.width,
+                    rendered.height,
+                    plan.format,
+                ) {
+                    summary.metadata_skipped.push(Skip {
+                        file: action.source,
+                        reason: e.to_string(),
+                    });
+                }
+            }
+            ResolvedLook::Film { stock } => {
+                let linear = match develop_linear(&raw_bytes, &DevelopOptions { exposure_ev: 0.0 })
+                {
+                    Ok(l) => l,
+                    Err(e) => {
+                        summary.failures.push(Skip {
+                            file: action.source,
+                            reason: e.to_string(),
+                        });
+                        continue;
+                    }
+                };
+
+                let default_dir = dirs::data_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join("masterphototools/film-data");
+                let data_dir = store.film_data_dir().unwrap_or(&default_dir);
+
+                match plan.format {
+                    OutputFormat::Jpeg { quality } => {
+                        if !(1..=100).contains(&quality) {
+                            summary.failures.push(Skip {
+                                file: action.source,
+                                reason: format!("JPEG quality {quality} is outside 1..=100"),
+                            });
+                            continue;
+                        }
+
+                        let rendered_pixels = match render_film(
+                            &linear.pixels,
+                            linear.width,
+                            linear.height,
+                            stock,
+                            action.grain,
+                            action.exposure_ev,
+                            FilmOutput::Srgb,
+                            FilmBackend::Auto,
+                            data_dir,
+                        ) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                summary.failures.push(Skip {
+                                    file: action.source,
+                                    reason: e.to_string(),
+                                });
+                                continue;
+                            }
+                        };
+
+                        let u8_data: Vec<u8> = rendered_pixels
+                            .into_par_iter()
+                            .flat_map(|p| {
+                                [
+                                    (p[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+                                    (p[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+                                    (p[2] * 255.0).round().clamp(0.0, 255.0) as u8,
+                                ]
+                            })
+                            .collect();
+                        let srgb_img =
+                            match image::RgbImage::from_raw(linear.width, linear.height, u8_data) {
+                                Some(img) => img,
+                                None => {
+                                    summary.failures.push(Skip {
+                                        file: action.source,
+                                        reason: "failed to create RgbImage buffer".to_string(),
+                                    });
+                                    continue;
+                                }
+                            };
+                        let dyn_img = image::DynamicImage::ImageRgb8(srgb_img);
+                        let opts = phototools_core::media::jpeg::JpegOptions::deliverable(quality);
+                        let bytes = match phototools_core::media::jpeg::encode(&dyn_img, &opts) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                summary.failures.push(Skip {
+                                    file: action.source,
+                                    reason: e.to_string(),
+                                });
+                                continue;
+                            }
+                        };
+
+                        match store.create_new(&action.output, &bytes) {
+                            Ok(()) => {}
+                            Err(Error::Refused(reason)) => {
+                                summary.skipped.push(Skip {
+                                    file: action.source,
+                                    reason,
+                                });
+                                continue;
+                            }
+                            Err(e) => {
+                                summary.failures.push(Skip {
+                                    file: action.source,
+                                    reason: e.to_string(),
+                                });
+                                continue;
+                            }
+                        }
+
+                        summary.developed.push(action.output.clone());
+
+                        if let Err(e) = store.carry_metadata(
+                            &action.source,
+                            &action.output,
+                            linear.width,
+                            linear.height,
+                            plan.format,
+                        ) {
+                            summary.metadata_skipped.push(Skip {
+                                file: action.source,
+                                reason: e.to_string(),
+                            });
+                        }
+                    }
+                    OutputFormat::Tiff => {
+                        let rendered_pixels = match render_film(
+                            &linear.pixels,
+                            linear.width,
+                            linear.height,
+                            stock,
+                            action.grain,
+                            action.exposure_ev,
+                            FilmOutput::ProPhotoLinear,
+                            FilmBackend::Auto,
+                            data_dir,
+                        ) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                summary.failures.push(Skip {
+                                    file: action.source,
+                                    reason: e.to_string(),
+                                });
+                                continue;
+                            }
+                        };
+
+                        let u16_data: Vec<u16> = rendered_pixels
+                            .into_par_iter()
+                            .flat_map(|p| {
+                                let mut out = [0u16; 3];
+                                for c in 0..3 {
+                                    let enc =
+                                        crate::media::develop::tone::prophoto_encode(p[c].max(0.0));
+                                    out[c] = (enc * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                                }
+                                out
+                            })
+                            .collect();
+
+                        let icc_profile =
+                            match crate::media::develop::render::prophoto_icc_profile() {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    summary.failures.push(Skip {
+                                        file: action.source,
+                                        reason: e.to_string(),
+                                    });
+                                    continue;
+                                }
+                            };
+
+                        let bytes = match crate::media::develop::render::encode_tiff(
+                            linear.width,
+                            linear.height,
+                            &u16_data,
+                            &icc_profile,
+                        ) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                summary.failures.push(Skip {
+                                    file: action.source,
+                                    reason: e.to_string(),
+                                });
+                                continue;
+                            }
+                        };
+
+                        match store.create_new(&action.output, &bytes) {
+                            Ok(()) => {}
+                            Err(Error::Refused(reason)) => {
+                                summary.skipped.push(Skip {
+                                    file: action.source,
+                                    reason,
+                                });
+                                continue;
+                            }
+                            Err(e) => {
+                                summary.failures.push(Skip {
+                                    file: action.source,
+                                    reason: e.to_string(),
+                                });
+                                continue;
+                            }
+                        }
+
+                        summary.developed.push(action.output.clone());
+
+                        if let Err(e) = store.carry_metadata(
+                            &action.source,
+                            &action.output,
+                            linear.width,
+                            linear.height,
+                            plan.format,
+                        ) {
+                            summary.metadata_skipped.push(Skip {
+                                file: action.source,
+                                reason: e.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -443,6 +703,7 @@ mod tests {
             name: "DSCF1234.RAF".to_string(),
             look: Some("Astia".to_string()),
             exposure_ev: 0.5,
+            grain: Grain::Fine,
         }];
         let existing = BTreeSet::new();
 
@@ -454,6 +715,7 @@ mod tests {
         assert_eq!(plan_jpeg.actions[0].output, "DSCF1234.jpg");
         assert_eq!(plan_jpeg.actions[0].look, "Astia");
         assert_eq!(plan_jpeg.actions[0].exposure_ev, 0.5);
+        assert_eq!(plan_jpeg.actions[0].grain, Grain::Fine);
 
         // TIFF
         let plan_tiff = plan_develop(&items, OutputFormat::Tiff, &existing);
@@ -461,6 +723,7 @@ mod tests {
         assert_eq!(plan_tiff.actions[0].output, "DSCF1234.tif");
         assert_eq!(plan_tiff.actions[0].look, "Astia");
         assert_eq!(plan_tiff.actions[0].exposure_ev, 0.5);
+        assert_eq!(plan_tiff.actions[0].grain, Grain::Fine);
     }
 
     #[test]
@@ -469,6 +732,7 @@ mod tests {
             name: "DSCF1234.RAF".to_string(),
             look: None,
             exposure_ev: 0.0,
+            grain: Grain::Fine,
         }];
         let existing = BTreeSet::new();
         let plan = plan_develop(&items, OutputFormat::Tiff, &existing);
@@ -488,6 +752,7 @@ mod tests {
             name: "DSCF1234.RAF".to_string(),
             look: Some("Velvia".to_string()),
             exposure_ev: 0.0,
+            grain: Grain::Fine,
         }];
         let plan = plan_develop(&items, OutputFormat::Jpeg { quality: 90 }, &existing);
 
@@ -509,11 +774,13 @@ mod tests {
                 name: "IMG_0001.DNG".to_string(),
                 look: Some("ClassicChrome".to_string()),
                 exposure_ev: 0.0,
+                grain: Grain::Fine,
             },
             DevelopItem {
                 name: "IMG_0001.CR2".to_string(),
                 look: Some("ClassicChrome".to_string()),
                 exposure_ev: 0.0,
+                grain: Grain::Fine,
             },
         ];
         let existing = BTreeSet::new();
@@ -538,11 +805,13 @@ mod tests {
                 name: "DSCF1234.JPG".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: 0.0,
+                grain: Grain::Fine,
             },
             DevelopItem {
                 name: "notes.txt".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: 0.0,
+                grain: Grain::Fine,
             },
         ];
         let existing = BTreeSet::new();
@@ -563,26 +832,31 @@ mod tests {
                 name: "A.RAF".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: -4.5,
+                grain: Grain::Fine,
             },
             DevelopItem {
                 name: "B.RAF".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: 4.5,
+                grain: Grain::Fine,
             },
             DevelopItem {
                 name: "C.RAF".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: f32::NAN,
+                grain: Grain::Fine,
             },
             DevelopItem {
                 name: "D.RAF".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: -4.0,
+                grain: Grain::Fine,
             },
             DevelopItem {
                 name: "E.RAF".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: 4.0,
+                grain: Grain::Fine,
             },
         ];
         let existing = BTreeSet::new();
@@ -605,16 +879,19 @@ mod tests {
                 name: "../x.RAF".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: 0.0,
+                grain: Grain::Fine,
             },
             DevelopItem {
                 name: "a/b.RAF".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: 0.0,
+                grain: Grain::Fine,
             },
             DevelopItem {
                 name: "".to_string(),
                 look: Some("Look".to_string()),
                 exposure_ev: 0.0,
+                grain: Grain::Fine,
             },
         ];
         let existing = BTreeSet::new();
@@ -649,12 +926,14 @@ mod tests {
                     output: "raw1.jpg".to_string(),
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
+                    grain: Grain::Fine,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
                     output: "raw2.jpg".to_string(),
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
+                    grain: Grain::Fine,
                 },
             ],
             skipped: Vec::new(),
@@ -704,12 +983,14 @@ mod tests {
                     output: "raw1.jpg".to_string(),
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
+                    grain: Grain::Fine,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
                     output: "raw2.jpg".to_string(),
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
+                    grain: Grain::Fine,
                 },
             ],
             skipped: Vec::new(),
@@ -749,12 +1030,14 @@ mod tests {
                     output: "corrupt.tif".to_string(),
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
+                    grain: Grain::Fine,
                 },
                 DevelopAction {
                     source: "good.dng".to_string(),
                     output: "good.tif".to_string(),
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
+                    grain: Grain::Fine,
                 },
             ],
             skipped: Vec::new(),
@@ -788,12 +1071,14 @@ mod tests {
                     output: "raw1.tif".to_string(),
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
+                    grain: Grain::Fine,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
                     output: "raw2.tif".to_string(),
                     look: "test_look".to_string(),
                     exposure_ev: 0.0,
+                    grain: Grain::Fine,
                 },
             ],
             skipped: Vec::new(),
@@ -830,12 +1115,14 @@ mod tests {
                     output: "raw1.tif".to_string(),
                     look: "vanished_lut".to_string(),
                     exposure_ev: 0.0,
+                    grain: Grain::Fine,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
                     output: "raw2.tif".to_string(),
                     look: "vanished_lut".to_string(),
                     exposure_ev: 0.0,
+                    grain: Grain::Fine,
                 },
             ],
             skipped: Vec::new(),

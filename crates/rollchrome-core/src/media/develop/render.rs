@@ -278,7 +278,7 @@ pub fn render_tiff_u16(developed: &Developed, look: &Look) -> Vec<u16> {
     }
 }
 
-fn encode_tiff(
+pub fn encode_tiff(
     width: u32,
     height: u32,
     pixels: &[u16],

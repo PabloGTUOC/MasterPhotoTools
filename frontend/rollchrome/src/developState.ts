@@ -5,11 +5,12 @@
  * between tabs, which unmounts the Develop view. Nothing is written to disk.
  */
 import { ref } from 'vue';
-import type { OutputFormat } from './api';
+import type { Grain, OutputFormat } from './api';
 
 export interface PhotoAssignment {
   look: string | null;
   exposure_ev: number;
+  grain?: Grain;
 }
 
 export const moduleFolder = ref('');

@@ -6,6 +6,7 @@ use rollchrome_core::media::develop::{
     develop, develop_linear, render, Demosaic, DevelopOptions, Look, OutputFormat,
 };
 use rollchrome_core::media::edit::lut::Lut;
+use rollchrome_core::media::film::Grain;
 use std::collections::BTreeSet;
 use support::dng::{DngBuilder, PreviewIfd0, XTRANS_PATTERN};
 
@@ -984,7 +985,9 @@ fn a_preview_fits_the_long_edge_and_keeps_the_aspect_ratio() {
     let max_edge = 120u32;
     let preview = rollchrome_core::media::develop::DevelopPreview::new(&dng, max_edge)
         .expect("develop preview");
-    let rendered = preview.render(None, 0.0, false).expect("render preview");
+    let rendered = preview
+        .render(None, 0.0, Grain::Fine, false)
+        .expect("render preview");
 
     assert_eq!(rendered.width, 120);
     assert_eq!(rendered.height, 80);
@@ -1003,7 +1006,9 @@ fn a_preview_is_upright_for_a_rotated_raw() {
     let max_edge = 120u32;
     let preview = rollchrome_core::media::develop::DevelopPreview::new(&dng, max_edge)
         .expect("develop preview");
-    let rendered = preview.render(None, 0.0, false).expect("render preview");
+    let rendered = preview
+        .render(None, 0.0, Grain::Fine, false)
+        .expect("render preview");
 
     // Upright should be portrait: width 80, height 120
     assert_eq!(rendered.width, 80);
@@ -1032,7 +1037,7 @@ fn a_preview_with_a_look_matches_the_full_render_within_two_levels() {
     let preview =
         rollchrome_core::media::develop::DevelopPreview::new(&dng, 48).expect("preview develop");
     let prev_rendered = preview
-        .render(Some(&look), 0.0, false)
+        .render(Some((&look).into()), 0.0, Grain::Fine, false)
         .expect("preview render");
     let prev_img = image::load_from_memory(&prev_rendered.bytes)
         .expect("decode preview jpeg")
@@ -1184,9 +1189,15 @@ fn changing_exposure_needs_only_the_cached_linear_image() {
     let preview =
         rollchrome_core::media::develop::DevelopPreview::new(&dng, 48).expect("develop preview");
 
-    let r_base = preview.render(None, 0.0, false).expect("render 0 EV");
-    let r_plus = preview.render(None, 1.0, false).expect("render +1 EV");
-    let r_minus = preview.render(None, -1.0, false).expect("render -1 EV");
+    let r_base = preview
+        .render(None, 0.0, Grain::Fine, false)
+        .expect("render 0 EV");
+    let r_plus = preview
+        .render(None, 1.0, Grain::Fine, false)
+        .expect("render +1 EV");
+    let r_minus = preview
+        .render(None, -1.0, Grain::Fine, false)
+        .expect("render -1 EV");
 
     assert_eq!(r_base.width, r_plus.width);
     assert_eq!(r_base.height, r_plus.height);
@@ -1232,7 +1243,7 @@ fn a_preview_at_an_exposure_matches_a_full_development_at_that_exposure() {
     let preview =
         rollchrome_core::media::develop::DevelopPreview::new(&dng, 48).expect("preview develop");
     let prev_rendered = preview
-        .render(None, exposure_ev, false)
+        .render(None, exposure_ev, Grain::Fine, false)
         .expect("preview render");
     let prev_img = image::load_from_memory(&prev_rendered.bytes)
         .expect("decode preview jpeg")
@@ -1267,10 +1278,10 @@ fn a_draft_preview_is_smaller_and_agrees_with_the_full_preview() {
 
     let exposure_ev = 0.5f32;
     let full_rendered = preview
-        .render(None, exposure_ev, false)
+        .render(None, exposure_ev, Grain::Fine, false)
         .expect("full preview render");
     let draft_rendered = preview
-        .render(None, exposure_ev, true)
+        .render(None, exposure_ev, Grain::Fine, true)
         .expect("draft preview render");
 
     assert!(
@@ -1305,4 +1316,19 @@ fn a_draft_preview_is_smaller_and_agrees_with_the_full_preview() {
             draft_px[c]
         );
     }
+}
+
+#[cfg(not(feature = "film"))]
+#[test]
+fn a_film_look_is_refused_when_film_is_not_built_in() {
+    let custom_look = rollchrome_core::media::looks::builtin::builtin_look("ricoh-standard")
+        .expect("builtin look");
+    let store = TestResolveStore { custom_look };
+    let res = rollchrome_core::tools::develop::resolve_look("film:kodak-portra-400", &store);
+    assert!(res.is_err());
+    let err = res.unwrap_err().to_string();
+    assert!(
+        err.contains("film") && err.contains("built"),
+        "expected error about film feature built, got {err}"
+    );
 }

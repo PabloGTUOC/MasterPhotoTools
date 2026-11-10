@@ -50,6 +50,22 @@ pub fn models_dir(config: &Config) -> PathBuf {
         })
 }
 
+/// Directory where film simulation data is materialised on first use (DV-4).
+///
+/// Stored alongside the application database in the app data directory
+/// next to `models_dir`.
+pub fn film_data_dir(config: &Config) -> PathBuf {
+    config
+        .database
+        .parent()
+        .map(|p| p.join("film-data"))
+        .unwrap_or_else(|| {
+            dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("masterphototools/film-data")
+        })
+}
+
 /// Directory where presets are stored (ED-17).
 ///
 /// Stored alongside the application database in the app data directory

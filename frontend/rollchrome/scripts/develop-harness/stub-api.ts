@@ -6,6 +6,7 @@ import type {
   BuiltinLookInfo,
   DevelopItem,
   DevelopPlan,
+  Grain,
   Job,
   JobEvent,
   LutLibraryList,
@@ -18,7 +19,7 @@ export interface StubDevelopState {
   thumbnailRequests: string[];
   activePreviewRequests: number;
   maxConcurrentPreviewRequests: number;
-  previewRequests: Array<{ name: string; look: string | null; exposure_ev: number; draft: boolean }>;
+  previewRequests: Array<{ name: string; look: string | null; exposure_ev: number; draft: boolean; grain?: Grain }>;
   previewDelayMs: Record<number, number>;
   previewCallCount: number;
   distinctPreviewCallIdx: number | null;
@@ -99,6 +100,29 @@ const BUILTIN_LOOKS: BuiltinLookInfo[] = [
   { id: 'builtin:ricoh-cross-processing', name: 'Cross Processing', maker: 'Ricoh' },
 ];
 
+const FILM_LOOKS: BuiltinLookInfo[] = [
+  // 13 Kodak
+  { id: 'film:kodak_portra_160', name: 'Kodak Portra 160', maker: 'Kodak' },
+  { id: 'film:kodak_portra_400', name: 'Kodak Portra 400', maker: 'Kodak' },
+  { id: 'film:kodak_portra_800', name: 'Kodak Portra 800', maker: 'Kodak' },
+  { id: 'film:kodak_ektar_100', name: 'Kodak Ektar 100', maker: 'Kodak' },
+  { id: 'film:kodak_gold_200', name: 'Kodak Gold 200', maker: 'Kodak' },
+  { id: 'film:kodak_ultramax_400', name: 'Kodak Ultramax 400', maker: 'Kodak' },
+  { id: 'film:kodak_ektachrome_100', name: 'Kodak Ektachrome 100', maker: 'Kodak' },
+  { id: 'film:kodak_kodachrome_64', name: 'Kodak Kodachrome 64', maker: 'Kodak' },
+  { id: 'film:kodak_vision3_50d', name: 'Kodak Vision3 50D', maker: 'Kodak' },
+  { id: 'film:kodak_vision3_200t', name: 'Kodak Vision3 200T', maker: 'Kodak' },
+  { id: 'film:kodak_vision3_250d', name: 'Kodak Vision3 250D', maker: 'Kodak' },
+  { id: 'film:kodak_vision3_500t', name: 'Kodak Vision3 500T', maker: 'Kodak' },
+  { id: 'film:kodak_verita_200d', name: 'Kodak Verita 200D', maker: 'Kodak' },
+  // 5 Fujifilm
+  { id: 'film:fujifilm_c200', name: 'Fujifilm C200', maker: 'Fujifilm' },
+  { id: 'film:fujifilm_pro_400h', name: 'Fujifilm Pro 400H', maker: 'Fujifilm' },
+  { id: 'film:fujifilm_xtra_400', name: 'Fujifilm X-Tra 400', maker: 'Fujifilm' },
+  { id: 'film:fujifilm_provia_100f', name: 'Fujifilm Provia 100F', maker: 'Fujifilm' },
+  { id: 'film:fujifilm_velvia_100', name: 'Fujifilm Velvia 100', maker: 'Fujifilm' },
+];
+
 export class StubDesktopApiClient {
   async health(): Promise<{ status: string; version: string }> {
     return { status: 'ok', version: 'stub' };
@@ -119,6 +143,10 @@ export class StubDesktopApiClient {
 
   async listBuiltinLooks(): Promise<BuiltinLookInfo[]> {
     return BUILTIN_LOOKS;
+  }
+
+  async listFilmLooks(): Promise<BuiltinLookInfo[]> {
+    return FILM_LOOKS;
   }
 
   async listLuts(): Promise<LutLibraryList> {
@@ -160,6 +188,7 @@ export class StubDesktopApiClient {
     look: string | null,
     exposure_ev: number,
     draft = false,
+    grain?: Grain,
   ): Promise<Uint8Array> {
     stubState.activePreviewRequests++;
     if (stubState.activePreviewRequests > stubState.maxConcurrentPreviewRequests) {
@@ -167,7 +196,7 @@ export class StubDesktopApiClient {
     }
 
     const callIdx = ++stubState.previewCallCount;
-    stubState.previewRequests.push({ name, look, exposure_ev, draft: !!draft });
+    stubState.previewRequests.push({ name, look, exposure_ev, draft: !!draft, grain });
 
     const delay = stubState.previewDelayMs[callIdx] ?? 10;
     if (delay > 0) {

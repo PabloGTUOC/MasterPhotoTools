@@ -1,15 +1,46 @@
-//! Develop preview generation and fast look re-rendering (RP-1, RP-12).
+//! Develop preview generation and fast look re-rendering (RP-1, RP-12, DV-4).
 
 use fast_image_resize as fr;
 use phototools_core::error::Error;
 use rayon::prelude::*;
+use std::path::Path;
 
 use crate::media::develop::render::{render, Look, OutputFormat, Rendered};
 use crate::media::develop::{develop_linear, linear_to_developed, DevelopOptions, LinearProPhoto};
+use crate::media::film::{render_film, FilmBackend, FilmOutput, Grain};
 use crate::media::segment::to_upright;
+use crate::tools::develop::ResolvedLook;
 
 pub const PREVIEW_MAX_EDGE: u32 = 1600;
 pub const PREVIEW_DRAFT_EDGE: u32 = 800;
+
+/// Look passed to preview rendering: either a 3D LUT look or a film stock (DV-4).
+#[derive(Debug, Clone, Copy)]
+pub enum PreviewLook<'a> {
+    Look(&'a Look),
+    Film(&'a str),
+}
+
+impl<'a> From<&'a Look> for PreviewLook<'a> {
+    fn from(l: &'a Look) -> Self {
+        PreviewLook::Look(l)
+    }
+}
+
+impl<'a> From<&'a str> for PreviewLook<'a> {
+    fn from(s: &'a str) -> Self {
+        PreviewLook::Film(s)
+    }
+}
+
+impl<'a> From<&'a ResolvedLook> for PreviewLook<'a> {
+    fn from(r: &'a ResolvedLook) -> Self {
+        match r {
+            ResolvedLook::Look(l) => PreviewLook::Look(l),
+            ResolvedLook::Film { stock } => PreviewLook::Film(stock.as_str()),
+        }
+    }
+}
 
 /// Reduced-resolution developed RAW representation for interactive previewing (RP-1, RP-12).
 ///
@@ -92,13 +123,26 @@ impl DevelopPreview {
         })
     }
 
-    /// Upright, JPEG quality 90, with the look if any, at the given exposure (RP-12).
+    /// Upright, JPEG quality 90, with the look if any, at the given exposure and grain (RP-12, DV-4).
     /// Does not develop the RAW again.
-    pub fn render(
+    pub fn render<'a>(
         &self,
-        look: Option<&Look>,
+        look: Option<PreviewLook<'a>>,
         exposure_ev: f32,
+        grain: Grain,
         draft: bool,
+    ) -> Result<Rendered, Error> {
+        self.render_with_data_dir(look, exposure_ev, grain, draft, None)
+    }
+
+    /// Upright preview rendering with optional custom film data directory.
+    pub fn render_with_data_dir<'a>(
+        &self,
+        look: Option<PreviewLook<'a>>,
+        exposure_ev: f32,
+        grain: Grain,
+        draft: bool,
+        data_dir: Option<&Path>,
     ) -> Result<Rendered, Error> {
         if !exposure_ev.is_finite() || exposure_ev < -4.0 || exposure_ev > 4.0 {
             return Err(Error::Refused(format!(
@@ -107,6 +151,54 @@ impl DevelopPreview {
         }
 
         let source = if draft { &self.draft } else { &self.full };
+        let preview_look = look;
+
+        if let Some(PreviewLook::Film(stock)) = preview_look {
+            let default_dir = dirs::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("masterphototools/film-data");
+            let effective_dir = data_dir.unwrap_or(&default_dir);
+
+            let rendered_pixels = render_film(
+                &source.pixels,
+                source.width,
+                source.height,
+                stock,
+                grain,
+                exposure_ev,
+                FilmOutput::Srgb,
+                FilmBackend::Auto,
+                effective_dir,
+            )?;
+
+            let u8_data: Vec<u8> = rendered_pixels
+                .into_par_iter()
+                .flat_map(|p| {
+                    [
+                        (p[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        (p[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        (p[2] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    ]
+                })
+                .collect();
+            let srgb_img = image::RgbImage::from_raw(source.width, source.height, u8_data)
+                .ok_or_else(|| Error::Internal("failed to build preview image buffer".into()))?;
+            let dyn_img = image::DynamicImage::ImageRgb8(srgb_img);
+            let opts = phototools_core::media::jpeg::JpegOptions::deliverable(90);
+            let bytes = phototools_core::media::jpeg::encode(&dyn_img, &opts)?;
+            return Ok(Rendered {
+                bytes,
+                width: source.width,
+                height: source.height,
+                extension: "jpg",
+            });
+        }
+
+        let look_obj = match preview_look {
+            Some(PreviewLook::Look(l)) => Some(l),
+            _ => None,
+        };
+
         let exp_scale = 2.0f32.powf(exposure_ev);
 
         let scaled_pixels: Vec<[f32; 3]> = if (exp_scale - 1.0).abs() <= 1e-6 {
@@ -127,7 +219,7 @@ impl DevelopPreview {
             source.demosaic,
         )?;
 
-        render(&developed, look, OutputFormat::Jpeg { quality: 90 })
+        render(&developed, look_obj, OutputFormat::Jpeg { quality: 90 })
     }
 
     pub fn width(&self) -> u32 {
@@ -148,36 +240,64 @@ impl DevelopPreview {
 }
 
 fn resize_linear(
-    w: u32,
-    h: u32,
-    pixels: &[[f32; 3]],
+    src_w: u32,
+    src_h: u32,
+    src_pixels: &[[f32; 3]],
     max_edge: u32,
 ) -> Result<(u32, u32, Vec<[f32; 3]>), Error> {
-    let long = w.max(h);
-    if max_edge == 0 || long <= max_edge {
-        return Ok((w, h, pixels.to_vec()));
+    let longest = src_w.max(src_h);
+    if longest <= max_edge || max_edge == 0 {
+        return Ok((src_w, src_h, src_pixels.to_vec()));
     }
 
-    let ratio = max_edge as f64 / long as f64;
-    let new_w = ((w as f64 * ratio).floor() as u32).max(1);
-    let new_h = ((h as f64 * ratio).floor() as u32).max(1);
+    let scale = max_edge as f32 / longest as f32;
+    let dst_w = ((src_w as f32 * scale).round() as u32).max(1);
+    let dst_h = ((src_h as f32 * scale).round() as u32).max(1);
 
-    let byte_slice =
-        unsafe { std::slice::from_raw_parts(pixels.as_ptr() as *const u8, pixels.len() * 12) };
-    let src = fr::images::ImageRef::new(w, h, byte_slice, fr::PixelType::F32x3)
-        .map_err(|e| Error::Internal(format!("resize linear preview source: {e:?}")))?;
-    let mut dst = fr::images::Image::new(new_w, new_h, fr::PixelType::F32x3);
-    fr::Resizer::new()
-        .resize(&src, &mut dst, None)
-        .map_err(|e| Error::Internal(format!("resize linear preview: {e:?}")))?;
-
-    let dst_bytes = dst.into_vec();
-    let mut out = Vec::with_capacity((new_w * new_h) as usize);
-    for chunk in dst_bytes.as_chunks::<12>().0 {
-        let r = f32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        let g = f32::from_ne_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
-        let b = f32::from_ne_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
-        out.push([r, g, b]);
+    let mut src_flat = Vec::with_capacity(src_pixels.len() * 3);
+    for p in src_pixels {
+        src_flat.push(p[0]);
+        src_flat.push(p[1]);
+        src_flat.push(p[2]);
     }
-    Ok((new_w, new_h, out))
+
+    let src_img = fr::images::ImageRef::new(
+        src_w,
+        src_h,
+        bytemuck_cast_slice(&src_flat),
+        fr::PixelType::F32x3,
+    )
+    .map_err(|e| Error::Internal(format!("fast_image_resize src init failed: {e}")))?;
+
+    let mut dst_flat = vec![0f32; (dst_w * dst_h * 3) as usize];
+    let mut dst_img = fr::images::Image::new(dst_w, dst_h, fr::PixelType::F32x3);
+
+    let mut resizer = fr::Resizer::new();
+    resizer
+        .resize(
+            &src_img,
+            &mut dst_img,
+            &fr::ResizeOptions::new()
+                .resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Bilinear)),
+        )
+        .map_err(|e| Error::Internal(format!("fast_image_resize resize failed: {e}")))?;
+
+    let dst_bytes = dst_img.buffer();
+    let dst_f32: &[f32] = bytemuck_cast_slice_back(dst_bytes);
+    dst_flat.copy_from_slice(dst_f32);
+
+    let mut pixels = Vec::with_capacity((dst_w * dst_h) as usize);
+    for chunk in dst_flat.as_chunks::<3>().0 {
+        pixels.push([chunk[0], chunk[1], chunk[2]]);
+    }
+
+    Ok((dst_w, dst_h, pixels))
+}
+
+fn bytemuck_cast_slice(f: &[f32]) -> &[u8] {
+    unsafe { std::slice::from_raw_parts(f.as_ptr() as *const u8, f.len() * 4) }
+}
+
+fn bytemuck_cast_slice_back(b: &[u8]) -> &[f32] {
+    unsafe { std::slice::from_raw_parts(b.as_ptr() as *const f32, b.len() / 4) }
 }

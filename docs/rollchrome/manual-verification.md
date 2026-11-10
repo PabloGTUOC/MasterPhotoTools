@@ -420,6 +420,16 @@ the automated check drives the screen against a stub.
       **Pass:** only the missing guard model (238 MB) is downloaded; progress reports the single file's progress; once downloaded, the sky mask completes normally.
       **Result:**
 
+## MV-38 — Film stock simulations in Develop (DV-4)
+
+[`develop-plan.md`](../develop-plan.md), built. Needs a Mac running Rollchrome with real photographs.
+
+- [ ] **MV-38.1 — Develop three RAWs across film stocks and grain settings.**
+      **Run:** develop three of the owner's RAWs in Portra 160, Ektachrome 100 and Vision3 250D at each grain setting (Off, Fine, 35 mm).
+      **Pass:** preview and exported file match by eye, grain Off has none, and a 40 MP X100VI file exports in under 10 s.
+      **Result:**
+
+
 
 
 

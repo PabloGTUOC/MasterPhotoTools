@@ -22,6 +22,7 @@ import type {
   BuiltinLookInfo,
   DevelopItem,
   DevelopPlan,
+  Grain,
   LutLibraryList,
   OutputFormat,
 } from '@host/api';
@@ -76,6 +77,7 @@ watch(scope, (s) => {
 
 // Looks library
 const builtinLooks = ref<BuiltinLookInfo[]>([]);
+const filmLooks = ref<BuiltinLookInfo[]>([]);
 const lutLibrary = ref<LutLibraryList>({ luts: [], errors: [] });
 
 // Preview
@@ -90,6 +92,7 @@ interface WantedPreviewState {
   look: string | null;
   exposure_ev: number;
   draft: boolean;
+  grain: Grain;
 }
 let previewInFlight = false;
 let pendingPreviewState: WantedPreviewState | null = null;
@@ -168,6 +171,8 @@ watch(currentFormat, (fmt) => {
 }, { deep: true });
 
 // Filtered look options
+const kodakFilmLooks = computed(() => filmLooks.value.filter((l) => l.maker.toLowerCase() === 'kodak'));
+const fujifilmFilmLooks = computed(() => filmLooks.value.filter((l) => l.maker.toLowerCase() === 'fujifilm'));
 const fujifilmLooks = computed(() => builtinLooks.value.filter((l) => l.maker.toLowerCase() === 'fujifilm'));
 const ricohLooks = computed(() => builtinLooks.value.filter((l) => l.maker.toLowerCase() === 'ricoh'));
 
@@ -186,6 +191,31 @@ const selectedLook = computed(() => {
   );
   if (!allSame) return '__mixed__';
   return first ?? '';
+});
+
+// Active grain for selection (DV-4)
+const allSelectedHaveFilmLook = computed(() => {
+  if (selection.value.length === 0) return false;
+  return selection.value.every((name) => {
+    const look = moduleAssignments.value[name]?.look;
+    return !!look && look.startsWith('film:');
+  });
+});
+
+const selectedGrain = computed<Grain | '__mixed__'>(() => {
+  if (selection.value.length === 0) return 'fine';
+  const first = moduleAssignments.value[selection.value[0]]?.grain ?? 'fine';
+  const allSame = selection.value.every(
+    (name) => (moduleAssignments.value[name]?.grain ?? 'fine') === first,
+  );
+  if (!allSame) return '__mixed__';
+  return first;
+});
+
+const shownPhotoHasFilmLook = computed(() => {
+  if (!lastClicked.value) return false;
+  const assignment = moduleAssignments.value[lastClicked.value];
+  return !!assignment?.look && assignment.look.startsWith('film:');
 });
 
 // Active exposure for selection
@@ -208,8 +238,13 @@ function lookDisplayName(lookId: string | null | undefined): string {
   if (!lookId) return 'None';
   const builtin = builtinLooks.value.find((b) => b.id === lookId);
   if (builtin) return builtin.name;
+  const film = filmLooks.value.find((f) => f.id === lookId);
+  if (film) return film.name;
   const lut = lutLibrary.value.luts.find((l) => l.name === lookId);
   if (lut) return lut.name;
+  if (lookId.startsWith('film:')) {
+    return lookId.slice('film:'.length);
+  }
   if (lookId.startsWith('builtin:')) {
     return lookId.slice('builtin:'.length);
   }
@@ -247,7 +282,7 @@ async function loadFolder() {
     const assignments = { ...moduleAssignments.value };
     for (const name of names) {
       if (!assignments[name]) {
-        assignments[name] = { look: null, exposure_ev: 0.0 };
+        assignments[name] = { look: null, exposure_ev: 0.0, grain: 'fine' };
       }
     }
     moduleAssignments.value = assignments;
@@ -341,17 +376,30 @@ function onLookChange(event: Event) {
 
   const updated = { ...moduleAssignments.value };
   for (const name of selection.value) {
-    const existing = updated[name] ?? { look: null, exposure_ev: 0.0 };
-    updated[name] = { ...existing, look };
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine' };
+    updated[name] = { ...existing, look, grain: existing.grain ?? 'fine' };
   }
   moduleAssignments.value = updated;
   triggerPreview();
 }
 
+function onGrainChange(event: Event) {
+  const value = (event.target as HTMLSelectElement).value;
+  if (value === '__mixed__') return;
+  const grain = value as Grain;
+  const updated = { ...moduleAssignments.value };
+  for (const name of selection.value) {
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine' };
+    updated[name] = { ...existing, grain };
+  }
+  moduleAssignments.value = updated;
+  triggerPreview(false);
+}
+
 function onExposureInput(exposure_ev: number) {
   const updated = { ...moduleAssignments.value };
   for (const name of selection.value) {
-    const existing = updated[name] ?? { look: null, exposure_ev: 0.0 };
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine' };
     updated[name] = { ...existing, exposure_ev };
   }
   moduleAssignments.value = updated;
@@ -361,7 +409,7 @@ function onExposureInput(exposure_ev: number) {
 function onExposureChange(exposure_ev: number) {
   const updated = { ...moduleAssignments.value };
   for (const name of selection.value) {
-    const existing = updated[name] ?? { look: null, exposure_ev: 0.0 };
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine' };
     updated[name] = { ...existing, exposure_ev };
   }
   moduleAssignments.value = updated;
@@ -385,13 +433,14 @@ async function triggerPreview(draft = false) {
     return;
   }
 
-  const assignment = moduleAssignments.value[targetPhoto] ?? { look: null, exposure_ev: 0.0 };
+  const assignment = moduleAssignments.value[targetPhoto] ?? { look: null, exposure_ev: 0.0, grain: 'fine' };
   const wanted: WantedPreviewState = {
     folder: currentPath,
     name: targetPhoto,
     look: assignment.look,
     exposure_ev: assignment.exposure_ev,
     draft,
+    grain: assignment.grain ?? 'fine',
   };
 
   if (previewInFlight) {
@@ -416,6 +465,7 @@ async function executePreview(wanted: WantedPreviewState) {
       wanted.look,
       wanted.exposure_ev,
       wanted.draft,
+      wanted.grain,
     );
     if (seq === previewSeq) {
       if (previewUrl.value) {
@@ -451,11 +501,12 @@ function makeItems(): DevelopItem[] {
       : photos.value;
 
   return targetPhotos.map((name) => {
-    const a = moduleAssignments.value[name] ?? { look: null, exposure_ev: 0.0 };
+    const a = moduleAssignments.value[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine' };
     return {
       name,
       look: a.look,
       exposure_ev: a.exposure_ev,
+      grain: a.grain ?? 'fine',
     };
   });
 }
@@ -590,11 +641,13 @@ onBeforeUnmount(() => {
 
 onMounted(async () => {
   try {
-    const [looks, luts] = await Promise.all([
+    const [looks, films, luts] = await Promise.all([
       desktop.listBuiltinLooks(),
+      desktop.listFilmLooks(),
       desktop.listLuts(),
     ]);
     builtinLooks.value = looks;
+    filmLooks.value = films;
     lutLibrary.value = luts;
   } catch (err) {
     console.error('Failed to load looks:', err);
@@ -755,6 +808,24 @@ onMounted(async () => {
               <optgroup label="Neutral">
                 <option value="">None (neutral)</option>
               </optgroup>
+              <optgroup v-if="kodakFilmLooks.length" label="Kodak film">
+                <option
+                  v-for="look in kodakFilmLooks"
+                  :key="look.id"
+                  :value="look.id"
+                >
+                  {{ look.name }}
+                </option>
+              </optgroup>
+              <optgroup v-if="fujifilmFilmLooks.length" label="Fujifilm film">
+                <option
+                  v-for="look in fujifilmFilmLooks"
+                  :key="look.id"
+                  :value="look.id"
+                >
+                  {{ look.name }}
+                </option>
+              </optgroup>
               <optgroup v-if="fujifilmLooks.length" label="Fujifilm">
                 <option
                   v-for="look in fujifilmLooks"
@@ -782,6 +853,29 @@ onMounted(async () => {
                   {{ lut.name }}
                 </option>
               </optgroup>
+            </select>
+            <div v-if="shownPhotoHasFilmLook" class="film-credit-line muted" data-testid="film-credit">
+              Film simulation: spektrafilm (GPL-3.0) · film data CC BY-SA 4.0.
+            </div>
+          </div>
+
+          <!-- Grain setting for film looks (DV-4) -->
+          <div v-if="allSelectedHaveFilmLook" class="control-row">
+            <label class="control-label" for="develop-grain-select">Grain</label>
+            <select
+              id="develop-grain-select"
+              class="look-select"
+              data-testid="grain-select"
+              :disabled="selection.length === 0 || isDeveloping"
+              :value="selectedGrain"
+              @change="onGrainChange"
+            >
+              <option v-if="selectedGrain === '__mixed__'" value="__mixed__" disabled>
+                (Multiple)
+              </option>
+              <option value="off">Off</option>
+              <option value="fine">Fine</option>
+              <option value="standard">35 mm</option>
             </select>
           </div>
 
@@ -1201,6 +1295,13 @@ onMounted(async () => {
   border-radius: 2px;
   font-family: var(--font-mono);
   font-size: 13px;
+}
+
+.film-credit-line {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-top: 4px;
 }
 
 .box-title {

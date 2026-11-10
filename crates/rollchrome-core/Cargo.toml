@@ -2,6 +2,7 @@
 name = "rollchrome-core"
 version = "0.1.0"
 edition = "2021"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 phototools-core = { path = "../core" }
@@ -22,8 +23,22 @@ tiff = "0.11.3"
 # the NAS server never links it. Pinned: 2.0 is a release candidate.
 ort = { version = "=2.0.0-rc.13", optional = true }
 
+# DV-4: spektrafilm-rs film simulation engine (GPL-3.0)
+spektrafilm-core = { git = "https://github.com/turbasvin/spektrafilm-rs", rev = "9dd59b0380194b93686aaa230a8bb9680aa270a4", optional = true, features = ["precision-f64"] }
+spektrafilm-gpu  = { git = "https://github.com/turbasvin/spektrafilm-rs", rev = "9dd59b0380194b93686aaa230a8bb9680aa270a4", optional = true, features = ["precision-f64"] }
+spektrafilm-math = { git = "https://github.com/turbasvin/spektrafilm-rs", rev = "9dd59b0380194b93686aaa230a8bb9680aa270a4", optional = true, features = ["precision-f64"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+openblas-src = { version = "0.10", optional = true, features = ["system"] }
+
 [features]
 segment = ["dep:ort"]
+film = [
+    "dep:spektrafilm-core",
+    "dep:spektrafilm-gpu",
+    "dep:spektrafilm-math",
+    "dep:openblas-src",
+]
 
 [dev-dependencies]
 tempfile = "3.10"
@@ -36,3 +51,7 @@ nom-exif = "3.6.2"
 [[example]]
 name = "auto_mask"
 required-features = ["segment"]
+
+[[test]]
+name = "film_tests"
+required-features = ["film"]

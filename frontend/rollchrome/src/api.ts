@@ -337,6 +337,10 @@ export class RollchromeClient {
     return invoke<BuiltinLookInfo[]>('list_builtin_looks');
   }
 
+  listFilmLooks(): Promise<BuiltinLookInfo[]> {
+    return invoke<BuiltinLookInfo[]>('list_film_looks');
+  }
+
   listDevelopFolder(folder: string): Promise<string[]> {
     return invoke<string[]>('list_develop_folder', { folder });
   }
@@ -352,6 +356,7 @@ export class RollchromeClient {
     look: string | null,
     exposureEv: number,
     draft: boolean,
+    grain?: Grain,
   ): Promise<Uint8Array> {
     const res = await invoke<ArrayBuffer | Uint8Array>('preview_develop', {
       folder,
@@ -359,6 +364,7 @@ export class RollchromeClient {
       look,
       exposureEv,
       draft,
+      grain,
     });
     return res instanceof Uint8Array ? res : new Uint8Array(res);
   }
@@ -905,11 +911,15 @@ export interface BuiltinLookInfo {
   maker: string;
 }
 
+/** Grain setting for film simulations (DV-4). */
+export type Grain = 'off' | 'fine' | 'standard';
+
 /** One item in a develop plan. */
 export interface DevelopItem {
   name: string;
   look: string | null;
   exposure_ev: number;
+  grain?: Grain;
 }
 
 /** One planned develop action. */

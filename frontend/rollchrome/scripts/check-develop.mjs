@@ -22,6 +22,9 @@
  * 17. The Grain select is hidden for a camera look or LUT, shown with Fine for a film look; the credit line shows with it.
  * 18. Changing grain disables Run until a new dry run, and that dry run's items carry the grain.
  * 19. Changing grain sends a new preview request carrying look: "film:..." and the grain.
+ * 20. A new photograph's Noise reduction slider shows 25, and it is visible for a camera look and for a film look.
+ * 21. Changing it disables Run until a new dry run, and that dry run's items carry the new noise_reduction.
+ * 22. Changing it sends a new preview request carrying noise_reduction.
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -868,6 +871,105 @@ try {
       failures.push(`Preview request must carry grain 'off', got '${lastGrainReq.grain}'`);
     }
   }
+
+  // -------------------------------------------------------------------------
+  // 20. A new photograph's Noise reduction slider shows 25, and it is visible for a camera look and for a film look (DV-5)
+  // -------------------------------------------------------------------------
+  console.log('20. Checking Noise reduction slider shows 25 and is visible for camera look and film look...');
+  const noiseSlider = page.locator('[data-testid="noise-slider"]');
+  const noiseNumber = page.locator('[data-testid="noise-slider-number"]');
+
+  // Select photo 2 (which hasn't had noise changed)
+  await page.locator('.thumbnail-card[data-filename="DSCF0002.RAF"]').click();
+  await page.waitForTimeout(100);
+
+  if (!(await noiseSlider.isVisible())) {
+    failures.push('Noise reduction slider must be visible');
+  }
+  const defaultVal = await noiseNumber.inputValue();
+  if (defaultVal !== '25') {
+    failures.push(`Noise reduction slider default must be 25, got '${defaultVal}'`);
+  }
+
+  // Camera look
+  await page.selectOption('[data-testid="look-select"]', 'builtin:fujifilm-classic-chrome');
+  await page.waitForTimeout(100);
+  if (!(await noiseSlider.isVisible())) {
+    failures.push('Noise reduction slider must be visible for a camera look');
+  }
+
+  // Film look
+  await page.selectOption('[data-testid="look-select"]', 'film:kodak_portra_160');
+  await page.waitForTimeout(100);
+  if (!(await noiseSlider.isVisible())) {
+    failures.push('Noise reduction slider must be visible for a film look');
+  }
+
+  // -------------------------------------------------------------------------
+  // 21. Changing noise reduction disables Run until new dry run, and dry run carries noise_reduction (DV-5)
+  // -------------------------------------------------------------------------
+  console.log('21. Checking noise reduction change invalidates dry run and dry run carries noise_reduction...');
+  await page.locator('[data-testid="scope-all"]').click();
+  await page.waitForTimeout(100);
+
+  await dryRunBtn.click();
+  await page.waitForSelector('[data-testid="review-section"]', { timeout: 3000 });
+  await page.waitForTimeout(100);
+
+  if (await runBtn.isDisabled()) {
+    failures.push('Run button should be enabled after dry run');
+  }
+
+  // Select photo 1
+  await page.locator('.thumbnail-card[data-filename="DSCF0001.RAF"]').click();
+  await page.waitForTimeout(100);
+
+  // Change noise reduction to 50
+  await noiseNumber.fill('50');
+  await noiseNumber.dispatchEvent('change');
+  await page.waitForTimeout(100);
+
+  if (!(await runBtn.isDisabled())) {
+    failures.push('Changing noise reduction must disable Run button until a new dry run');
+  }
+
+  // New dry run
+  await dryRunBtn.click();
+  await page.waitForSelector('[data-testid="review-section"]', { timeout: 3000 });
+  await page.waitForTimeout(100);
+
+  if (await runBtn.isDisabled()) {
+    failures.push('Run button should be enabled after new dry run');
+  }
+
+  const dryRunItems21 = await page.evaluate(() => window.__DEVELOP_STUB__.lastPlanItems);
+  const photo1Planned21 = dryRunItems21?.find((it) => it.name === 'DSCF0001.RAF');
+  if (!photo1Planned21 || photo1Planned21.noise_reduction !== 50) {
+    failures.push(
+      `Dry run items must carry the changed noise_reduction (50), got: ${JSON.stringify(photo1Planned21)}`,
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // 22. Changing noise reduction sends new preview request carrying noise_reduction (DV-5)
+  // -------------------------------------------------------------------------
+  console.log('22. Checking noise reduction change triggers preview carrying noise_reduction...');
+  await page.evaluate(() => {
+    window.__DEVELOP_STUB__.previewRequests = [];
+  });
+
+  // Change noise reduction to 60
+  await noiseNumber.fill('60');
+  await noiseNumber.dispatchEvent('change');
+  await page.waitForTimeout(200);
+
+  const nrPreviewReqs = await page.evaluate(() => window.__DEVELOP_STUB__.previewRequests);
+  const lastNrReq = nrPreviewReqs[nrPreviewReqs.length - 1];
+  if (!lastNrReq) {
+    failures.push('Changing noise reduction must trigger a preview request');
+  } else if (lastNrReq.noise_reduction !== 60) {
+    failures.push(`Preview request must carry noise_reduction 60, got '${lastNrReq.noise_reduction}'`);
+  }
 } catch (err) {
   failures.push(`Test execution threw: ${err instanceof Error ? err.stack : String(err)}`);
 } finally {
@@ -882,5 +984,5 @@ if (failures.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log('\ncheck:develop PASSED: all 19 checks verified successfully.');
+  console.log('\ncheck:develop PASSED: all 22 checks verified successfully.');
 }

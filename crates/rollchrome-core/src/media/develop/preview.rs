@@ -51,6 +51,7 @@ impl<'a> From<&'a ResolvedLook> for PreviewLook<'a> {
 pub struct DevelopPreview {
     full: LinearProPhoto,
     draft: LinearProPhoto,
+    source_long_edge: u32,
 }
 
 impl DevelopPreview {
@@ -90,6 +91,8 @@ impl DevelopPreview {
             (up_w, up_h, pixels)
         };
 
+        let source_long_edge = up_w.max(up_h);
+
         let full_edge = if max_edge > 0 {
             max_edge
         } else {
@@ -120,19 +123,32 @@ impl DevelopPreview {
                 orientation: 1,
                 demosaic: linear.demosaic,
             },
+            source_long_edge,
         })
     }
 
-    /// Upright, JPEG quality 90, with the look if any, at the given exposure and grain (RP-12, DV-4).
+    /// Computes the scale factor for detail/noise reduction: this buffer's long edge over the upright source's.
+    pub fn noise_scale(&self, draft: bool) -> f32 {
+        let buf = if draft { &self.draft } else { &self.full };
+        let buf_long = buf.width.max(buf.height) as f32;
+        if self.source_long_edge == 0 {
+            1.0
+        } else {
+            buf_long / self.source_long_edge as f32
+        }
+    }
+
+    /// Upright, JPEG quality 90, with the look if any, at the given exposure, grain and noise reduction (RP-12, DV-4, DV-5).
     /// Does not develop the RAW again.
     pub fn render<'a>(
         &self,
         look: Option<PreviewLook<'a>>,
         exposure_ev: f32,
         grain: Grain,
+        noise_reduction: f32,
         draft: bool,
     ) -> Result<Rendered, Error> {
-        self.render_with_data_dir(look, exposure_ev, grain, draft, None)
+        self.render_with_data_dir(look, exposure_ev, grain, noise_reduction, draft, None)
     }
 
     /// Upright preview rendering with optional custom film data directory.
@@ -141,6 +157,7 @@ impl DevelopPreview {
         look: Option<PreviewLook<'a>>,
         exposure_ev: f32,
         grain: Grain,
+        noise_reduction: f32,
         draft: bool,
         data_dir: Option<&Path>,
     ) -> Result<Rendered, Error> {
@@ -149,8 +166,22 @@ impl DevelopPreview {
                 "exposure_ev {exposure_ev} is outside supported range -4.0..=4.0 or not finite"
             )));
         }
+        if !noise_reduction.is_finite() || noise_reduction < 0.0 || noise_reduction > 100.0 {
+            return Err(Error::Refused(format!(
+                "noise_reduction {noise_reduction} is outside supported range 0.0..=100.0 or not finite"
+            )));
+        }
 
         let source = if draft { &self.draft } else { &self.full };
+        let scale = self.noise_scale(draft);
+        let denoised_pixels = super::reduce_noise(
+            source.width,
+            source.height,
+            &source.pixels,
+            noise_reduction,
+            scale,
+        );
+
         let preview_look = look;
 
         if let Some(PreviewLook::Film(stock)) = preview_look {
@@ -160,7 +191,7 @@ impl DevelopPreview {
             })?;
 
             let rendered_pixels = render_film(
-                &source.pixels,
+                &denoised_pixels,
                 source.width,
                 source.height,
                 stock,
@@ -202,10 +233,9 @@ impl DevelopPreview {
         let exp_scale = 2.0f32.powf(exposure_ev);
 
         let scaled_pixels: Vec<[f32; 3]> = if (exp_scale - 1.0).abs() <= 1e-6 {
-            source.pixels.clone()
+            denoised_pixels
         } else {
-            source
-                .pixels
+            denoised_pixels
                 .par_iter()
                 .map(|p| [p[0] * exp_scale, p[1] * exp_scale, p[2] * exp_scale])
                 .collect()

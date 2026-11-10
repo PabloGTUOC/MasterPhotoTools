@@ -58,6 +58,7 @@ fn plan_develop_refuses_a_folder_outside_the_roots() {
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
     }];
 
     let err = plan_develop_impl(
@@ -93,18 +94,21 @@ fn plan_develop_plans_a_folder_inside_the_roots() {
             look: Some("Identity.cube".to_string()),
             exposure_ev: 0.0,
             grain: Grain::Fine,
+            noise_reduction: 0.0,
         },
         DevelopItem {
             name: "DSCF0002.dng".to_string(),
             look: Some("Identity.cube".to_string()),
             exposure_ev: 0.5,
             grain: Grain::Fine,
+            noise_reduction: 0.0,
         },
         DevelopItem {
             name: "notes.txt".to_string(),
             look: Some("Identity.cube".to_string()),
             exposure_ev: 0.0,
             grain: Grain::Fine,
+            noise_reduction: 0.0,
         },
     ];
 
@@ -142,6 +146,7 @@ fn preview_refuses_a_name_that_leaves_the_folder() {
         0.0,
         false,
         None,
+        None,
     )
     .unwrap_err();
     assert!(err1.contains("path separators or '..'"));
@@ -154,6 +159,7 @@ fn preview_refuses_a_name_that_leaves_the_folder() {
         0.0,
         false,
         None,
+        None,
     )
     .unwrap_err();
     assert!(err2.contains("path separators or '..'"));
@@ -165,6 +171,7 @@ fn preview_refuses_a_name_that_leaves_the_folder() {
         None,
         0.0,
         false,
+        None,
         None,
     )
     .unwrap_err();
@@ -185,6 +192,7 @@ fn preview_refuses_a_folder_outside_the_roots() {
         None,
         0.0,
         false,
+        None,
         None,
     )
     .unwrap_err();
@@ -208,6 +216,7 @@ fn preview_develop_returns_a_jpeg_for_a_synthetic_raw() {
         Some("builtin:fujifilm-classic-chrome".to_string()),
         0.0,
         false,
+        None,
         None,
     )
     .expect("preview develop");
@@ -238,6 +247,7 @@ fn a_second_look_on_the_same_photo_does_not_develop_it_again() {
         0.0,
         false,
         None,
+        None,
     )
     .expect("first look");
 
@@ -251,6 +261,7 @@ fn a_second_look_on_the_same_photo_does_not_develop_it_again() {
         Some("builtin:ricoh-standard".to_string()),
         0.0,
         false,
+        None,
         None,
     )
     .expect("second look");
@@ -277,6 +288,7 @@ fn changing_exposure_does_not_develop_the_photo_again() {
         0.0,
         false,
         None,
+        None,
     )
     .expect("first render");
 
@@ -289,6 +301,7 @@ fn changing_exposure_does_not_develop_the_photo_again() {
         None,
         1.0,
         false,
+        None,
         None,
     )
     .expect("second render with new exposure");
@@ -318,6 +331,7 @@ fn going_back_to_a_recent_photo_does_not_develop_it_again() {
         0.0,
         false,
         None,
+        None,
     )
     .expect("photo 1");
     assert_eq!(state.develop_preview_runs(), 1);
@@ -330,6 +344,7 @@ fn going_back_to_a_recent_photo_does_not_develop_it_again() {
         None,
         0.0,
         false,
+        None,
         None,
     )
     .expect("photo 2");
@@ -344,9 +359,51 @@ fn going_back_to_a_recent_photo_does_not_develop_it_again() {
         0.0,
         false,
         None,
+        None,
     )
     .expect("photo 1 again");
     assert_eq!(state.develop_preview_runs(), 2);
+}
+
+#[test]
+fn preview_develop_passes_noise_reduction() {
+    let f = fixture();
+    let state = make_state(&f);
+
+    let mut pixels = Vec::with_capacity(64 * 48);
+    let mut rng = 12345u64;
+    for _ in 0..(64 * 48) {
+        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+        pixels.push((2000 + (rng % 2000)) as u16);
+    }
+    let dng = dng::DngBuilder::new_bayer(64, 48).build(&pixels);
+    std::fs::write(f.root.join("noisy_photo.dng"), dng).unwrap();
+
+    let bytes_none = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        f.root.to_string_lossy().to_string(),
+        "noisy_photo.dng".to_string(),
+        None,
+        0.0,
+        false,
+        None,
+        None,
+    )
+    .expect("preview without noise reduction");
+
+    let bytes_50 = rollchrome_desktop::commands::develop::preview_develop_impl(
+        &state,
+        f.root.to_string_lossy().to_string(),
+        "noisy_photo.dng".to_string(),
+        None,
+        0.0,
+        false,
+        None,
+        Some(50.0),
+    )
+    .expect("preview with noise reduction");
+
+    assert_ne!(bytes_none, bytes_50);
 }
 
 #[test]

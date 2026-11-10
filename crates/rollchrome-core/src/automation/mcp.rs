@@ -188,6 +188,7 @@ fn tools_schema_list() -> Value {
                         "look": { "type": "string", "description": "Look identifier (e.g. film:kodak_portra_160, builtin:fujifilm-classic-chrome, or LUT library name)" },
                         "exposure_ev": { "type": "number", "description": "Exposure adjustment in stops (-4.0 to 4.0, default 0.0)" },
                         "grain": { "type": "string", "enum": ["off", "fine", "standard"], "description": "Film grain simulation setting (off, fine, standard, default fine)" },
+                        "noise_reduction": { "type": "number", "minimum": 0.0, "maximum": 100.0, "description": "Noise reduction amount (0.0 to 100.0, default 0.0)" },
                         "format": { "type": "string", "enum": ["jpeg", "tiff"], "description": "Output format (jpeg or tiff, default jpeg)" },
                         "quality": { "type": "integer", "minimum": 1, "maximum": 100, "description": "JPEG quality (1..100, default 92)" },
                         "only": { "type": "array", "items": { "type": "string" }, "description": "Optional list of RAW filenames in the folder to develop" }
@@ -205,6 +206,7 @@ fn tools_schema_list() -> Value {
                         "look": { "type": "string", "description": "Look identifier (e.g. film:kodak_portra_160, builtin:fujifilm-classic-chrome, or LUT library name)" },
                         "exposure_ev": { "type": "number", "description": "Exposure adjustment in stops (-4.0 to 4.0, default 0.0)" },
                         "grain": { "type": "string", "enum": ["off", "fine", "standard"], "description": "Film grain simulation setting (off, fine, standard, default fine)" },
+                        "noise_reduction": { "type": "number", "minimum": 0.0, "maximum": 100.0, "description": "Noise reduction amount (0.0 to 100.0, default 0.0)" },
                         "format": { "type": "string", "enum": ["jpeg", "tiff"], "description": "Output format (jpeg or tiff, default jpeg)" },
                         "quality": { "type": "integer", "minimum": 1, "maximum": 100, "description": "JPEG quality (1..100, default 92)" },
                         "only": { "type": "array", "items": { "type": "string" }, "description": "Optional list of RAW filenames in the folder to develop" },
@@ -385,6 +387,7 @@ fn parse_develop_request(args: &Map<String, Value>) -> Result<DevelopRequest, St
         },
         Some(_) => return Err("argument 'grain' must be a string".to_string()),
     };
+    let noise_reduction = opt_f32(args, "noise_reduction", 0.0)?;
     let quality = opt_u8_range(args, "quality", 1, 100)?.unwrap_or(92);
     let only = opt_string_array(args, "only")?;
 
@@ -403,6 +406,7 @@ fn parse_develop_request(args: &Map<String, Value>) -> Result<DevelopRequest, St
         look,
         exposure_ev,
         grain,
+        noise_reduction,
         format,
         only,
     })

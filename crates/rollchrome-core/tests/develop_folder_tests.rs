@@ -105,6 +105,7 @@ fn a_developed_jpeg_carries_the_originals_date_camera_and_position() {
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
     }];
 
     let plan = plan_develop(
@@ -166,6 +167,7 @@ fn a_developed_jpeg_says_srgb() {
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
     }];
 
     let plan = plan_develop(
@@ -311,6 +313,7 @@ fn a_developed_tiff_says_uncalibrated_and_has_no_interop_index() {
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
     }];
 
     let plan = plan_develop(
@@ -368,6 +371,7 @@ fn a_developed_tiff_is_not_taken_for_a_dng() {
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
     }];
 
     let plan = plan_develop(
@@ -410,6 +414,7 @@ fn the_tiff_keeps_its_own_profile_after_the_metadata_copy() {
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
     }];
 
     let plan = plan_develop(
@@ -468,6 +473,7 @@ fn outputs_go_beside_the_raws_in_developed_and_nothing_is_overwritten() {
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
     }];
     let plan = plan_develop(
         &items,
@@ -490,6 +496,7 @@ fn outputs_go_beside_the_raws_in_developed_and_nothing_is_overwritten() {
         look: Some("Identity.cube".to_string()),
         exposure_ev: 0.0,
         grain: Grain::Fine,
+        noise_reduction: 0.0,
     }];
     let plan2 = plan_develop(
         &items2,

@@ -986,7 +986,7 @@ fn a_preview_fits_the_long_edge_and_keeps_the_aspect_ratio() {
     let preview = rollchrome_core::media::develop::DevelopPreview::new(&dng, max_edge)
         .expect("develop preview");
     let rendered = preview
-        .render(None, 0.0, Grain::Fine, false)
+        .render(None, 0.0, Grain::Fine, 0.0, false)
         .expect("render preview");
 
     assert_eq!(rendered.width, 120);
@@ -1007,7 +1007,7 @@ fn a_preview_is_upright_for_a_rotated_raw() {
     let preview = rollchrome_core::media::develop::DevelopPreview::new(&dng, max_edge)
         .expect("develop preview");
     let rendered = preview
-        .render(None, 0.0, Grain::Fine, false)
+        .render(None, 0.0, Grain::Fine, 0.0, false)
         .expect("render preview");
 
     // Upright should be portrait: width 80, height 120
@@ -1037,7 +1037,7 @@ fn a_preview_with_a_look_matches_the_full_render_within_two_levels() {
     let preview =
         rollchrome_core::media::develop::DevelopPreview::new(&dng, 48).expect("preview develop");
     let prev_rendered = preview
-        .render(Some((&look).into()), 0.0, Grain::Fine, false)
+        .render(Some((&look).into()), 0.0, Grain::Fine, 0.0, false)
         .expect("preview render");
     let prev_img = image::load_from_memory(&prev_rendered.bytes)
         .expect("decode preview jpeg")
@@ -1190,13 +1190,13 @@ fn changing_exposure_needs_only_the_cached_linear_image() {
         rollchrome_core::media::develop::DevelopPreview::new(&dng, 48).expect("develop preview");
 
     let r_base = preview
-        .render(None, 0.0, Grain::Fine, false)
+        .render(None, 0.0, Grain::Fine, 0.0, false)
         .expect("render 0 EV");
     let r_plus = preview
-        .render(None, 1.0, Grain::Fine, false)
+        .render(None, 1.0, Grain::Fine, 0.0, false)
         .expect("render +1 EV");
     let r_minus = preview
-        .render(None, -1.0, Grain::Fine, false)
+        .render(None, -1.0, Grain::Fine, 0.0, false)
         .expect("render -1 EV");
 
     assert_eq!(r_base.width, r_plus.width);
@@ -1243,7 +1243,7 @@ fn a_preview_at_an_exposure_matches_a_full_development_at_that_exposure() {
     let preview =
         rollchrome_core::media::develop::DevelopPreview::new(&dng, 48).expect("preview develop");
     let prev_rendered = preview
-        .render(None, exposure_ev, Grain::Fine, false)
+        .render(None, exposure_ev, Grain::Fine, 0.0, false)
         .expect("preview render");
     let prev_img = image::load_from_memory(&prev_rendered.bytes)
         .expect("decode preview jpeg")
@@ -1278,10 +1278,10 @@ fn a_draft_preview_is_smaller_and_agrees_with_the_full_preview() {
 
     let exposure_ev = 0.5f32;
     let full_rendered = preview
-        .render(None, exposure_ev, Grain::Fine, false)
+        .render(None, exposure_ev, Grain::Fine, 0.0, false)
         .expect("full preview render");
     let draft_rendered = preview
-        .render(None, exposure_ev, Grain::Fine, true)
+        .render(None, exposure_ev, Grain::Fine, 0.0, true)
         .expect("draft preview render");
 
     assert!(
@@ -1330,5 +1330,462 @@ fn a_film_look_is_refused_when_film_is_not_built_in() {
     assert!(
         err.contains("film") && err.contains("built"),
         "expected error about film feature built, got {err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// DV-5 Tests 1–8: Noise Reduction
+// ---------------------------------------------------------------------------
+
+struct Lcg(u64);
+impl Lcg {
+    fn next_u32(&mut self) -> u32 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (self.0 >> 32) as u32
+    }
+    fn next_f32(&mut self) -> f32 {
+        (self.next_u32() >> 8) as f32 / 16777216.0
+    }
+    fn next_gaussian(&mut self, sigma: f32) -> f32 {
+        let u1 = self.next_f32().max(1e-7);
+        let u2 = self.next_f32();
+        (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos() * sigma
+    }
+}
+
+struct ExecuteTestStore {
+    raw_bytes: Vec<u8>,
+    created: std::cell::RefCell<std::collections::HashMap<String, Vec<u8>>>,
+}
+
+impl rollchrome_core::tools::develop::DevelopStore for ExecuteTestStore {
+    fn existing_outputs(&self) -> Result<BTreeSet<String>, Error> {
+        Ok(BTreeSet::new())
+    }
+    fn read(&self, _name: &str) -> Result<Vec<u8>, Error> {
+        Ok(self.raw_bytes.clone())
+    }
+    fn look(&self, name: &str) -> Result<Look, Error> {
+        Err(Error::Refused(format!("LUT '{name}' not found")))
+    }
+    fn create_new(&mut self, output: &str, bytes: &[u8]) -> Result<(), Error> {
+        self.created
+            .borrow_mut()
+            .insert(output.to_string(), bytes.to_vec());
+        Ok(())
+    }
+    fn carry_metadata(
+        &mut self,
+        _source: &str,
+        _output: &str,
+        _width: u32,
+        _height: u32,
+        _format: OutputFormat,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+struct TestProgress;
+impl phototools_core::jobs::Progress for TestProgress {
+    fn report(&self, _done: u64, _total: u64, _unit: &str) {}
+    fn cancelled(&self) -> bool {
+        false
+    }
+}
+
+/// 1. `noise_reduction_at_zero_returns_the_pixels_unchanged`
+#[test]
+fn noise_reduction_at_zero_returns_the_pixels_unchanged() {
+    let width = 16u32;
+    let height = 16u32;
+    let pixels: Vec<[f32; 3]> = (0..(width * height))
+        .map(|i| {
+            let v = (i as f32) / (width * height) as f32;
+            [v, 1.0 - v, v * 0.5]
+        })
+        .collect();
+    let result = rollchrome_core::media::develop::reduce_noise(width, height, &pixels, 0.0, 1.0);
+    assert_eq!(result, pixels);
+}
+
+/// 2. `noise_reduction_quiets_a_flat_area_and_keeps_its_brightness`
+#[test]
+fn noise_reduction_quiets_a_flat_area_and_keeps_its_brightness() {
+    let w = 256u32;
+    let h = 256u32;
+    let mut rng = Lcg(123456789);
+    let mut pixels = Vec::with_capacity((w * h) as usize);
+    for _ in 0..(w * h) {
+        let r = (0.18 + rng.next_gaussian(0.02)).max(0.0);
+        let g = (0.18 + rng.next_gaussian(0.02)).max(0.0);
+        let b = (0.18 + rng.next_gaussian(0.02)).max(0.0);
+        pixels.push([r, g, b]);
+    }
+
+    let denoised = rollchrome_core::media::develop::reduce_noise(w, h, &pixels, 50.0, 1.0);
+
+    let w_usize = w as usize;
+    let h_usize = h as usize;
+
+    fn to_y_cb_cr(pixels: &[[f32; 3]]) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+        let n = pixels.len();
+        let mut y = Vec::with_capacity(n);
+        let mut cb = Vec::with_capacity(n);
+        let mut cr = Vec::with_capacity(n);
+        for p in pixels {
+            let r = p[0].max(0.0).sqrt();
+            let g = p[1].max(0.0).sqrt();
+            let b = p[2].max(0.0).sqrt();
+            let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            y.push(luma);
+            cb.push(b - luma);
+            cr.push(r - luma);
+        }
+        (y, cb, cr)
+    }
+
+    let (y_in, cb_in, cr_in) = to_y_cb_cr(&pixels);
+    let (y_out, cb_out, cr_out) = to_y_cb_cr(&denoised);
+
+    let mut luma_res_sq_in = 0.0f64;
+    let mut luma_res_sq_out = 0.0f64;
+    let mut chroma_sq_in = 0.0f64;
+    let mut chroma_sq_out = 0.0f64;
+    let mut count = 0usize;
+
+    for y_idx in 2..(h_usize - 2) {
+        for x_idx in 2..(w_usize - 2) {
+            let mut sum_box_in = 0.0f32;
+            let mut sum_box_out = 0.0f32;
+            for dy in 0..5 {
+                for dx in 0..5 {
+                    let ny = y_idx + dy - 2;
+                    let nx = x_idx + dx - 2;
+                    sum_box_in += y_in[ny * w_usize + nx];
+                    sum_box_out += y_out[ny * w_usize + nx];
+                }
+            }
+            let mean_box_in = sum_box_in / 25.0;
+            let mean_box_out = sum_box_out / 25.0;
+
+            let res_in = (y_in[y_idx * w_usize + x_idx] - mean_box_in) as f64;
+            let res_out = (y_out[y_idx * w_usize + x_idx] - mean_box_out) as f64;
+
+            luma_res_sq_in += res_in * res_in;
+            luma_res_sq_out += res_out * res_out;
+
+            let cb_i = cb_in[y_idx * w_usize + x_idx] as f64;
+            let cr_i = cr_in[y_idx * w_usize + x_idx] as f64;
+            chroma_sq_in += cb_i * cb_i + cr_i * cr_i;
+
+            let cb_o = cb_out[y_idx * w_usize + x_idx] as f64;
+            let cr_o = cr_out[y_idx * w_usize + x_idx] as f64;
+            chroma_sq_out += cb_o * cb_o + cr_o * cr_o;
+
+            count += 1;
+        }
+    }
+
+    let luma_noise_in = (luma_res_sq_in / count as f64).sqrt();
+    let luma_noise_out = (luma_res_sq_out / count as f64).sqrt();
+    assert!(
+        luma_noise_out <= 0.50 * luma_noise_in,
+        "luminance noise must be at most 50%: in={luma_noise_in}, out={luma_noise_out}, ratio={}",
+        luma_noise_out / luma_noise_in
+    );
+
+    let chroma_noise_in = (chroma_sq_in / count as f64).sqrt();
+    let chroma_noise_out = (chroma_sq_out / count as f64).sqrt();
+    assert!(
+        chroma_noise_out <= 0.25 * chroma_noise_in,
+        "chroma noise must be at most 25%: in={chroma_noise_in}, out={chroma_noise_out}, ratio={}",
+        chroma_noise_out / chroma_noise_in
+    );
+
+    for c in 0..3 {
+        let mean_in: f64 = pixels.iter().map(|p| p[c] as f64).sum::<f64>() / pixels.len() as f64;
+        let mean_out: f64 =
+            denoised.iter().map(|p| p[c] as f64).sum::<f64>() / denoised.len() as f64;
+        let diff_ratio = ((mean_out - mean_in) / mean_in).abs();
+        assert!(
+            diff_ratio <= 0.01,
+            "channel {c} mean shifted by {diff_ratio:.4} (in={mean_in}, out={mean_out})"
+        );
+    }
+}
+
+/// 3. `noise_reduction_keeps_an_edge`
+#[test]
+fn noise_reduction_keeps_an_edge() {
+    let w = 256u32;
+    let h = 256u32;
+    let mut rng = Lcg(987654321);
+    let mut pixels = Vec::with_capacity((w * h) as usize);
+    let step_x = 128u32;
+    for _y in 0..h {
+        for x in 0..w {
+            let base = if x < step_x { 0.05 } else { 0.5 };
+            let r = (base + rng.next_gaussian(0.02)).max(0.0);
+            let g = (base + rng.next_gaussian(0.02)).max(0.0);
+            let b = (base + rng.next_gaussian(0.02)).max(0.0);
+            pixels.push([r, g, b]);
+        }
+    }
+
+    let denoised = rollchrome_core::media::develop::reduce_noise(w, h, &pixels, 50.0, 1.0);
+
+    let col_left = step_x - 8;
+    let col_right = step_x + 8;
+
+    let col_mean = |px: &[[f32; 3]], col: u32| -> f64 {
+        let mut sum = 0.0f64;
+        for y in 0..h {
+            let idx = (y * w + col) as usize;
+            let p = px[idx];
+            sum += (0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) as f64;
+        }
+        sum / h as f64
+    };
+
+    let step_before = col_mean(&pixels, col_right) - col_mean(&pixels, col_left);
+    let step_after = col_mean(&denoised, col_right) - col_mean(&denoised, col_left);
+
+    assert!(
+        step_after >= 0.90 * step_before,
+        "edge height must keep >= 90%: before={step_before}, after={step_after}, ratio={}",
+        step_after / step_before
+    );
+}
+
+/// 4. `the_plan_refuses_noise_outside_0_to_100`
+#[test]
+fn the_plan_refuses_noise_outside_0_to_100() {
+    use rollchrome_core::tools::develop::{plan_develop, DevelopItem};
+
+    let items = vec![
+        DevelopItem {
+            name: "neg.dng".to_string(),
+            look: Some("Look".to_string()),
+            exposure_ev: 0.0,
+            grain: Grain::Off,
+            noise_reduction: -1.0,
+        },
+        DevelopItem {
+            name: "over.dng".to_string(),
+            look: Some("Look".to_string()),
+            exposure_ev: 0.0,
+            grain: Grain::Off,
+            noise_reduction: 100.5,
+        },
+        DevelopItem {
+            name: "nan.dng".to_string(),
+            look: Some("Look".to_string()),
+            exposure_ev: 0.0,
+            grain: Grain::Off,
+            noise_reduction: f32::NAN,
+        },
+        DevelopItem {
+            name: "zero.dng".to_string(),
+            look: Some("Look".to_string()),
+            exposure_ev: 0.0,
+            grain: Grain::Off,
+            noise_reduction: 0.0,
+        },
+        DevelopItem {
+            name: "hundred.dng".to_string(),
+            look: Some("Look".to_string()),
+            exposure_ev: 0.0,
+            grain: Grain::Off,
+            noise_reduction: 100.0,
+        },
+    ];
+
+    let plan = plan_develop(&items, OutputFormat::Jpeg { quality: 90 }, &BTreeSet::new());
+
+    assert_eq!(plan.skipped.len(), 3);
+    assert_eq!(plan.skipped[0].file, "nan.dng");
+    assert_eq!(
+        plan.skipped[0].reason,
+        "noise reduction must be between 0 and 100"
+    );
+    assert_eq!(plan.skipped[1].file, "neg.dng");
+    assert_eq!(
+        plan.skipped[1].reason,
+        "noise reduction must be between 0 and 100"
+    );
+    assert_eq!(plan.skipped[2].file, "over.dng");
+    assert_eq!(
+        plan.skipped[2].reason,
+        "noise reduction must be between 0 and 100"
+    );
+
+    assert_eq!(plan.actions.len(), 2);
+    assert_eq!(plan.actions[0].source, "hundred.dng");
+    assert_eq!(plan.actions[0].noise_reduction, 100.0);
+    assert_eq!(plan.actions[1].source, "zero.dng");
+    assert_eq!(plan.actions[1].noise_reduction, 0.0);
+}
+
+/// 5. `an_item_without_noise_reduction_means_none`
+#[test]
+fn an_item_without_noise_reduction_means_none() {
+    use rollchrome_core::tools::develop::DevelopItem;
+
+    let json = r#"{"name": "test.dng", "look": null, "exposure_ev": 0.0, "grain": "fine"}"#;
+    let item: DevelopItem = serde_json::from_str(json).expect("deserialize DevelopItem");
+    assert_eq!(item.noise_reduction, 0.0);
+}
+
+/// 6. `a_camera_look_export_at_zero_noise_is_unchanged`
+#[test]
+fn a_camera_look_export_at_zero_noise_is_unchanged() {
+    use rollchrome_core::tools::develop::{execute_develop, DevelopAction, DevelopPlan};
+
+    let width = 64u32;
+    let height = 48u32;
+    let pixels = vec![3000u16; (width * height) as usize];
+    let dng_bytes = DngBuilder::new_bayer(width, height).build(&pixels);
+
+    let look_name = "fujifilm-classic-chrome";
+    let look =
+        rollchrome_core::media::looks::builtin::builtin_look(look_name).expect("builtin look");
+
+    let dev = develop(&dng_bytes, &DevelopOptions::default()).expect("develop");
+    let legacy_rendered =
+        render(&dev, Some(&look), OutputFormat::Jpeg { quality: 90 }).expect("render");
+
+    let mut store = ExecuteTestStore {
+        raw_bytes: dng_bytes,
+        created: std::cell::RefCell::new(std::collections::HashMap::new()),
+    };
+    let plan = DevelopPlan {
+        format: OutputFormat::Jpeg { quality: 90 },
+        actions: vec![DevelopAction {
+            source: "photo.dng".to_string(),
+            output: "photo.jpg".to_string(),
+            look: format!("builtin:{look_name}"),
+            exposure_ev: 0.0,
+            grain: Grain::Fine,
+            noise_reduction: 0.0,
+        }],
+        skipped: Vec::new(),
+    };
+    let summary = execute_develop(plan, &mut store, &TestProgress);
+    assert_eq!(summary.developed, vec!["photo.jpg"]);
+
+    let created_bytes = store.created.borrow().get("photo.jpg").cloned().unwrap();
+    assert_eq!(
+        created_bytes, legacy_rendered.bytes,
+        "execute_develop at noise_reduction: 0 must produce the same bytes as develop() + render()"
+    );
+}
+
+/// 7. `a_camera_look_export_with_noise_reduction_differs`
+#[test]
+fn a_camera_look_export_with_noise_reduction_differs() {
+    use rollchrome_core::tools::develop::{execute_develop, DevelopAction, DevelopPlan};
+
+    let width = 64u32;
+    let height = 48u32;
+    let mut rng = Lcg(55555);
+    let mut pixels = Vec::with_capacity((width * height) as usize);
+    for _ in 0..(width * height) {
+        let v = (3000.0 + rng.next_gaussian(300.0)).clamp(512.0, 16000.0) as u16;
+        pixels.push(v);
+    }
+    let dng_bytes = DngBuilder::new_bayer(width, height).build(&pixels);
+
+    let look_name = "fujifilm-classic-chrome";
+    let look =
+        rollchrome_core::media::looks::builtin::builtin_look(look_name).expect("builtin look");
+
+    let dev = develop(&dng_bytes, &DevelopOptions::default()).expect("develop");
+    let base_rendered =
+        render(&dev, Some(&look), OutputFormat::Jpeg { quality: 90 }).expect("render");
+
+    let mut store = ExecuteTestStore {
+        raw_bytes: dng_bytes,
+        created: std::cell::RefCell::new(std::collections::HashMap::new()),
+    };
+    let plan = DevelopPlan {
+        format: OutputFormat::Jpeg { quality: 90 },
+        actions: vec![DevelopAction {
+            source: "photo.dng".to_string(),
+            output: "photo.jpg".to_string(),
+            look: format!("builtin:{look_name}"),
+            exposure_ev: 0.0,
+            grain: Grain::Fine,
+            noise_reduction: 50.0,
+        }],
+        skipped: Vec::new(),
+    };
+    let summary = execute_develop(plan, &mut store, &TestProgress);
+    assert_eq!(summary.developed, vec!["photo.jpg"]);
+
+    let created_bytes = store.created.borrow().get("photo.jpg").cloned().unwrap();
+    assert_ne!(
+        created_bytes, base_rendered.bytes,
+        "execute_develop at noise_reduction: 50 must produce different bytes"
+    );
+}
+
+/// 8. `the_preview_scales_noise_reduction_to_its_size`
+#[test]
+fn the_preview_scales_noise_reduction_to_its_size() {
+    let w = 1200u32;
+    let h = 800u32;
+    let mut rng = Lcg(777);
+    let mut pixels = Vec::with_capacity((w * h) as usize);
+    for _ in 0..(w * h) {
+        let r = (0.18 + rng.next_gaussian(0.05)).max(0.0);
+        let g = (0.18 + rng.next_gaussian(0.05)).max(0.0);
+        let b = (0.18 + rng.next_gaussian(0.05)).max(0.0);
+        pixels.push([r, g, b]);
+    }
+
+    let linear = rollchrome_core::media::develop::LinearProPhoto {
+        width: w,
+        height: h,
+        orientation: 1,
+        demosaic: Demosaic::Bayer,
+        pixels: pixels.clone(),
+    };
+
+    let preview = rollchrome_core::media::develop::DevelopPreview::from_linear(linear, 600)
+        .expect("preview from linear");
+
+    let scale_full = preview.noise_scale(false);
+    assert!(
+        (scale_full - 0.5).abs() < 0.01,
+        "noise_scale(false) expected ~0.5, got {scale_full}"
+    );
+
+    let scale_draft = preview.noise_scale(true);
+    let expected_draft_scale = 300.0 / 1200.0;
+    assert!(
+        (scale_draft - expected_draft_scale).abs() < 0.01,
+        "noise_scale(true) expected ~{expected_draft_scale}, got {scale_draft}"
+    );
+
+    let rendered_0 = preview
+        .render(None, 0.0, Grain::Off, 0.0, false)
+        .expect("render 0");
+    let rendered_50 = preview
+        .render(None, 0.0, Grain::Off, 50.0, false)
+        .expect("render 50");
+    assert_ne!(
+        rendered_0.bytes, rendered_50.bytes,
+        "render at noise 50 must differ from noise 0"
+    );
+
+    let denoised_half = rollchrome_core::media::develop::reduce_noise(w, h, &pixels, 50.0, 0.5);
+    let denoised_one = rollchrome_core::media::develop::reduce_noise(w, h, &pixels, 50.0, 1.0);
+    assert_ne!(
+        denoised_half, denoised_one,
+        "reduce_noise at scale 0.5 and 1.0 must give different pixels"
     );
 }

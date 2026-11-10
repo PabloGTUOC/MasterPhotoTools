@@ -429,8 +429,11 @@ the automated check drives the screen against a stub.
       **Pass:** preview and exported file match by eye, grain Off has none, and a 40 MP X100VI file exports in under 10 s.
       **Result:**
 
+## MV-39 — Noise reduction in Develop (DV-5)
 
+[`develop-plan.md`](../develop-plan.md), briefed. Needs a Mac running Rollchrome with real photographs.
 
-
-
-
+- [ ] **MV-39.1 — High-ISO RAWs through a film stock, with and without noise reduction.**
+      **Run:** develop two of the owner's ISO 400 XZ-1 files in Portra 160, grain Off, at Noise reduction 0, 25 and 50.
+      **Pass:** at 25 the colour speckle is gone and skin and fabric stay detailed at 100%; the preview and the exported file match by eye.
+      **Result:**

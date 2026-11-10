@@ -240,6 +240,15 @@ along with three target papers (`kodak_portra_endura`, `fujifilm_crystal_archive
 Slide films (Ektachrome, Kodachrome, Provia, Velvia) are scanned directly without paper. A Grain control offers Off, Fine (default, 60 mm format), and 35 mm.
 Data files are embedded and materialised on first use into `<film_data_dir>/film-data-<hash>/`.
 
+### `DV-5` · Noise reduction before the look
+
+**Briefed in [DV-5](briefs/DV-5.md).** On the owner's first real XZ-1 files (ISO 400, low light) the film stocks
+looked grainy even with grain Off. The cause was sensor noise, lifted by the film's auto exposure and sharpened by its
+contrast and edge effects, not the simulated grain. Develop gets one Noise reduction setting per photograph (0–100;
+the screen starts at 25, scripts at 0). It reuses Edit's guided-filter noise reduction (RP-7) and runs on the linear
+RAW before any look, so the film's own grain is never smoothed. The architect measured it on one owner file: fine
+noise after Portra 160 fell from 4.7 to 2.1 at 25, colour noise from 4.5 to 0.5, and brightness was unchanged.
+
 ### The screen — RP-1
 
 Implemented in [RP-1](briefs/RP-1.md). A dedicated Develop screen (route `/`) with thumbnail grid, look picker, exposure slider, upright preview, dry-run discipline, and background development to JPEG/TIFF into `<folder>/Developed`.

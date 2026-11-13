@@ -212,10 +212,62 @@ Commit on `dv-6`. Do not merge.
 
 ## Report
 
-*Written by the implementer.*
+Implemented by Claude on 2026-11-13: agy was out of credits, and the owner said "carry on with all dev points".
 
----
+**What was done.** As briefed:
+- **Core (`film.rs`):** `LutBalance`, `FilmLut`, `FILM_LUT_SIZE`, `film_lut` and a stub without `film`.
+  `lut_pipeline` uses `new_with_spectral`. Each colour is a 1×1 sample on the CPU backend. The neutral
+  search is Newton's method with central differences, steps of 2.0, 12 iterations, and a refusal if it
+  does not converge. `tungsten` was added to `FilmStockInfo`, set for 200T and 500T.
+- **Desktop:** `save_film_lut` (`spawn_blocking`) and `save_film_lut_impl`. `BuiltinLookInfo` gains
+  `#[serde(default)] tungsten`, which `film_look_list` fills.
+- **Screen:** "Save as LUT" and "Neutral grey (daylight)" under Grain, for the photograph on screen when its
+  look is a film stock. Saving neither touches the dry run nor locks Run.
+
+**Deviations**
+1. **G5 added.** `save_film_lut_impl` also refuses a folder on a card, as Develop does. The brief named only
+   G6, but the LUT is written beside the photographs.
+2. **Browser checks renumbered.** They are **27–29**, not 23–25: DV-7 and DV-8 took 23–26 after this brief was
+   written.
+3. **Counts start from the current numbers,** not the brief's (film 482, desktop 29).
+4. **The CPU backend is built locally** (`CpuBackend`) rather than taken from the shared locked one, so the
+   35,937 samples run in parallel. `get_or_build_pipeline` and `PIPELINE_CACHE` are untouched.
+
+**Test 8 timing (release):** Portra 400 as film **0.63 s**, 500T neutral **1.35 s** (budgets 5 s and 20 s).
+
+**The `Pipeline::new` check.** With `lut_pipeline` temporarily switched to `Pipeline::new(film, print,
+params)`, test 2 failed with mid grey `[0.085212, 0.138483, 0.124328]`, the dark green LUT measured by hand
+on 2026-11-10. The file was restored from a copy afterwards, and `new_with_spectral` is the only constructor
+in the committed code.
+
+**Gates** (`gate-dv6.log`)
+
+| Gate | Result |
+|---|---|
+| fmt / build | rc 0 |
+| clippy | **rc 101 at first**: two `.into()` on values that were already `f32`. Removed; clippy rc 0. |
+| `--workspace` | **1344 passed**, 0 failed, **5 ignored** (the timing test added) |
+| `phototools-core` | 719 |
+| `rollchrome-core` | 469 (the new code is behind `film`) |
+| `--features film` | **490 passed, 3 ignored** (482 + 8, and 1 more ignored) |
+| `phototools-desktop` | 26 |
+| `rollchrome-desktop` | **30** (29 + 1) |
+| `rollchrome-cli` | 8 |
+| `check:develop` | **29 / 29** |
+| Every other `check:*`, the web and desktop builds | pass |
+| `film_tests` after the clippy fix | 21 passed, 3 ignored |
+
+**Unverified:** the files in Photomator. That is MV-40.
 
 ## Review
 
-*Written by the architect, after re-running the gates on the branch.*
+**Approved**, with the caveat that **the reviewer wrote the code**, so this is not an independent review.
+
+**What was checked**
+- **Gates:** run on the branch.
+- **Calibration:** test 2 was shown to catch `Pipeline::new`.
+- **Do not touch:** `render_film`, the pipeline cache and every export path are unchanged in the diff.
+- **G5 and G6:** both refusals are in place, and the G6 one is tested.
+- **G8:** no new dependency.
+- **G10:** a panic in the engine becomes an error, and the neutral search refuses instead of returning a
+  wrong LUT.

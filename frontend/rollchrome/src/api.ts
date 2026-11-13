@@ -337,6 +337,11 @@ export class RollchromeClient {
     return invoke<BuiltinLookInfo[]>('list_builtin_looks');
   }
 
+  /** Saves a film stock as a `.cube` LUT into `<folder>/Developed`; resolves to its path (DV-6). */
+  saveFilmLut(folder: string, stock: string, balance: LutBalance): Promise<string> {
+    return invoke<string>('save_film_lut', { folder, stock, balance });
+  }
+
   listFilmLooks(): Promise<BuiltinLookInfo[]> {
     return invoke<BuiltinLookInfo[]>('list_film_looks');
   }
@@ -913,7 +918,12 @@ export interface BuiltinLookInfo {
   id: string;
   name: string;
   maker: string;
+  /** A film stock balanced for tungsten light (DV-6). */
+  tungsten?: boolean;
 }
+
+/** How a saved film LUT treats colour balance (DV-6). */
+export type LutBalance = 'asfilm' | 'neutralgrey';
 
 /** Grain setting for film simulations (DV-4). */
 export type Grain = 'off' | 'fine' | 'standard';

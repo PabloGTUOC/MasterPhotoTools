@@ -243,6 +243,48 @@ const selectedGrain = computed<Grain | '__mixed__'>(() => {
   return first;
 });
 
+// DV-6: the film stock of the photograph on screen, which "Save as LUT" saves.
+const lutStock = computed<string | null>(() => {
+  if (!lastClicked.value) return null;
+  const look = moduleAssignments.value[lastClicked.value]?.look;
+  return look && look.startsWith('film:') ? look.slice('film:'.length) : null;
+});
+const lutNeutral = ref(false);
+const isSavingLut = ref(false);
+const lutPath = ref<string | null>(null);
+const lutError = ref<string | null>(null);
+
+// A tungsten stock starts with "Neutral grey (daylight)" ticked: as film it is blue in daylight.
+watch(
+  [lutStock, filmLooks],
+  ([stock]) => {
+    lutNeutral.value = !!filmLooks.value.find((f) => f.id === `film:${stock}`)?.tungsten;
+    lutPath.value = null;
+    lutError.value = null;
+  },
+  { immediate: true },
+);
+
+/** Saving a LUT writes one file and has nothing to do with the dry run, so it locks nothing. */
+async function saveLut() {
+  const stock = lutStock.value;
+  if (!stock || isSavingLut.value) return;
+  isSavingLut.value = true;
+  lutPath.value = null;
+  lutError.value = null;
+  try {
+    lutPath.value = await desktop.saveFilmLut(
+      folder.value.trim(),
+      stock,
+      lutNeutral.value ? 'neutralgrey' : 'asfilm',
+    );
+  } catch (err: unknown) {
+    lutError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    isSavingLut.value = false;
+  }
+}
+
 const shownPhotoHasFilmLook = computed(() => {
   if (!lastClicked.value) return false;
   const assignment = moduleAssignments.value[lastClicked.value];
@@ -965,6 +1007,32 @@ onMounted(async () => {
             </select>
           </div>
 
+          <!-- Save the film stock as a LUT for other editors (DV-6) -->
+          <div v-if="lutStock" class="control-row lut-row">
+            <label class="checkbox">
+              <input
+                v-model="lutNeutral"
+                type="checkbox"
+                data-testid="lut-neutral"
+                :disabled="isSavingLut"
+              />
+              Neutral grey (daylight)
+            </label>
+            <button
+              type="button"
+              class="secondary"
+              data-testid="save-lut"
+              :disabled="isSavingLut || !folder.trim()"
+              @click="saveLut"
+            >
+              {{ isSavingLut ? 'Saving LUT…' : 'Save as LUT' }}
+            </button>
+            <div v-if="lutPath" class="muted mono lut-path" data-testid="lut-path">
+              Saved: {{ lutPath }}
+            </div>
+            <div v-if="lutError" class="error-line" role="alert">{{ lutError }}</div>
+          </div>
+
           <!-- Exposure adjustment -->
           <div class="control-row">
             <AdjustmentSlider
@@ -1435,6 +1503,16 @@ onMounted(async () => {
   border-radius: 2px;
   font-family: var(--font-mono);
   font-size: 13px;
+}
+
+.lut-row {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.lut-path {
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .film-credit-line {

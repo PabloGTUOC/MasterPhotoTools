@@ -1103,3 +1103,145 @@ fn noise_reduction_preview_cost_is_printed() {
         median
     );
 }
+
+// ---------------------------------------------------------------------------
+// DV-6: a film stock as a LUT
+// ---------------------------------------------------------------------------
+
+use rollchrome_core::media::film::{film_lut, LutBalance, FILM_LUT_SIZE};
+
+/// The data lines of a cube, as numbers.
+fn cube_entries(cube: &str) -> Vec<[f64; 3]> {
+    cube.lines()
+        .filter(|l| l.starts_with(|c: char| c.is_ascii_digit()))
+        .map(|l| {
+            let v: Vec<f64> = l.split_whitespace().map(|x| x.parse().unwrap()).collect();
+            [v[0], v[1], v[2]]
+        })
+        .collect()
+}
+
+/// The entry on the grey axis at grid index `i`.
+fn grey(entries: &[[f64; 3]], i: usize) -> [f64; 3] {
+    let n = FILM_LUT_SIZE;
+    entries[i + n * i + n * n * i]
+}
+
+#[test]
+fn a_film_lut_has_the_cube_layout() {
+    let (_t, data) = test_data_dir();
+    let lut = film_lut("kodak_portra_400", LutBalance::AsFilm, &data).unwrap();
+
+    assert_eq!(lut.file_name, "Kodak Portra 400 (spektrafilm).cube");
+    let lines: Vec<&str> = lut.cube.lines().collect();
+    assert!(lines[0].starts_with("# Created by Rollchrome with spektrafilm (GPL-3.0)"));
+    assert!(lines[0].contains("CC BY-SA 4.0"));
+    assert!(lines[1].contains("Input: sRGB (gamma-encoded). Output: sRGB."));
+    assert!(lines[2].contains("No grain, halation, DIR couplers or auto exposure"));
+    assert_eq!(lines[3], "TITLE \"Kodak Portra 400 (spektrafilm)\"");
+    assert_eq!(lines[4], "LUT_3D_SIZE 33");
+    assert_eq!(lines[5], "DOMAIN_MIN 0.0 0.0 0.0");
+    assert_eq!(lines[6], "DOMAIN_MAX 1.0 1.0 1.0");
+    let entries = cube_entries(&lut.cube);
+    assert_eq!(entries.len(), 33 * 33 * 33);
+    assert!(entries.iter().flatten().all(|v| (0.0..=1.0).contains(v)));
+}
+
+/// The test that fails if the pipeline skips the spectral calibration (`Pipeline::new`).
+#[test]
+fn a_film_lut_is_calibrated_like_the_renderer() {
+    let (_t, data) = test_data_dir();
+    let lut = film_lut("kodak_portra_400", LutBalance::AsFilm, &data).unwrap();
+    let entries = cube_entries(&lut.cube);
+
+    let mid = grey(&entries, 16);
+    for (got, want) in mid.iter().zip([0.493, 0.504, 0.515]) {
+        assert!((got - want).abs() <= 0.03, "mid grey {mid:?}");
+    }
+    let axis: Vec<f64> = (0..33).map(|i| grey(&entries, i)[1]).collect();
+    assert!(
+        axis.windows(2).all(|w| w[1] >= w[0]),
+        "grey axis not rising: {axis:?}"
+    );
+}
+
+#[test]
+fn a_film_lut_follows_srgb_input() {
+    let (_t, data) = test_data_dir();
+    let lut = film_lut("kodak_portra_400", LutBalance::AsFilm, &data).unwrap();
+    let quarter = grey(&cube_entries(&lut.cube), 8);
+    let mean = quarter.iter().sum::<f64>() / 3.0;
+    assert!((0.12..=0.20).contains(&mean), "sRGB 0.25 gave {quarter:?}");
+}
+
+#[test]
+fn tungsten_film_as_film_is_blue_in_daylight() {
+    let (_t, data) = test_data_dir();
+    let lut = film_lut("kodak_vision3_500t", LutBalance::AsFilm, &data).unwrap();
+    let mid = grey(&cube_entries(&lut.cube), 16);
+    assert!(mid[2] - mid[0] > 0.25, "500T mid grey {mid:?}");
+}
+
+#[test]
+fn tungsten_film_neutral_prints_grey_neutral() {
+    let (_t, data) = test_data_dir();
+    let lut = film_lut("kodak_vision3_500t", LutBalance::NeutralGrey, &data).unwrap();
+    assert_eq!(
+        lut.file_name,
+        "Kodak Vision3 500T neutral (spektrafilm).cube"
+    );
+    let mid = grey(&cube_entries(&lut.cube), 16);
+    let spread =
+        mid.iter().cloned().fold(f64::MIN, f64::max) - mid.iter().cloned().fold(f64::MAX, f64::min);
+    assert!(spread <= 0.01, "500T neutral mid grey {mid:?}");
+    assert!((lut.y_shift + 38.2).abs() <= 3.0, "y {}", lut.y_shift);
+    assert!((lut.m_shift + 13.2).abs() <= 3.0, "m {}", lut.m_shift);
+    assert!(lut.cube.contains(&format!(
+        "Enlarger Y/M shift {:.1} {:.1}",
+        lut.y_shift, lut.m_shift
+    )));
+}
+
+#[test]
+fn a_daylight_film_neutral_needs_only_a_small_shift() {
+    let (_t, data) = test_data_dir();
+    let lut = film_lut("kodak_portra_400", LutBalance::NeutralGrey, &data).unwrap();
+    assert!(
+        lut.y_shift.abs() < 15.0 && lut.m_shift.abs() < 15.0,
+        "{} {}",
+        lut.y_shift,
+        lut.m_shift
+    );
+}
+
+#[test]
+fn the_same_lut_twice_is_identical() {
+    let (_t, data) = test_data_dir();
+    let a = film_lut("kodak_portra_400", LutBalance::AsFilm, &data).unwrap();
+    let b = film_lut("kodak_portra_400", LutBalance::AsFilm, &data).unwrap();
+    assert_eq!(a.cube, b.cube);
+}
+
+#[test]
+#[ignore = "timing: run in release with --ignored"]
+fn film_lut_time_is_printed() {
+    let (_t, data) = test_data_dir();
+    let t = std::time::Instant::now();
+    film_lut("kodak_portra_400", LutBalance::AsFilm, &data).unwrap();
+    let as_film = t.elapsed().as_secs_f64();
+    let t = std::time::Instant::now();
+    film_lut("kodak_vision3_500t", LutBalance::NeutralGrey, &data).unwrap();
+    let neutral = t.elapsed().as_secs_f64();
+    println!("film LUT: Portra 400 as film {as_film:.2} s, 500T neutral {neutral:.2} s");
+    assert!(as_film <= 5.0 && neutral <= 20.0);
+}
+
+#[test]
+fn tungsten_stocks_are_flagged() {
+    let tungsten: Vec<&str> = FILM_STOCKS
+        .iter()
+        .filter(|s| s.tungsten)
+        .map(|s| s.id)
+        .collect();
+    assert_eq!(tungsten, vec!["kodak_vision3_200t", "kodak_vision3_500t"]);
+}

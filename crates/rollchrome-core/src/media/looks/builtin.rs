@@ -120,6 +120,10 @@ pub struct BuiltinLookInfo {
     pub name: String,
     /// Camera maker, e.g. `Fujifilm` or `Ricoh`.
     pub maker: String,
+    /// A film stock balanced for tungsten light (DV-6): the screen ticks "Neutral grey (daylight)" by
+    /// default when saving it as a LUT. Always false for a camera look.
+    #[serde(default)]
+    pub tungsten: bool,
 }
 
 /// Lists all shipped built-in looks formatted for the UI picker and develop items.
@@ -127,6 +131,7 @@ pub fn builtin_look_list() -> Vec<BuiltinLookInfo> {
     SHIPPED_LOOKS
         .iter()
         .map(|l| BuiltinLookInfo {
+            tungsten: false,
             id: format!("builtin:{}", l.id),
             name: l.display_name.to_string(),
             maker: l.maker.to_string(),

@@ -139,6 +139,8 @@ export interface RenameRequest {
   camera?: string | null;
   film?: string | null;
   order: RenameOrder;
+  /** RS-3: name each photograph after its folder (`<Folder>-01`) instead of the fields above. */
+  name_from_folder?: boolean;
 }
 
 /** `phototools_core::tools::f4_split::SplitSettings` */

@@ -439,6 +439,7 @@ fn f3_a_collision_is_skipped_and_the_existing_file_is_untouched() {
             camera: None,
             film: None,
             order: RenameOrder::Numeric,
+            name_from_folder: false,
         })
         .unwrap()
         .data;
@@ -476,6 +477,7 @@ fn f3_a_file_listed_twice_is_renamed_once() {
             camera: None,
             film: None,
             order: RenameOrder::Numeric,
+            name_from_folder: false,
         })
         .unwrap()
         .data;
@@ -517,6 +519,7 @@ fn f3_numbers_are_zero_padded_to_at_least_two_digits() {
             camera: None,
             film: None,
             order: RenameOrder::Numeric,
+            name_from_folder: false,
         })
         .unwrap()
         .data;
@@ -555,6 +558,7 @@ fn f3_capture_ordering_uses_metadata_not_just_file_times() {
             camera: None,
             film: None,
             order: RenameOrder::Capture,
+            name_from_folder: false,
         })
         .unwrap()
         .data;
@@ -586,6 +590,7 @@ fn f3_extensions_are_lowercased_and_preserved() {
             camera: None,
             film: None,
             order: RenameOrder::Numeric,
+            name_from_folder: false,
         })
         .unwrap()
         .data;
@@ -643,6 +648,7 @@ fn planning_never_touches_the_filesystem() {
             camera: None,
             film: None,
             order: RenameOrder::Capture,
+            name_from_folder: false,
         })
         .unwrap();
     assert_eq!(hash_tree(&dir), before, "F3 plan modified the directory");
@@ -966,6 +972,7 @@ fn f3_rename_carries_companion_photoedit_sidecar() {
             camera: None,
             film: None,
             order: RenameOrder::Numeric,
+            name_from_folder: false,
         })
         .unwrap()
         .data;
@@ -1013,6 +1020,7 @@ fn f3_rename_plans_a_conflict_when_the_sidecar_target_exists() {
             camera: None,
             film: None,
             order: RenameOrder::Numeric,
+            name_from_folder: false,
         })
         .unwrap()
         .data;
@@ -1045,6 +1053,7 @@ fn f3_rename_reports_a_sidecar_that_could_not_follow_its_photo() {
             camera: None,
             film: None,
             order: RenameOrder::Numeric,
+            name_from_folder: false,
         })
         .unwrap()
         .data;
@@ -1066,4 +1075,131 @@ fn f3_rename_reports_a_sidecar_that_could_not_follow_its_photo() {
         "failure message must mention sidecar vanished: {}",
         summary.failures[0].1
     );
+}
+
+fn folder_params(paths: Vec<PathBuf>) -> BatchRenameParams {
+    BatchRenameParams {
+        paths,
+        // Blocks given as well, to show folder mode ignores them.
+        date: Some("20240101".into()),
+        subject: Some("Ignored".into()),
+        camera: None,
+        film: None,
+        order: RenameOrder::Numeric,
+        name_from_folder: true,
+    }
+}
+
+/// RS-3: the folder's name replaces the whole name, numbered from 01.
+#[test]
+fn f3_named_from_the_folder_each_photograph_takes_the_folders_name() {
+    let f = Fixtures::new();
+    let dir = f.path().join("Playground");
+    fs::create_dir(&dir).unwrap();
+    for name in ["P1.ORF", "P2.ORF", "P3.ORF"] {
+        fs::write(dir.join(name), name).unwrap();
+    }
+
+    let plan = BatchRenamerTool
+        .plan(&folder_params(vec![dir.clone()]))
+        .unwrap()
+        .data;
+    assert_eq!(
+        phototools_core::tools::f3_rename::plan_names(&plan),
+        vec![
+            "Playground-01.orf",
+            "Playground-02.orf",
+            "Playground-03.orf"
+        ]
+    );
+
+    BatchRenamerTool
+        .apply(plan, &InMemoryProgress::new())
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(dir.join("Playground-02.orf")).unwrap(),
+        "P2.ORF"
+    );
+}
+
+/// RS-3: two folders in one batch are numbered separately, each under its own name.
+#[test]
+fn f3_named_from_the_folder_two_folders_are_numbered_separately() {
+    let f = Fixtures::new();
+    let park = f.path().join("Park Day");
+    let cafe = f.path().join("cafe_morning");
+    fs::create_dir(&park).unwrap();
+    fs::create_dir(&cafe).unwrap();
+    fs::write(park.join("a1.jpg"), "a1").unwrap();
+    fs::write(park.join("a2.jpg"), "a2").unwrap();
+    fs::write(cafe.join("b1.jpg"), "b1").unwrap();
+
+    let plan = BatchRenamerTool
+        .plan(&folder_params(vec![park.clone(), cafe.clone()]))
+        .unwrap()
+        .data;
+    let mut names = phototools_core::tools::f3_rename::plan_names(&plan);
+    names.sort();
+    // Spaces dropped and `_` turned into `-`, as for any block.
+    assert_eq!(
+        names,
+        vec!["ParkDay-01.jpg", "ParkDay-02.jpg", "cafe-morning-01.jpg"]
+    );
+    assert!(plan.skipped.is_empty());
+}
+
+/// RS-3: a folder whose name sanitises to nothing is reported, never numbered bare.
+#[test]
+fn f3_named_from_the_folder_a_folder_with_no_usable_name_is_skipped() {
+    let f = Fixtures::new();
+    let dir = f.path().join("!!!");
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("x.jpg"), "x").unwrap();
+
+    let plan = BatchRenamerTool
+        .plan(&folder_params(vec![dir.join("x.jpg")]))
+        .unwrap()
+        .data;
+    assert!(plan.actions.is_empty());
+    assert_eq!(plan.skipped.len(), 1);
+    assert!(plan.skipped[0].reason.contains("no letters or digits"));
+    assert!(dir.join("x.jpg").exists());
+}
+
+/// RS-3: an edit sidecar follows its photograph in folder mode too.
+#[test]
+fn f3_named_from_the_folder_the_sidecar_follows_its_photograph() {
+    let f = Fixtures::new();
+    let dir = f.path().join("Trip");
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("p.jpg"), "p").unwrap();
+    let sidecar = phototools_core::sidecar::sidecar_path(&dir.join("p.jpg"));
+    fs::write(&sidecar, "{}").unwrap();
+
+    let plan = BatchRenamerTool
+        .plan(&folder_params(vec![dir.clone()]))
+        .unwrap()
+        .data;
+    BatchRenamerTool
+        .apply(plan, &InMemoryProgress::new())
+        .unwrap();
+
+    assert!(dir.join("Trip-01.jpg").exists());
+    assert!(phototools_core::sidecar::sidecar_path(&dir.join("Trip-01.jpg")).exists());
+    assert!(!sidecar.exists());
+}
+
+/// RS-3: a request without the new field still renames by the blocks.
+#[test]
+fn f3_a_request_without_name_from_folder_uses_the_blocks() {
+    let params: BatchRenameParams = serde_json::from_value(serde_json::json!({
+        "paths": [],
+        "date": "20240101",
+        "subject": "Trip",
+        "camera": null,
+        "film": null,
+        "order": "Numeric"
+    }))
+    .unwrap();
+    assert!(!params.name_from_folder);
 }

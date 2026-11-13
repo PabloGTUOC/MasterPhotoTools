@@ -310,6 +310,9 @@ pub struct RenameRequest {
     pub film: Option<String>,
     #[serde(default = "capture_order")]
     pub order: f3_rename::RenameOrder,
+    /// RS-3: name each photograph after its folder instead of the blocks.
+    #[serde(default)]
+    pub name_from_folder: bool,
 }
 
 fn capture_order() -> f3_rename::RenameOrder {
@@ -325,6 +328,7 @@ impl RenameRequest {
             camera: self.camera,
             film: self.film,
             order: self.order,
+            name_from_folder: self.name_from_folder,
         })
     }
 }

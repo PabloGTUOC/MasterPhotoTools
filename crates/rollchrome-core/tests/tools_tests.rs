@@ -268,6 +268,7 @@ fn f3_rename_carries_masks_in_the_sidecar() {
             camera: None,
             film: None,
             order: RenameOrder::Numeric,
+            name_from_folder: false,
         })
         .unwrap()
         .data;

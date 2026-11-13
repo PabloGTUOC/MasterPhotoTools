@@ -15,6 +15,8 @@ const subject = ref('');
 const camera = ref('');
 const film = ref('');
 const order = ref<RenameOrder>('Capture');
+// RS-3: the name comes from the fields, or from each photograph's folder.
+const nameFrom = ref<'fields' | 'folder'>('fields');
 const plan = ref<Plan<RenameAction> | null>(null);
 const busy = ref(false);
 
@@ -30,6 +32,7 @@ function request() {
     camera: camera.value || null,
     film: film.value || null,
     order: order.value,
+    name_from_folder: nameFrom.value === 'folder',
   };
 }
 
@@ -86,7 +89,19 @@ const leaf = (p: string) => p.split('/').pop() ?? p;
         :list="list"
       />
 
-      <div class="prefix-grid">
+      <fieldset class="field">
+        <legend>Name</legend>
+        <label class="radio">
+          <input v-model="nameFrom" type="radio" value="fields" />
+          From the fields below — date, subject, camera, film
+        </label>
+        <label class="radio">
+          <input v-model="nameFrom" type="radio" value="folder" />
+          From each photograph's folder — Folder-01, numbered per folder
+        </label>
+      </fieldset>
+
+      <div v-if="nameFrom === 'fields'" class="prefix-grid">
         <label class="field"><span>Date</span><input v-model="date" type="text" placeholder="2024-05-01" /></label>
         <label class="field"><span>Subject</span><input v-model="subject" type="text" placeholder="Lisboa" /></label>
         <label class="field"><span>Camera</span><input v-model="camera" type="text" placeholder="PENTAX17" /></label>

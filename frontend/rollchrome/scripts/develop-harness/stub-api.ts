@@ -28,6 +28,7 @@ export interface StubDevelopState {
   lastPlanItems: DevelopItem[] | null;
   lastPlanFormat: OutputFormat | null;
   lastPlanOutput: DevelopOutput | null;
+  saveLutCalls: Array<{ folder: string; stock: string; balance: string }>;
   lastApplyFolder: string | null;
   lastApplyItems: DevelopItem[] | null;
   lastApplyFormat: OutputFormat | null;
@@ -50,6 +51,7 @@ const stubState: StubDevelopState = {
   lastPlanItems: null,
   lastPlanFormat: null,
   lastPlanOutput: null,
+  saveLutCalls: [],
   lastApplyFolder: null,
   lastApplyItems: null,
   lastApplyFormat: null,
@@ -114,9 +116,9 @@ const FILM_LOOKS: BuiltinLookInfo[] = [
   { id: 'film:kodak_ektachrome_100', name: 'Kodak Ektachrome 100', maker: 'Kodak' },
   { id: 'film:kodak_kodachrome_64', name: 'Kodak Kodachrome 64', maker: 'Kodak' },
   { id: 'film:kodak_vision3_50d', name: 'Kodak Vision3 50D', maker: 'Kodak' },
-  { id: 'film:kodak_vision3_200t', name: 'Kodak Vision3 200T', maker: 'Kodak' },
+  { id: 'film:kodak_vision3_200t', name: 'Kodak Vision3 200T', maker: 'Kodak', tungsten: true },
   { id: 'film:kodak_vision3_250d', name: 'Kodak Vision3 250D', maker: 'Kodak' },
-  { id: 'film:kodak_vision3_500t', name: 'Kodak Vision3 500T', maker: 'Kodak' },
+  { id: 'film:kodak_vision3_500t', name: 'Kodak Vision3 500T', maker: 'Kodak', tungsten: true },
   { id: 'film:kodak_verita_200d', name: 'Kodak Verita 200D', maker: 'Kodak' },
   // 5 Fujifilm
   { id: 'film:fujifilm_c200', name: 'Fujifilm C200', maker: 'Fujifilm' },
@@ -146,6 +148,11 @@ export class StubDesktopApiClient {
 
   async listBuiltinLooks(): Promise<BuiltinLookInfo[]> {
     return BUILTIN_LOOKS;
+  }
+
+  async saveFilmLut(folder: string, stock: string, balance: string): Promise<string> {
+    stubState.saveLutCalls.push({ folder, stock, balance });
+    return `${folder.replace(/\/+$/, '')}/Developed/Stub LUT (spektrafilm).cube`;
   }
 
   async listFilmLooks(): Promise<BuiltinLookInfo[]> {

@@ -460,3 +460,42 @@ fn plan_develop_refuses_an_output_folder_outside_the_roots() {
     );
     assert!(!outside.exists());
 }
+
+#[test]
+fn save_film_lut_writes_into_developed() {
+    use rollchrome_core::media::film::LutBalance;
+    use rollchrome_desktop::commands::develop::save_film_lut_impl;
+
+    let f = fixture();
+    let state = make_state(&f);
+
+    let path = save_film_lut_impl(
+        &state,
+        f.root.to_string_lossy().to_string(),
+        "kodak_portra_400".to_string(),
+        LutBalance::AsFilm,
+    )
+    .expect("save the LUT");
+    let want = f
+        .root
+        .join("Developed")
+        .join("Kodak Portra 400 (spektrafilm).cube");
+    assert_eq!(PathBuf::from(&path), want);
+    let text = std::fs::read_to_string(&want).unwrap();
+    assert!(text.contains("LUT_3D_SIZE 33"));
+
+    let outside = f._temp.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    let err = save_film_lut_impl(
+        &state,
+        outside.to_string_lossy().to_string(),
+        "kodak_portra_400".to_string(),
+        LutBalance::AsFilm,
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("outside the folders this application may touch"),
+        "expected G6 refusal, got: {err}"
+    );
+    assert!(!outside.join("Developed").exists());
+}

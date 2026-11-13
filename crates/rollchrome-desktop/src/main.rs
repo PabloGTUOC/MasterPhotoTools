@@ -103,6 +103,7 @@ fn main() {
             commands::apply_develop,
             commands::list_builtin_looks,
             commands::list_film_looks,
+            commands::save_film_lut,
             commands::list_develop_folder,
             commands::develop_thumbnail,
             commands::preview_develop,

@@ -29,6 +29,9 @@
  * 24. JPEG + TIFF, a long edge and an output folder each lock Run until a new dry run, which carries them (DV-7).
  * 25. The destination note names the chosen output folder (DV-7).
  * 26. A running job shows the time per photograph and the time left (DV-8).
+ * 27. "Save as LUT" and its checkbox show only for a film look; the checkbox is ticked for 500T, not Portra 400 (DV-6).
+ * 28. Saving calls saveFilmLut with the folder, the stock and the balance, and shows the returned path (DV-6).
+ * 29. Saving a LUT leaves Run enabled after a dry run (DV-6).
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -1095,6 +1098,64 @@ try {
   if (!timing26 || !/s per photograph · about .+ left/.test(timing26)) {
     failures.push(`A running job must show "… s per photograph · about … left", got "${timing26}"`);
   }
+
+  // -------------------------------------------------------------------------
+  // 27–29. Save as LUT (DV-6)
+  // -------------------------------------------------------------------------
+  console.log('27. Checking Save as LUT shows only for a film look, ticked for tungsten...');
+  await page.waitForTimeout(700); // let the stub's job from check 26 finish
+  const lookSelect27 = page.locator('[data-testid="look-select"]');
+  const saveLut = page.locator('[data-testid="save-lut"]');
+  const lutNeutral = page.locator('[data-testid="lut-neutral"]');
+  await page.locator('.thumbnail-card[data-filename="DSCF0002.RAF"]').click();
+  await page.waitForTimeout(100);
+  await lookSelect27.selectOption('builtin:ricoh-positive-film');
+  await page.waitForTimeout(100);
+  if ((await saveLut.count()) !== 0 || (await lutNeutral.count()) !== 0) {
+    failures.push('Save as LUT and its checkbox must be hidden for a camera look');
+  }
+  await lookSelect27.selectOption('film:kodak_vision3_500t');
+  await page.waitForTimeout(100);
+  if ((await saveLut.count()) !== 1) {
+    failures.push('Save as LUT must show for a film look');
+  } else if (!(await lutNeutral.isChecked())) {
+    failures.push('"Neutral grey (daylight)" must start ticked for Vision3 500T');
+  }
+  await lookSelect27.selectOption('film:kodak_portra_400');
+  await page.waitForTimeout(100);
+  if (await lutNeutral.isChecked()) {
+    failures.push('"Neutral grey (daylight)" must start unticked for Portra 400');
+  }
+
+  console.log('28. Checking saving calls saveFilmLut and shows the path...');
+  console.log('29. Checking saving a LUT leaves Run enabled...');
+  await dryRunBtn.click();
+  await page.waitForTimeout(200);
+  const runEnabledBefore = !(await runBtn.isDisabled());
+  await saveLut.click();
+  await page.waitForTimeout(200);
+  const calls28 = await page.evaluate(() => window.__DEVELOP_STUB__.saveLutCalls);
+  const planFolder28 = await page.evaluate(() => window.__DEVELOP_STUB__.lastPlanFolder);
+  const call28 = calls28[calls28.length - 1];
+  if (
+    !call28 ||
+    call28.stock !== 'kodak_portra_400' ||
+    call28.balance !== 'asfilm' ||
+    call28.folder !== planFolder28
+  ) {
+    failures.push(
+      `saveFilmLut must get the folder, kodak_portra_400 and asfilm, got ${JSON.stringify(call28)} (folder ${planFolder28})`,
+    );
+  }
+  const path28 = await page.locator('[data-testid="lut-path"]').textContent().catch(() => null);
+  if (!path28?.includes('Stub LUT (spektrafilm).cube')) {
+    failures.push(`The saved LUT's path must be shown, got "${path28}"`);
+  }
+  if (!runEnabledBefore) {
+    failures.push('Run should be enabled after the dry run in check 29');
+  } else if (await runBtn.isDisabled()) {
+    failures.push('Saving a LUT must leave Run enabled');
+  }
 } catch (err) {
   failures.push(`Test execution threw: ${err instanceof Error ? err.stack : String(err)}`);
 } finally {
@@ -1109,5 +1170,5 @@ if (failures.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log('\ncheck:develop PASSED: all 26 checks verified successfully.');
+  console.log('\ncheck:develop PASSED: all 29 checks verified successfully.');
 }

@@ -48,6 +48,53 @@ pub fn list_film_looks_impl() -> Vec<BuiltinLookInfo> {
     rollchrome_core::media::film::film_look_list()
 }
 
+/// Saves a film stock as a `.cube` LUT into `<folder>/Developed` and returns its path (DV-6).
+///
+/// The making takes a second or two on the CPU, so it runs off the command thread.
+#[tauri::command]
+pub async fn save_film_lut(
+    folder: String,
+    stock: String,
+    balance: rollchrome_core::media::film::LutBalance,
+    app: tauri::AppHandle,
+) -> CommandResult<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        save_film_lut_impl(&state, folder, stock, balance)
+    })
+    .await
+    .map_err(|e| format!("saving the LUT stopped unexpectedly: {e}"))?
+}
+
+pub fn save_film_lut_impl(
+    state: &AppState,
+    folder: String,
+    stock: String,
+    balance: rollchrome_core::media::film::LutBalance,
+) -> CommandResult<String> {
+    let config = state.config();
+    let resolved_folder = resolve_input(&config, &folder)?;
+    // G5: the LUT goes beside the photographs, so a folder on a card is refused like Develop's.
+    rollchrome_core::tools::develop_folder::refuse_card_folder(
+        &resolved_folder,
+        rollchrome_core::tools::edit::find_volume_root,
+    )
+    .map_err(describe)?;
+    let dev_folder = resolve_output(
+        &config,
+        &resolved_folder.join("Developed").to_string_lossy(),
+    )?;
+    let film_data_dir = rollchrome_core::config::film_data_dir(&config);
+    let lut = rollchrome_core::media::film::film_lut(&stock, balance, &film_data_dir)
+        .map_err(describe)?;
+    std::fs::create_dir_all(&dev_folder).map_err(|e| e.to_string())?;
+    // An existing LUT of the same name is replaced: the content is deterministic, so the old file
+    // can only be the same picture or one from an older engine.
+    let path = dev_folder.join(&lut.file_name);
+    std::fs::write(&path, lut.cube).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Lists non-recursive RAW files in a folder, sorted by name.
 #[tauri::command]
 pub fn list_develop_folder(

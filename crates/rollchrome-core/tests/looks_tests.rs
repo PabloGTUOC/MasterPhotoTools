@@ -504,8 +504,12 @@ fn a_builtin_look_never_reaches_the_library() {
             exposure_ev: 0.0,
             grain: rollchrome_core::media::film::Grain::Fine,
             noise_reduction: 0.0,
+            also_output: None,
         }],
         skipped: Vec::new(),
+        also: None,
+        long_edge: None,
+        output_folder: None,
     };
 
     let summary = execute_develop(plan, &mut store, &NoopProgress);
@@ -540,8 +544,12 @@ fn an_unknown_builtin_look_is_skipped_with_its_reason() {
             exposure_ev: 0.0,
             grain: rollchrome_core::media::film::Grain::Fine,
             noise_reduction: 0.0,
+            also_output: None,
         }],
         skipped: Vec::new(),
+        also: None,
+        long_edge: None,
+        output_folder: None,
     };
 
     let summary = execute_develop(plan, &mut store, &NoopProgress);

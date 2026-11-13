@@ -14,6 +14,7 @@ use rollchrome_core::automation::{
 };
 use rollchrome_core::media::develop::OutputFormat;
 use rollchrome_core::media::film::Grain;
+use rollchrome_core::tools::develop::DevelopOutput;
 use rollchrome_core::tools::edit::{
     ExportFormat, ExportOptions, ExportResize, MetadataPolicy, OutputSharpening,
 };
@@ -22,7 +23,8 @@ const HELP_TEXT: &str = "\
 Usage:
   rollchrome-cli looks [--json]
   rollchrome-cli luts [--json]
-  rollchrome-cli develop <folder> --look <id> [--exposure <ev>] [--noise <0..100>] [--grain off|fine|standard] [--format jpeg|tiff] [--quality <1..100, default 92>] [--only <name>]... [--apply] [--json]
+  rollchrome-cli develop <folder> --look <id> [--exposure <ev>] [--noise <0..100>] [--grain off|fine|standard] [--format jpeg|tiff] [--quality <1..100, default 92>] [--only <name>]... [--output-folder <dir>] [--long-edge <px>] [--also-tiff] [--apply] [--json]
+                         --look neutral develops with no look
   rollchrome-cli batch <input>... --lut <name|sha256|path> --out <dir> [--intensity <0..1, default 1>] [--recursive] [--apply] [--json]
   rollchrome-cli export <photo> --out <dir> [--format as-source|jpeg|tiff|png|webp|avif] [--quality <n>] [--bits <8|16>] [--long-edge <n>|--megapixels <n>] [--sharpen off|screen|print] [--template <t>] [--metadata all|no-location|none] [--json]
   rollchrome-cli mcp
@@ -136,6 +138,7 @@ fn parse_develop(args: &[String]) -> Result<Command, String> {
     let mut format_str = "jpeg".to_string();
     let mut quality: u8 = 92;
     let mut only: Vec<String> = Vec::new();
+    let mut output = DevelopOutput::default();
     let mut apply = false;
     let mut json = false;
 
@@ -143,6 +146,20 @@ fn parse_develop(args: &[String]) -> Result<Command, String> {
     while i < args.len() {
         let arg = args[i].as_str();
         match arg {
+            "--output-folder" => {
+                output.folder = Some(next_val(args, &mut i, "--output-folder")?.to_string());
+            }
+            "--long-edge" => {
+                let raw = next_val(args, &mut i, "--long-edge")?;
+                let edge = raw
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid --long-edge value '{raw}'"))?;
+                if edge == 0 {
+                    return Err("--long-edge must be at least 1".to_string());
+                }
+                output.long_edge = Some(edge);
+            }
+            "--also-tiff" => output.also_tiff = true,
             "--look" => {
                 look = Some(next_val(args, &mut i, "--look")?.to_string());
             }
@@ -224,6 +241,7 @@ fn parse_develop(args: &[String]) -> Result<Command, String> {
             noise_reduction,
             format,
             only,
+            output,
         },
         apply,
         json,

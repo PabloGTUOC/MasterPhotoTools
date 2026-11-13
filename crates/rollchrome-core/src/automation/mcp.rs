@@ -185,13 +185,16 @@ fn tools_schema_list() -> Value {
                     "type": "object",
                     "properties": {
                         "folder": { "type": "string", "description": "Path to the folder of RAW files" },
-                        "look": { "type": "string", "description": "Look identifier (e.g. film:kodak_portra_160, builtin:fujifilm-classic-chrome, or LUT library name)" },
+                        "look": { "type": "string", "description": "Look identifier (neutral for no look, e.g. film:kodak_portra_160, builtin:fujifilm-classic-chrome, or LUT library name)" },
                         "exposure_ev": { "type": "number", "description": "Exposure adjustment in stops (-4.0 to 4.0, default 0.0)" },
                         "grain": { "type": "string", "enum": ["off", "fine", "standard"], "description": "Film grain simulation setting (off, fine, standard, default fine)" },
                         "noise_reduction": { "type": "number", "minimum": 0.0, "maximum": 100.0, "description": "Noise reduction amount (0.0 to 100.0, default 0.0)" },
                         "format": { "type": "string", "enum": ["jpeg", "tiff"], "description": "Output format (jpeg or tiff, default jpeg)" },
                         "quality": { "type": "integer", "minimum": 1, "maximum": 100, "description": "JPEG quality (1..100, default 92)" },
-                        "only": { "type": "array", "items": { "type": "string" }, "description": "Optional list of RAW filenames in the folder to develop" }
+                        "only": { "type": "array", "items": { "type": "string" }, "description": "Optional list of RAW filenames in the folder to develop" },
+                        "output_folder": { "type": "string", "description": "Folder to write into (default: Developed beside the RAW files)" },
+                        "long_edge": { "type": "integer", "minimum": 1, "description": "Downscale so the long edge is at most this many pixels (default: full size)" },
+                        "also_tiff": { "type": "boolean", "description": "With format jpeg, also write a 16-bit TIFF of each photograph (default false)" }
                     },
                     "required": ["folder", "look"]
                 }
@@ -203,13 +206,16 @@ fn tools_schema_list() -> Value {
                     "type": "object",
                     "properties": {
                         "folder": { "type": "string", "description": "Path to the folder of RAW files" },
-                        "look": { "type": "string", "description": "Look identifier (e.g. film:kodak_portra_160, builtin:fujifilm-classic-chrome, or LUT library name)" },
+                        "look": { "type": "string", "description": "Look identifier (neutral for no look, e.g. film:kodak_portra_160, builtin:fujifilm-classic-chrome, or LUT library name)" },
                         "exposure_ev": { "type": "number", "description": "Exposure adjustment in stops (-4.0 to 4.0, default 0.0)" },
                         "grain": { "type": "string", "enum": ["off", "fine", "standard"], "description": "Film grain simulation setting (off, fine, standard, default fine)" },
                         "noise_reduction": { "type": "number", "minimum": 0.0, "maximum": 100.0, "description": "Noise reduction amount (0.0 to 100.0, default 0.0)" },
                         "format": { "type": "string", "enum": ["jpeg", "tiff"], "description": "Output format (jpeg or tiff, default jpeg)" },
                         "quality": { "type": "integer", "minimum": 1, "maximum": 100, "description": "JPEG quality (1..100, default 92)" },
                         "only": { "type": "array", "items": { "type": "string" }, "description": "Optional list of RAW filenames in the folder to develop" },
+                        "output_folder": { "type": "string", "description": "Folder to write into (default: Developed beside the RAW files)" },
+                        "long_edge": { "type": "integer", "minimum": 1, "description": "Downscale so the long edge is at most this many pixels (default: full size)" },
+                        "also_tiff": { "type": "boolean", "description": "With format jpeg, also write a 16-bit TIFF of each photograph (default false)" },
                         "plan_sha256": { "type": "string", "description": "SHA-256 hash of the reviewed plan from plan_develop" }
                     },
                     "required": ["folder", "look", "plan_sha256"]
@@ -401,6 +407,18 @@ fn parse_develop_request(args: &Map<String, Value>) -> Result<DevelopRequest, St
         Some(_) => return Err("argument 'format' must be a string".to_string()),
     };
 
+    let output_folder = match args.get("output_folder") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) if s.trim().is_empty() => None,
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(_) => return Err("argument 'output_folder' must be a string".to_string()),
+    };
+    let output = crate::tools::develop::DevelopOutput {
+        also_tiff: opt_bool(args, "also_tiff", false)?,
+        long_edge: opt_u32_min(args, "long_edge", 1)?,
+        folder: output_folder,
+    };
+
     Ok(DevelopRequest {
         folder,
         look,
@@ -409,6 +427,7 @@ fn parse_develop_request(args: &Map<String, Value>) -> Result<DevelopRequest, St
         noise_reduction,
         format,
         only,
+        output,
     })
 }
 

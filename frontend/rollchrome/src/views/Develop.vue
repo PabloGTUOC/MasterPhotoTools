@@ -11,7 +11,9 @@
  * - Exposure: AdjustmentSlider (-4 to +4 EV) applied to the selection.
  * - Preview: Shows most recently clicked photograph at its assigned look and exposure.
  *   Latest-wins rendering discipline (stale responses discarded).
- * - Output: JPEG (quality 1-100, default 95) or 16-bit ProPhoto RGB TIFF into <folder>/Developed.
+ * - Output: JPEG (quality 1-100, default 95), 16-bit ProPhoto RGB TIFF, or both (DV-7), into
+ *   <folder>/Developed or a chosen folder, at full size or downscaled to a long edge.
+ * - "None (neutral)" develops with no look (sent as `neutral`); "Skip" leaves a photograph out (DV-7).
  * - Run: Dry-run lock discipline. Run disabled until reviewed dry run exists for exact settings.
  *   Any change invalidates the dry run. Skipped items listed with reasons. JobProgress with cancel.
  * - State persistence: Module-level state preserves folder, assignments, and selection across tab switches.
@@ -21,6 +23,7 @@ import type { BrowserEntry } from '@phototools/shared';
 import type {
   BuiltinLookInfo,
   DevelopItem,
+  DevelopOutput,
   DevelopPlan,
   Grain,
   LutLibraryList,
@@ -42,9 +45,11 @@ import {
   moduleSelection,
   moduleLastClicked,
   moduleFormat,
+  moduleOutput,
   moduleScope,
   moduleJobId,
   moduleIsDeveloping,
+  NEUTRAL_LOOK,
 } from '../developState';
 
 // ---------------------------------------------------------------------------
@@ -99,7 +104,16 @@ let previewInFlight = false;
 let pendingPreviewState: WantedPreviewState | null = null;
 
 // Output format
-const outputType = ref<'jpeg' | 'tiff'>(moduleFormat.value.kind === 'tiff' ? 'tiff' : 'jpeg');
+const outputType = ref<'jpeg' | 'tiff' | 'both'>(
+  moduleFormat.value.kind === 'tiff' ? 'tiff' : moduleOutput.value.also_tiff ? 'both' : 'jpeg',
+);
+// DV-7: empty means "as before" for both — full size, and `Developed` beside the photographs.
+// A number input's v-model gives a number once typed in, and '' when cleared.
+const longEdge = ref<string | number>(moduleOutput.value.long_edge ?? '');
+const outputFolder = ref<string>(moduleOutput.value.folder ?? '');
+
+/** The assignment that means "leave this photograph out" (DV-7). */
+const SKIP_LOOK = 'skip';
 const jpegQuality = ref(moduleFormat.value.kind === 'jpeg' ? moduleFormat.value.quality : 95);
 
 // Dry run & review state
@@ -171,6 +185,20 @@ watch(currentFormat, (fmt) => {
   moduleFormat.value = fmt;
 }, { deep: true });
 
+const currentOutput = computed<DevelopOutput>(() => {
+  const raw = String(longEdge.value ?? '').trim();
+  const edge = Math.round(Number(raw));
+  return {
+    also_tiff: outputType.value === 'both',
+    long_edge: raw !== '' && Number.isFinite(edge) && edge > 0 ? edge : null,
+    folder: outputFolder.value.trim() || null,
+  };
+});
+
+watch(currentOutput, (out) => {
+  moduleOutput.value = out;
+}, { deep: true });
+
 // Filtered look options
 const kodakFilmLooks = computed(() => filmLooks.value.filter((l) => l.maker.toLowerCase() === 'kodak'));
 const fujifilmFilmLooks = computed(() => filmLooks.value.filter((l) => l.maker.toLowerCase() === 'fujifilm'));
@@ -179,6 +207,8 @@ const ricohLooks = computed(() => builtinLooks.value.filter((l) => l.maker.toLow
 
 // Output destination
 const outputDestination = computed(() => {
+  const chosen = outputFolder.value.trim();
+  if (chosen) return chosen;
   if (!folder.value.trim()) return '';
   return `${folder.value.replace(/\/+$/, '')}/Developed`;
 });
@@ -248,6 +278,7 @@ const selectedNoiseReduction = computed(() => {
 // Helper: look display name on thumbnails (RP-1 review item 6)
 function lookDisplayName(lookId: string | null | undefined): string {
   if (!lookId) return 'None';
+  if (lookId === SKIP_LOOK) return 'Skip';
   const builtin = builtinLooks.value.find((b) => b.id === lookId);
   if (builtin) return builtin.name;
   const film = filmLooks.value.find((f) => f.id === lookId);
@@ -474,7 +505,7 @@ async function triggerPreview(draft = false) {
   const wanted: WantedPreviewState = {
     folder: currentPath,
     name: targetPhoto,
-    look: assignment.look,
+    look: assignment.look === SKIP_LOOK ? null : assignment.look,
     exposure_ev: assignment.exposure_ev,
     draft,
     grain: assignment.grain ?? 'fine',
@@ -543,7 +574,8 @@ function makeItems(): DevelopItem[] {
     const a = moduleAssignments.value[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine', noise_reduction: 25 };
     return {
       name,
-      look: a.look,
+      // An unassigned photograph is "None (neutral)": developed with no look. Only "Skip" leaves it out.
+      look: a.look === SKIP_LOOK ? null : (a.look ?? NEUTRAL_LOOK),
       exposure_ev: a.exposure_ev,
       grain: a.grain ?? 'fine',
       noise_reduction: a.noise_reduction ?? 25,
@@ -557,7 +589,10 @@ const currentItemsJson = computed(() =>
     items: makeItems(),
   })
 );
-const currentFormatJson = computed(() => JSON.stringify(currentFormat.value));
+// The output settings are part of what a dry run reviewed, so changing them locks Run too.
+const currentFormatJson = computed(() =>
+  JSON.stringify({ format: currentFormat.value, output: currentOutput.value }),
+);
 
 const settingsChanged = computed(() => {
   if (!reviewed.value) return false;
@@ -619,7 +654,12 @@ async function runDryRun() {
 
   try {
     const items = makeItems();
-    const plan = await desktop.planDevelop(folder.value.trim(), items, currentFormat.value);
+    const plan = await desktop.planDevelop(
+      folder.value.trim(),
+      items,
+      currentFormat.value,
+      currentOutput.value,
+    );
     reviewedPlan.value = plan;
     reviewed.value = {
       folder: folder.value.trim(),
@@ -642,7 +682,12 @@ async function runDevelop() {
 
   try {
     const items = makeItems();
-    const id = await desktop.applyDevelop(folder.value.trim(), items, currentFormat.value);
+    const id = await desktop.applyDevelop(
+      folder.value.trim(),
+      items,
+      currentFormat.value,
+      currentOutput.value,
+    );
     jobId.value = id;
   } catch (err: unknown) {
     isDeveloping.value = false;
@@ -847,6 +892,7 @@ onMounted(async () => {
               </option>
               <optgroup label="Neutral">
                 <option value="">None (neutral)</option>
+                <option value="skip" data-testid="look-skip">Skip (don't develop)</option>
               </optgroup>
               <optgroup v-if="kodakFilmLooks.length" label="Kodak film">
                 <option
@@ -978,9 +1024,19 @@ onMounted(async () => {
               />
               <span>TIFF (16-bit ProPhoto RGB)</span>
             </label>
+            <label class="format-option">
+              <input
+                v-model="outputType"
+                type="radio"
+                value="both"
+                :disabled="isDeveloping"
+                data-testid="format-both"
+              />
+              <span>JPEG + TIFF</span>
+            </label>
           </div>
 
-          <div v-if="outputType === 'jpeg'" class="quality-row">
+          <div v-if="outputType !== 'tiff'" class="quality-row">
             <label for="develop-jpeg-quality" class="control-label">Quality</label>
             <input
               id="develop-jpeg-quality"
@@ -994,7 +1050,33 @@ onMounted(async () => {
             />
           </div>
 
-          <div class="destination-note muted mono">
+          <div class="quality-row">
+            <label for="develop-long-edge" class="control-label">Long edge (px)</label>
+            <input
+              id="develop-long-edge"
+              v-model="longEdge"
+              type="number"
+              min="1"
+              step="1"
+              placeholder="full"
+              class="quality-input"
+              data-testid="long-edge-input"
+              :disabled="isDeveloping"
+            />
+          </div>
+
+          <PathField
+            v-model="outputFolder"
+            label="Output folder"
+            placeholder="Developed, beside the photographs"
+            :roots="roots"
+            :roots-error="rootsError"
+            :list="listRoots"
+            :disabled="isDeveloping || isPlanning"
+            data-testid="develop-output-folder"
+          />
+
+          <div class="destination-note muted mono" data-testid="destination-note">
             Destination: <code>{{ outputDestination }}</code>
           </div>
         </div>

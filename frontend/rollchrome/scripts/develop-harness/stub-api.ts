@@ -5,6 +5,7 @@ import type { BrowserEntry } from '@phototools/shared';
 import type {
   BuiltinLookInfo,
   DevelopItem,
+  DevelopOutput,
   DevelopPlan,
   Grain,
   Job,
@@ -26,6 +27,7 @@ export interface StubDevelopState {
   lastPlanFolder: string | null;
   lastPlanItems: DevelopItem[] | null;
   lastPlanFormat: OutputFormat | null;
+  lastPlanOutput: DevelopOutput | null;
   lastApplyFolder: string | null;
   lastApplyItems: DevelopItem[] | null;
   lastApplyFormat: OutputFormat | null;
@@ -47,6 +49,7 @@ const stubState: StubDevelopState = {
   lastPlanFolder: null,
   lastPlanItems: null,
   lastPlanFormat: null,
+  lastPlanOutput: null,
   lastApplyFolder: null,
   lastApplyItems: null,
   lastApplyFormat: null,
@@ -216,10 +219,12 @@ export class StubDesktopApiClient {
     folder: string,
     items: DevelopItem[],
     format: OutputFormat,
+    output?: DevelopOutput,
   ): Promise<DevelopPlan> {
     stubState.lastPlanFolder = folder;
     stubState.lastPlanItems = JSON.parse(JSON.stringify(items));
     stubState.lastPlanFormat = JSON.parse(JSON.stringify(format));
+    stubState.lastPlanOutput = output ? JSON.parse(JSON.stringify(output)) : null;
 
     const ext = format.kind === 'tiff' ? 'tif' : 'jpg';
     const dest = `${folder.replace(/\/+$/, '')}/Developed`;
@@ -255,6 +260,7 @@ export class StubDesktopApiClient {
     folder: string,
     items: DevelopItem[],
     format: OutputFormat,
+    _output?: DevelopOutput,
   ): Promise<string> {
     stubState.lastApplyFolder = folder;
     stubState.lastApplyItems = JSON.parse(JSON.stringify(items));

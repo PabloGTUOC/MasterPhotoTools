@@ -375,16 +375,18 @@ export class RollchromeClient {
     folder: string,
     items: DevelopItem[],
     format: OutputFormat,
+    output?: DevelopOutput,
   ): Promise<DevelopPlan> {
-    return invoke<DevelopPlan>('plan_develop', { folder, items, format });
+    return invoke<DevelopPlan>('plan_develop', { folder, items, format, output });
   }
 
   applyDevelop(
     folder: string,
     items: DevelopItem[],
     format: OutputFormat,
+    output?: DevelopOutput,
   ): Promise<string> {
-    return invoke<string>('apply_develop', { folder, items, format });
+    return invoke<string>('apply_develop', { folder, items, format, output });
   }
 }
 
@@ -925,12 +927,27 @@ export interface DevelopItem {
   noise_reduction?: number;
 }
 
+/**
+ * Where and how a develop run writes (DV-7). Omitted, or with every field at its default, the run
+ * writes one format at full size into `Developed` beside the photographs, as it always did.
+ */
+export interface DevelopOutput {
+  /** With a JPEG format, also write a 16-bit TIFF of each photograph. */
+  also_tiff: boolean;
+  /** Downscale so the long edge is at most this many pixels; null keeps the full size. */
+  long_edge: number | null;
+  /** The output folder; null is `Developed` beside the photographs. */
+  folder: string | null;
+}
+
 /** One planned develop action. */
 export interface DevelopAction {
   source: string;
   output: string;
   look: string;
   exposure_ev: number;
+  /** The TIFF written beside the JPEG, when the plan writes both (DV-7). */
+  also_output?: string;
 }
 
 /** One item skipped during develop planning. */
@@ -944,6 +961,9 @@ export interface DevelopPlan {
   actions: DevelopAction[];
   skipped: DevelopSkip[];
   format: OutputFormat;
+  also?: OutputFormat;
+  long_edge?: number;
+  output_folder?: string;
 }
 
 export const rollchrome = new RollchromeClient();

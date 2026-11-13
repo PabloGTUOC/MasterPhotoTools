@@ -29,7 +29,10 @@ pub mod tone;
 pub mod xtrans;
 
 pub use preview::{DevelopPreview, PREVIEW_DRAFT_EDGE, PREVIEW_MAX_EDGE};
-pub use render::{prophoto_icc_profile, render, Look, LookSpace, OutputFormat, Rendered};
+pub use render::{
+    downscaled_size, prophoto_icc_profile, render, render_sized, Look, LookSpace, OutputFormat,
+    Rendered,
+};
 
 /// Options controlling RAW development.
 #[derive(Debug, Clone, Copy, PartialEq)]

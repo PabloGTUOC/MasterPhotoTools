@@ -1,6 +1,6 @@
 # Develop — RAW files to finished photographs, a film look each
 
-> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 done ([brief](briefs/DV-3.md)): 12 built-in looks ship; Velvia and Astia did not pass. RP-1 built ([brief](briefs/RP-1.md)): Develop screen exists with preview, look picker, exposure slider, dry run, and export. DV-4 done ([brief](briefs/DV-4.md)): 18 film stocks simulated by spektrafilm-rs with grain control and GPU acceleration; the repository is GPL-3.0-or-later. DV-5 done ([brief](briefs/DV-5.md)): noise reduction before the look.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
+> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 done ([brief](briefs/DV-3.md)): 12 built-in looks ship; Velvia and Astia did not pass. RP-1 built ([brief](briefs/RP-1.md)): Develop screen exists with preview, look picker, exposure slider, dry run, and export. DV-4 done ([brief](briefs/DV-4.md)): 18 film stocks simulated by spektrafilm-rs with grain control and GPU acceleration; the repository is GPL-3.0-or-later. DV-5 done ([brief](briefs/DV-5.md)): noise reduction before the look. DV-7 done ([brief](briefs/DV-7.md)): developing without a look, output folder, long edge, JPEG + TIFF.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
 > ([`rollchrome-plan.md`](rollchrome-plan.md)). DV-1 needs RC-1. Nothing here touches PhotoTools.
 >
 > **Functionality first.** The screen is discussed with the owner before it becomes a step
@@ -257,6 +257,19 @@ stock. The LUT is a 33-point `.cube` with sRGB in and sRGB out, written into the
 hold grain, halation, DIR couplers or auto exposure. Tungsten stocks get an optional neutral-grey print filter,
 found automatically. The engine's own `export-lut` is unusable as it stands: it skips the print calibration, and
 its LUTs come out two stops dark.
+
+### `DV-7` · Developing without a look, and output choices
+
+**Done ([DV-7](briefs/DV-7.md)), step 1 of the [rescope](rescope-plan.md).** Before it, "None (neutral)" sent
+no look, and the planner skipped such a photograph, so a RAW could not be developed without a film look.
+Now:
+- `neutral` is a look of its own. An unassigned photograph is developed neutrally; **Skip** leaves it out.
+- **Output folder:** default `Developed`, or any folder inside the roots.
+- **Long edge:** downscaled after the look, so grain keeps its scale.
+- **JPEG + TIFF** in one pass. The RAW is decoded and denoised once. A film look renders once per format,
+  because the two outputs are in different colour spaces.
+
+With the defaults, plans, plan hashes and output bytes are what they were.
 
 ### The screen — RP-1
 

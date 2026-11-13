@@ -21,7 +21,8 @@ use crate::media::edit::lut::Lut;
 use crate::media::film::Grain;
 use crate::media::looks::builtin::{builtin_look_list, BuiltinLookInfo};
 use crate::tools::develop::{
-    execute_develop, plan_develop as core_plan_develop, DevelopItem, DevelopPlan, DevelopSummary,
+    execute_develop, plan_develop_with as core_plan_develop_with, DevelopItem, DevelopOutput,
+    DevelopPlan, DevelopSummary, NEUTRAL_LOOK,
 };
 use crate::tools::develop_folder::{raw_names, refuse_card_folder, FolderStore};
 use crate::tools::edit::{
@@ -52,6 +53,9 @@ pub struct DevelopRequest {
     pub noise_reduction: f32,
     pub format: OutputFormat,
     pub only: Vec<String>,
+    /// Output folder, long edge and JPEG + TIFF (DV-7). Absent in a request means the default.
+    #[serde(default)]
+    pub output: DevelopOutput,
 }
 
 /// Parameters for planning or running batch 3D LUT grading.
@@ -153,8 +157,8 @@ impl Automation {
     pub fn plan_develop(&self, r: &DevelopRequest) -> Result<Reviewed<DevelopPlan>, Error> {
         let resolved_folder = self.resolve_input(&r.folder)?;
         refuse_card_folder(&resolved_folder, self.volume_resolver)?;
-        let dev_folder = resolved_folder.join("Developed");
-        self.resolve_output(&dev_folder.to_string_lossy())?;
+        r.output.check(r.format)?;
+        let custom_output = self.develop_output_dir(&resolved_folder, &r.output)?;
 
         let folder_raw_names = raw_names(&resolved_folder)?;
         let look_opt = if r.look.is_empty() {
@@ -210,10 +214,17 @@ impl Automation {
 
         let lut_dir = crate::config::lut_dir(&self.config);
         let film_data_dir = crate::config::film_data_dir(&self.config);
-        let store =
+        let mut store =
             FolderStore::with_film_data(resolved_folder, lut_dir.clone(), Some(film_data_dir));
+        if let Some(dir) = &custom_output {
+            store = store.with_output_dir(dir.clone());
+        }
         let existing = store.existing_outputs()?;
-        let mut plan = core_plan_develop(&items, r.format, &existing);
+        let output = DevelopOutput {
+            folder: custom_output.map(|d| d.display().to_string()),
+            ..r.output.clone()
+        };
+        let mut plan = core_plan_develop_with(&items, r.format, &output, &existing);
         plan.skipped.extend(missing_skipped);
 
         let mut hasher = Sha256::new();
@@ -225,9 +236,9 @@ impl Automation {
             .actions
             .iter()
             .map(|a| a.look.as_str())
-            .filter(|l| !l.starts_with("builtin:") && !l.starts_with("film:"))
+            .filter(|l| is_library_look(l))
             .collect();
-        if !r.look.is_empty() && !r.look.starts_with("builtin:") && !r.look.starts_with("film:") {
+        if !r.look.is_empty() && is_library_look(&r.look) {
             non_builtin_looks.insert(r.look.as_str());
         }
         for look_id in non_builtin_looks {
@@ -261,8 +272,33 @@ impl Automation {
         let resolved_folder = self.resolve_input(&r.folder)?;
         let lut_dir = crate::config::lut_dir(&self.config);
         let film_data_dir = crate::config::film_data_dir(&self.config);
+        let custom_output = self.develop_output_dir(&resolved_folder, &r.output)?;
         let mut store = FolderStore::with_film_data(resolved_folder, lut_dir, Some(film_data_dir));
+        if let Some(dir) = custom_output {
+            store = store.with_output_dir(dir);
+        }
         Ok(execute_develop(reviewed.plan, &mut store, p))
+    }
+
+    /// Resolves where a develop run writes: `None` for `Developed` beside the photographs, or the
+    /// chosen folder, checked against the roots (G6) and refused on a card (G5) like the input.
+    fn develop_output_dir(
+        &self,
+        resolved_folder: &Path,
+        output: &DevelopOutput,
+    ) -> Result<Option<PathBuf>, Error> {
+        match &output.folder {
+            None => {
+                let dev_folder = resolved_folder.join("Developed");
+                self.resolve_output(&dev_folder.to_string_lossy())?;
+                Ok(None)
+            }
+            Some(folder) => {
+                let dir = self.resolve_output(folder)?;
+                refuse_card_folder(&dir, self.volume_resolver)?;
+                Ok(Some(dir))
+            }
+        }
     }
 
     fn resolve_batch_lut(&self, lut_query: &str) -> Result<(PathBuf, Lut), Error> {
@@ -368,4 +404,10 @@ impl Automation {
             self.volume_resolver,
         )
     }
+}
+
+/// A look the plan hash must cover by its LUT's content: anything that is not built in, a film stock
+/// or the neutral development, all of which are fixed by the program itself.
+fn is_library_look(look: &str) -> bool {
+    look != NEUTRAL_LOOK && !look.starts_with("builtin:") && !look.starts_with("film:")
 }

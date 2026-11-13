@@ -1671,8 +1671,12 @@ fn a_camera_look_export_at_zero_noise_is_unchanged() {
             exposure_ev: 0.0,
             grain: Grain::Fine,
             noise_reduction: 0.0,
+            also_output: None,
         }],
         skipped: Vec::new(),
+        also: None,
+        long_edge: None,
+        output_folder: None,
     };
     let summary = execute_develop(plan, &mut store, &TestProgress);
     assert_eq!(summary.developed, vec!["photo.jpg"]);
@@ -1720,8 +1724,12 @@ fn a_camera_look_export_with_noise_reduction_differs() {
             exposure_ev: 0.0,
             grain: Grain::Fine,
             noise_reduction: 50.0,
+            also_output: None,
         }],
         skipped: Vec::new(),
+        also: None,
+        long_edge: None,
+        output_folder: None,
     };
     let summary = execute_develop(plan, &mut store, &TestProgress);
     assert_eq!(summary.developed, vec!["photo.jpg"]);

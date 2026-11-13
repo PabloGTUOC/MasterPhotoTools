@@ -45,8 +45,51 @@ folder's name replaces the whole name, followed only by a number.
 
 ## Report
 
-*(below)*
+Implemented by Claude on 2026-11-13.
+
+**What was done**
+- `f3_rename.rs`: `name_from_folder`. Planning now builds groups: one group for the blocks, or one per folder
+  (sorted by path) under the folder's sanitised name. It numbers within each group. Everything after naming
+  (collision, sidecar and duplicate checks) is the existing code, run per group. The folder name is taken from
+  the canonical path, so a relative `.` still names the real folder.
+- The server's `RenameRequest`, the desktop's `RenameArgs` and the shared `RenameRequest` type carry the field.
+- The shared Rename screen gets a **Name** fieldset ("From the fields below — date, subject, camera, film" /
+  "From each photograph's folder — Folder-01, numbered per folder"), in the house `.radio` style that clears the
+  40 px touch target. The four fields are hidden in folder mode.
+- **Deviation:** `-` rather than the `_` in the planning illustration, for the reason given in the brief.
+- **Mechanical:** `name_from_folder: false` added to 14 existing `BatchRenameParams` literals: 9 in
+  `core/tests/tools_tests.rs`, 4 in `f3_rename.rs`'s unit tests, 1 in `rollchrome-core/tests/tools_tests.rs`.
+
+**Gates** (`gate-rs3.log`)
+
+| Gate | Result |
+|---|---|
+| clippy / build | rc 0 |
+| fmt | **rc 1 on the first run**: the new tests were not formatted. `cargo fmt` was applied, `--check` rerun: rc 0, and `tools_tests` rerun: 38 passed. |
+| `--workspace` | **1335 passed**, 0 failed, 4 ignored (1330 + 5) |
+| `phototools-core` | **719** (714 + 5) |
+| `rollchrome-core` | 469 |
+| `--features film` | 482 passed, 2 ignored |
+| `phototools-desktop` | 26 |
+| `rollchrome-desktop` | 29 |
+| `rollchrome-cli` | 8 |
+| Every `check:*`, the web and desktop builds | pass |
+| Web `check:layout` | 12 routes clean at 390 px, `/rename` included |
+
+**Unverified:** the Rename screen was checked by typecheck and the layout check, not by a run on the owner's
+folders. That is MV-43.
 
 ## Review
 
-*(below)*
+**Approved**, with the caveat that **the reviewer wrote the code**, so this is not an independent review.
+
+**What was checked**
+- **Gates:** run on the branch.
+- **G7:** no existing assertion changed; only the new field, `false`, was added to existing literals.
+- **G6:** the paths still go through `resolve_inputs` in both the server and the desktop. The folder's name is
+  only read from them.
+- **The old behaviour holds:** the existing rename tests (collisions, sidecars, duplicates, padding, capture
+  order) all pass with the field `false`. Test 5 shows an old request still parses to `false`.
+- **G11:** nothing outside the brief. `PhotoTools` gains no new dependency.
+
+**For the owner:** MV-43, and whether `-` is right or should be `_`.

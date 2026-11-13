@@ -27,6 +27,11 @@ pub struct BatchRenameParams {
     pub camera: Option<String>,
     pub film: Option<String>,
     pub order: RenameOrder,
+    /// Name each photograph after its folder instead of the blocks above (RS-3): `<Folder>-01`, the
+    /// folder's name sanitised like any block, numbered afresh in each folder. Absent in a request, it
+    /// is `false` and the blocks are used, as they always were.
+    #[serde(default)]
+    pub name_from_folder: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -249,84 +254,128 @@ impl Tool for BatchRenamerTool {
             .collect();
         keyed.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let prefix = build_prefix(
-            p.date.as_deref(),
-            p.subject.as_deref(),
-            p.camera.as_deref(),
-            p.film.as_deref(),
-        );
+        // One group per name: the whole batch under the blocks, or each folder under its own name.
+        let mut groups: Vec<(String, Vec<&PathBuf>)> = Vec::new();
+        if p.name_from_folder {
+            let mut by_folder: Vec<(PathBuf, Vec<&PathBuf>)> = Vec::new();
+            for (_, source) in &keyed {
+                let parent = source
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .to_path_buf();
+                match by_folder.iter_mut().find(|(f, _)| *f == parent) {
+                    Some((_, files)) => files.push(source),
+                    None => by_folder.push((parent, vec![source])),
+                }
+            }
+            by_folder.sort_by(|a, b| a.0.cmp(&b.0));
+            for (folder, files) in by_folder {
+                let name = folder
+                    .canonicalize()
+                    .unwrap_or_else(|_| folder.clone())
+                    .file_name()
+                    .map(|n| sanitise_block(&n.to_string_lossy()))
+                    .unwrap_or_default();
+                // A folder called `!!!` sanitises to nothing; numbering its photographs `01`, `02`
+                // would throw their names away without saying so.
+                if name.is_empty() {
+                    for source in files {
+                        skipped.push(Skip {
+                            file: source.to_string_lossy().to_string(),
+                            reason: format!(
+                                "Its folder's name has no letters or digits to use: {}",
+                                folder.display()
+                            ),
+                        });
+                    }
+                    continue;
+                }
+                groups.push((name, files));
+            }
+        } else {
+            let prefix = build_prefix(
+                p.date.as_deref(),
+                p.subject.as_deref(),
+                p.camera.as_deref(),
+                p.film.as_deref(),
+            );
+            groups.push((prefix, keyed.iter().map(|(_, path)| path).collect()));
+        }
 
-        let width = std::cmp::max(2, keyed.len().to_string().len());
         let mut claimed: HashSet<PathBuf> = HashSet::new();
         let mut actions = Vec::new();
 
-        for (index, (_, source)) in keyed.iter().enumerate() {
-            let extension = source
-                .extension()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_lowercase();
-            let sequence = format!("{:0width$}", index + 1, width = width);
+        for (prefix, files) in &groups {
+            let width = std::cmp::max(2, files.len().to_string().len());
+            for (index, source) in files.iter().enumerate() {
+                let source: &PathBuf = source;
+                let extension = source
+                    .extension()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_lowercase();
+                let sequence = format!("{:0width$}", index + 1, width = width);
 
-            let stem = if prefix.is_empty() {
-                sequence
-            } else {
-                format!("{prefix}-{sequence}")
-            };
-            let file_name = if extension.is_empty() {
-                stem
-            } else {
-                format!("{stem}.{extension}")
-            };
+                let stem = if prefix.is_empty() {
+                    sequence
+                } else {
+                    format!("{prefix}-{sequence}")
+                };
+                let file_name = if extension.is_empty() {
+                    stem
+                } else {
+                    format!("{stem}.{extension}")
+                };
 
-            let parent = source.parent().unwrap_or(std::path::Path::new("."));
-            let target = parent.join(&file_name);
+                let parent = source.parent().unwrap_or(std::path::Path::new("."));
+                let target = parent.join(&file_name);
 
-            // A file already at the target name is never overwritten — unless it
-            // is this very file, which is a no-op rename.
-            if target != *source && target.exists() {
-                skipped.push(Skip {
-                    file: source.to_string_lossy().to_string(),
-                    reason: format!("Would overwrite an existing file: {file_name}"),
-                });
-                continue;
-            }
-
-            // Check companion sidecar if present
-            let src_sidecar = crate::sidecar::sidecar_path(source);
-            let sidecar = if src_sidecar.exists() {
-                let target_sidecar = crate::sidecar::sidecar_path(&target);
-                if target != *source && target_sidecar.exists() {
+                // A file already at the target name is never overwritten — unless it
+                // is this very file, which is a no-op rename.
+                if target != *source && target.exists() {
                     skipped.push(Skip {
                         file: source.to_string_lossy().to_string(),
-                        reason: format!(
-                            "Would overwrite an existing sidecar: {}",
-                            target_sidecar
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                        ),
+                        reason: format!("Would overwrite an existing file: {file_name}"),
                     });
                     continue;
                 }
-                Some((src_sidecar, target_sidecar))
-            } else {
-                None
-            };
 
-            if !claimed.insert(target.clone()) {
-                skipped.push(Skip {
-                    file: source.to_string_lossy().to_string(),
-                    reason: format!("Duplicate target within this batch: {file_name}"),
+                // Check companion sidecar if present
+                let src_sidecar = crate::sidecar::sidecar_path(source);
+                let sidecar = if src_sidecar.exists() {
+                    let target_sidecar = crate::sidecar::sidecar_path(&target);
+                    if target != *source && target_sidecar.exists() {
+                        skipped.push(Skip {
+                            file: source.to_string_lossy().to_string(),
+                            reason: format!(
+                                "Would overwrite an existing sidecar: {}",
+                                target_sidecar
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                            ),
+                        });
+                        continue;
+                    }
+                    Some((src_sidecar, target_sidecar))
+                } else {
+                    None
+                };
+
+                if !claimed.insert(target.clone()) {
+                    skipped.push(Skip {
+                        file: source.to_string_lossy().to_string(),
+                        reason: format!("Duplicate target within this batch: {file_name}"),
+                    });
+                    continue;
+                }
+
+                actions.push(BatchRenameAction {
+                    source: source.clone(),
+                    target,
+                    sidecar,
                 });
-                continue;
             }
-
-            actions.push(BatchRenameAction {
-                source: source.clone(),
-                target,
-                sidecar,
-            });
         }
 
         Ok(Outcome {
@@ -517,6 +566,7 @@ mod tests {
                 camera: None,
                 film: None,
                 order: RenameOrder::Numeric,
+                name_from_folder: false,
             })
             .unwrap()
             .data;
@@ -556,6 +606,7 @@ mod tests {
                 camera: None,
                 film: None,
                 order: RenameOrder::Numeric,
+                name_from_folder: false,
             })
             .unwrap()
             .data;
@@ -590,6 +641,7 @@ mod tests {
                 camera: None,
                 film: None,
                 order: RenameOrder::Numeric,
+                name_from_folder: false,
             })
             .unwrap()
             .data;
@@ -636,6 +688,7 @@ mod tests {
                 camera: None,
                 film: None,
                 order: RenameOrder::Numeric,
+                name_from_folder: false,
             })
             .unwrap()
             .data;

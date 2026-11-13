@@ -237,6 +237,9 @@ pub struct RenameArgs {
     pub camera: Option<String>,
     pub film: Option<String>,
     pub order: RenameOrder,
+    /// RS-3: name each photograph after its folder instead of the blocks.
+    #[serde(default)]
+    pub name_from_folder: bool,
 }
 
 impl RenameArgs {
@@ -248,6 +251,7 @@ impl RenameArgs {
             camera: self.camera,
             film: self.film,
             order: self.order,
+            name_from_folder: self.name_from_folder,
         })
     }
 }

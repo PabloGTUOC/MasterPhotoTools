@@ -27,7 +27,7 @@ cause: **the tools had only ever been exercised with typed file paths, and the f
 pointing at a folder the normal gesture.**
 
 The numbered checks in [`manual-verification.md`](docs/manual-verification.md) remain the
-structured half of that work — 96 for PhotoTools, eight done, and 64 for Rollchrome in
+structured half of that work — 97 for PhotoTools, eight done, and 64 for Rollchrome in
 [`docs/rollchrome/manual-verification.md`](docs/rollchrome/manual-verification.md), same ids.
 
 | Read this | For |
@@ -127,8 +127,8 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 1330 passing (4 ignored)
-cargo test -p phototools-core   # 714 passing — G2
+cargo test --workspace          # 1335 passing (4 ignored)
+cargo test -p phototools-core   # 719 passing — G2
 cargo test -p rollchrome-core   # 469 passing — G2
 cargo test -p rollchrome-core --features film # 482 passing (2 ignored)
 cargo test -p phototools-desktop   # 26 passing

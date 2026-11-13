@@ -885,3 +885,17 @@ MV-19.7 are not optional.
 
 The editor's checks — the Edit tab, its second round, and masks — moved with the editor to
 Rollchrome: [`rollchrome/manual-verification.md`](rollchrome/manual-verification.md). Same ids.
+
+## MV-43 — Rename from the folder's name (RS-3)
+
+[`rescope-plan.md`](rescope-plan.md), done. Needs the web or desktop app and a folder of photographs.
+
+- [ ] **MV-43.1 — One folder.**
+      **Run:** in Rename, pick a folder, choose "From each photograph's folder", preview.
+      **Pass:** the preview shows `<Folder>-01`, `-02`… in capture order. Apply renames them, and edit sidecars follow.
+      **Result:**
+- [ ] **MV-43.2 — Two folders at once.**
+      **Run:** list two folders, preview.
+      **Pass:** each is numbered from 01 under its own name.
+      **Result:**
+

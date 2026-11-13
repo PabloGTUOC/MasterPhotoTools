@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use crate::media::develop::par_map_rgb;
 use crate::media::develop::preview::resize_linear;
 use crate::media::develop::{
-    develop_linear, linear_to_developed, reduce_noise, render_sized, DevelopOptions, Look,
-    OutputFormat,
+    correct_lens, develop_linear, linear_to_developed, reduce_noise, render_sized, DevelopOptions,
+    Look, OutputFormat,
 };
 use crate::media::film::{render_film, FilmBackend, FilmOutput, Grain};
 
@@ -39,6 +39,9 @@ pub struct DevelopItem {
     /// Noise reduction amount (0.0..=100.0, default 0.0) (DV-5).
     #[serde(default)]
     pub noise_reduction: f32,
+    /// Correct distortion, lateral CA and vignetting from the lens database (DV-9).
+    #[serde(default)]
+    pub lens_correction: bool,
 }
 
 /// The reserved look id that develops a photograph with no look applied (DV-7).
@@ -96,6 +99,9 @@ pub struct DevelopAction {
     /// The second output's file name, when the plan writes JPEG + TIFF (DV-7).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub also_output: Option<String>,
+    /// Lens correction (DV-9). Skipped when off, so a plan without it serialises as before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lens_correction: bool,
 }
 
 /// Result of planning a folder's development.
@@ -137,6 +143,9 @@ pub struct DevelopSummary {
     pub failures: Vec<Skip>,
     /// Items written whose metadata could not be carried.
     pub metadata_skipped: Vec<Skip>,
+    /// Items developed without the lens correction they asked for, and why (DV-9).
+    #[serde(default)]
+    pub lens_skipped: Vec<Skip>,
 }
 
 /// Storage abstraction for developing a folder (R2).
@@ -305,6 +314,7 @@ pub fn plan_develop_with(
             grain: item.grain,
             noise_reduction: item.noise_reduction,
             also_output,
+            lens_correction: item.lens_correction,
         });
     }
 
@@ -386,7 +396,7 @@ fn develop_one(
     raw_bytes: &[u8],
     plan: &DevelopPlan,
     film_data_dir: Option<&Path>,
-) -> Result<Vec<Encoded>, String> {
+) -> Result<(Vec<Encoded>, Option<String>), String> {
     let outputs: Vec<(OutputFormat, String)> =
         std::iter::once((plan.format, action.output.clone()))
             .chain(plan.also.zip(action.also_output.clone()))
@@ -398,8 +408,14 @@ fn develop_one(
         ResolvedLook::Film { .. } => 0.0,
         _ => action.exposure_ev,
     };
-    let linear =
+    let mut linear =
         develop_linear(raw_bytes, &DevelopOptions { exposure_ev }).map_err(|e| e.to_string())?;
+    // Before noise reduction and the look: the lens models describe the sensor's image (DV-9).
+    let lens_note = if action.lens_correction {
+        correct_lens(&mut linear, raw_bytes).err()
+    } else {
+        None
+    };
     let denoised = reduce_noise(
         linear.width,
         linear.height,
@@ -482,7 +498,7 @@ fn develop_one(
             }
         }
     }
-    Ok(encoded)
+    Ok((encoded, lens_note))
 }
 
 /// Encodes a film render's display sRGB as an 8-bit JPEG.
@@ -646,6 +662,7 @@ pub fn execute_develop_with(
         skipped: plan.skipped.clone(),
         failures: Vec::new(),
         metadata_skipped: Vec::new(),
+        lens_skipped: Vec::new(),
     };
     let jobs = concurrency.max_jobs.max(1);
     let film_data_dir = store.film_data_dir().map(Path::to_path_buf);
@@ -654,7 +671,7 @@ pub fn execute_develop_with(
 
     let (job_tx, job_rx) = mpsc::channel::<Job>();
     let job_rx = Mutex::new(job_rx);
-    let (done_tx, done_rx) = mpsc::channel::<(usize, Result<Vec<Encoded>, String>)>();
+    let (done_tx, done_rx) = mpsc::channel::<(usize, Outcome)>();
 
     std::thread::scope(|scope| {
         for _ in 0..jobs {
@@ -685,7 +702,7 @@ pub fn execute_develop_with(
         drop(done_tx);
 
         let mut look_cache: HashMap<String, Result<ResolvedLook, String>> = HashMap::new();
-        let mut finished: BTreeMap<usize, Result<Vec<Encoded>, String>> = BTreeMap::new();
+        let mut finished: BTreeMap<usize, Outcome> = BTreeMap::new();
         let mut in_flight: HashMap<usize, u64> = HashMap::new();
         let mut reserved: u64 = 0;
         let mut staged: Option<Staged> = None;
@@ -790,15 +807,26 @@ pub fn execute_develop_with(
     summary
 }
 
+/// What a worker hands back: the outputs and a lens note, or why the photograph failed.
+type Outcome = Result<(Vec<Encoded>, Option<String>), String>;
+
 /// Writes one photograph's outputs and carries its metadata, recording what happened.
 fn write_outcome(
     action: &DevelopAction,
-    result: Result<Vec<Encoded>, String>,
+    result: Outcome,
     store: &mut dyn DevelopStore,
     summary: &mut DevelopSummary,
 ) {
     let encoded = match result {
-        Ok(e) => e,
+        Ok((e, lens_note)) => {
+            if let Some(reason) = lens_note {
+                summary.lens_skipped.push(Skip {
+                    file: action.source.clone(),
+                    reason: format!("developed without lens correction: {reason}"),
+                });
+            }
+            e
+        }
         Err(reason) => {
             summary.failures.push(Skip {
                 file: action.source.clone(),
@@ -980,6 +1008,7 @@ mod tests {
             exposure_ev: 0.5,
             grain: Grain::Fine,
             noise_reduction: 0.0,
+            lens_correction: false,
         }];
         let existing = BTreeSet::new();
 
@@ -1012,6 +1041,7 @@ mod tests {
             exposure_ev: 0.0,
             grain: Grain::Fine,
             noise_reduction: 0.0,
+            lens_correction: false,
         }];
         let existing = BTreeSet::new();
         let plan = plan_develop(&items, OutputFormat::Tiff, &existing);
@@ -1033,6 +1063,7 @@ mod tests {
             exposure_ev: 0.0,
             grain: Grain::Fine,
             noise_reduction: 0.0,
+            lens_correction: false,
         }];
         let plan = plan_develop(&items, OutputFormat::Jpeg { quality: 90 }, &existing);
 
@@ -1056,6 +1087,7 @@ mod tests {
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
+                lens_correction: false,
             },
             DevelopItem {
                 name: "IMG_0001.CR2".to_string(),
@@ -1063,6 +1095,7 @@ mod tests {
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
+                lens_correction: false,
             },
         ];
         let existing = BTreeSet::new();
@@ -1089,6 +1122,7 @@ mod tests {
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
+                lens_correction: false,
             },
             DevelopItem {
                 name: "notes.txt".to_string(),
@@ -1096,6 +1130,7 @@ mod tests {
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
+                lens_correction: false,
             },
         ];
         let existing = BTreeSet::new();
@@ -1118,6 +1153,7 @@ mod tests {
                 exposure_ev: -4.5,
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
+                lens_correction: false,
             },
             DevelopItem {
                 name: "B.RAF".to_string(),
@@ -1125,6 +1161,7 @@ mod tests {
                 exposure_ev: 4.5,
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
+                lens_correction: false,
             },
             DevelopItem {
                 name: "C.RAF".to_string(),
@@ -1132,6 +1169,7 @@ mod tests {
                 exposure_ev: f32::NAN,
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
+                lens_correction: false,
             },
             DevelopItem {
                 name: "D.RAF".to_string(),
@@ -1139,6 +1177,7 @@ mod tests {
                 exposure_ev: -4.0,
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
+                lens_correction: false,
             },
             DevelopItem {
                 name: "E.RAF".to_string(),
@@ -1146,6 +1185,7 @@ mod tests {
                 exposure_ev: 4.0,
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
+                lens_correction: false,
             },
         ];
         let existing = BTreeSet::new();
@@ -1170,6 +1210,7 @@ mod tests {
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
+                lens_correction: false,
             },
             DevelopItem {
                 name: "a/b.RAF".to_string(),
@@ -1177,6 +1218,7 @@ mod tests {
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
+                lens_correction: false,
             },
             DevelopItem {
                 name: "".to_string(),
@@ -1184,6 +1226,7 @@ mod tests {
                 exposure_ev: 0.0,
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
+                lens_correction: false,
             },
         ];
         let existing = BTreeSet::new();
@@ -1221,6 +1264,7 @@ mod tests {
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
                     also_output: None,
+                    lens_correction: false,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1230,6 +1274,7 @@ mod tests {
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
                     also_output: None,
+                    lens_correction: false,
                 },
             ],
             skipped: Vec::new(),
@@ -1285,6 +1330,7 @@ mod tests {
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
                     also_output: None,
+                    lens_correction: false,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1294,6 +1340,7 @@ mod tests {
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
                     also_output: None,
+                    lens_correction: false,
                 },
             ],
             skipped: Vec::new(),
@@ -1339,6 +1386,7 @@ mod tests {
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
                     also_output: None,
+                    lens_correction: false,
                 },
                 DevelopAction {
                     source: "good.dng".to_string(),
@@ -1348,6 +1396,7 @@ mod tests {
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
                     also_output: None,
+                    lens_correction: false,
                 },
             ],
             skipped: Vec::new(),
@@ -1387,6 +1436,7 @@ mod tests {
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
                     also_output: None,
+                    lens_correction: false,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1396,6 +1446,7 @@ mod tests {
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
                     also_output: None,
+                    lens_correction: false,
                 },
             ],
             skipped: Vec::new(),
@@ -1438,6 +1489,7 @@ mod tests {
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
                     also_output: None,
+                    lens_correction: false,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1447,6 +1499,7 @@ mod tests {
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
                     also_output: None,
+                    lens_correction: false,
                 },
             ],
             skipped: Vec::new(),

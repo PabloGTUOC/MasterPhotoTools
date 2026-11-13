@@ -44,6 +44,7 @@ fn item(name: &str, look: Option<&str>) -> DevelopItem {
         exposure_ev: 0.0,
         grain: Grain::Off,
         noise_reduction: 0.0,
+        lens_correction: false,
     }
 }
 
@@ -366,6 +367,7 @@ fn request(folder: &Path, output: DevelopOutput) -> DevelopRequest {
         format: JPEG,
         only: Vec::new(),
         output,
+        lens_correction: false,
     }
 }
 

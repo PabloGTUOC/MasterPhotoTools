@@ -57,6 +57,7 @@ fn plan_develop_refuses_a_folder_outside_the_roots() {
         exposure_ev: 0.0,
         grain: Grain::Fine,
         noise_reduction: 0.0,
+        lens_correction: false,
     }];
 
     let err = plan_develop_impl(
@@ -94,6 +95,7 @@ fn plan_develop_plans_a_folder_inside_the_roots() {
             exposure_ev: 0.0,
             grain: Grain::Fine,
             noise_reduction: 0.0,
+            lens_correction: false,
         },
         DevelopItem {
             name: "DSCF0002.dng".to_string(),
@@ -101,6 +103,7 @@ fn plan_develop_plans_a_folder_inside_the_roots() {
             exposure_ev: 0.5,
             grain: Grain::Fine,
             noise_reduction: 0.0,
+            lens_correction: false,
         },
         DevelopItem {
             name: "notes.txt".to_string(),
@@ -108,6 +111,7 @@ fn plan_develop_plans_a_folder_inside_the_roots() {
             exposure_ev: 0.0,
             grain: Grain::Fine,
             noise_reduction: 0.0,
+            lens_correction: false,
         },
     ];
 
@@ -147,6 +151,7 @@ fn preview_refuses_a_name_that_leaves_the_folder() {
         false,
         None,
         None,
+        false,
     )
     .unwrap_err();
     assert!(err1.contains("path separators or '..'"));
@@ -160,6 +165,7 @@ fn preview_refuses_a_name_that_leaves_the_folder() {
         false,
         None,
         None,
+        false,
     )
     .unwrap_err();
     assert!(err2.contains("path separators or '..'"));
@@ -173,6 +179,7 @@ fn preview_refuses_a_name_that_leaves_the_folder() {
         false,
         None,
         None,
+        false,
     )
     .unwrap_err();
     assert!(err3.contains("path separators or '..'"));
@@ -194,6 +201,7 @@ fn preview_refuses_a_folder_outside_the_roots() {
         false,
         None,
         None,
+        false,
     )
     .unwrap_err();
 
@@ -218,6 +226,7 @@ fn preview_develop_returns_a_jpeg_for_a_synthetic_raw() {
         false,
         None,
         None,
+        false,
     )
     .expect("preview develop");
 
@@ -248,6 +257,7 @@ fn a_second_look_on_the_same_photo_does_not_develop_it_again() {
         false,
         None,
         None,
+        false,
     )
     .expect("first look");
 
@@ -263,6 +273,7 @@ fn a_second_look_on_the_same_photo_does_not_develop_it_again() {
         false,
         None,
         None,
+        false,
     )
     .expect("second look");
 
@@ -289,6 +300,7 @@ fn changing_exposure_does_not_develop_the_photo_again() {
         false,
         None,
         None,
+        false,
     )
     .expect("first render");
 
@@ -303,6 +315,7 @@ fn changing_exposure_does_not_develop_the_photo_again() {
         false,
         None,
         None,
+        false,
     )
     .expect("second render with new exposure");
 
@@ -332,6 +345,7 @@ fn going_back_to_a_recent_photo_does_not_develop_it_again() {
         false,
         None,
         None,
+        false,
     )
     .expect("photo 1");
     assert_eq!(state.develop_preview_runs(), 1);
@@ -346,6 +360,7 @@ fn going_back_to_a_recent_photo_does_not_develop_it_again() {
         false,
         None,
         None,
+        false,
     )
     .expect("photo 2");
     assert_eq!(state.develop_preview_runs(), 2);
@@ -360,6 +375,7 @@ fn going_back_to_a_recent_photo_does_not_develop_it_again() {
         false,
         None,
         None,
+        false,
     )
     .expect("photo 1 again");
     assert_eq!(state.develop_preview_runs(), 2);
@@ -388,6 +404,7 @@ fn preview_develop_passes_noise_reduction() {
         false,
         None,
         None,
+        false,
     )
     .expect("preview without noise reduction");
 
@@ -400,6 +417,7 @@ fn preview_develop_passes_noise_reduction() {
         false,
         None,
         Some(50.0),
+        false,
     )
     .expect("preview with noise reduction");
 
@@ -439,6 +457,7 @@ fn plan_develop_refuses_an_output_folder_outside_the_roots() {
         exposure_ev: 0.0,
         grain: Grain::Fine,
         noise_reduction: 0.0,
+        lens_correction: false,
     }];
     let err = plan_develop_impl(
         &state,

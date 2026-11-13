@@ -20,7 +20,15 @@ export interface StubDevelopState {
   thumbnailRequests: string[];
   activePreviewRequests: number;
   maxConcurrentPreviewRequests: number;
-  previewRequests: Array<{ name: string; look: string | null; exposure_ev: number; draft: boolean; grain?: Grain; noise_reduction?: number }>;
+  previewRequests: Array<{
+    name: string;
+    look: string | null;
+    exposure_ev: number;
+    draft: boolean;
+    grain?: Grain;
+    noise_reduction?: number;
+    lens_correction?: boolean;
+  }>;
   previewDelayMs: Record<number, number>;
   previewCallCount: number;
   distinctPreviewCallIdx: number | null;
@@ -200,6 +208,7 @@ export class StubDesktopApiClient {
     draft = false,
     grain?: Grain,
     noise_reduction?: number,
+    lens_correction?: boolean,
   ): Promise<Uint8Array> {
     stubState.activePreviewRequests++;
     if (stubState.activePreviewRequests > stubState.maxConcurrentPreviewRequests) {
@@ -207,7 +216,15 @@ export class StubDesktopApiClient {
     }
 
     const callIdx = ++stubState.previewCallCount;
-    stubState.previewRequests.push({ name, look, exposure_ev, draft: !!draft, grain, noise_reduction });
+    stubState.previewRequests.push({
+      name,
+      look,
+      exposure_ev,
+      draft: !!draft,
+      grain,
+      noise_reduction,
+      lens_correction,
+    });
 
     const delay = stubState.previewDelayMs[callIdx] ?? 10;
     if (delay > 0) {

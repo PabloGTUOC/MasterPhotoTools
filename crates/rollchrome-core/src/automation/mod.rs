@@ -56,6 +56,9 @@ pub struct DevelopRequest {
     /// Output folder, long edge and JPEG + TIFF (DV-7). Absent in a request means the default.
     #[serde(default)]
     pub output: DevelopOutput,
+    /// Correct each photograph for its lens (DV-9). Absent means off.
+    #[serde(default)]
+    pub lens_correction: bool,
 }
 
 /// Parameters for planning or running batch 3D LUT grading.
@@ -178,6 +181,7 @@ impl Automation {
                     exposure_ev: r.exposure_ev,
                     grain: r.grain,
                     noise_reduction: r.noise_reduction,
+                    lens_correction: r.lens_correction,
                 });
             }
         } else {
@@ -194,6 +198,7 @@ impl Automation {
                         exposure_ev: r.exposure_ev,
                         grain: r.grain,
                         noise_reduction: r.noise_reduction,
+                        lens_correction: r.lens_correction,
                     });
                 } else if !resolved_folder.join(name).is_file() {
                     missing_skipped.push(Skip {
@@ -207,6 +212,7 @@ impl Automation {
                         exposure_ev: r.exposure_ev,
                         grain: r.grain,
                         noise_reduction: r.noise_reduction,
+                        lens_correction: r.lens_correction,
                     });
                 }
             }

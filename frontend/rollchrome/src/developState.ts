@@ -12,6 +12,8 @@ export interface PhotoAssignment {
   exposure_ev: number;
   grain?: Grain;
   noise_reduction?: number;
+  /** Lens correction (DV-9); absent means on, the default for a photograph. */
+  lens_correction?: boolean;
 }
 
 export const moduleFolder = ref('');

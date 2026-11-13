@@ -60,7 +60,17 @@ pub struct DevelopPreview {
 impl DevelopPreview {
     /// Develops raw file bytes to a reduced upright linear preview image (RP-1, RP-12).
     pub fn new(raw: &[u8], max_edge: u32) -> Result<Self, Error> {
-        let linear = develop_linear(raw, &DevelopOptions { exposure_ev: 0.0 })?;
+        Self::new_with_lens(raw, max_edge, false)
+    }
+
+    /// [`Self::new`], with the lens corrected first when `lens` is set (DV-9), at full resolution
+    /// and in sensor orientation exactly as Develop does it, so the preview is the photograph that
+    /// will be written. A file with no profile previews uncorrected, as it will develop.
+    pub fn new_with_lens(raw: &[u8], max_edge: u32, lens: bool) -> Result<Self, Error> {
+        let mut linear = develop_linear(raw, &DevelopOptions { exposure_ev: 0.0 })?;
+        if lens {
+            let _ = crate::media::develop::correct_lens(&mut linear, raw);
+        }
         Self::from_linear(linear, max_edge)
     }
 

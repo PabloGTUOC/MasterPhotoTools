@@ -47,6 +47,8 @@ pub struct ActivePreview {
 
 struct CachedDevelopPreview {
     path: PathBuf,
+    /// Whether the lens was corrected (DV-9): the same file previews twice, once each way.
+    lens: bool,
     preview: Arc<rollchrome_core::media::develop::DevelopPreview>,
 }
 
@@ -340,13 +342,23 @@ impl AppState {
         &self,
         path: &std::path::Path,
     ) -> Result<Arc<rollchrome_core::media::develop::DevelopPreview>, Error> {
+        self.get_or_create_develop_preview_with(path, false)
+    }
+
+    /// [`Self::get_or_create_develop_preview`], with or without lens correction (DV-9). The cache key
+    /// is the path and the flag.
+    pub fn get_or_create_develop_preview_with(
+        &self,
+        path: &std::path::Path,
+        lens: bool,
+    ) -> Result<Arc<rollchrome_core::media::develop::DevelopPreview>, Error> {
         // 1. Check cache with lock held briefly
         {
             let mut cache = self
                 .develop_preview
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            if let Some(pos) = cache.iter().position(|c| c.path == path) {
+            if let Some(pos) = cache.iter().position(|c| c.path == path && c.lens == lens) {
                 let item = cache.remove(pos).unwrap();
                 let preview = item.preview.clone();
                 cache.push_back(item);
@@ -358,10 +370,13 @@ impl AppState {
         // A photograph's file having changed on disk is not handled.
         let raw = std::fs::read(path).map_err(Error::Io)?;
         self.develop_preview_runs.fetch_add(1, Ordering::SeqCst);
-        let preview = Arc::new(rollchrome_core::media::develop::DevelopPreview::new(
-            &raw,
-            rollchrome_core::media::develop::PREVIEW_MAX_EDGE,
-        )?);
+        let preview = Arc::new(
+            rollchrome_core::media::develop::DevelopPreview::new_with_lens(
+                &raw,
+                rollchrome_core::media::develop::PREVIEW_MAX_EDGE,
+                lens,
+            )?,
+        );
 
         // 3. Re-acquire lock and store in LRU cache (capacity 8)
         {
@@ -369,7 +384,7 @@ impl AppState {
                 .develop_preview
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            if let Some(pos) = cache.iter().position(|c| c.path == path) {
+            if let Some(pos) = cache.iter().position(|c| c.path == path && c.lens == lens) {
                 let item = cache.remove(pos).unwrap();
                 let prev = item.preview.clone();
                 cache.push_back(item);
@@ -380,6 +395,7 @@ impl AppState {
             }
             cache.push_back(CachedDevelopPreview {
                 path: path.to_path_buf(),
+                lens,
                 preview: preview.clone(),
             });
         }

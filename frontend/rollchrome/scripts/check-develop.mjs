@@ -32,6 +32,7 @@
  * 27. "Save as LUT" and its checkbox show only for a film look; the checkbox is ticked for 500T, not Portra 400 (DV-6).
  * 28. Saving calls saveFilmLut with the folder, the stock and the balance, and shows the returned path (DV-6).
  * 29. Saving a LUT leaves Run enabled after a dry run (DV-6).
+ * 30. Lens correction is on for a new photograph, reaches the dry run and the preview, and turning it off locks Run (DV-9).
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -1156,6 +1157,44 @@ try {
   } else if (await runBtn.isDisabled()) {
     failures.push('Saving a LUT must leave Run enabled');
   }
+
+  // -------------------------------------------------------------------------
+  // 30. Lens correction (DV-9)
+  // -------------------------------------------------------------------------
+  console.log('30. Checking lens correction defaults on, reaches dry run and preview, and locks Run...');
+  const lensBox = page.locator('[data-testid="lens-correction"]');
+  await page.locator('.thumbnail-card[data-filename="DSCF0004.RAF"]').click();
+  await page.waitForTimeout(150);
+  if (!(await lensBox.isChecked())) {
+    failures.push('Lens correction must be on for a new photograph');
+  }
+  await dryRunBtn.click();
+  await page.waitForTimeout(200);
+  const items30 = await page.evaluate(() => window.__DEVELOP_STUB__.lastPlanItems);
+  const item30 = items30?.find((it) => it.name === 'DSCF0004.RAF');
+  if (!item30 || item30.lens_correction !== true) {
+    failures.push(`The dry run must carry lens_correction: true, got ${JSON.stringify(item30)}`);
+  }
+  await page.evaluate(() => {
+    window.__DEVELOP_STUB__.previewRequests = [];
+  });
+  await lensBox.uncheck();
+  await page.waitForTimeout(250);
+  if (!(await runBtn.isDisabled())) {
+    failures.push('Turning lens correction off must disable Run until a new dry run');
+  }
+  const previews30 = await page.evaluate(() => window.__DEVELOP_STUB__.previewRequests);
+  const last30 = previews30[previews30.length - 1];
+  if (!last30 || last30.lens_correction !== false) {
+    failures.push(`The preview must follow the checkbox, got ${JSON.stringify(last30)}`);
+  }
+  await dryRunBtn.click();
+  await page.waitForTimeout(200);
+  const items30b = await page.evaluate(() => window.__DEVELOP_STUB__.lastPlanItems);
+  const item30b = items30b?.find((it) => it.name === 'DSCF0004.RAF');
+  if (!item30b || item30b.lens_correction !== false) {
+    failures.push(`The dry run must carry lens_correction: false after unticking, got ${JSON.stringify(item30b)}`);
+  }
 } catch (err) {
   failures.push(`Test execution threw: ${err instanceof Error ? err.stack : String(err)}`);
 } finally {
@@ -1170,5 +1209,5 @@ if (failures.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log('\ncheck:develop PASSED: all 29 checks verified successfully.');
+  console.log('\ncheck:develop PASSED: all 30 checks verified successfully.');
 }

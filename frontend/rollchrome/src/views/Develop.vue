@@ -99,6 +99,7 @@ interface WantedPreviewState {
   draft: boolean;
   grain: Grain;
   noise_reduction: number;
+  lens_correction: boolean;
 }
 let previewInFlight = false;
 let pendingPreviewState: WantedPreviewState | null = null;
@@ -303,6 +304,24 @@ const selectedExposure = computed(() => {
 });
 
 // Active noise reduction for selection (DV-5)
+// DV-9: lens correction, on unless a photograph's assignment turned it off.
+const lensOf = (name: string) => moduleAssignments.value[name]?.lens_correction ?? true;
+const selectedLens = computed<boolean | 'mixed'>(() => {
+  if (selection.value.length === 0) return true;
+  const first = lensOf(selection.value[0]);
+  return selection.value.every((name) => lensOf(name) === first) ? first : 'mixed';
+});
+
+function onLensChange(lens_correction: boolean) {
+  const updated = { ...moduleAssignments.value };
+  for (const name of selection.value) {
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine', noise_reduction: 25 };
+    updated[name] = { ...existing, lens_correction };
+  }
+  moduleAssignments.value = updated;
+  triggerPreview();
+}
+
 const selectedNoiseReduction = computed(() => {
   if (selection.value.length === 0) return 25;
   const first = moduleAssignments.value[selection.value[0]]?.noise_reduction ?? 25;
@@ -552,6 +571,7 @@ async function triggerPreview(draft = false) {
     draft,
     grain: assignment.grain ?? 'fine',
     noise_reduction: assignment.noise_reduction ?? 25,
+    lens_correction: assignment.lens_correction ?? true,
   };
 
   if (previewInFlight) {
@@ -578,6 +598,7 @@ async function executePreview(wanted: WantedPreviewState) {
       wanted.draft,
       wanted.grain,
       wanted.noise_reduction,
+      wanted.lens_correction,
     );
     if (seq === previewSeq) {
       if (previewUrl.value) {
@@ -621,6 +642,7 @@ function makeItems(): DevelopItem[] {
       exposure_ev: a.exposure_ev,
       grain: a.grain ?? 'fine',
       noise_reduction: a.noise_reduction ?? 25,
+      lens_correction: a.lens_correction ?? true,
     };
   });
 }
@@ -1065,6 +1087,21 @@ onMounted(async () => {
               @change="onNoiseChange"
               @update:model-value="onNoiseInput"
             />
+          </div>
+
+          <!-- Lens correction from the lensfun database (DV-9) -->
+          <div class="control-row">
+            <label class="checkbox">
+              <input
+                type="checkbox"
+                data-testid="lens-correction"
+                :checked="selectedLens === true"
+                :indeterminate="selectedLens === 'mixed'"
+                :disabled="selection.length === 0 || isDeveloping"
+                @change="onLensChange(($event.target as HTMLInputElement).checked)"
+              />
+              Lens correction
+            </label>
           </div>
         </div>
 

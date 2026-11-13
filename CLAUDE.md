@@ -14,6 +14,11 @@ has the decisions and the steps; RC-1 to RC-3 are done, and Develop's first step
 and DV-2b: Develop's function is complete, DV-3 added twelve built-in looks fitted from chart photographs, DV-4 added 18 physical film simulations with grain, DV-5 noise reduction before the look, and RP-1 gave it its screen. The state
 before the split is frozen on the **`FullEdition`** branch.
 
+**The project was rescoped on 2026-11-13** ([`docs/rescope-plan.md`](docs/rescope-plan.md)): editing is left to
+the open-source editors. PhotoTools keeps the library and the file tools, and loses Google publishing and its RAW tab.
+Rollchrome's Edit and Batch Grade are frozen as they are, and only Develop moves on (output choices, speed, lens
+correction, capture sharpening). Read that plan before starting new work.
+
 The active job is **using the application on a Mac and fixing what that finds.** Two sessions of
 working through the tabs with real photographs turned up sixteen defects that no test had caught —
 a rename that renamed the folder instead of the photographs, a metadata reader that silently
@@ -38,6 +43,7 @@ structured half of that work — 96 for PhotoTools, eight done, and 60 for Rollc
 | [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
 | [`docs/rollchrome/parity-plan.md`](docs/rollchrome/parity-plan.md) | Rollchrome towards replacing Lightroom: three tabs (Develop, Edit, Batch) and the small and medium gaps, RP-1 to RP-13. RP-1 to RP-13, RP-2b, RP-11b, RP-11c and RP-11d done (MV-24 to MV-37 await real files, models and an MCP client) |
 | [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | Splitting Edit and Batch Grade out into Rollchrome, a desktop-only film emulator. RC-1 to RC-3 done; Develop next |
+| [`docs/rescope-plan.md`](docs/rescope-plan.md) | **The current direction.** What stays, what goes, and steps RS-1 to RS-4 and DV-6 to DV-10 |
 | [`docs/develop-plan.md`](docs/develop-plan.md) | Rollchrome's third screen, Develop: RAW files to finished JPEG or TIFF, a film look each. DV-1 to DV-5 done: the function, twelve built-in looks, 18 physical film simulations with grain, and noise reduction before the look; the screen came with RP-1 (MV-23, MV-24, MV-38 and MV-39 await real files) |
 | [`docs/rollchrome/edit-plan.md`](docs/rollchrome/edit-plan.md) | Rollchrome's Edit and Batch Grade screens: non-destructive exposure adjustments and 3D LUT grading. Rounds 1 and 2 built (ED-1–ED-18); MV-20 and MV-21 await a Mac. Round 3, masks (ED-19–ED-24), built; MV-20 to MV-22 await the Mac Studio |
 | [`docs/deployment.md`](docs/deployment.md) | Deploying the server and the desktop app, and every environment variable |

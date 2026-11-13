@@ -460,3 +460,16 @@ the automated check drives the screen against a stub.
       **Pass:** each photograph has a `.jpg` and a `.tif` in the chosen folder, both 2048 px on the long edge, with the capture date and camera in their metadata. Nothing new is created in `Developed`. The film photographs' grain looks as fine as at full size, not coarser.
       **Result:**
 
+## MV-42 — Developing a large folder quickly (DV-8)
+
+[`develop-plan.md`](../develop-plan.md), done. Needs a Mac running Rollchrome and a folder of 50 or more of the owner's RAW files.
+
+- [ ] **MV-42.1 — A large folder, neutral and with a film stock.**
+      **Run:** develop the folder once with no look and once with Portra 400. Watch the progress line and Activity Monitor's memory.
+      **Pass:** the progress line shows the seconds per photograph and the time left, and the estimate settles near the real total. Memory pressure stays green. The outputs are in file-name order, with metadata, none missing.
+      **Result:**
+- [ ] **MV-42.2 — X100VI files.**
+      **Run:** the same with 40 MP RAFs from the X100VI.
+      **Pass:** nothing fails for memory, and the machine stays usable during the run. Note the seconds per photograph here.
+      **Result:**
+

@@ -17,6 +17,10 @@ dirs = "6.0.0"
 rawler = "0.7.2"
 moxcms = "0.8.1"
 tiff = "0.11.3"
+# DV-8: the machine's physical memory (`sysconf`), so Develop runs only as many photographs at
+# once as fit in half of it. Already in the tree through several dependencies; recorded in DV-8's
+# report (G8).
+libc = "0.2.189"
 # ED-23: automatic subject and sky masks run through ONNX Runtime, the owner's choice
 # after ED-22 measured it (edit plan, Round 3). Not in §2.6 — recorded in the edit phase
 # report (G8). Optional, behind `segment`, so `core` builds and tests without it (G2) and

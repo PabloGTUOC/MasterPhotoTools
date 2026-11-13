@@ -28,6 +28,7 @@
  * 23. An unassigned photograph ("None (neutral)") is sent to the dry run as "neutral"; "Skip" sends null (DV-7).
  * 24. JPEG + TIFF, a long edge and an output folder each lock Run until a new dry run, which carries them (DV-7).
  * 25. The destination note names the chosen output folder (DV-7).
+ * 26. A running job shows the time per photograph and the time left (DV-8).
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -1064,6 +1065,36 @@ try {
   if (!note25?.includes('/photos/exports')) {
     failures.push(`The destination note must name the chosen folder, got "${note25}"`);
   }
+
+  // -------------------------------------------------------------------------
+  // 26. The running job shows time per photograph and time left (DV-8)
+  // -------------------------------------------------------------------------
+  console.log('26. Checking the running job shows time per photograph and time left...');
+  if (await runBtn.isDisabled()) {
+    await dryRunBtn.click();
+    await page.waitForTimeout(200);
+  }
+  await runBtn.click();
+  await page.waitForTimeout(150);
+  // The stub reported 1 of 5 on watching; report 2 of 5 a moment later.
+  await page.evaluate(() => {
+    for (const listener of window.__DEVELOP_STUB__.activeJobListeners) {
+      listener({
+        id: 'timing',
+        kind: 'develop',
+        state: 'running',
+        progress: 2,
+        total: 5,
+        message: 'Developing photo 3/5: DSCF0003.RAF',
+        terminal: false,
+      });
+    }
+  });
+  await page.waitForTimeout(50);
+  const timing26 = await page.locator('[data-testid="job-timing"]').first().textContent().catch(() => null);
+  if (!timing26 || !/s per photograph · about .+ left/.test(timing26)) {
+    failures.push(`A running job must show "… s per photograph · about … left", got "${timing26}"`);
+  }
 } catch (err) {
   failures.push(`Test execution threw: ${err instanceof Error ? err.stack : String(err)}`);
 } finally {
@@ -1078,5 +1109,5 @@ if (failures.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log('\ncheck:develop PASSED: all 25 checks verified successfully.');
+  console.log('\ncheck:develop PASSED: all 26 checks verified successfully.');
 }

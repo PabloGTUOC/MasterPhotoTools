@@ -107,8 +107,90 @@ The full list in `CLAUDE.md`, with counts reported.
 
 ## Report
 
-*(to be filled)*
+Implemented by Claude on 2026-11-13.
+
+**A. In-place fill.**
+- `media::develop::par_map_rgb` replaces the per-pixel `flat_map(..).collect()` at seven sites:
+  `linear_to_developed`, the three render paths in `render.rs`, the two film encoders in `tools/develop.rs`,
+  and the film preview.
+- The X-Trans demosaic and the crop collect whole rows, not pixels, and were left alone.
+
+**Effect, one XZ-1 file, no look:**
+
+| Stage | Before | After |
+|---|---|---|
+| Linear → 16-bit | 0.98 s | **0.03 s** |
+| sRGB + JPEG | 1.52 s | **0.56 s** |
+| Total | 3.00 s | **1.10 s** |
+| Peak memory | 4.1 GB | **1.3 GB** |
+
+**B. Concurrency.**
+- `Concurrency`, `execute_develop_with`, `estimated_peak`, `physical_memory` and `DEFAULT_JOBS` are in
+  `tools/develop.rs`. Workers are `std::thread::scope` threads fed by a channel.
+- **One fix found by a test.** Test 4 first failed with three photographs read ahead under a budget of one:
+  a finished photograph was held until the next had been read. The executor now writes ready photographs
+  first.
+- **Wiring:** desktop `apply_develop` and automation `run_develop` use `for_this_machine(DEFAULT_JOBS)`.
+- **Dependency:** `libc` 0.2.189 is added to `rollchrome-core` for `sysconf`. It was already in
+  `Cargo.lock` through other crates (G8).
+
+**Benchmark, the six XZ-1 ORFs, JPEG, noise reduction 25:**
+
+| At once | No look: photos/min | No look: peak | Portra 400: photos/min | Portra 400: peak |
+|---|---|---|---|---|
+| Before DV-8 | 19.7 | 4.95 GB | 19.9 | 4.07 GB |
+| 1 | 44.3 | 1.47 GB | 27.3 | 2.11 GB |
+| 2 | 56.0 | 2.69 GB | 36.3 | 3.55 GB |
+| 3 | 70.9 | 3.54 GB | 49.9 | 4.72 GB |
+| **4** | **89.6** | 4.52 GB | **58.3** | 5.73 GB |
+| 5 | 81.4 | 5.16 GB | 54.6 | 6.46 GB |
+
+So `DEFAULT_JOBS = 4`. Against the code before DV-8:
+- **No look:** 3.05 → 0.67 s per photograph, **4.5× faster**.
+- **Portra 400:** 3.02 → 1.03 s per photograph, **2.9× faster**.
+
+**C.** `JobProgress` gained the optional `timingItem` prop, and Develop sets it.
+
+**Gates** (`gate-dv8.log`)
+
+| Gate | Result |
+|---|---|
+| fmt / clippy / build | rc 0 |
+| `--workspace` | **1330 passed**, 0 failed, 4 ignored |
+| `phototools-core` | 714 |
+| `rollchrome-core` | **469** (461 + 8) |
+| `--features film` | **482 passed, 2 ignored** (474 + 8) |
+| `phototools-desktop` | 26 |
+| `rollchrome-desktop` | 29 |
+| `rollchrome-cli` | 8 |
+| `check:develop` | **26 / 26** |
+| Every other `check:*`, the web and desktop builds | pass |
+| Web `check:layout` (it renders the shared `JobProgress`) | 12 routes clean at 390 px |
+| Film GPU budget test | 65.5 ms warm preview |
+
+**Unverified**
+- **Larger files.** No 40 MP X100VI or D60 NEF was measured. The memory estimate for them is extrapolated
+  from the 10 MP ORF and the 24 MP RAF.
+- **Film grain with several photographs at once.** It was not compared byte for byte with one-at-a-time:
+  the film tests check one photograph, and the concurrency tests use neutral and LUT looks. Each film render
+  takes the backend lock and its own pipeline clone, so no state is shared.
 
 ## Review
 
-*(to be filled)*
+**Approved**, with the caveat that **the reviewer wrote the code**, so this is not an independent review.
+
+**What was checked**
+- **Gates:** run on the branch, not taken from the report.
+- **Byte-identical output (G7):** every pre-existing test passes unchanged, including the tests comparing
+  `execute_develop` bytes to `develop()` + `render()`. Test 1 shows four at once gives the same bytes and
+  calls as one at a time.
+- **G4:** the store, and so the one exiftool, is used only on the calling thread. Test 2 pins the
+  sequential call order.
+- **G10:** a worker panic becomes that photograph's failure. Test 6 covers a failing photograph mid-run.
+  There is no `unwrap` on a shipped path. The one `unsafe` block is the `sysconf` call, documented.
+- **G8:** `libc` is recorded above and in `Cargo.toml`.
+- **G11:** the in-place fill was not in the rescope plan's DV-8 wording. It is in this brief because the
+  measurement found it, and it is the larger part of the gain. Edit's own `flat_map` sites (`tools/edit.rs`)
+  were left alone, since Edit is frozen.
+
+**For the owner:** MV-42.

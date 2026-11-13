@@ -1196,6 +1196,7 @@ onMounted(async () => {
       <JobProgress
         :job-id="jobId"
         :can-cancel="true"
+        timing-item="photograph"
         @cancel="handleCancelJob"
         @done="handleJobDone"
       />

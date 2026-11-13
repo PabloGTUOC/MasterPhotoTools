@@ -5,7 +5,6 @@
 
 use image::DynamicImage;
 use phototools_core::error::Error;
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::media::develop::colour;
@@ -124,85 +123,82 @@ pub(crate) fn render_srgb8_image(developed: &Developed, look: Option<&Look>) -> 
     let m = colour::prophoto_to_srgb_matrix();
 
     let raw_u16 = developed.image.as_raw();
-    let u8_data: Vec<u8> = raw_u16
-        .par_chunks_exact(3)
-        .flat_map(|pixel| {
-            match look {
-                None => {
-                    let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
-                    let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
-                    let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
+    let u8_data: Vec<u8> = super::par_map_rgb(raw_u16.as_chunks::<3>().0, |pixel| {
+        match look {
+            None => {
+                let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
+                let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
+                let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
 
-                    let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
-                    let s = [
-                        linear_to_srgb(srgb_lin[0]),
-                        linear_to_srgb(srgb_lin[1]),
-                        linear_to_srgb(srgb_lin[2]),
-                    ];
+                let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
+                let s = [
+                    linear_to_srgb(srgb_lin[0]),
+                    linear_to_srgb(srgb_lin[1]),
+                    linear_to_srgb(srgb_lin[2]),
+                ];
 
-                    [
-                        (s[0] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        (s[1] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        (s[2] * 255.0).round().clamp(0.0, 255.0) as u8,
-                    ]
-                }
-                Some(look) if look.space == LookSpace::Srgb => {
-                    let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
-                    let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
-                    let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
-
-                    let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
-                    let mut s = [
-                        linear_to_srgb(srgb_lin[0]),
-                        linear_to_srgb(srgb_lin[1]),
-                        linear_to_srgb(srgb_lin[2]),
-                    ];
-
-                    let sampled = look.lut.sample(s);
-                    s[0] = sampled[0].clamp(0.0, 1.0);
-                    s[1] = sampled[1].clamp(0.0, 1.0);
-                    s[2] = sampled[2].clamp(0.0, 1.0);
-
-                    [
-                        (s[0] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        (s[1] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        (s[2] * 255.0).round().clamp(0.0, 255.0) as u8,
-                    ]
-                }
-                Some(look) => {
-                    // ProPhoto look: sample in ROMM ProPhoto space, then convert looked ProPhoto to sRGB
-                    let in_pro = [
-                        pixel[0] as f32 / 65535.0,
-                        pixel[1] as f32 / 65535.0,
-                        pixel[2] as f32 / 65535.0,
-                    ];
-                    let sampled = look.lut.sample(in_pro);
-                    let pro_enc = [
-                        sampled[0].clamp(0.0, 1.0),
-                        sampled[1].clamp(0.0, 1.0),
-                        sampled[2].clamp(0.0, 1.0),
-                    ];
-
-                    let r_lin = tone::prophoto_decode(pro_enc[0]);
-                    let g_lin = tone::prophoto_decode(pro_enc[1]);
-                    let b_lin = tone::prophoto_decode(pro_enc[2]);
-
-                    let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
-                    let s = [
-                        linear_to_srgb(srgb_lin[0]),
-                        linear_to_srgb(srgb_lin[1]),
-                        linear_to_srgb(srgb_lin[2]),
-                    ];
-
-                    [
-                        (s[0] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        (s[1] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        (s[2] * 255.0).round().clamp(0.0, 255.0) as u8,
-                    ]
-                }
+                [
+                    (s[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    (s[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    (s[2] * 255.0).round().clamp(0.0, 255.0) as u8,
+                ]
             }
-        })
-        .collect();
+            Some(look) if look.space == LookSpace::Srgb => {
+                let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
+                let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
+                let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
+
+                let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
+                let mut s = [
+                    linear_to_srgb(srgb_lin[0]),
+                    linear_to_srgb(srgb_lin[1]),
+                    linear_to_srgb(srgb_lin[2]),
+                ];
+
+                let sampled = look.lut.sample(s);
+                s[0] = sampled[0].clamp(0.0, 1.0);
+                s[1] = sampled[1].clamp(0.0, 1.0);
+                s[2] = sampled[2].clamp(0.0, 1.0);
+
+                [
+                    (s[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    (s[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    (s[2] * 255.0).round().clamp(0.0, 255.0) as u8,
+                ]
+            }
+            Some(look) => {
+                // ProPhoto look: sample in ROMM ProPhoto space, then convert looked ProPhoto to sRGB
+                let in_pro = [
+                    pixel[0] as f32 / 65535.0,
+                    pixel[1] as f32 / 65535.0,
+                    pixel[2] as f32 / 65535.0,
+                ];
+                let sampled = look.lut.sample(in_pro);
+                let pro_enc = [
+                    sampled[0].clamp(0.0, 1.0),
+                    sampled[1].clamp(0.0, 1.0),
+                    sampled[2].clamp(0.0, 1.0),
+                ];
+
+                let r_lin = tone::prophoto_decode(pro_enc[0]);
+                let g_lin = tone::prophoto_decode(pro_enc[1]);
+                let b_lin = tone::prophoto_decode(pro_enc[2]);
+
+                let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
+                let s = [
+                    linear_to_srgb(srgb_lin[0]),
+                    linear_to_srgb(srgb_lin[1]),
+                    linear_to_srgb(srgb_lin[2]),
+                ];
+
+                [
+                    (s[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    (s[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    (s[2] * 255.0).round().clamp(0.0, 255.0) as u8,
+                ]
+            }
+        }
+    });
 
     image::RgbImage::from_raw(w, h, u8_data).unwrap_or_else(|| image::RgbImage::new(w, h))
 }
@@ -216,65 +212,59 @@ pub fn render_tiff_u16(developed: &Developed, look: &Look) -> Vec<u16> {
             let m_pro_to_srgb = colour::prophoto_to_srgb_matrix();
             let m_srgb_to_pro = colour::srgb_to_prophoto_matrix();
 
-            raw_u16
-                .par_chunks_exact(3)
-                .flat_map(|pixel| {
-                    let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
-                    let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
-                    let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
+            super::par_map_rgb(raw_u16.as_chunks::<3>().0, |pixel| {
+                let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
+                let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
+                let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
 
-                    let srgb_lin = colour::mul_3x3_vec(m_pro_to_srgb, [r_lin, g_lin, b_lin]);
-                    let s_in = [
-                        linear_to_srgb(srgb_lin[0]),
-                        linear_to_srgb(srgb_lin[1]),
-                        linear_to_srgb(srgb_lin[2]),
-                    ];
-
-                    let sampled = look.lut.sample(s_in);
-                    let s_out = [
-                        sampled[0].clamp(0.0, 1.0),
-                        sampled[1].clamp(0.0, 1.0),
-                        sampled[2].clamp(0.0, 1.0),
-                    ];
-
-                    let lin_srgb = [
-                        srgb_to_linear(s_out[0]),
-                        srgb_to_linear(s_out[1]),
-                        srgb_to_linear(s_out[2]),
-                    ];
-
-                    let lin_pro = colour::mul_3x3_vec(m_srgb_to_pro, lin_srgb);
-                    let mut out = [0u16; 3];
-                    for c in 0..3 {
-                        let enc = tone::prophoto_encode(lin_pro[c].max(0.0));
-                        out[c] = (enc * 65535.0).round().clamp(0.0, 65535.0) as u16;
-                    }
-                    out
-                })
-                .collect()
-        }
-        LookSpace::ProPhoto => raw_u16
-            .par_chunks_exact(3)
-            .flat_map(|pixel| {
-                let in_pro = [
-                    pixel[0] as f32 / 65535.0,
-                    pixel[1] as f32 / 65535.0,
-                    pixel[2] as f32 / 65535.0,
+                let srgb_lin = colour::mul_3x3_vec(m_pro_to_srgb, [r_lin, g_lin, b_lin]);
+                let s_in = [
+                    linear_to_srgb(srgb_lin[0]),
+                    linear_to_srgb(srgb_lin[1]),
+                    linear_to_srgb(srgb_lin[2]),
                 ];
-                let sampled = look.lut.sample(in_pro);
-                [
-                    (sampled[0].clamp(0.0, 1.0) * 65535.0)
-                        .round()
-                        .clamp(0.0, 65535.0) as u16,
-                    (sampled[1].clamp(0.0, 1.0) * 65535.0)
-                        .round()
-                        .clamp(0.0, 65535.0) as u16,
-                    (sampled[2].clamp(0.0, 1.0) * 65535.0)
-                        .round()
-                        .clamp(0.0, 65535.0) as u16,
-                ]
+
+                let sampled = look.lut.sample(s_in);
+                let s_out = [
+                    sampled[0].clamp(0.0, 1.0),
+                    sampled[1].clamp(0.0, 1.0),
+                    sampled[2].clamp(0.0, 1.0),
+                ];
+
+                let lin_srgb = [
+                    srgb_to_linear(s_out[0]),
+                    srgb_to_linear(s_out[1]),
+                    srgb_to_linear(s_out[2]),
+                ];
+
+                let lin_pro = colour::mul_3x3_vec(m_srgb_to_pro, lin_srgb);
+                let mut out = [0u16; 3];
+                for c in 0..3 {
+                    let enc = tone::prophoto_encode(lin_pro[c].max(0.0));
+                    out[c] = (enc * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                }
+                out
             })
-            .collect(),
+        }
+        LookSpace::ProPhoto => super::par_map_rgb(raw_u16.as_chunks::<3>().0, |pixel| {
+            let in_pro = [
+                pixel[0] as f32 / 65535.0,
+                pixel[1] as f32 / 65535.0,
+                pixel[2] as f32 / 65535.0,
+            ];
+            let sampled = look.lut.sample(in_pro);
+            [
+                (sampled[0].clamp(0.0, 1.0) * 65535.0)
+                    .round()
+                    .clamp(0.0, 65535.0) as u16,
+                (sampled[1].clamp(0.0, 1.0) * 65535.0)
+                    .round()
+                    .clamp(0.0, 65535.0) as u16,
+                (sampled[2].clamp(0.0, 1.0) * 65535.0)
+                    .round()
+                    .clamp(0.0, 65535.0) as u16,
+            ]
+        }),
     }
 }
 

@@ -205,16 +205,13 @@ impl DevelopPreview {
                 effective_dir,
             )?;
 
-            let u8_data: Vec<u8> = rendered_pixels
-                .into_par_iter()
-                .flat_map(|p| {
-                    [
-                        (p[0] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        (p[1] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        (p[2] * 255.0).round().clamp(0.0, 255.0) as u8,
-                    ]
-                })
-                .collect();
+            let u8_data: Vec<u8> = super::par_map_rgb(&rendered_pixels, |p| {
+                [
+                    (p[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    (p[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    (p[2] * 255.0).round().clamp(0.0, 255.0) as u8,
+                ]
+            });
             let srgb_img = image::RgbImage::from_raw(source.width, source.height, u8_data)
                 .ok_or_else(|| Error::Internal("failed to build preview image buffer".into()))?;
             let dyn_img = image::DynamicImage::ImageRgb8(srgb_img);

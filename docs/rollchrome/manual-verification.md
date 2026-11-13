@@ -446,3 +446,17 @@ the automated check drives the screen against a stub.
       **Run:** in Develop, choose each stock for a photograph, press Save as LUT, then load the file from `Developed` in Photomator on the same photograph's JPEG.
       **Pass:** Photomator accepts both files. The colours match Rollchrome's grain-off preview by eye. 500T neutral is not blue on a daylight photograph.
       **Result:**
+
+## MV-41 — Developing many RAW files, with and without a look (DV-7)
+
+[`develop-plan.md`](../develop-plan.md), done. Needs a Mac running Rollchrome and a folder of the owner's RAW files.
+
+- [ ] **MV-41.1 — Develop a folder with no film look.**
+      **Run:** open a folder of ORF, NEF or RAF files in Develop, leave every photograph on "None (neutral)", set Skip on one, dry run, then Develop.
+      **Pass:** every photograph except the skipped one has a JPEG in `Developed`, with no film look. The skipped one has none.
+      **Result:**
+- [ ] **MV-41.2 — JPEG + TIFF, a long edge and an output folder.**
+      **Run:** choose JPEG + TIFF, long edge 2048 and an output folder elsewhere inside the roots, give some photographs a film stock, then develop.
+      **Pass:** each photograph has a `.jpg` and a `.tif` in the chosen folder, both 2048 px on the long edge, with the capture date and camera in their metadata. Nothing new is created in `Developed`. The film photographs' grain looks as fine as at full size, not coarser.
+      **Result:**
+

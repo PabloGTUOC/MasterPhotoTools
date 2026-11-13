@@ -16,8 +16,10 @@ use phototools_core::tools::Skip;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::media::develop::preview::resize_linear;
 use crate::media::develop::{
-    develop_linear, linear_to_developed, reduce_noise, render, DevelopOptions, Look, OutputFormat,
+    develop_linear, linear_to_developed, reduce_noise, render_sized, DevelopOptions, Look,
+    OutputFormat,
 };
 use crate::media::film::{render_film, FilmBackend, FilmOutput, Grain};
 
@@ -38,6 +40,45 @@ pub struct DevelopItem {
     pub noise_reduction: f32,
 }
 
+/// The reserved look id that develops a photograph with no look applied (DV-7).
+///
+/// Distinct from `look: None`, which leaves the photograph out of the run: "develop it plainly" and
+/// "not this one" are different requests, and before DV-7 the second was the only one reachable.
+pub const NEUTRAL_LOOK: &str = "neutral";
+
+/// Where and how a run writes its outputs (DV-7). The default is what Develop always did: one
+/// format, full size, into `Developed` beside the photographs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DevelopOutput {
+    /// Also write a 16-bit TIFF beside each JPEG, from the same development.
+    #[serde(default)]
+    pub also_tiff: bool,
+    /// Downscale so the long edge is at most this many pixels; `None` keeps the full size.
+    #[serde(default)]
+    pub long_edge: Option<u32>,
+    /// The output folder. `None` is `Developed` beside the photographs. Callers resolve and check it
+    /// against the roots (G6) before planning; the plan records the resolved path.
+    #[serde(default)]
+    pub folder: Option<String>,
+}
+
+impl DevelopOutput {
+    /// Refuses settings that cannot mean anything, before any planning.
+    pub fn check(&self, format: OutputFormat) -> Result<(), Error> {
+        if self.long_edge == Some(0) {
+            return Err(Error::Refused(
+                "the long edge must be at least 1 pixel".to_string(),
+            ));
+        }
+        if self.also_tiff && matches!(format, OutputFormat::Tiff) {
+            return Err(Error::Refused(
+                "the format is already TIFF; JPEG + TIFF needs the JPEG format".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// A planned development step for one photograph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevelopAction {
@@ -51,14 +92,37 @@ pub struct DevelopAction {
     /// Noise reduction amount (0.0..=100.0, default 0.0) (DV-5).
     #[serde(default)]
     pub noise_reduction: f32,
+    /// The second output's file name, when the plan writes JPEG + TIFF (DV-7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub also_output: Option<String>,
 }
 
 /// Result of planning a folder's development.
+///
+/// The DV-7 fields are skipped when unset, so a plan made with the default output serialises
+/// exactly as before, and an automation's reviewed `plan_sha256` stays valid.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevelopPlan {
     pub format: OutputFormat,
     pub actions: Vec<DevelopAction>,
     pub skipped: Vec<Skip>,
+    /// A second format written beside the first (always TIFF, after a JPEG) (DV-7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub also: Option<OutputFormat>,
+    /// Long edge the outputs are downscaled to (DV-7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long_edge: Option<u32>,
+    /// The output folder, when it is not `Developed` beside the photographs (DV-7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_folder: Option<String>,
+}
+
+/// How a message names an output: `Developed/x.jpg`, as it always has, or `x.jpg in <folder>`.
+fn destination(folder: Option<&str>, output: &str) -> String {
+    match folder {
+        None => format!("Developed/{output}"),
+        Some(folder) => format!("{output} in {folder}"),
+    }
 }
 
 /// Summary of a development run.
@@ -101,12 +165,26 @@ pub trait DevelopStore {
     fn finish(&mut self) {}
 }
 
-/// Plans folder development without performing I/O.
+/// Plans folder development without performing I/O, with the default output.
 ///
 /// Items are evaluated in byte order of `name`.
 pub fn plan_develop(
     items: &[DevelopItem],
     format: OutputFormat,
+    existing_outputs: &BTreeSet<String>,
+) -> DevelopPlan {
+    plan_develop_with(items, format, &DevelopOutput::default(), existing_outputs)
+}
+
+/// Plans folder development with output settings (DV-7). `output` is assumed to have passed
+/// [`DevelopOutput::check`]; `also_tiff` with a TIFF format writes the one TIFF.
+///
+/// A photograph is skipped when **either** of its outputs already exists: writing the other alone
+/// would leave a pair that came from two different runs, possibly with two different looks.
+pub fn plan_develop_with(
+    items: &[DevelopItem],
+    format: OutputFormat,
+    output: &DevelopOutput,
     existing_outputs: &BTreeSet<String>,
 ) -> DevelopPlan {
     let mut sorted_items = items.to_vec();
@@ -115,10 +193,15 @@ pub fn plan_develop(
     let mut actions = Vec::new();
     let mut skipped = Vec::new();
     let mut planned_outputs: HashMap<String, String> = HashMap::new();
+    let folder = output.folder.as_deref();
 
     let ext = match format {
         OutputFormat::Jpeg { .. } => "jpg",
         OutputFormat::Tiff => "tif",
+    };
+    let also = match format {
+        OutputFormat::Jpeg { .. } if output.also_tiff => Some(OutputFormat::Tiff),
+        _ => None,
     };
 
     for item in sorted_items {
@@ -176,35 +259,51 @@ pub fn plan_develop(
             Some(idx) => &item.name[..idx],
             None => &item.name,
         };
-        let output = format!("{stem}.{ext}");
-        let lower_output = output.to_lowercase();
+        let output_name = format!("{stem}.{ext}");
+        let also_output = also.map(|_| format!("{stem}.tif"));
+        let names: Vec<&String> = std::iter::once(&output_name)
+            .chain(also_output.as_ref())
+            .collect();
 
-        // Check if output file already exists on disk
-        if existing_outputs.contains(&lower_output) {
+        // Check if an output file already exists on disk
+        if let Some(taken) = names
+            .iter()
+            .find(|n| existing_outputs.contains(&n.to_lowercase()))
+        {
             skipped.push(Skip {
                 file: item.name,
-                reason: format!("Developed/{output} already exists"),
+                reason: format!("{} already exists", destination(folder, taken)),
             });
             continue;
         }
 
         // Check if an earlier planned item produces the same output
-        if let Some(earlier_source) = planned_outputs.get(&lower_output) {
+        if let Some((taken, earlier_source)) = names.iter().find_map(|n| {
+            planned_outputs
+                .get(&n.to_lowercase())
+                .map(|earlier| (n, earlier))
+        }) {
             skipped.push(Skip {
                 file: item.name,
-                reason: format!("{earlier_source} already develops to Developed/{output}"),
+                reason: format!(
+                    "{earlier_source} already develops to {}",
+                    destination(folder, taken)
+                ),
             });
             continue;
         }
 
-        planned_outputs.insert(lower_output, item.name.clone());
+        for n in &names {
+            planned_outputs.insert(n.to_lowercase(), item.name.clone());
+        }
         actions.push(DevelopAction {
             source: item.name,
-            output,
+            output: output_name,
             look: look.clone(),
             exposure_ev: item.exposure_ev,
             grain: item.grain,
             noise_reduction: item.noise_reduction,
+            also_output,
         });
     }
 
@@ -212,21 +311,32 @@ pub fn plan_develop(
         format,
         actions,
         skipped,
+        also,
+        long_edge: output.long_edge,
+        output_folder: output.folder.clone(),
     }
 }
 
 /// A resolved look for development: either a 3D LUT look or a film stock (DV-4).
 #[derive(Debug, Clone)]
 pub enum ResolvedLook {
+    /// No look: the neutral development itself (DV-7).
+    Neutral,
     Look(Look),
-    Film { stock: String },
+    Film {
+        stock: String,
+    },
 }
 
 /// Resolves a look identifier into a `ResolvedLook` (RP-1, DV-4).
 ///
 /// Resolves `film:<stock>`, `builtin:<id>`, and custom LUT identifiers from `DevelopStore::look`.
 pub fn resolve_look(id: &str, store: &dyn DevelopStore) -> Result<ResolvedLook, Error> {
-    if let Some(stock) = id.strip_prefix("film:") {
+    // Before the library: a LUT the owner happened to call "neutral" must not change what the
+    // reserved id means on another machine.
+    if id == NEUTRAL_LOOK {
+        Ok(ResolvedLook::Neutral)
+    } else if let Some(stock) = id.strip_prefix("film:") {
         #[cfg(feature = "film")]
         {
             if crate::media::film::FILM_STOCKS
@@ -254,7 +364,170 @@ pub fn resolve_look(id: &str, store: &dyn DevelopStore) -> Result<ResolvedLook, 
     }
 }
 
-/// Executes a development plan sequentially.
+/// One encoded output of one photograph, ready to write.
+struct Encoded {
+    format: OutputFormat,
+    output: String,
+    bytes: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+/// Develops one photograph and encodes every output the plan asks for (DV-7).
+///
+/// The RAW is decoded and denoised once. A LUT or neutral look renders once per format from the
+/// same development; a film look renders once per format, because spektrafilm produces sRGB for the
+/// JPEG and linear ProPhoto for the TIFF. A long edge downscales after the look, so film grain is
+/// rendered on the full frame and keeps its scale.
+fn develop_one(
+    action: &DevelopAction,
+    look: &ResolvedLook,
+    raw_bytes: &[u8],
+    plan: &DevelopPlan,
+    film_data_dir: Option<&Path>,
+) -> Result<Vec<Encoded>, String> {
+    let outputs: Vec<(OutputFormat, String)> =
+        std::iter::once((plan.format, action.output.clone()))
+            .chain(plan.also.zip(action.also_output.clone()))
+            .collect();
+
+    // A film look takes exposure inside the simulation, as light reaching the negative; a LUT or
+    // neutral development takes it on the linear data.
+    let exposure_ev = match look {
+        ResolvedLook::Film { .. } => 0.0,
+        _ => action.exposure_ev,
+    };
+    let linear =
+        develop_linear(raw_bytes, &DevelopOptions { exposure_ev }).map_err(|e| e.to_string())?;
+    let denoised = reduce_noise(
+        linear.width,
+        linear.height,
+        &linear.pixels,
+        action.noise_reduction,
+        1.0,
+    );
+
+    let mut encoded = Vec::with_capacity(outputs.len());
+    match look {
+        ResolvedLook::Neutral | ResolvedLook::Look(_) => {
+            let look = match look {
+                ResolvedLook::Look(l) => Some(l),
+                _ => None,
+            };
+            let developed = linear_to_developed(
+                linear.width,
+                linear.height,
+                &denoised,
+                linear.orientation,
+                linear.demosaic,
+            )
+            .map_err(|e| e.to_string())?;
+            for (format, output) in outputs {
+                let r = render_sized(&developed, look, format, plan.long_edge)
+                    .map_err(|e| e.to_string())?;
+                encoded.push(Encoded {
+                    format,
+                    output,
+                    bytes: r.bytes,
+                    width: r.width,
+                    height: r.height,
+                });
+            }
+        }
+        ResolvedLook::Film { stock } => {
+            // No silent default: a store that cannot say where film data lives must not
+            // have it written somewhere the user never chose (G10).
+            let Some(data_dir) = film_data_dir else {
+                return Err("no folder for the film simulation data was given".to_string());
+            };
+            for (format, output) in outputs {
+                let (film_output, quality) = match format {
+                    OutputFormat::Jpeg { quality } => {
+                        if !(1..=100).contains(&quality) {
+                            return Err(format!("JPEG quality {quality} is outside 1..=100"));
+                        }
+                        (FilmOutput::Srgb, Some(quality))
+                    }
+                    OutputFormat::Tiff => (FilmOutput::ProPhotoLinear, None),
+                };
+                let rendered = render_film(
+                    &denoised,
+                    linear.width,
+                    linear.height,
+                    stock,
+                    action.grain,
+                    action.exposure_ev,
+                    film_output,
+                    FilmBackend::Auto,
+                    data_dir,
+                )
+                .map_err(|e| e.to_string())?;
+                let (width, height, pixels) = match plan.long_edge {
+                    None => (linear.width, linear.height, rendered),
+                    Some(edge) => resize_linear(linear.width, linear.height, &rendered, edge)
+                        .map_err(|e| e.to_string())?,
+                };
+                let bytes = match quality {
+                    Some(quality) => encode_film_jpeg(width, height, pixels, quality)?,
+                    None => encode_film_tiff(width, height, pixels)?,
+                };
+                encoded.push(Encoded {
+                    format,
+                    output,
+                    bytes,
+                    width,
+                    height,
+                });
+            }
+        }
+    }
+    Ok(encoded)
+}
+
+/// Encodes a film render's display sRGB as an 8-bit JPEG.
+fn encode_film_jpeg(
+    width: u32,
+    height: u32,
+    pixels: Vec<[f32; 3]>,
+    quality: u8,
+) -> Result<Vec<u8>, String> {
+    let u8_data: Vec<u8> = pixels
+        .into_par_iter()
+        .flat_map(|p| {
+            [
+                (p[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+                (p[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+                (p[2] * 255.0).round().clamp(0.0, 255.0) as u8,
+            ]
+        })
+        .collect();
+    let img = image::RgbImage::from_raw(width, height, u8_data)
+        .ok_or_else(|| "failed to create RgbImage buffer".to_string())?;
+    let opts = phototools_core::media::jpeg::JpegOptions::deliverable(quality);
+    phototools_core::media::jpeg::encode(&image::DynamicImage::ImageRgb8(img), &opts)
+        .map_err(|e| e.to_string())
+}
+
+/// Encodes a film render's linear ProPhoto as a 16-bit TIFF with its ICC profile.
+fn encode_film_tiff(width: u32, height: u32, pixels: Vec<[f32; 3]>) -> Result<Vec<u8>, String> {
+    let u16_data: Vec<u16> = pixels
+        .into_par_iter()
+        .flat_map(|p| {
+            let mut out = [0u16; 3];
+            for c in 0..3 {
+                let enc = crate::media::develop::tone::prophoto_encode(p[c].max(0.0));
+                out[c] = (enc * 65535.0).round().clamp(0.0, 65535.0) as u16;
+            }
+            out
+        })
+        .collect();
+    let icc_profile =
+        crate::media::develop::render::prophoto_icc_profile().map_err(|e| e.to_string())?;
+    crate::media::develop::render::encode_tiff(width, height, &u16_data, &icc_profile)
+        .map_err(|e| e.to_string())
+}
+
+/// Executes a development plan, one photograph after another.
 pub fn execute_develop(
     plan: DevelopPlan,
     store: &mut dyn DevelopStore,
@@ -263,14 +536,14 @@ pub fn execute_develop(
     let total = plan.actions.len() as u64;
     let mut summary = DevelopSummary {
         developed: Vec::new(),
-        skipped: plan.skipped,
+        skipped: plan.skipped.clone(),
         failures: Vec::new(),
         metadata_skipped: Vec::new(),
     };
 
     let mut look_cache: HashMap<String, Result<ResolvedLook, String>> = HashMap::new();
 
-    for (done, action) in plan.actions.into_iter().enumerate() {
+    for (done, action) in plan.actions.iter().enumerate() {
         if progress.cancelled() {
             break;
         }
@@ -279,12 +552,11 @@ pub fn execute_develop(
         let look_res = look_cache
             .entry(action.look.clone())
             .or_insert_with(|| resolve_look(&action.look, store).map_err(|e| e.to_string()));
-
         let look = match look_res {
-            Ok(l) => l,
+            Ok(l) => l.clone(),
             Err(reason) => {
                 summary.failures.push(Skip {
-                    file: action.source,
+                    file: action.source.clone(),
                     reason: reason.clone(),
                 });
                 continue;
@@ -295,326 +567,56 @@ pub fn execute_develop(
             Ok(b) => b,
             Err(e) => {
                 summary.failures.push(Skip {
-                    file: action.source,
+                    file: action.source.clone(),
                     reason: e.to_string(),
                 });
                 continue;
             }
         };
 
-        match look {
-            ResolvedLook::Look(look) => {
-                let linear = match develop_linear(
-                    &raw_bytes,
-                    &DevelopOptions {
-                        exposure_ev: action.exposure_ev,
-                    },
-                ) {
-                    Ok(l) => l,
-                    Err(e) => {
-                        summary.failures.push(Skip {
-                            file: action.source,
-                            reason: e.to_string(),
-                        });
-                        continue;
-                    }
-                };
-
-                let denoised_pixels = reduce_noise(
-                    linear.width,
-                    linear.height,
-                    &linear.pixels,
-                    action.noise_reduction,
-                    1.0,
-                );
-
-                let developed = match linear_to_developed(
-                    linear.width,
-                    linear.height,
-                    &denoised_pixels,
-                    linear.orientation,
-                    linear.demosaic,
-                ) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        summary.failures.push(Skip {
-                            file: action.source,
-                            reason: e.to_string(),
-                        });
-                        continue;
-                    }
-                };
-
-                let rendered = match render(&developed, Some(look), plan.format) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        summary.failures.push(Skip {
-                            file: action.source,
-                            reason: e.to_string(),
-                        });
-                        continue;
-                    }
-                };
-
-                match store.create_new(&action.output, &rendered.bytes) {
-                    Ok(()) => {}
-                    Err(Error::Refused(reason)) => {
-                        summary.skipped.push(Skip {
-                            file: action.source,
-                            reason,
-                        });
-                        continue;
-                    }
-                    Err(e) => {
-                        summary.failures.push(Skip {
-                            file: action.source,
-                            reason: e.to_string(),
-                        });
-                        continue;
-                    }
-                }
-
-                summary.developed.push(action.output.clone());
-
-                if let Err(e) = store.carry_metadata(
-                    &action.source,
-                    &action.output,
-                    rendered.width,
-                    rendered.height,
-                    plan.format,
-                ) {
-                    summary.metadata_skipped.push(Skip {
-                        file: action.source,
-                        reason: e.to_string(),
-                    });
-                }
+        let encoded = match develop_one(action, &look, &raw_bytes, &plan, store.film_data_dir()) {
+            Ok(e) => e,
+            Err(reason) => {
+                summary.failures.push(Skip {
+                    file: action.source.clone(),
+                    reason,
+                });
+                continue;
             }
-            ResolvedLook::Film { stock } => {
-                let linear = match develop_linear(&raw_bytes, &DevelopOptions { exposure_ev: 0.0 })
-                {
-                    Ok(l) => l,
-                    Err(e) => {
-                        summary.failures.push(Skip {
-                            file: action.source,
-                            reason: e.to_string(),
-                        });
-                        continue;
-                    }
-                };
+        };
 
-                let denoised_pixels = reduce_noise(
-                    linear.width,
-                    linear.height,
-                    &linear.pixels,
-                    action.noise_reduction,
-                    1.0,
-                );
-
-                // No silent default: a store that cannot say where film data lives must not
-                // have it written somewhere the user never chose (G10).
-                let Some(data_dir) = store.film_data_dir() else {
-                    summary.failures.push(Skip {
-                        file: action.source,
-                        reason: "no folder for the film simulation data was given".to_string(),
+        for out in encoded {
+            match store.create_new(&out.output, &out.bytes) {
+                Ok(()) => {}
+                Err(Error::Refused(reason)) => {
+                    summary.skipped.push(Skip {
+                        file: action.source.clone(),
+                        reason,
                     });
                     continue;
-                };
-
-                match plan.format {
-                    OutputFormat::Jpeg { quality } => {
-                        if !(1..=100).contains(&quality) {
-                            summary.failures.push(Skip {
-                                file: action.source,
-                                reason: format!("JPEG quality {quality} is outside 1..=100"),
-                            });
-                            continue;
-                        }
-
-                        let rendered_pixels = match render_film(
-                            &denoised_pixels,
-                            linear.width,
-                            linear.height,
-                            stock,
-                            action.grain,
-                            action.exposure_ev,
-                            FilmOutput::Srgb,
-                            FilmBackend::Auto,
-                            data_dir,
-                        ) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                summary.failures.push(Skip {
-                                    file: action.source,
-                                    reason: e.to_string(),
-                                });
-                                continue;
-                            }
-                        };
-
-                        let u8_data: Vec<u8> = rendered_pixels
-                            .into_par_iter()
-                            .flat_map(|p| {
-                                [
-                                    (p[0] * 255.0).round().clamp(0.0, 255.0) as u8,
-                                    (p[1] * 255.0).round().clamp(0.0, 255.0) as u8,
-                                    (p[2] * 255.0).round().clamp(0.0, 255.0) as u8,
-                                ]
-                            })
-                            .collect();
-                        let srgb_img =
-                            match image::RgbImage::from_raw(linear.width, linear.height, u8_data) {
-                                Some(img) => img,
-                                None => {
-                                    summary.failures.push(Skip {
-                                        file: action.source,
-                                        reason: "failed to create RgbImage buffer".to_string(),
-                                    });
-                                    continue;
-                                }
-                            };
-                        let dyn_img = image::DynamicImage::ImageRgb8(srgb_img);
-                        let opts = phototools_core::media::jpeg::JpegOptions::deliverable(quality);
-                        let bytes = match phototools_core::media::jpeg::encode(&dyn_img, &opts) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                summary.failures.push(Skip {
-                                    file: action.source,
-                                    reason: e.to_string(),
-                                });
-                                continue;
-                            }
-                        };
-
-                        match store.create_new(&action.output, &bytes) {
-                            Ok(()) => {}
-                            Err(Error::Refused(reason)) => {
-                                summary.skipped.push(Skip {
-                                    file: action.source,
-                                    reason,
-                                });
-                                continue;
-                            }
-                            Err(e) => {
-                                summary.failures.push(Skip {
-                                    file: action.source,
-                                    reason: e.to_string(),
-                                });
-                                continue;
-                            }
-                        }
-
-                        summary.developed.push(action.output.clone());
-
-                        if let Err(e) = store.carry_metadata(
-                            &action.source,
-                            &action.output,
-                            linear.width,
-                            linear.height,
-                            plan.format,
-                        ) {
-                            summary.metadata_skipped.push(Skip {
-                                file: action.source,
-                                reason: e.to_string(),
-                            });
-                        }
-                    }
-                    OutputFormat::Tiff => {
-                        let rendered_pixels = match render_film(
-                            &denoised_pixels,
-                            linear.width,
-                            linear.height,
-                            stock,
-                            action.grain,
-                            action.exposure_ev,
-                            FilmOutput::ProPhotoLinear,
-                            FilmBackend::Auto,
-                            data_dir,
-                        ) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                summary.failures.push(Skip {
-                                    file: action.source,
-                                    reason: e.to_string(),
-                                });
-                                continue;
-                            }
-                        };
-
-                        let u16_data: Vec<u16> = rendered_pixels
-                            .into_par_iter()
-                            .flat_map(|p| {
-                                let mut out = [0u16; 3];
-                                for c in 0..3 {
-                                    let enc =
-                                        crate::media::develop::tone::prophoto_encode(p[c].max(0.0));
-                                    out[c] = (enc * 65535.0).round().clamp(0.0, 65535.0) as u16;
-                                }
-                                out
-                            })
-                            .collect();
-
-                        let icc_profile =
-                            match crate::media::develop::render::prophoto_icc_profile() {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    summary.failures.push(Skip {
-                                        file: action.source,
-                                        reason: e.to_string(),
-                                    });
-                                    continue;
-                                }
-                            };
-
-                        let bytes = match crate::media::develop::render::encode_tiff(
-                            linear.width,
-                            linear.height,
-                            &u16_data,
-                            &icc_profile,
-                        ) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                summary.failures.push(Skip {
-                                    file: action.source,
-                                    reason: e.to_string(),
-                                });
-                                continue;
-                            }
-                        };
-
-                        match store.create_new(&action.output, &bytes) {
-                            Ok(()) => {}
-                            Err(Error::Refused(reason)) => {
-                                summary.skipped.push(Skip {
-                                    file: action.source,
-                                    reason,
-                                });
-                                continue;
-                            }
-                            Err(e) => {
-                                summary.failures.push(Skip {
-                                    file: action.source,
-                                    reason: e.to_string(),
-                                });
-                                continue;
-                            }
-                        }
-
-                        summary.developed.push(action.output.clone());
-
-                        if let Err(e) = store.carry_metadata(
-                            &action.source,
-                            &action.output,
-                            linear.width,
-                            linear.height,
-                            plan.format,
-                        ) {
-                            summary.metadata_skipped.push(Skip {
-                                file: action.source,
-                                reason: e.to_string(),
-                            });
-                        }
-                    }
                 }
+                Err(e) => {
+                    summary.failures.push(Skip {
+                        file: action.source.clone(),
+                        reason: e.to_string(),
+                    });
+                    continue;
+                }
+            }
+
+            summary.developed.push(out.output.clone());
+
+            if let Err(e) = store.carry_metadata(
+                &action.source,
+                &out.output,
+                out.width,
+                out.height,
+                out.format,
+            ) {
+                summary.metadata_skipped.push(Skip {
+                    file: action.source.clone(),
+                    reason: e.to_string(),
+                });
             }
         }
     }
@@ -1001,6 +1003,7 @@ mod tests {
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
+                    also_output: None,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1009,9 +1012,13 @@ mod tests {
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
+                    also_output: None,
                 },
             ],
             skipped: Vec::new(),
+            also: None,
+            long_edge: None,
+            output_folder: None,
         };
 
         let progress = MockProgress::default();
@@ -1060,6 +1067,7 @@ mod tests {
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
+                    also_output: None,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1068,9 +1076,13 @@ mod tests {
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
+                    also_output: None,
                 },
             ],
             skipped: Vec::new(),
+            also: None,
+            long_edge: None,
+            output_folder: None,
         };
 
         let progress = MockProgress::default();
@@ -1109,6 +1121,7 @@ mod tests {
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
+                    also_output: None,
                 },
                 DevelopAction {
                     source: "good.dng".to_string(),
@@ -1117,9 +1130,13 @@ mod tests {
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
+                    also_output: None,
                 },
             ],
             skipped: Vec::new(),
+            also: None,
+            long_edge: None,
+            output_folder: None,
         };
 
         let progress = MockProgress::default();
@@ -1152,6 +1169,7 @@ mod tests {
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
+                    also_output: None,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1160,9 +1178,13 @@ mod tests {
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
+                    also_output: None,
                 },
             ],
             skipped: Vec::new(),
+            also: None,
+            long_edge: None,
+            output_folder: None,
         };
 
         // Cancel after the first report
@@ -1198,6 +1220,7 @@ mod tests {
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
+                    also_output: None,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1206,9 +1229,13 @@ mod tests {
                     exposure_ev: 0.0,
                     grain: Grain::Fine,
                     noise_reduction: 0.0,
+                    also_output: None,
                 },
             ],
             skipped: Vec::new(),
+            also: None,
+            long_edge: None,
+            output_folder: None,
         };
 
         let progress = MockProgress::default();

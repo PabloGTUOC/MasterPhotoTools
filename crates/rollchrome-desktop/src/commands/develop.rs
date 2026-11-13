@@ -4,11 +4,12 @@
 
 use super::{describe, resolve_input, resolve_output, CommandResult};
 use crate::AppState;
+use phototools_core::config::Config;
 use rollchrome_core::media::develop::OutputFormat;
 use rollchrome_core::media::film::Grain;
 use rollchrome_core::media::looks::builtin::BuiltinLookInfo;
 use rollchrome_core::tools::develop::{
-    plan_develop as core_plan_develop, DevelopItem, DevelopPlan,
+    plan_develop_with as core_plan_develop_with, DevelopItem, DevelopOutput, DevelopPlan,
 };
 use rollchrome_core::tools::develop_folder::FolderStore;
 use tauri::{Manager, State};
@@ -174,9 +175,52 @@ pub fn plan_develop(
     folder: String,
     items: Vec<DevelopItem>,
     format: OutputFormat,
+    output: Option<DevelopOutput>,
     state: State<'_, AppState>,
 ) -> CommandResult<DevelopPlan> {
-    plan_develop_impl(&state, folder, items, format)
+    plan_develop_impl(&state, folder, items, format, output.unwrap_or_default())
+}
+
+/// The input folder and the output folder of a develop run, both resolved against the roots (G6)
+/// and refused on a card (G5). The output is `None` for `Developed` beside the photographs.
+fn develop_folders(
+    config: &Config,
+    folder: &str,
+    output: &DevelopOutput,
+    format: OutputFormat,
+) -> CommandResult<(std::path::PathBuf, Option<std::path::PathBuf>)> {
+    output.check(format).map_err(describe)?;
+    let resolved_folder = resolve_input(config, folder)?;
+    rollchrome_core::tools::develop_folder::refuse_card_folder(
+        &resolved_folder,
+        rollchrome_core::tools::edit::find_volume_root,
+    )
+    .map_err(describe)?;
+    let custom = match &output.folder {
+        None => {
+            let dev_folder = resolved_folder.join("Developed");
+            resolve_output(config, &dev_folder.to_string_lossy())?;
+            None
+        }
+        Some(dir) => {
+            let dir = resolve_output(config, dir)?;
+            rollchrome_core::tools::develop_folder::refuse_card_folder(
+                &dir,
+                rollchrome_core::tools::edit::find_volume_root,
+            )
+            .map_err(describe)?;
+            Some(dir)
+        }
+    };
+    Ok((resolved_folder, custom))
+}
+
+/// The plan's view of the output: the chosen folder recorded as the resolved path.
+fn planned_output(output: &DevelopOutput, custom: &Option<std::path::PathBuf>) -> DevelopOutput {
+    DevelopOutput {
+        folder: custom.as_ref().map(|d| d.display().to_string()),
+        ..output.clone()
+    }
 }
 
 pub fn plan_develop_impl(
@@ -184,22 +228,24 @@ pub fn plan_develop_impl(
     folder: String,
     items: Vec<DevelopItem>,
     format: OutputFormat,
+    output: DevelopOutput,
 ) -> CommandResult<DevelopPlan> {
     let config = state.config();
-    let resolved_folder = resolve_input(&config, &folder)?;
-    rollchrome_core::tools::develop_folder::refuse_card_folder(
-        &resolved_folder,
-        rollchrome_core::tools::edit::find_volume_root,
-    )
-    .map_err(describe)?;
-    let dev_folder = resolved_folder.join("Developed");
-    resolve_output(&config, &dev_folder.to_string_lossy())?;
+    let (resolved_folder, custom) = develop_folders(&config, &folder, &output, format)?;
 
     let lut_dir = rollchrome_core::config::lut_dir(&config);
     let film_data_dir = rollchrome_core::config::film_data_dir(&config);
-    let store = FolderStore::with_film_data(resolved_folder, lut_dir, Some(film_data_dir));
+    let mut store = FolderStore::with_film_data(resolved_folder, lut_dir, Some(film_data_dir));
+    if let Some(dir) = &custom {
+        store = store.with_output_dir(dir.clone());
+    }
     let existing = store.existing_outputs().map_err(describe)?;
-    Ok(core_plan_develop(&items, format, &existing))
+    Ok(core_plan_develop_with(
+        &items,
+        format,
+        &planned_output(&output, &custom),
+        &existing,
+    ))
 }
 
 #[tauri::command]
@@ -207,9 +253,10 @@ pub fn apply_develop(
     folder: String,
     items: Vec<DevelopItem>,
     format: OutputFormat,
+    output: Option<DevelopOutput>,
     state: State<'_, AppState>,
 ) -> CommandResult<String> {
-    apply_develop_impl(&state, folder, items, format)
+    apply_develop_impl(&state, folder, items, format, output.unwrap_or_default())
 }
 
 pub fn apply_develop_impl(
@@ -217,16 +264,11 @@ pub fn apply_develop_impl(
     folder: String,
     items: Vec<DevelopItem>,
     format: OutputFormat,
+    output: DevelopOutput,
 ) -> CommandResult<String> {
     let config = state.config();
-    let resolved_folder = resolve_input(&config, &folder)?;
-    rollchrome_core::tools::develop_folder::refuse_card_folder(
-        &resolved_folder,
-        rollchrome_core::tools::edit::find_volume_root,
-    )
-    .map_err(describe)?;
-    let dev_folder = resolved_folder.join("Developed");
-    resolve_output(&config, &dev_folder.to_string_lossy())?;
+    let (resolved_folder, custom) = develop_folders(&config, &folder, &output, format)?;
+    let output = planned_output(&output, &custom);
 
     let lut_dir = rollchrome_core::config::lut_dir(&config);
     let film_data_dir = rollchrome_core::config::film_data_dir(&config);
@@ -237,8 +279,11 @@ pub fn apply_develop_impl(
         .spawn("develop", total, move |progress| {
             let mut store =
                 FolderStore::with_film_data(resolved_folder, lut_dir, Some(film_data_dir));
+            if let Some(dir) = custom {
+                store = store.with_output_dir(dir);
+            }
             let existing = store.existing_outputs()?;
-            let plan = core_plan_develop(&items, format, &existing);
+            let plan = core_plan_develop_with(&items, format, &output, &existing);
             let skipped = plan.skipped.clone();
             let summary =
                 rollchrome_core::tools::develop::execute_develop(plan, &mut store, progress);

@@ -356,6 +356,103 @@ pub fn render(
     }
 }
 
+/// Size of a frame downscaled so its long edge is at most `max_edge`. **Downscale only**: a frame
+/// already within the limit keeps its size. Same rule as the preview and as PhotoTools' F6 (floor,
+/// at least 1), so a long edge means the same thing everywhere.
+pub fn downscaled_size(width: u32, height: u32, max_edge: u32) -> (u32, u32) {
+    let long = width.max(height);
+    if max_edge == 0 || long <= max_edge {
+        return (width, height);
+    }
+    let ratio = max_edge as f64 / long as f64;
+    (
+        ((width as f64 * ratio).floor() as u32).max(1),
+        ((height as f64 * ratio).floor() as u32).max(1),
+    )
+}
+
+/// Downscales interleaved 16-bit RGB so the long edge is at most `max_edge` (DV-7).
+pub(crate) fn downscale_u16_rgb(
+    width: u32,
+    height: u32,
+    pixels: &[u16],
+    max_edge: u32,
+) -> Result<(u32, u32, Vec<u16>), Error> {
+    use fast_image_resize as fr;
+
+    let (new_w, new_h) = downscaled_size(width, height, max_edge);
+    if (new_w, new_h) == (width, height) {
+        return Ok((width, height, pixels.to_vec()));
+    }
+    let bytes: Vec<u8> = pixels.iter().flat_map(|v| v.to_ne_bytes()).collect();
+    let src = fr::images::ImageRef::new(width, height, &bytes, fr::PixelType::U16x3)
+        .map_err(|e| Error::Internal(format!("resize 16-bit source: {e:?}")))?;
+    let mut dst = fr::images::Image::new(new_w, new_h, fr::PixelType::U16x3);
+    fr::Resizer::new()
+        .resize(&src, &mut dst, None)
+        .map_err(|e| Error::Internal(format!("resize 16-bit: {e:?}")))?;
+    let out = dst
+        .into_vec()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| u16::from_ne_bytes(*b))
+        .collect();
+    Ok((new_w, new_h, out))
+}
+
+/// [`render`], with the output downscaled to a long edge of at most `long_edge` pixels (DV-7).
+///
+/// The look is applied at full resolution and the result is downscaled, so a look's output is the
+/// same picture at any size. With `None` this is exactly [`render`], byte for byte.
+pub fn render_sized(
+    developed: &Developed,
+    look: Option<&Look>,
+    format: OutputFormat,
+    long_edge: Option<u32>,
+) -> Result<Rendered, Error> {
+    let Some(max_edge) = long_edge else {
+        return render(developed, look, format);
+    };
+    let width = developed.image.width();
+    let height = developed.image.height();
+
+    match format {
+        OutputFormat::Jpeg { quality } => {
+            if !(1..=100).contains(&quality) {
+                return Err(Error::Refused(format!(
+                    "JPEG quality {quality} is outside 1..=100"
+                )));
+            }
+            let full = DynamicImage::ImageRgb8(render_srgb8_image(developed, look));
+            let sized = phototools_core::media::image_ops::downscale_to_max_edge(&full, max_edge)?;
+            let opts = phototools_core::media::jpeg::JpegOptions::deliverable(quality);
+            let bytes = phototools_core::media::jpeg::encode(&sized, &opts)?;
+            Ok(Rendered {
+                bytes,
+                width: sized.width(),
+                height: sized.height(),
+                extension: "jpg",
+            })
+        }
+        OutputFormat::Tiff => {
+            let icc_profile = prophoto_icc_profile()?;
+            let pixels = match look {
+                None => developed.image.as_raw().clone(),
+                Some(look) => render_tiff_u16(developed, look),
+            };
+            let (w, h, sized) = downscale_u16_rgb(width, height, &pixels, max_edge)?;
+            let bytes = encode_tiff(w, h, &sized, &icc_profile)?;
+            Ok(Rendered {
+                bytes,
+                width: w,
+                height: h,
+                extension: "tif",
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

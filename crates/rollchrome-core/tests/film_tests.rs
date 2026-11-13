@@ -736,6 +736,7 @@ fn grain_is_carried_through_the_plan() {
         noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 90 },
         only: vec!["photo.dng".to_string()],
+        output: Default::default(),
     };
     let rev1 = engine.plan_develop(&req1).expect("plan 1");
 
@@ -747,6 +748,7 @@ fn grain_is_carried_through_the_plan() {
         noise_reduction: 0.0,
         format: OutputFormat::Jpeg { quality: 90 },
         only: vec!["photo.dng".to_string()],
+        output: Default::default(),
     };
     let rev2 = engine.plan_develop(&req2).expect("plan 2");
 

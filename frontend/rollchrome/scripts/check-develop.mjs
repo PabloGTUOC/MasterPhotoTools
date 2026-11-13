@@ -25,6 +25,9 @@
  * 20. A new photograph's Noise reduction slider shows 25, and it is visible for a camera look and for a film look.
  * 21. Changing it disables Run until a new dry run, and that dry run's items carry the new noise_reduction.
  * 22. Changing it sends a new preview request carrying noise_reduction.
+ * 23. An unassigned photograph ("None (neutral)") is sent to the dry run as "neutral"; "Skip" sends null (DV-7).
+ * 24. JPEG + TIFF, a long edge and an output folder each lock Run until a new dry run, which carries them (DV-7).
+ * 25. The destination note names the chosen output folder (DV-7).
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -970,6 +973,97 @@ try {
   } else if (lastNrReq.noise_reduction !== 60) {
     failures.push(`Preview request must carry noise_reduction 60, got '${lastNrReq.noise_reduction}'`);
   }
+  // -------------------------------------------------------------------------
+  // 23. "None (neutral)" is developed as neutral; "Skip" leaves the photograph out (DV-7)
+  // -------------------------------------------------------------------------
+  console.log('23. Checking None (neutral) is sent as neutral and Skip as null...');
+  const lookSelect23 = page.locator('[data-testid="look-select"]');
+  await page.locator('.thumbnail-card[data-filename="DSCF0001.RAF"]').click();
+  await page.waitForTimeout(100);
+  await lookSelect23.selectOption('');
+  await page.waitForTimeout(100);
+  await dryRunBtn.click();
+  await page.waitForSelector('[data-testid="review-section"]', { timeout: 3000 });
+  await page.waitForTimeout(100);
+  const items23 = await page.evaluate(() => window.__DEVELOP_STUB__.lastPlanItems);
+  const neutral23 = items23?.find((it) => it.name === 'DSCF0001.RAF');
+  if (!neutral23 || neutral23.look !== 'neutral') {
+    failures.push(`"None (neutral)" must be sent as look "neutral", got: ${JSON.stringify(neutral23)}`);
+  }
+  const noneLabel23 = await page
+    .locator('.thumbnail-card[data-filename="DSCF0001.RAF"] .thumb-look')
+    .textContent();
+  if (noneLabel23?.trim() !== 'None') {
+    failures.push(`An unassigned thumbnail must still read "None", got "${noneLabel23}"`);
+  }
+
+  await lookSelect23.selectOption('skip');
+  await page.waitForTimeout(100);
+  if (!(await runBtn.isDisabled())) {
+    failures.push('Choosing Skip must disable Run until a new dry run');
+  }
+  await dryRunBtn.click();
+  await page.waitForTimeout(200);
+  const items23b = await page.evaluate(() => window.__DEVELOP_STUB__.lastPlanItems);
+  const skipped23 = items23b?.find((it) => it.name === 'DSCF0001.RAF');
+  if (!skipped23 || skipped23.look !== null) {
+    failures.push(`"Skip" must be sent as look null, got: ${JSON.stringify(skipped23)}`);
+  }
+  const skipLabel23 = await page
+    .locator('.thumbnail-card[data-filename="DSCF0001.RAF"] .thumb-look')
+    .textContent();
+  if (skipLabel23?.trim() !== 'Skip') {
+    failures.push(`A skipped thumbnail must read "Skip", got "${skipLabel23}"`);
+  }
+
+  // -------------------------------------------------------------------------
+  // 24. Output settings lock Run and reach the dry run (DV-7)
+  // -------------------------------------------------------------------------
+  console.log('24. Checking JPEG + TIFF, long edge and output folder lock Run and reach the dry run...');
+  const outputSteps24 = [
+    ['JPEG + TIFF', async () => page.locator('[data-testid="format-both"]').check()],
+    ['long edge', async () => page.locator('[data-testid="long-edge-input"]').fill('2048')],
+    [
+      'output folder',
+      async () =>
+        page.locator('[data-testid="develop-output-folder"] input').first().fill('/photos/exports'),
+    ],
+  ];
+  for (const [label, step] of outputSteps24) {
+    await dryRunBtn.click();
+    await page.waitForTimeout(150);
+    await step();
+    await page.waitForTimeout(100);
+    if (!(await runBtn.isDisabled())) {
+      failures.push(`Changing the ${label} must disable Run until a new dry run`);
+    }
+  }
+  await dryRunBtn.click();
+  await page.waitForTimeout(200);
+  const output24 = await page.evaluate(() => window.__DEVELOP_STUB__.lastPlanOutput);
+  const format24 = await page.evaluate(() => window.__DEVELOP_STUB__.lastPlanFormat);
+  if (
+    !output24 ||
+    output24.also_tiff !== true ||
+    output24.long_edge !== 2048 ||
+    output24.folder !== '/photos/exports'
+  ) {
+    failures.push(
+      `The dry run must carry output { also_tiff: true, long_edge: 2048, folder: "/photos/exports" }, got: ${JSON.stringify(output24)}`,
+    );
+  }
+  if (format24?.kind !== 'jpeg') {
+    failures.push(`JPEG + TIFF must send the JPEG format with also_tiff, got: ${JSON.stringify(format24)}`);
+  }
+
+  // -------------------------------------------------------------------------
+  // 25. The destination note names the chosen folder (DV-7)
+  // -------------------------------------------------------------------------
+  console.log('25. Checking the destination note names the chosen output folder...');
+  const note25 = await page.locator('[data-testid="destination-note"]').textContent();
+  if (!note25?.includes('/photos/exports')) {
+    failures.push(`The destination note must name the chosen folder, got "${note25}"`);
+  }
 } catch (err) {
   failures.push(`Test execution threw: ${err instanceof Error ? err.stack : String(err)}`);
 } finally {
@@ -984,5 +1078,5 @@ if (failures.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log('\ncheck:develop PASSED: all 22 checks verified successfully.');
+  console.log('\ncheck:develop PASSED: all 25 checks verified successfully.');
 }

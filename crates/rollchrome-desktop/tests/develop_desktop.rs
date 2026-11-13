@@ -9,7 +9,7 @@ use phototools_core::jobs::NoEvents;
 use phototools_core::ledger::Ledger;
 use rollchrome_core::media::develop::OutputFormat;
 use rollchrome_core::media::film::Grain;
-use rollchrome_core::tools::develop::DevelopItem;
+use rollchrome_core::tools::develop::{DevelopItem, DevelopOutput};
 use rollchrome_desktop::commands::develop::{list_film_looks_impl, plan_develop_impl};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -66,6 +66,7 @@ fn plan_develop_refuses_a_folder_outside_the_roots() {
         outside.to_string_lossy().to_string(),
         items,
         OutputFormat::Jpeg { quality: 90 },
+        DevelopOutput::default(),
     )
     .unwrap_err();
 
@@ -117,6 +118,7 @@ fn plan_develop_plans_a_folder_inside_the_roots() {
         f.root.to_string_lossy().to_string(),
         items,
         OutputFormat::Jpeg { quality: 90 },
+        DevelopOutput::default(),
     )
     .expect("plan develop");
 
@@ -419,4 +421,42 @@ fn list_film_looks_impl_returns_eighteen_entries_with_film_ids() {
         assert!(!look.name.is_empty());
         assert!(!look.maker.is_empty());
     }
+}
+
+#[test]
+fn plan_develop_refuses_an_output_folder_outside_the_roots() {
+    let f = fixture();
+    let state = make_state(&f);
+    let pixels = vec![1000u16; 16 * 16];
+    std::fs::write(
+        f.root.join("DSCF0001.dng"),
+        dng::DngBuilder::new_bayer(16, 16).build(&pixels),
+    )
+    .unwrap();
+    let outside = f._temp.path().join("outside-exports");
+
+    let items = vec![DevelopItem {
+        name: "DSCF0001.dng".to_string(),
+        look: Some("neutral".to_string()),
+        exposure_ev: 0.0,
+        grain: Grain::Fine,
+        noise_reduction: 0.0,
+    }];
+    let err = plan_develop_impl(
+        &state,
+        f.root.to_string_lossy().to_string(),
+        items,
+        OutputFormat::Jpeg { quality: 90 },
+        DevelopOutput {
+            folder: Some(outside.to_string_lossy().to_string()),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+
+    assert!(
+        err.contains("outside the folders this application may touch"),
+        "expected G6 refusal, got: {err}"
+    );
+    assert!(!outside.exists());
 }

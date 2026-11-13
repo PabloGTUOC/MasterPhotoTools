@@ -22,6 +22,8 @@ pub struct FolderStore {
     film_data_dir: Option<PathBuf>,
     exiftool_program: Option<String>,
     writer: Option<ExifWriter>,
+    /// A chosen output folder (DV-7); `None` is `<folder>/Developed`.
+    custom_output: Option<PathBuf>,
 }
 
 impl FolderStore {
@@ -57,12 +59,23 @@ impl FolderStore {
             film_data_dir,
             exiftool_program: program,
             writer: None,
+            custom_output: None,
         }
     }
 
-    /// The destination folder for rendered outputs (`<folder>/Developed`).
+    /// Writes into `dir` instead of `<folder>/Developed` (DV-7). The caller has resolved `dir`
+    /// against the roots (G6) and refused a card (G5).
+    pub fn with_output_dir(mut self, dir: PathBuf) -> Self {
+        self.custom_output = Some(dir);
+        self
+    }
+
+    /// The destination folder for rendered outputs (`<folder>/Developed` unless one was chosen).
     pub fn output_dir(&self) -> PathBuf {
-        self.folder.join("Developed")
+        match &self.custom_output {
+            Some(dir) => dir.clone(),
+            None => self.folder.join("Developed"),
+        }
     }
 
     /// Read existing output file names in the `Developed/` directory in lower case.
@@ -150,7 +163,10 @@ impl DevelopStore for FolderStore {
         {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                return Err(Error::Refused(format!("Developed/{output} already exists")));
+                return Err(Error::Refused(match &self.custom_output {
+                    None => format!("Developed/{output} already exists"),
+                    Some(dir) => format!("{output} already exists in {}", dir.display()),
+                }));
             }
             Err(e) => return Err(Error::Io(e)),
         };

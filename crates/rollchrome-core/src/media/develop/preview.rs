@@ -14,9 +14,11 @@ use crate::tools::develop::ResolvedLook;
 pub const PREVIEW_MAX_EDGE: u32 = 1600;
 pub const PREVIEW_DRAFT_EDGE: u32 = 800;
 
-/// Look passed to preview rendering: either a 3D LUT look or a film stock (DV-4).
+/// Look passed to preview rendering: none, a 3D LUT look or a film stock (DV-4, DV-7).
 #[derive(Debug, Clone, Copy)]
 pub enum PreviewLook<'a> {
+    /// The neutral development, the same picture as passing no look (DV-7).
+    Neutral,
     Look(&'a Look),
     Film(&'a str),
 }
@@ -36,6 +38,7 @@ impl<'a> From<&'a str> for PreviewLook<'a> {
 impl<'a> From<&'a ResolvedLook> for PreviewLook<'a> {
     fn from(r: &'a ResolvedLook) -> Self {
         match r {
+            ResolvedLook::Neutral => PreviewLook::Neutral,
             ResolvedLook::Look(l) => PreviewLook::Look(l),
             ResolvedLook::Film { stock } => PreviewLook::Film(stock.as_str()),
         }
@@ -269,7 +272,7 @@ impl DevelopPreview {
     }
 }
 
-fn resize_linear(
+pub(crate) fn resize_linear(
     w: u32,
     h: u32,
     pixels: &[[f32; 3]],

@@ -19,7 +19,6 @@ const DESCRIBED: Record<string, { name: string; note: string }> = {
   '/rename': { name: 'Rename', note: 'Batch rename to a sortable scheme' },
   '/geotag': { name: 'Geotag', note: 'Place photographs from a GPS track' },
   '/tiff-to-jpeg': { name: 'TIFF to JPEG', note: 'Convert scanner output' },
-  '/raw-to-jpeg': { name: 'RAW to JPEG', note: 'Develop camera raw files' },
   '/split': { name: 'Half-frame split', note: 'Separate two-up film scans' },
   '/border': { name: 'Print border', note: 'Place on a print canvas' },
   '/contact-sheet': { name: 'Contact sheet', note: 'Proof sheet from a folder' },

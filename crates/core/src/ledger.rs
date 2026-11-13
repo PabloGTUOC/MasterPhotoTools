@@ -167,8 +167,9 @@ const MIGRATIONS: &[&str] = &[
     // the phase report rather than resolved by editing the specification (G9).
     //
     // The key is the **source** hash: the bytes the camera wrote, which never
-    // change. See `ingest::handoff::manifest::ManifestEntry` for why the derived
-    // hash cannot do this job.
+    // change; a derived file's hash changes with every re-encode. The handoff
+    // that wrote these rows was retired in RS-1 (2026-11-14); the tables stay,
+    // so a NAS database keeps its history.
     r#"
     CREATE TABLE IF NOT EXISTS published (
         source_sha256 TEXT PRIMARY KEY,
@@ -370,17 +371,6 @@ const MIGRATIONS: &[&str] = &[
     "#,
 ];
 
-/// One provider's stored authorisation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OAuthGrant {
-    pub encrypted_refresh_token: String,
-    pub scope: String,
-    /// When the grant was last stored, as Unix seconds.
-    pub expires_at: i64,
-    /// `connected` or `disconnected` (§6.2's reconnect path).
-    pub state: String,
-}
-
 /// One imported GPX file.
 ///
 /// The counts are what the import actually did, not what the file held: a
@@ -403,20 +393,6 @@ pub struct TrackRow {
     pub bounds: Option<(f64, f64, f64, f64)>,
     /// Recorded, placed by hand, or inferred — migration 10.
     pub source: PointSource,
-}
-
-/// One row of the publish state machine (§6.3).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublishRow {
-    pub shot_id: String,
-    pub stem: String,
-    pub source_sha256: String,
-    pub file_name: String,
-    pub upload_token: Option<String>,
-    pub media_item_id: Option<String>,
-    pub state: String,
-    pub attempts: i64,
-    pub error: Option<String>,
 }
 
 pub struct Ledger {
@@ -478,10 +454,6 @@ impl Ledger {
 
     // ---------------------------------------------------------------- cards
 
-    pub fn add_card(&self, id: &str, fingerprint: &str) -> SqlResult<()> {
-        self.upsert_card(id, None, fingerprint)
-    }
-
     /// Record a card sighting. First sighting sets `first_seen`; every later
     /// sighting refreshes `last_seen`.
     pub fn upsert_card(
@@ -502,14 +474,6 @@ impl Ledger {
     }
 
     // ---------------------------------------------------------------- shots
-
-    pub fn add_shot(&self, id: &str, card_id: &str, stem: &str) -> SqlResult<()> {
-        self.conn.execute(
-            "INSERT OR IGNORE INTO shots (id, card_id, stem, status) VALUES (?1, ?2, ?3, 'new')",
-            (id, card_id, stem),
-        )?;
-        Ok(())
-    }
 
     /// Record a shot against both the physical card and the observation of it.
     ///
@@ -536,22 +500,6 @@ impl Ledger {
     }
 
     // --------------------------------------------------------------- assets
-
-    pub fn add_asset(
-        &self,
-        id: &str,
-        shot_id: &str,
-        rel_path: &str,
-        bytes: u64,
-        sha256: &str,
-    ) -> SqlResult<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO assets (id, shot_id, rel_path, bytes, sha256)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            (id, shot_id, rel_path, bytes, sha256),
-        )?;
-        Ok(())
-    }
 
     /// Write an asset row with every column the data model defines.
     #[allow(clippy::too_many_arguments)]
@@ -627,70 +575,6 @@ impl Ledger {
             [],
             |row| row.get(0),
         )
-    }
-
-    // --------------------------------------------------------------- checks
-
-    pub fn add_check(
-        &self,
-        shot_id: &str,
-        name: &str,
-        status: &str,
-        detail: Option<&str>,
-    ) -> SqlResult<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO checks (shot_id, name, status, detail)
-             VALUES (?1, ?2, ?3, ?4)",
-            (shot_id, name, status, detail),
-        )?;
-        Ok(())
-    }
-
-    // -------------------------------------------------------------- derived
-
-    pub fn add_derived(
-        &self,
-        shot_id: &str,
-        staged_path: &str,
-        sha256: &str,
-        bytes: u64,
-        width: u32,
-        height: u32,
-    ) -> SqlResult<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO derived (shot_id, staged_path, sha256, bytes, width, height)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            (shot_id, staged_path, sha256, bytes, width, height),
-        )?;
-        Ok(())
-    }
-
-    // ------------------------------------------------------------ publishes
-
-    pub fn add_publish(&self, shot_id: &str) -> SqlResult<()> {
-        self.conn.execute(
-            "INSERT OR IGNORE INTO publishes (shot_id, state, attempts) VALUES (?1, 'pending', 0)",
-            [shot_id],
-        )?;
-        Ok(())
-    }
-
-    pub fn update_publish_state(
-        &self,
-        shot_id: &str,
-        state: &str,
-        token: Option<&str>,
-        media_item_id: Option<&str>,
-        error: Option<&str>,
-    ) -> SqlResult<()> {
-        self.conn.execute(
-            "UPDATE publishes
-                SET state = ?2, upload_token = ?3, media_item_id = ?4, error = ?5,
-                    attempts = attempts + 1
-              WHERE shot_id = ?1",
-            (shot_id, state, token, media_item_id, error),
-        )?;
-        Ok(())
     }
 
     // ----------------------------------------------------------------- jobs
@@ -797,8 +681,6 @@ impl Ledger {
             summary: row.get(8)?,
         })
     }
-
-    // ------------------------------------------------------------- settings
 
     // -----------------------------------------------------------------------
     // The GPS track library (`docs/geotag-plan.md`)
@@ -1281,468 +1163,6 @@ impl Ledger {
             })
             .optional()
     }
-
-    // ---------------------------------------------------------------- oauth
-
-    /// Store an OAuth grant. The token must already be encrypted (§6.2 step 4)
-    /// — this layer does not know how, deliberately, so a plaintext token
-    /// cannot arrive here by a caller forgetting.
-    pub fn set_oauth_grant(
-        &self,
-        provider: &str,
-        encrypted_refresh_token: &str,
-        scope: &str,
-        connected_at: i64,
-        state: &str,
-    ) -> SqlResult<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO oauth
-                 (provider, encrypted_refresh_token, scope, expires_at, state)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            (
-                provider,
-                encrypted_refresh_token,
-                scope,
-                connected_at,
-                state,
-            ),
-        )?;
-        Ok(())
-    }
-
-    pub fn oauth_grant(&self, provider: &str) -> SqlResult<Option<OAuthGrant>> {
-        self.conn
-            .query_row(
-                "SELECT encrypted_refresh_token, scope, expires_at, state
-                   FROM oauth WHERE provider = ?1",
-                [provider],
-                |row| {
-                    Ok(OAuthGrant {
-                        encrypted_refresh_token: row.get(0)?,
-                        scope: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                        expires_at: row.get::<_, Option<i64>>(2)?.unwrap_or_default(),
-                        state: row
-                            .get::<_, Option<String>>(3)?
-                            .unwrap_or_else(|| "connected".into()),
-                    })
-                },
-            )
-            .optional()
-    }
-
-    pub fn set_oauth_state(&self, provider: &str, state: &str) -> SqlResult<()> {
-        self.conn.execute(
-            "UPDATE oauth SET state = ?2 WHERE provider = ?1",
-            (provider, state),
-        )?;
-        Ok(())
-    }
-
-    pub fn delete_oauth(&self, provider: &str) -> SqlResult<()> {
-        self.conn
-            .execute("DELETE FROM oauth WHERE provider = ?1", [provider])?;
-        Ok(())
-    }
-
-    // ---------------------------------------------------- F15: publish state
-
-    /// Record a shot as awaiting publication, without disturbing one that is
-    /// already under way.
-    ///
-    /// `INSERT OR IGNORE`, because re-running a publish must resume from what is
-    /// recorded rather than reset it to `pending` — resetting is precisely how a
-    /// photograph gets uploaded and created twice (§6.3).
-    pub fn queue_publish(
-        &self,
-        shot_id: &str,
-        session_id: &str,
-        stem: &str,
-        source_sha256: &str,
-        file_name: &str,
-    ) -> SqlResult<()> {
-        self.conn.execute(
-            "INSERT OR IGNORE INTO publishes
-                 (shot_id, session_id, stem, source_sha256, file_name, state, attempts)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', 0)",
-            (shot_id, session_id, stem, source_sha256, file_name),
-        )?;
-        Ok(())
-    }
-
-    /// Every queued shot for one session, in a stable order.
-    pub fn publishes_for_session(&self, session_id: &str) -> SqlResult<Vec<PublishRow>> {
-        let mut statement = self.conn.prepare(
-            "SELECT shot_id, stem, source_sha256, file_name, upload_token,
-                    media_item_id, state, attempts, error
-               FROM publishes WHERE session_id = ?1 ORDER BY stem",
-        )?;
-        let rows = statement.query_map([session_id], |row| {
-            Ok(PublishRow {
-                shot_id: row.get(0)?,
-                stem: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                source_sha256: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                file_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                upload_token: row.get(4)?,
-                media_item_id: row.get(5)?,
-                state: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
-                attempts: row.get::<_, Option<i64>>(7)?.unwrap_or_default(),
-                error: row.get(8)?,
-            })
-        })?;
-        rows.collect()
-    }
-
-    pub fn publish_row(&self, shot_id: &str) -> SqlResult<Option<PublishRow>> {
-        Ok(self
-            .publishes_matching("shot_id = ?1", shot_id)?
-            .into_iter()
-            .next())
-    }
-
-    fn publishes_matching(&self, predicate: &str, value: &str) -> SqlResult<Vec<PublishRow>> {
-        let mut statement = self.conn.prepare(&format!(
-            "SELECT shot_id, stem, source_sha256, file_name, upload_token,
-                    media_item_id, state, attempts, error
-               FROM publishes WHERE {predicate}"
-        ))?;
-        let rows = statement.query_map([value], |row| {
-            Ok(PublishRow {
-                shot_id: row.get(0)?,
-                stem: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                source_sha256: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                file_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                upload_token: row.get(4)?,
-                media_item_id: row.get(5)?,
-                state: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
-                attempts: row.get::<_, Option<i64>>(7)?.unwrap_or_default(),
-                error: row.get(8)?,
-            })
-        })?;
-        rows.collect()
-    }
-
-    /// Move a shot to `uploaded`, holding the token Google gave back (§6.3).
-    pub fn record_upload(&self, shot_id: &str, upload_token: &str) -> SqlResult<()> {
-        self.conn.execute(
-            "UPDATE publishes SET state = 'uploaded', upload_token = ?2, error = NULL
-              WHERE shot_id = ?1",
-            (shot_id, upload_token),
-        )?;
-        Ok(())
-    }
-
-    /// Mark that a create is about to be sent.
-    ///
-    /// Written **before** the request, so a process that dies mid-call leaves a
-    /// row saying so. `batchCreate` is not idempotent and the API cannot delete,
-    /// so "we sent it and never heard back" has to be distinguishable from "we
-    /// never sent it" — see `publish::Publisher`.
-    pub fn record_creating(&self, shot_id: &str) -> SqlResult<()> {
-        self.conn.execute(
-            "UPDATE publishes SET state = 'creating', attempts = attempts + 1
-              WHERE shot_id = ?1",
-            [shot_id],
-        )?;
-        Ok(())
-    }
-
-    /// Record a media item **and** F16's published-hash entry in one
-    /// transaction.
-    ///
-    /// Two writes that must not come apart. A crash between them leaves a
-    /// photograph that is in Google Photos but not in the deduplication ledger,
-    /// and the next ingest of that card publishes it a second time — the exact
-    /// duplicate F16 exists to prevent, arriving through the back door.
-    pub fn record_created_and_published(
-        &self,
-        shot_id: &str,
-        media_item_id: &str,
-        source_sha256: &str,
-        stem: &str,
-        derived_file_name: &str,
-        key_kind: &str,
-    ) -> SqlResult<()> {
-        let tx = self.conn.unchecked_transaction()?;
-
-        tx.execute(
-            "UPDATE publishes SET state = 'created', media_item_id = ?2, error = NULL
-              WHERE shot_id = ?1",
-            (shot_id, media_item_id),
-        )?;
-        tx.execute(
-            "INSERT OR REPLACE INTO published
-                 (source_sha256, stem, derived_sha256, session_id, media_item_id,
-                  published_at, key_kind)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            (
-                source_sha256,
-                stem,
-                derived_file_name,
-                shot_id,
-                media_item_id,
-                chrono::Utc::now().timestamp(),
-                key_kind,
-            ),
-        )?;
-
-        tx.commit()
-    }
-
-    pub fn record_created(&self, shot_id: &str, media_item_id: &str) -> SqlResult<()> {
-        self.conn.execute(
-            "UPDATE publishes SET state = 'created', media_item_id = ?2, error = NULL
-              WHERE shot_id = ?1",
-            (shot_id, media_item_id),
-        )?;
-        Ok(())
-    }
-
-    /// A definite failure: nothing was created, so the shot goes back to the
-    /// last state that is safe to resume from.
-    pub fn record_publish_failure(&self, shot_id: &str, state: &str, error: &str) -> SqlResult<()> {
-        self.conn.execute(
-            "UPDATE publishes SET state = ?2, error = ?3 WHERE shot_id = ?1",
-            (shot_id, state, error),
-        )?;
-        Ok(())
-    }
-
-    // ----------------------------------------------------------- dry runs
-
-    /// Record that a dry run was performed for a session (§9.2 rule 3).
-    pub fn record_dry_run(&self, session_id: &str) -> SqlResult<()> {
-        self.conn.execute(
-            "UPDATE sessions SET dry_run_at = ?2 WHERE id = ?1",
-            (session_id, chrono::Utc::now().timestamp()),
-        )?;
-        Ok(())
-    }
-
-    pub fn dry_run_at(&self, session_id: &str) -> SqlResult<Option<i64>> {
-        self.conn
-            .query_row(
-                "SELECT dry_run_at FROM sessions WHERE id = ?1",
-                [session_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map(Option::flatten)
-    }
-
-    // ------------------------------------------------- F16: published hashes
-
-    /// Record that one photograph reached Google Photos.
-    ///
-    /// `media_item_id` is optional because Phase 12's state machine reaches
-    /// `uploaded` before it reaches `created`; a row with no media item is a
-    /// photograph whose bytes are up but whose item is not yet made.
-    pub fn record_published(
-        &self,
-        source_sha256: &str,
-        stem: &str,
-        derived_sha256: &str,
-        session_id: &str,
-        media_item_id: Option<&str>,
-    ) -> SqlResult<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO published
-                 (source_sha256, stem, derived_sha256, session_id, media_item_id, published_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            (
-                source_sha256,
-                stem,
-                derived_sha256,
-                session_id,
-                media_item_id,
-                chrono::Utc::now().timestamp(),
-            ),
-        )?;
-        Ok(())
-    }
-
-    /// Record a file published from a folder, keyed on the bytes uploaded.
-    ///
-    /// A weaker claim than [`record_published`] makes, and stored as such: this
-    /// says "these exact bytes went to Google", not "this photograph has been
-    /// published". The tools rewrite files — geotagging changes a photograph's
-    /// hash — so the same frame processed twice is two rows here.
-    pub fn record_published_file(
-        &self,
-        sha256: &str,
-        name: &str,
-        session_id: &str,
-        media_item_id: Option<&str>,
-    ) -> SqlResult<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO published
-                 (source_sha256, stem, derived_sha256, session_id, media_item_id,
-                  published_at, key_kind)
-             VALUES (?1, ?2, ?1, ?3, ?4, ?5, 'file')",
-            (
-                sha256,
-                name,
-                session_id,
-                media_item_id,
-                chrono::Utc::now().timestamp(),
-            ),
-        )?;
-        Ok(())
-    }
-
-    /// Which kind of key a `published` row carries: `source` or `file`.
-    pub fn published_key_kind(&self, sha256: &str) -> SqlResult<Option<String>> {
-        self.conn
-            .query_row(
-                "SELECT key_kind FROM published WHERE source_sha256 = ?1",
-                [sha256],
-                |row| row.get(0),
-            )
-            .optional()
-    }
-
-    pub fn is_published(&self, source_sha256: &str) -> SqlResult<bool> {
-        let found: Option<i64> = self
-            .conn
-            .query_row(
-                "SELECT 1 FROM published WHERE source_sha256 = ?1",
-                [source_sha256],
-                |row| row.get(0),
-            )
-            .optional()?;
-        Ok(found.is_some())
-    }
-
-    /// Which of `hashes` have been published (F16).
-    ///
-    /// One query per chunk rather than one per hash, because a 400-frame card
-    /// would otherwise make 400 round trips to answer a question SQLite can
-    /// answer in one. Chunked at 500 because SQLite's default limit is 999
-    /// bound parameters, and a manifest is not bounded by anything the caller
-    /// controls — a burst-mode card can carry thousands of frames.
-    pub fn published_among(
-        &self,
-        hashes: &[String],
-    ) -> SqlResult<std::collections::HashSet<String>> {
-        const CHUNK: usize = 500;
-        let mut found = std::collections::HashSet::new();
-
-        for chunk in hashes.chunks(CHUNK) {
-            let placeholders = vec!["?"; chunk.len()].join(",");
-            let sql = format!(
-                "SELECT source_sha256 FROM published WHERE source_sha256 IN ({placeholders})"
-            );
-
-            let mut statement = self.conn.prepare(&sql)?;
-            let rows = statement.query_map(rusqlite::params_from_iter(chunk), |row| {
-                row.get::<_, String>(0)
-            })?;
-            for row in rows {
-                found.insert(row?);
-            }
-        }
-
-        Ok(found)
-    }
-
-    // ------------------------------------------------------ handoff sessions
-
-    /// Open a handoff session, storing the manifest it was opened with.
-    ///
-    /// The manifest is kept whole, as the JSON it arrived as. The protocol
-    /// spans two requests — `sessions` then `ready` — and the second cannot
-    /// verify arrivals without what the first was promised. Storing it verbatim
-    /// also means a server restarted between the two still knows what it agreed
-    /// to (F17).
-    /// Open a session for publishing a folder.
-    ///
-    /// `INSERT OR IGNORE`, not `OR REPLACE`: the row carries the dry-run stamp
-    /// that §9.2 rule 3 requires, and replacing it would quietly clear the
-    /// record that somebody had looked — turning the safeguard into a
-    /// formality that any second call satisfies.
-    pub fn open_folder_session(&self, id: &str, folder: &str) -> SqlResult<()> {
-        self.conn.execute(
-            "INSERT OR IGNORE INTO sessions (id, folder, state, created_at)
-             VALUES (?1, ?2, 'folder', ?3)",
-            (id, folder, chrono::Utc::now().timestamp()),
-        )?;
-        Ok(())
-    }
-
-    pub fn open_session(
-        &self,
-        id: &str,
-        card_id: &str,
-        manifest_json: &str,
-        plan_json: &str,
-    ) -> SqlResult<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO sessions (id, card_id, state, created_at, manifest, plan)
-             VALUES (?1, ?2, 'open', ?3, ?4, ?5)",
-            (
-                id,
-                card_id,
-                chrono::Utc::now().timestamp(),
-                manifest_json,
-                plan_json,
-            ),
-        )?;
-        Ok(())
-    }
-
-    /// The manifest and plan a session was opened with, as stored JSON.
-    ///
-    /// Both, together, because verification needs both and reading them in one
-    /// statement means a session cannot be seen half-updated.
-    pub fn session_agreement(&self, id: &str) -> SqlResult<Option<(String, String)>> {
-        self.conn
-            .query_row(
-                "SELECT manifest, plan FROM sessions WHERE id = ?1",
-                [id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-    }
-
-    pub fn set_session_plan(&self, id: &str, plan_json: &str) -> SqlResult<()> {
-        self.conn.execute(
-            "UPDATE sessions SET plan = ?2 WHERE id = ?1",
-            (id, plan_json),
-        )?;
-        Ok(())
-    }
-
-    /// Store what verification found, so `GET .../shots` can answer after the
-    /// job that produced it has finished.
-    pub fn set_session_report(&self, id: &str, state: &str, report_json: &str) -> SqlResult<()> {
-        self.conn.execute(
-            "UPDATE sessions SET state = ?2, report = ?3 WHERE id = ?1",
-            (id, state, report_json),
-        )?;
-        Ok(())
-    }
-
-    pub fn session_report(&self, id: &str) -> SqlResult<Option<String>> {
-        self.conn
-            .query_row("SELECT report FROM sessions WHERE id = ?1", [id], |row| {
-                row.get(0)
-            })
-            .optional()
-            .map(Option::flatten)
-    }
-
-    pub fn set_session_state(&self, id: &str, state: &str) -> SqlResult<()> {
-        self.conn
-            .execute("UPDATE sessions SET state = ?2 WHERE id = ?1", (id, state))?;
-        Ok(())
-    }
-
-    pub fn session_state(&self, id: &str) -> SqlResult<Option<String>> {
-        self.conn
-            .query_row("SELECT state FROM sessions WHERE id = ?1", [id], |row| {
-                row.get(0)
-            })
-            .optional()
-    }
 }
 
 #[cfg(test)]
@@ -1793,319 +1213,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(index_count, 1, "migration 2 should have added the index");
-    }
-
-    /// A database at **any** earlier version catches up to exactly the schema a
-    /// fresh one is created with.
-    ///
-    /// Every version, not a chosen one. The check used to start at migration 6,
-    /// and the bug it missed was a line appended to migration 8 *after* 8 had
-    /// already run: databases that had seen the old 8 stayed at
-    /// `user_version = 8` for ever and never gained the column, while a fresh
-    /// database got it on creation. Nothing failed until something read the
-    /// column, and the error named neither the cause nor the remedy.
-    ///
-    /// Comparing the whole of `sqlite_master` rather than looking for one
-    /// table: a migration that adds a table and forgets its index leaves two
-    /// databases that behave differently under load and identically under a
-    /// test that only checks the table exists.
-    #[test]
-    fn a_database_at_any_version_catches_up_to_a_fresh_one() {
-        let dir = tempfile::tempdir().unwrap();
-
-        let schema_of = |ledger: &Ledger| -> Vec<(String, String)> {
-            let mut statement = ledger
-                .inner()
-                .prepare(
-                    "SELECT name, COALESCE(sql, '') FROM sqlite_master
-                      WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
-                )
-                .unwrap();
-            let rows = statement
-                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-                .unwrap();
-            rows.map(|r| r.unwrap()).collect()
-        };
-
-        let fresh = Ledger::open(dir.path().join("fresh.sqlite3")).unwrap();
-        let expected = schema_of(&fresh);
-
-        for version in 1..MIGRATIONS.len() {
-            let path = dir.path().join(format!("at-{version}.sqlite3"));
-            {
-                let conn = Connection::open(&path).unwrap();
-                for migration in &MIGRATIONS[..version] {
-                    conn.execute_batch(migration).unwrap();
-                }
-                conn.execute_batch(&format!("PRAGMA user_version = {version}"))
-                    .unwrap();
-            }
-
-            let migrated = Ledger::open(&path).unwrap();
-            assert_eq!(
-                migrated.schema_version().unwrap(),
-                MIGRATIONS.len() as i64,
-                "a database at version {version} should catch up"
-            );
-            assert_eq!(
-                schema_of(&migrated),
-                expected,
-                "a database at version {version} ended up with a different schema \
-                 from a fresh one"
-            );
-
-            // And the tables work, rather than merely existing.
-            assert_eq!(migrated.tracks().unwrap(), vec![]);
-            assert_eq!(migrated.points_between(0, i64::MAX).unwrap(), vec![]);
-            migrated
-                .open_folder_session(&format!("folder-{version}"), "/Publishing")
-                .unwrap();
-        }
-    }
-
-    /// Phase 1 acceptance: a round-trip test per table. All ten tables of
-    /// specification §7, every column written and read back.
-    #[test]
-    fn every_table_round_trips() {
-        let ledger = Ledger::open_in_memory().unwrap();
-        let conn = ledger.inner();
-
-        // users
-        ledger.add_user("uid-1", "Pablo").unwrap();
-        let (name, added): (String, i64) = conn
-            .query_row(
-                "SELECT display_name, added_at FROM users WHERE uid = 'uid-1'",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(name, "Pablo");
-        assert!(added > 0);
-
-        // cards
-        ledger
-            .upsert_card("card-1", Some("EOS_DIGITAL"), "fp-abc")
-            .unwrap();
-        let (label, fp, first, last): (String, String, i64, i64) = conn
-            .query_row(
-                "SELECT volume_label, fingerprint, first_seen, last_seen
-                   FROM cards WHERE id = 'card-1'",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .unwrap();
-        assert_eq!(label, "EOS_DIGITAL");
-        assert_eq!(fp, "fp-abc");
-        assert!(first > 0 && last > 0);
-
-        // shots
-        ledger.add_shot("shot-1", "card-1", "IMG_1234").unwrap();
-        ledger.set_shot_candidate("shot-1", "asset-1").unwrap();
-        let (card_id, stem, candidate, status): (String, String, String, String) = conn
-            .query_row(
-                "SELECT card_id, stem, candidate_asset_id, status FROM shots WHERE id = 'shot-1'",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .unwrap();
-        assert_eq!((card_id.as_str(), stem.as_str()), ("card-1", "IMG_1234"));
-        assert_eq!(candidate, "asset-1");
-        assert_eq!(status, "new");
-
-        // assets — every column
-        ledger
-            .upsert_asset(
-                "asset-1",
-                "shot-1",
-                "DCIM/100/IMG_1234.JPG",
-                "jpeg",
-                12_582_912,
-                "sha-jpeg",
-                Some(1_714_564_800),
-                Some(6000),
-                Some(4000),
-                Some("PENTAX17"),
-            )
-            .unwrap();
-        #[allow(clippy::type_complexity)]
-        let (rel, kind, bytes, sha, capture, w, h, cam): (
-            String,
-            String,
-            i64,
-            String,
-            i64,
-            u32,
-            u32,
-            String,
-        ) = conn
-            .query_row(
-                "SELECT rel_path, kind, bytes, sha256, capture_datetime, width, height, camera
-                   FROM assets WHERE id = 'asset-1'",
-                [],
-                |r| {
-                    Ok((
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                        r.get(5)?,
-                        r.get(6)?,
-                        r.get(7)?,
-                    ))
-                },
-            )
-            .unwrap();
-        assert_eq!(rel, "DCIM/100/IMG_1234.JPG");
-        assert_eq!(kind, "jpeg");
-        assert_eq!(bytes, 12_582_912);
-        assert_eq!(sha, "sha-jpeg");
-        assert_eq!(capture, 1_714_564_800);
-        assert_eq!((w, h), (6000, 4000));
-        assert_eq!(cam, "PENTAX17");
-
-        // checks
-        ledger
-            .add_check("shot-1", "resolution", "fail", Some("24.0 MP > 10 MP"))
-            .unwrap();
-        let (status, detail): (String, String) = conn
-            .query_row(
-                "SELECT status, detail FROM checks WHERE shot_id = 'shot-1' AND name = 'resolution'",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(status, "fail");
-        assert_eq!(detail, "24.0 MP > 10 MP");
-
-        // derived
-        ledger
-            .add_derived(
-                "shot-1",
-                "/staging/IMG_1234.jpg",
-                "sha-derived",
-                2048,
-                3873,
-                2582,
-            )
-            .unwrap();
-        let (path, sha, bytes, w, h): (String, String, i64, u32, u32) = conn
-            .query_row(
-                "SELECT staged_path, sha256, bytes, width, height
-                   FROM derived WHERE shot_id = 'shot-1'",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-            )
-            .unwrap();
-        assert_eq!(path, "/staging/IMG_1234.jpg");
-        assert_eq!(sha, "sha-derived");
-        assert_eq!(bytes, 2048);
-        assert_eq!((w, h), (3873, 2582));
-
-        // publishes — including the attempts counter
-        ledger.add_publish("shot-1").unwrap();
-        ledger
-            .update_publish_state("shot-1", "uploaded", Some("upload-token"), None, None)
-            .unwrap();
-        ledger
-            .update_publish_state(
-                "shot-1",
-                "created",
-                Some("upload-token"),
-                Some("media-item-1"),
-                None,
-            )
-            .unwrap();
-        let (state, token, item, attempts): (String, String, String, i64) = conn
-            .query_row(
-                "SELECT state, upload_token, media_item_id, attempts
-                   FROM publishes WHERE shot_id = 'shot-1'",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .unwrap();
-        assert_eq!(state, "created");
-        assert_eq!(token, "upload-token");
-        assert_eq!(item, "media-item-1");
-        assert_eq!(attempts, 2, "each state change counts an attempt");
-
-        // jobs — through the typed API
-        let job = Job::new("job-1", "date_scan", 500);
-        ledger.insert_job(&job).unwrap();
-        ledger.update_job_progress("job-1", 250, 500).unwrap();
-        ledger
-            .finish_job("job-1", JobStatus::Completed, None, Some("1 file renamed"))
-            .unwrap();
-        let stored = ledger.get_job("job-1").unwrap().unwrap();
-        assert_eq!(stored.kind, "date_scan");
-        assert_eq!(stored.status, JobStatus::Completed);
-        assert_eq!((stored.progress, stored.total), (250, 500));
-        assert_eq!(stored.started_at, job.started_at);
-        assert!(stored.finished_at.is_some());
-        assert!(stored.error.is_none());
-
-        // settings
-        ledger.set_setting("auto_resize", "true").unwrap();
-        assert_eq!(
-            ledger.get_setting("auto_resize").unwrap().as_deref(),
-            Some("true")
-        );
-        assert_eq!(ledger.get_setting("absent").unwrap(), None);
-
-        // oauth
-        ledger
-            .set_oauth_grant(
-                "google",
-                "cipher-text",
-                "photoslibrary.appendonly",
-                4102444800,
-                "connected",
-            )
-            .unwrap();
-        let grant = ledger.oauth_grant("google").unwrap().unwrap();
-        assert_eq!(grant.encrypted_refresh_token, "cipher-text");
-        assert_eq!(grant.scope, "photoslibrary.appendonly");
-        assert_eq!(grant.expires_at, 4102444800);
-        assert_eq!(grant.state, "connected");
-
-        ledger.set_oauth_state("google", "disconnected").unwrap();
-        assert_eq!(
-            ledger.oauth_grant("google").unwrap().unwrap().state,
-            "disconnected"
-        );
-
-        ledger.delete_oauth("google").unwrap();
-        assert!(ledger.oauth_grant("google").unwrap().is_none());
-    }
-
-    #[test]
-    fn reinserting_a_card_preserves_first_seen_and_keeps_its_label() {
-        let ledger = Ledger::open_in_memory().unwrap();
-        ledger
-            .upsert_card("card-1", Some("EOS_DIGITAL"), "fp")
-            .unwrap();
-        let first: i64 = ledger
-            .inner()
-            .query_row(
-                "SELECT first_seen FROM cards WHERE id = 'card-1'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-
-        // A later sighting that does not know the label must not erase it.
-        ledger.add_card("card-1", "fp").unwrap();
-
-        let (label, first_again): (String, i64) = ledger
-            .inner()
-            .query_row(
-                "SELECT volume_label, first_seen FROM cards WHERE id = 'card-1'",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(label, "EOS_DIGITAL");
-        assert_eq!(first_again, first);
     }
 
     /// Phase 1 acceptance: a job written, the process simulated as restarted,
@@ -2460,5 +1567,212 @@ mod tests {
             .unwrap();
 
         assert!(!ledger.track_stamps().unwrap()[0].has_text);
+    }
+
+    /// A database at **any** earlier version catches up to exactly the schema a
+    /// fresh one is created with.
+    ///
+    /// Every version, not a chosen one. The check used to start at migration 6,
+    /// and the bug it missed was a line appended to migration 8 *after* 8 had
+    /// already run: databases that had seen the old 8 stayed at
+    /// `user_version = 8` for ever and never gained the column, while a fresh
+    /// database got it on creation. Nothing failed until something read the
+    /// column, and the error named neither the cause nor the remedy.
+    ///
+    /// Comparing the whole of `sqlite_master` rather than looking for one
+    /// table: a migration that adds a table and forgets its index leaves two
+    /// databases that behave differently under load and identically under a
+    /// test that only checks the table exists.
+    #[test]
+    fn a_database_at_any_version_catches_up_to_a_fresh_one() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let schema_of = |ledger: &Ledger| -> Vec<(String, String)> {
+            let mut statement = ledger
+                .inner()
+                .prepare(
+                    "SELECT name, COALESCE(sql, '') FROM sqlite_master
+                      WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
+                )
+                .unwrap();
+            let rows = statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        };
+
+        let fresh = Ledger::open(dir.path().join("fresh.sqlite3")).unwrap();
+        let expected = schema_of(&fresh);
+
+        for version in 1..MIGRATIONS.len() {
+            let path = dir.path().join(format!("at-{version}.sqlite3"));
+            {
+                let conn = Connection::open(&path).unwrap();
+                for migration in &MIGRATIONS[..version] {
+                    conn.execute_batch(migration).unwrap();
+                }
+                conn.execute_batch(&format!("PRAGMA user_version = {version}"))
+                    .unwrap();
+            }
+
+            let migrated = Ledger::open(&path).unwrap();
+            assert_eq!(
+                migrated.schema_version().unwrap(),
+                MIGRATIONS.len() as i64,
+                "a database at version {version} should catch up"
+            );
+            assert_eq!(
+                schema_of(&migrated),
+                expected,
+                "a database at version {version} ended up with a different schema \
+                 from a fresh one"
+            );
+
+            // And the tables work, rather than merely existing.
+            assert_eq!(migrated.tracks().unwrap(), vec![]);
+            assert_eq!(migrated.points_between(0, i64::MAX).unwrap(), vec![]);
+            // A session row, as the retired folder publishing wrote it (RS-1): the table stays, so a
+            // NAS database's old rows are kept, and it must still accept one.
+            migrated
+                .inner()
+                .execute(
+                    "INSERT OR IGNORE INTO sessions (id, folder, state, created_at)
+                     VALUES (?1, ?2, 'folder', ?3)",
+                    (format!("folder-{version}"), "/Publishing", 0),
+                )
+                .unwrap();
+        }
+    }
+
+    /// Phase 1 acceptance: a round-trip test per table. All ten tables of
+    /// specification §7, every column written and read back.
+    #[test]
+    fn every_table_round_trips() {
+        // The checks, derived, publishes and oauth tables lost their API with RS-1; they stay in the
+        // schema (no migration drops a table), and the migration test above still covers them.
+        let ledger = Ledger::open_in_memory().unwrap();
+        let conn = ledger.inner();
+
+        // users
+        ledger.add_user("uid-1", "Pablo").unwrap();
+        let (name, added): (String, i64) = conn
+            .query_row(
+                "SELECT display_name, added_at FROM users WHERE uid = 'uid-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "Pablo");
+        assert!(added > 0);
+
+        // cards
+        ledger
+            .upsert_card("card-1", Some("EOS_DIGITAL"), "fp-abc")
+            .unwrap();
+        let (label, fp, first, last): (String, String, i64, i64) = conn
+            .query_row(
+                "SELECT volume_label, fingerprint, first_seen, last_seen
+                   FROM cards WHERE id = 'card-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(label, "EOS_DIGITAL");
+        assert_eq!(fp, "fp-abc");
+        assert!(first > 0 && last > 0);
+
+        // shots
+        // `add_shot` went with the handoff (RS-1); the row it wrote, written directly.
+        conn.execute(
+            "INSERT OR IGNORE INTO shots (id, card_id, stem, status) VALUES (?1, ?2, ?3, 'new')",
+            ("shot-1", "card-1", "IMG_1234"),
+        )
+        .unwrap();
+        ledger.set_shot_candidate("shot-1", "asset-1").unwrap();
+        let (card_id, stem, candidate, status): (String, String, String, String) = conn
+            .query_row(
+                "SELECT card_id, stem, candidate_asset_id, status FROM shots WHERE id = 'shot-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!((card_id.as_str(), stem.as_str()), ("card-1", "IMG_1234"));
+        assert_eq!(candidate, "asset-1");
+        assert_eq!(status, "new");
+
+        // assets — every column
+        ledger
+            .upsert_asset(
+                "asset-1",
+                "shot-1",
+                "DCIM/100/IMG_1234.JPG",
+                "jpeg",
+                12_582_912,
+                "sha-jpeg",
+                Some(1_714_564_800),
+                Some(6000),
+                Some(4000),
+                Some("PENTAX17"),
+            )
+            .unwrap();
+        #[allow(clippy::type_complexity)]
+        let (rel, kind, bytes, sha, capture, w, h, cam): (
+            String,
+            String,
+            i64,
+            String,
+            i64,
+            u32,
+            u32,
+            String,
+        ) = conn
+            .query_row(
+                "SELECT rel_path, kind, bytes, sha256, capture_datetime, width, height, camera
+                   FROM assets WHERE id = 'asset-1'",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                        r.get(7)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(rel, "DCIM/100/IMG_1234.JPG");
+        assert_eq!(kind, "jpeg");
+        assert_eq!(bytes, 12_582_912);
+        assert_eq!(sha, "sha-jpeg");
+        assert_eq!(capture, 1_714_564_800);
+        assert_eq!((w, h), (6000, 4000));
+        assert_eq!(cam, "PENTAX17");
+
+        // jobs — through the typed API
+        let job = Job::new("job-1", "date_scan", 500);
+        ledger.insert_job(&job).unwrap();
+        ledger.update_job_progress("job-1", 250, 500).unwrap();
+        ledger
+            .finish_job("job-1", JobStatus::Completed, None, Some("1 file renamed"))
+            .unwrap();
+        let stored = ledger.get_job("job-1").unwrap().unwrap();
+        assert_eq!(stored.kind, "date_scan");
+        assert_eq!(stored.status, JobStatus::Completed);
+        assert_eq!((stored.progress, stored.total), (250, 500));
+        assert_eq!(stored.started_at, job.started_at);
+        assert!(stored.finished_at.is_some());
+        assert!(stored.error.is_none());
+
+        // settings
+        ledger.set_setting("auto_resize", "true").unwrap();
+        assert_eq!(
+            ledger.get_setting("auto_resize").unwrap().as_deref(),
+            Some("true")
+        );
+        assert_eq!(ledger.get_setting("absent").unwrap(), None);
     }
 }

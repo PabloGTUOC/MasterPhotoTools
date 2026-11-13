@@ -1,9 +1,8 @@
 /**
  * Firebase Authentication (specification §5.2).
  *
- * Firebase answers "may this person use PhotoTools?". It does **not** grant
- * access to Google Photos — that is a separate OAuth flow owned by the server
- * (§5.1). Nothing here touches Google Photos.
+ * Firebase answers "may this person use PhotoTools?" and nothing else. Google
+ * Photos publishing, which had an OAuth flow of its own, was removed (RS-1).
  */
 
 import { initializeApp, type FirebaseApp } from 'firebase/app';

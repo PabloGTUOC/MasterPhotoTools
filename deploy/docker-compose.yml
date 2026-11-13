@@ -40,23 +40,10 @@ services:
       # in ROOTS, and G6 refuses anything outside it.
       - ${LIBRARY_PATH:?set LIBRARY_PATH to the photo library on the NAS}:/library
 
-      # The ledger and the staging directory. Deliberately a different volume
+      # The ledger. Deliberately a different volume
       # from the library: specification §7 requires the database to sit outside
       # the photographs, so that losing one cannot corrupt the other.
-      - ${DATA_PATH:?set DATA_PATH to a directory for the ledger and staging}:/data
-
-      # The publishing folder. **This folder is emptied** of everything Google
-      # confirms receiving, so it must not be the library and must not contain
-      # it — the server refuses to start if it is either, rather than finding
-      # out at the moment of deletion.
-      #
-      # Required rather than defaulted, and required *here*, beside the
-      # environment variable that names it: the server is the only machine that
-      # can publish (it holds the Google refresh token), this folder is the only
-      # way in, and a server deployed without one has no publishing road at all.
-      # A deployment that genuinely wants none comments out this line and
-      # PUBLISHING_DIR together.
-      - ${PUBLISHING_PATH:?set PUBLISHING_PATH to a folder publishing may empty — not the library}:/publishing
+      - ${DATA_PATH:?set DATA_PATH to a directory for the ledger}:/data
 
     environment:
       # G6 — the only directories any request may reach. /library is the
@@ -65,12 +52,6 @@ services:
       ROOTS: /library
 
       DATABASE_PATH: /data/phototools.db
-      STAGING_DIR: /data/staging
-
-      # The container's view of PUBLISHING_PATH above. Unset refuses all
-      # publishing, the way an empty ROOTS refuses every path: there is no safe
-      # default for a folder that gets deleted from.
-      PUBLISHING_DIR: /publishing
 
       # F12's thresholds. Left at the code's defaults; override here rather than
       # in the image so a change does not need a rebuild.
@@ -91,20 +72,11 @@ services:
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?set FIREBASE_PROJECT_ID}
       ALLOWED_UIDS: ${ALLOWED_UIDS:?set ALLOWED_UIDS to the Firebase uids permitted to use this server}
 
-      # Break-glass token for the desktop handoff until Firebase sign-in is
-      # wired into the desktop (docs/known-gaps.md). Optional, and unset means
-      # unavailable rather than blank-permits.
+      # Break-glass token, and what the desktop's timeline sync authenticates
+      # with until Firebase sign-in is wired into the desktop
+      # (docs/known-gaps.md). Optional, and unset means unavailable rather than
+      # blank-permits.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
-
-      # F15. The redirect URI must match the OAuth client character for
-      # character, including scheme and port, or the failure happens at Google's
-      # end where this server never sees it (MV-12.3).
-      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
-      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
-      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
-      # Publishing refuses to store a refresh token without this rather than
-      # storing it in the clear. 32 bytes, hex: openssl rand -hex 32
-      GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY: ${GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY:-}
 
       # The phone posting its own positions (`docs/owntracks-plan.md`).
       # **Both unset means the route refuses everything**, which is the right

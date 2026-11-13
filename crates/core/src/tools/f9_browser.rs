@@ -100,8 +100,6 @@ mod tests {
     fn config_rooted_at(root: &Path) -> Config {
         Config {
             roots: vec![root.canonicalize().unwrap()],
-            staging_dir: PathBuf::new(),
-            publishing_dir: None,
             thresholds: Thresholds::default(),
             database: PathBuf::new(),
         }

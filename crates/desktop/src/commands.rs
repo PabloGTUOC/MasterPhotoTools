@@ -819,36 +819,6 @@ pub fn deliver_card(args: DeliverArgs, state: State<'_, AppState>) -> CommandRes
 }
 
 #[tauri::command]
-pub fn stage_card(path: String, state: State<'_, AppState>) -> CommandResult<String> {
-    let config = state.config();
-    let root = resolve_input(&config, &path)?;
-    let card = Card::at(&root).map_err(describe)?;
-    let staging = config.staging_dir.clone();
-
-    state
-        .jobs
-        .spawn("card_stage", 0, move |progress| {
-            let scan = ingest::scan_card(&card, progress)?;
-            let candidates: Vec<_> = scan.candidates().cloned().collect();
-            let result = ingest::stage_all(&candidates, &staging, progress);
-
-            if result.all_verified() {
-                Ok(format!("{} copied and verified", result.staged.len()))
-            } else {
-                Ok(format!(
-                    "{} copied, {} could not be verified",
-                    result.staged.len(),
-                    result.failed.len()
-                ))
-            }
-        })
-        .map_err(describe)
-}
-
-/// A scan the UI can render immediately, without waiting for a job.
-///
-/// Used by the review screen once a scan job has finished.
-#[tauri::command]
 pub fn read_card(path: String, state: State<'_, AppState>) -> CommandResult<CardScanResult> {
     let config = state.config();
     let root = resolve_input(&config, &path)?;
@@ -885,7 +855,7 @@ pub fn read_card(path: String, state: State<'_, AppState>) -> CommandResult<Card
 }
 
 // ---------------------------------------------------------------------------
-// Validation and remediation — F12, F13
+// Validation — F12
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
@@ -911,8 +881,6 @@ pub struct ShotValidationRow {
 pub struct FailureGroup {
     pub failure: String,
     pub count: usize,
-    pub actions: Vec<String>,
-    pub default_action: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -998,11 +966,6 @@ pub fn validate_card(
         .map(|(failure, indices)| FailureGroup {
             failure: failure.as_str().to_string(),
             count: indices.len(),
-            actions: ingest::actions_for(failure)
-                .into_iter()
-                .map(|a| a.as_str().to_string())
-                .collect(),
-            default_action: ingest::default_action(failure).map(|a| a.as_str().to_string()),
         })
         .collect();
 
@@ -1036,253 +999,6 @@ pub fn validate_card(
             })
             .collect(),
     })
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RemediateArgs {
-    pub path: String,
-    pub failure: String,
-    pub action: String,
-    /// `YYYY-MM-DDTHH:MM:SS`, for the manual date actions.
-    pub date: Option<String>,
-    pub out_dir: String,
-    /// When true, plan only and write nothing (§9.2 rule 3).
-    #[serde(default)]
-    pub dry_run: bool,
-    /// F12's ceilings for this card. Absent means the configured default.
-    #[serde(default)]
-    pub thresholds: Option<ThresholdOverrides>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RemediationPreview {
-    pub stem: String,
-    pub action: String,
-    pub target_dimensions: Option<(u32, u32)>,
-    pub new_date: Option<String>,
-    pub destination: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RemediationPlanResult {
-    pub actions: Vec<RemediationPreview>,
-    pub skipped: Vec<SkipRow>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SkipRow {
-    pub file: String,
-    pub reason: String,
-}
-
-/// Apply one action to every shot sharing one failure (F13).
-///
-/// With `dry_run` the plan is returned and **nothing is written**, which is how
-/// the review screen shows what a bulk action would do before it does it.
-#[tauri::command]
-pub fn remediate(
-    args: RemediateArgs,
-    state: State<'_, AppState>,
-) -> CommandResult<RemediationPlanResult> {
-    let config = state.config();
-    let root = resolve_input(&config, &args.path)?;
-    let out_dir = resolve_output(&config, &args.out_dir)?;
-    let card = Card::at(&root).map_err(describe)?;
-
-    let failure = parse_failure(&args.failure)?;
-    let action = parse_action(&args.action)?;
-    let date = match &args.date {
-        Some(raw) => Some(
-            chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S")
-                .map_err(|_| format!("{raw} is not a date of the form YYYY-MM-DDTHH:MM:SS"))?,
-        ),
-        None => None,
-    };
-
-    let scan = ingest::scan_card(&card, &InMemoryProgress::new()).map_err(describe)?;
-    // One set of thresholds for the whole request: validating against one
-    // ceiling and then remediating against another would plan work for
-    // failures that no longer exist.
-    let thresholds = session_thresholds(&config, &args.thresholds);
-    let validation = ingest::validate(&scan.shots, chrono::Utc::now().naive_utc(), &thresholds);
-
-    let params = ingest::RemediationParams {
-        shots: &scan.shots,
-        validation: &validation,
-        thresholds: thresholds.clone(),
-        request: ingest::BulkRequest {
-            failure,
-            action,
-            date,
-            output_dir: out_dir,
-        },
-    };
-
-    let plan = ingest::plan_bulk(&params).map_err(describe)?.data;
-
-    let preview = RemediationPlanResult {
-        actions: plan
-            .actions
-            .iter()
-            .map(|a| RemediationPreview {
-                stem: a.stem.clone(),
-                action: a.action.as_str().to_string(),
-                target_dimensions: a.target_dimensions,
-                new_date: a.new_date.map(|d| d.to_string()),
-                destination: a
-                    .destination
-                    .as_ref()
-                    .map(|d| d.to_string_lossy().to_string()),
-            })
-            .collect(),
-        skipped: plan
-            .skipped
-            .iter()
-            .map(|s| SkipRow {
-                file: s.file.clone(),
-                reason: s.reason.clone(),
-            })
-            .collect(),
-    };
-
-    if args.dry_run {
-        return Ok(preview);
-    }
-
-    ingest::apply_bulk(plan, &InMemoryProgress::new()).map_err(describe)?;
-    Ok(preview)
-}
-
-fn parse_failure(raw: &str) -> CommandResult<ingest::FailureClass> {
-    use ingest::FailureClass::*;
-    match raw {
-        "no_date" => Ok(NoDate),
-        "date_out_of_range" => Ok(DateOutOfRangeIsolated),
-        "date_out_of_range_batch" => Ok(DateOutOfRangeBatch),
-        "too_many_pixels" => Ok(TooManyPixels),
-        "too_large" => Ok(TooLarge),
-        other => Err(format!("{other} is not a failure class")),
-    }
-}
-
-fn parse_action(raw: &str) -> CommandResult<ingest::ActionKind> {
-    use ingest::ActionKind::*;
-    match raw {
-        "enter_date_manually" => Ok(EnterDateManually),
-        "derive_from_batch_median" => Ok(DeriveFromBatchMedian),
-        "use_file_modification_time" => Ok(UseFileModificationTime),
-        "redate_manually" => Ok(RedateManually),
-        "bulk_shift" => Ok(BulkShift),
-        "publish_anyway" => Ok(PublishAnyway),
-        "resize" => Ok(Resize),
-        "reencode_lower" => Ok(ReencodeLower),
-        "skip" => Ok(Skip),
-        other => Err(format!("{other} is not a remediation action")),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// F16 — the handoff
-// ---------------------------------------------------------------------------
-
-/// Hand a card's derivatives to the server (F16).
-///
-/// A job, and a long one: it copies gigabytes over SMB. The protocol itself
-/// lives in `core` — this resolves paths, builds the transport and gets out of
-/// the way (G1).
-///
-/// `staging_dir` is the directory on the **NAS share**, as the Mac sees it.
-/// It is deliberately not `config.staging_dir`: that one is local scratch for
-/// F11's copy off the card, and the two are different places that happen to
-/// share a word.
-#[tauri::command]
-pub fn hand_off_card(
-    path: String,
-    derived_dir: String,
-    staging_dir: String,
-    state: State<'_, AppState>,
-) -> CommandResult<String> {
-    let config = state.config();
-    let root = resolve_input(&config, &path)?;
-    let derived_dir = resolve_input(&config, &derived_dir)?;
-    let staging_dir = resolve_output(&config, &staging_dir)?;
-    let card = Card::at(&root).map_err(describe)?;
-    let client = state.server.session_client();
-
-    state
-        .jobs
-        .spawn("card_handoff", 0, move |progress| {
-            let scan = ingest::scan_card(&card, progress)?;
-            let (items, not_ready) = ingest::items_for(&scan, &derived_dir);
-
-            if items.is_empty() {
-                return Ok(format!(
-                    "nothing to hand over: {} shot(s) have no JPEG yet",
-                    not_ready.len()
-                ));
-            }
-
-            let handoff = ingest::Handoff::prepare(
-                // Replaced by the id the server mints; sent so a manifest is
-                // never on the wire without one.
-                "pending",
-                &scan.card_id,
-                &items,
-            )?;
-            let outcome = ingest::run_handoff(&handoff, &staging_dir, &client, progress)?;
-
-            // A shot with no JPEG is not a handoff failure, but it is a
-            // photograph that will not be published, so it is said out loud.
-            let mut summary = outcome.describe();
-            if !not_ready.is_empty() {
-                summary.push_str(&format!(", {} shot(s) not ready", not_ready.len()));
-            }
-
-            // The session id, because it is the only handle anybody has on this
-            // card once the server owns it: publishing is a server operation
-            // addressed by session, and nothing else reports the id.
-            summary.push_str(&format!(" · session {}", outcome.session_id));
-            Ok(summary)
-        })
-        .map_err(describe)
-}
-
-/// Derive JPEGs for the card's RAW-only shots (F14).
-#[tauri::command]
-pub fn derive_raw(
-    path: String,
-    out_dir: String,
-    thresholds: Option<ThresholdOverrides>,
-    state: State<'_, AppState>,
-) -> CommandResult<String> {
-    let config = state.config();
-    let root = resolve_input(&config, &path)?;
-    let out_dir = resolve_output(&config, &out_dir)?;
-    let card = Card::at(&root).map_err(describe)?;
-    // A derivative faces the same ceilings as a camera JPEG, so it faces the
-    // ones chosen for this card rather than the installation's defaults.
-    let thresholds = session_thresholds(&config, &thresholds);
-
-    state
-        .jobs
-        .spawn("raw_derive", 0, move |progress| {
-            let scan = ingest::scan_card(&card, progress)?;
-            let requests = ingest::derivation::requests_for(&scan.shots);
-
-            if requests.is_empty() {
-                return Ok("nothing to derive: every shot has a JPEG".to_string());
-            }
-
-            let summary =
-                ingest::derivation::derive_batch(&requests, &out_dir, &thresholds, progress)?;
-
-            Ok(format!(
-                "{} derived, {} failed",
-                summary.derived.len(),
-                summary.failures.len()
-            ))
-        })
-        .map_err(describe)
 }
 
 // ---------------------------------------------------------------------------
@@ -1682,71 +1398,6 @@ pub fn apply_geotag(args: GeotagArgs, state: State<'_, AppState>) -> CommandResu
                 .describe())
         })
         .map_err(describe)
-}
-
-// ---------------------------------------------------------------------------
-// Publishing a folder — the desktop's half
-//
-// Uploading is the server's alone: the Google refresh token lives on exactly
-// one machine (§2.3). What the desktop can do is fill the folder, which is
-// copying — and copying is what this machine is for.
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-pub struct FillArgs {
-    /// Folders or files to copy into the publishing folder.
-    pub paths: Vec<String>,
-}
-
-/// What a fill did, in the shape both transports answer with.
-#[derive(Debug, Serialize)]
-pub struct FillResult {
-    pub copied: usize,
-    pub already_there: usize,
-    pub failed: usize,
-    pub summary: String,
-}
-
-/// Copy folders or files into the publishing folder.
-///
-/// A copy, never a move: emptying that folder after a successful upload has to
-/// remove a second copy, never the only one.
-#[tauri::command]
-pub fn fill_publishing(args: FillArgs, state: State<'_, AppState>) -> CommandResult<FillResult> {
-    let config = state.config();
-    let Some(dir) = config.publishing_dir.clone() else {
-        return Err(
-            "No publishing folder is configured. Set PUBLISHING_DIR to the folder \
-                    publishing should draw from and empty."
-                .into(),
-        );
-    };
-
-    let sources = resolve_inputs(&config, &args.paths)?;
-    let progress = InMemoryProgress::new();
-    let mut result = ingest::DeliveryResult::default();
-
-    for source in &sources {
-        let scanned = ingest::scanner::scan_paths(std::slice::from_ref(source), &progress)
-            .map_err(describe)?;
-        let root = if source.is_dir() {
-            source.as_path()
-        } else {
-            source.parent().unwrap_or(source.as_path())
-        };
-
-        let one = ingest::deliver_all(&scanned.assets, root, &dir, &progress).map_err(describe)?;
-        result.delivered.extend(one.delivered);
-        result.skipped.extend(one.skipped);
-        result.failed.extend(one.failed);
-    }
-
-    Ok(FillResult {
-        copied: result.delivered.len(),
-        already_there: result.skipped.len(),
-        failed: result.failed.len(),
-        summary: result.describe(),
-    })
 }
 
 /// A poisoned ledger lock: an earlier panic left it unusable.

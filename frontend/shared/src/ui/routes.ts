@@ -18,10 +18,9 @@
  * and not the order these were built in.
  *
  * What is *not* here is each application's own screens. The web opens on a
- * dashboard and carries `Publish`, because the Google refresh token lives on
- * exactly one machine; the desktop opens on `Ingest`, because §2.3 puts the
- * card reader on the Mac. Those stay in their own routers, where the reason
- * for them is visible.
+ * dashboard; the desktop opens on `Ingest`, because §2.3 puts the card reader
+ * on the Mac. Those stay in their own routers, where the reason for them is
+ * visible.
  *
  * No `vue-router` import: it is not a dependency of the shared package, and
  * these records are structurally what a router wants. Each application spreads
@@ -31,7 +30,6 @@ import ContactSheet from './views/ContactSheet.vue';
 import Dates from './views/Dates.vue';
 import Geotag from './views/Geotag.vue';
 import ImageTool from './views/ImageTool.vue';
-import RawToJpeg from './views/RawToJpeg.vue';
 import Rename from './views/Rename.vue';
 import Timeline from './views/Timeline.vue';
 import Transform from './views/Transform.vue';
@@ -55,11 +53,6 @@ export const sharedToolRoutes = [
         'Convert scanner output to a distributable format. Multi-page TIFFs produce one numbered JPEG per page.',
       applyLabel: 'Convert',
     },
-  },
-  {
-    path: '/raw-to-jpeg',
-    component: RawToJpeg,
-    meta: { label: 'RAW' },
   },
   {
     path: '/split',
@@ -88,8 +81,7 @@ export const sharedToolRoutes = [
   // Neither of these is a step in the chain above — a contact sheet is made
   // *from* a set of photographs rather than applied to each, and Transform is
   // the general-purpose escape hatch for a one-off rotate or resize. They sit
-  // after the chain and before publishing so the numbered run reads straight
-  // through.
+  // after the chain so the numbered run reads straight through.
   { path: '/contact-sheet', component: ContactSheet, meta: { label: 'Sheet' } },
   { path: '/transform', component: Transform, meta: { label: 'Transform' } },
 ];
@@ -102,9 +94,6 @@ export const sharedToolRoutes = [
  * Mac and 05 on a phone, even though the two bars begin with different screens.
  */
 export const FIRST_SHARED_STEP = 2;
-
-/** Publishing is the last step, and only the web application offers it. */
-export const PUBLISH_STEP = FIRST_SHARED_STEP + sharedToolRoutes.length;
 
 /** `2` → `'02'`. Two digits so the labels stay in one column. */
 export function stepLabel(step: number): string {

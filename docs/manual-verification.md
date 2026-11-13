@@ -242,6 +242,9 @@ defects**, which is the argument for doing the rest. The suggested order, and wh
 
 ## Phase 9 — Validation and remediation
 
+> **Partly withdrawn 2026-11-14 (RS-1):** bulk remediation was removed with Google publishing. The
+> validation checks still apply; the remediation ones are kept for the history only.
+
 - [ ] **MV-9.1 — Look at a resized frame next to its original.**
       The tests prove the capture date survives and the dimensions land under the ceiling; they say
       nothing about whether a 24 MP frame reduced to 10 MP still looks right.
@@ -266,6 +269,9 @@ defects**, which is the argument for doing the rest. The suggested order, and wh
       **Result:**
 
 ## Phase 10 — RAW to JPEG
+
+> **Withdrawn 2026-11-14 (RS-2):** the RAW tab was removed; RAW development is Rollchrome's Develop
+> (MV-23, MV-41). Kept for the history.
 
 Rung 1 — the embedded preview — is fully tested and will handle nearly every real file. What cannot
 be tested is how the results *look*, and the two rungs below it.
@@ -303,6 +309,8 @@ be tested is how the results *look*, and the two rungs below it.
       **Result:**
 
 ## Phase 11 — Handoff and ledger · needs a NAS
+
+> **Withdrawn 2026-11-14 (RS-1):** the card handoff was removed. Kept for the history.
 
 > **This whole section covers a road being retired.** Publishing now takes a folder
 > (`docs/workflow-plan.md`), and WF-5 withdraws the handoff once MV-16 has confirmed the
@@ -350,6 +358,8 @@ exactly that.
       **Result:**
 
 ## Phase 12 — Google Photos · needs an OAuth client
+
+> **Withdrawn 2026-11-14 (RS-1):** Google Photos publishing was removed. Kept for the history.
 
 No test reaches Google: the API is a trait, and the one test of the real HTTP client points at
 `127.0.0.1`. That proves the client sends what it intends to. It cannot prove Google wants it.
@@ -592,6 +602,9 @@ through G6's check. `docs/GPS/track.gpx` does not — copy it under one, or add 
       **Result:**
 
 ## Publishing a folder — needs a NAS, a Google account, and real photographs
+
+> **Withdrawn 2026-11-14 (RS-1):** folder publishing was removed with Google Photos. MV-16 no longer
+> gates anything. Kept for the history.
 
 The road that lets the tools run before anything is published; the plan is in
 [`publish-folder-plan.md`](publish-folder-plan.md) and the report in

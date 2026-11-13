@@ -1,5 +1,9 @@
 # Two screens — development plan
 
+> **WF-5 done 2026-11-14 by RS-1** ([`rescope-plan.md`](rescope-plan.md)), without waiting for MV-16:
+> the owner dropped Google Photos publishing, so folder publishing was removed too. One difference from
+> the WF-5 text below: the desktop keeps its server connection, because timeline sync uses it.
+
 > **Built**, except WF-5. WF-1 to WF-4 and WF-6 are done and the gates pass; WF-5 withdraws two
 > specification features and is gated on MV-16 confirming folder publishing against real
 > photographs. The report is [`phase-reports/workflow.md`](phase-reports/workflow.md).

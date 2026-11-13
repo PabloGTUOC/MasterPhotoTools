@@ -1,23 +1,19 @@
 /**
  * Phase 13 acceptance, in a real browser.
  *
- * Three criteria, all of them claims about behaviour rather than about code:
+ * One criterion, a claim about behaviour rather than about code. Two more — bulk-approving resizes
+ * and the publish gate — went with remediation and Google publishing (RS-1, 2026-11-14).
  *
  * 1. **A 400-shot session renders and stays responsive.** "Responsive" is a
  *    measurement, not an opinion, so the grid is built on its own and four
  *    hundred shots are put through it: first paint, filtering and scrolling are
  *    all timed, every shot is reachable, and the DOM is checked to hold a
  *    screenful rather than a card's worth.
- * 2. **Bulk-approving all resizes is one action.** The resize must arrive
- *    already chosen, and one press must cover every shot in the class.
- * 3. **Publish is unreachable until a dry run has been reviewed.** Driven
- *    against the real built application, not a harness.
  *
  * Screenshots land in `layout-proof/` for a human to look at.
  */
-import { createServer as createHttpServer } from 'node:http';
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { extname, join, normalize } from 'node:path';
+import { existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import { createServer } from 'vite';
 import vue from '@vitejs/plugin-vue';
@@ -36,31 +32,6 @@ function preinstalledChromium() {
   return undefined;
 }
 
-/** Serve a built single-page app: API routes answered by apiHandler; unknown paths fall back to index.html. */
-function createStaticServer(root, apiHandler) {
-  const types = {
-    '.html': 'text/html',
-    '.js': 'text/javascript',
-    '.css': 'text/css',
-    '.svg': 'image/svg+xml',
-    '.png': 'image/png',
-    '.json': 'application/json',
-  };
-  return createHttpServer((request, response) => {
-    const pathname = (request.url ?? '/').split('?')[0];
-    if (pathname.startsWith('/api/') && apiHandler) {
-      if (apiHandler(request, response, pathname)) return;
-    }
-    const candidate = join(root, normalize(pathname));
-    const file =
-      existsSync(candidate) && extname(candidate) ? candidate : join(root, 'index.html');
-    response.writeHead(200, {
-      'Content-Type': types[extname(file)] ?? 'application/octet-stream',
-    });
-    response.end(readFileSync(file));
-  });
-}
-
 const SHOTS = 400;
 /** A filter must repaint within this. Well under the 100 ms that reads as instant. */
 const FILTER_BUDGET_MS = 100;
@@ -72,7 +43,6 @@ const OUT = 'layout-proof';
 
 const ui = fileURLToPath(new URL('../../shared/src/ui', import.meta.url));
 const harness = fileURLToPath(new URL('./grid-harness', import.meta.url));
-const DIST = 'dist';
 
 mkdirSync(OUT, { recursive: true });
 
@@ -191,7 +161,7 @@ try {
   await viewport.evaluate((element) => element.scrollTo(0, 0));
   await page.waitForTimeout(80);
 
-  // (3) The interaction the bulk action bar drives.
+  // (3) Filtering to one failure class, as a person reading the status does.
   const filterMs = await page.evaluate(async () => {
     const button = document.querySelector('[data-testid="filter-pixels"]');
     const start = performance.now();
@@ -242,202 +212,6 @@ try {
   );
   await page.waitForTimeout(80);
   await page.screenshot({ path: join(OUT, 'shot-grid-400.png'), fullPage: false });
-
-  // -------------------------------------------------------------------------
-  // (2) Bulk-approving all resizes is one action
-  // -------------------------------------------------------------------------
-
-  await page.goto(`${base}/bulk.html?shots=${SHOTS}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-testid="group-too_many_pixels"]');
-
-  const preselected = await page
-    .locator('[data-testid="action-too_many_pixels"]')
-    .inputValue();
-  note(`action preselected for too many pixels: ${preselected}`);
-  if (preselected !== 'resize') {
-    failures.push(
-      `the resize action is not preselected (got ${preselected}); a 10 MP ` +
-        'ceiling fails nearly every frame, so resizing is the normal path',
-    );
-  }
-
-  await page.locator('[data-testid="apply-too_many_pixels"]').click();
-  await page.waitForTimeout(60);
-
-  const emitted = await page.evaluate(() => window.__applied ?? []);
-  note(`one press emitted: ${JSON.stringify(emitted)}`);
-  if (emitted.length !== 1) {
-    failures.push(`one press produced ${emitted.length} requests, not one`);
-  }
-  const [request] = emitted;
-  if (request?.action !== 'resize' || request?.failure !== 'too_many_pixels') {
-    failures.push(`the press did not request a bulk resize: ${JSON.stringify(request)}`);
-  }
-  const covered = await page.evaluate(
-    () => Number(document.querySelector('[data-testid="count-too_many_pixels"]').textContent),
-  );
-  note(`shots covered by that one press: ${covered}`);
-  if (covered < 300) {
-    failures.push(`one press covered only ${covered} shots of ${SHOTS}`);
-  }
-
-  await page.screenshot({ path: join(OUT, 'bulk-actions.png'), fullPage: false });
-
-  // -------------------------------------------------------------------------
-  // (3) Publish is unreachable until a dry run has been reviewed
-  // -------------------------------------------------------------------------
-
-  if (!existsSync(DIST)) {
-    failures.push(`no ${DIST}/ — run \`npm run build\` before this check`);
-  } else {
-    let stubSessionId = 'session-initial-1234';
-    const stubItems = [
-      {
-        shot_id: 'shot-1',
-        stem: 'test1',
-        source_sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-        file_name: 'test1.jpg',
-        bytes: 1024 * 1024,
-      },
-      {
-        shot_id: 'shot-2',
-        stem: 'test2',
-        source_sha256: 'ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb',
-        file_name: 'test2.jpg',
-        bytes: 2 * 1024 * 1024,
-      },
-      {
-        shot_id: 'shot-3',
-        stem: 'test3',
-        source_sha256: '4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce',
-        file_name: 'test3.jpg',
-        bytes: 3 * 1024 * 1024,
-      },
-    ];
-    const stubTotalBytes = stubItems.reduce((acc, it) => acc + it.bytes, 0);
-
-    const getFolderPlan = () => ({
-      session_id: stubSessionId,
-      items: stubItems,
-      skipped: [],
-      total_bytes: stubTotalBytes,
-      upload_requests: stubItems.length,
-      batch_create_requests: 1,
-    });
-
-    const site = createStaticServer(DIST, (req, res, pathname) => {
-      if (pathname === '/api/connectors/google/status' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            connected: true,
-            scope: 'photoslibrary.appendonly',
-            connected_at: '2026-09-29T10:00:00Z',
-            needs_reauthorisation: false,
-            detail: null,
-          }),
-        );
-        return true;
-      }
-      if (pathname === '/api/storage/roots' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify([]));
-        return true;
-      }
-      if (pathname === '/api/publish/folder' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(getFolderPlan()));
-        return true;
-      }
-      if (pathname === '/api/publish/folder/plan' && req.method === 'POST') {
-        req.on('data', () => {});
-        req.on('end', () => {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(getFolderPlan()));
-        });
-        return true;
-      }
-      return false;
-    });
-    await new Promise((resolve) => site.listen(0, resolve));
-    const siteBase = `http://127.0.0.1:${site.address().port}`;
-
-    await page.goto(`${siteBase}/publish`, { waitUntil: 'networkidle' });
-
-    // (3a) Button accessible name before dry run is "Publish and empty", matching
-    // the anchored pattern /^Publish( \d+)? and empty$/, and is disabled.
-    const publishPattern = /^Publish( \d+)? and empty$/;
-    const publishBefore = page.getByRole('button', { name: 'Publish and empty', exact: true });
-    const disabledBefore = await publishBefore.isDisabled();
-    const explanationLocator = page.locator('[data-testid="gate-explanation"]');
-    const explanationVisibleBefore = await explanationLocator.isVisible();
-    const explanationTextBefore = (await explanationLocator.textContent()) ?? '';
-
-    note(`publish disabled before any dry run: ${disabledBefore}`);
-    if (!disabledBefore) {
-      failures.push(
-        'Publish is available with no dry run reviewed; the Google Photos API ' +
-          'cannot delete, so this is the one control that must be unreachable',
-      );
-    }
-    if (!explanationVisibleBefore) {
-      failures.push('nothing on screen explains why Publish is unavailable');
-    } else if (
-      !explanationTextBefore.includes(
-        'Publish is unavailable until a dry run of this folder has been reviewed.',
-      )
-    ) {
-      failures.push(
-        `gate explanation does not contain the dry-run reason: "${explanationTextBefore.trim()}"`,
-      );
-    }
-
-    // (3b) Review a dry run: the button updates to "Publish N and empty" with the
-    // stub's item count and unlocks.
-    await page.getByRole('button', { name: 'Dry run', exact: true }).click();
-    const expectedButtonName = `Publish ${stubItems.length} and empty`;
-    const publishAfterDryRun = page.getByRole('button', {
-      name: expectedButtonName,
-      exact: true,
-    });
-    try {
-      await publishAfterDryRun.waitFor({ state: 'visible', timeout: 5000 });
-    } catch {
-      failures.push(`Publish button did not update to "${expectedButtonName}" within 5 s`);
-    }
-
-    const enabledAfterDryRun = await publishAfterDryRun.isEnabled();
-    note(`publish button after dry run: enabled=${enabledAfterDryRun}, name="${expectedButtonName}"`);
-    if (!enabledAfterDryRun) {
-      failures.push('Publish button remained locked after a reviewed dry run');
-    }
-
-    // (3c) Simulate folder edited behind the app's back: session_id changes.
-    // We trigger the re-read using the "Re-read the folder" button: this
-    // exercises the exact same readFolder() check and folderChanged invalidation
-    // as a window focus event, without imposing an arbitrary 5-second sleep on
-    // the test suite's runtime budget.
-    stubSessionId = 'session-modified-5678';
-    await page.getByRole('button', { name: 'Re-read the folder', exact: true }).click();
-
-    const changedReason = 'The folder has changed since the dry run';
-    try {
-      await explanationLocator.filter({ hasText: changedReason }).waitFor({ timeout: 5000 });
-    } catch {
-      failures.push('gate explanation did not show the folder-changed reason within 5 s');
-    }
-
-    const publishAfterChange = page.getByRole('button', { name: publishPattern });
-    const disabledAfterChange = await publishAfterChange.isDisabled();
-
-    note(`publish locked after folder changed: ${disabledAfterChange}`);
-    if (!disabledAfterChange) {
-      failures.push('Publish button remained enabled after folder contents changed on disk');
-    }
-
-    await page.screenshot({ path: join(OUT, 'publish-gate.png'), fullPage: false });
-    site.close();
-  }
 } finally {
   await browser.close();
   await server.close();
@@ -449,4 +223,4 @@ if (failures.length) {
   process.exit(1);
 }
 
-console.log(`\ningest check: ${SHOTS} shots render responsively, one press bulk-resizes them, and publish is gated`);
+console.log(`\ningest check: ${SHOTS} shots render responsively`);

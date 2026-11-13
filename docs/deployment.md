@@ -3,12 +3,15 @@
 Two things get deployed, and they are independent of each other: a **server** in
 Docker on the NAS, and a **desktop application** on the Mac. The server can run
 without the desktop; the desktop's local tools work without the server, and only
-publishing needs it.
+timeline sync — the phone's positions, which the server receives — needs it.
 
-Read this in order the first time. The two sections that catch people are
-[roots](#3-roots-the-one-that-refuses-everything) and
-[the OAuth redirect](#7-google-photos), and both fail in ways that do not say
-what is wrong.
+Read this in order the first time. The section that catches people is
+[roots](#3-roots-the-one-that-refuses-everything), which fails in a way that does
+not say what is wrong.
+
+Google Photos publishing was removed on 2026-11-14 (`docs/rescope-plan.md`, RS-1):
+its environment variables, the publishing folder and its volume went with it. A
+server's old `.env` keys for it are simply ignored.
 
 ---
 
@@ -18,7 +21,6 @@ what is wrong.
 |---|---|
 | The server | A NAS running Docker, and a directory holding the photo library |
 | Sign-in | A Firebase project — free tier is enough |
-| Publishing | A Google Cloud project with the Photos Library API enabled |
 | The desktop | A Mac on macOS 14 or later, Rust, Node 20+, `exiftool`, Xcode command line tools |
 
 Nothing here needs a paid account except distributing the `.app` to somebody
@@ -42,16 +44,16 @@ cp deploy/deploy.env.example deploy/deploy.env   # set NAS_SSH
 ./deploy/deploy.sh             # builds, ships, starts, confirms
 ```
 
-**No configuration is typed twice.** The server's Firebase and Google values are
+**No configuration is typed twice.** The server's Firebase values are
 taken from the repository-root `.env` the server already runs with on the Mac —
-only the keys that mean the same on both machines, never `ROOTS`, the database,
-the port or the redirect URI. The web UI's Firebase configuration comes from
+only the keys that mean the same on both machines, never `ROOTS`, the database
+or the port. The web UI's Firebase configuration comes from
 `frontend/web/.env` and goes into the build as arguments, because
 `.dockerignore` keeps every `.env` out of the build context; without them the
 image would ship a web UI nobody can sign in to. `--check` refuses if the two
 files name different Firebase projects — sign-in would succeed and the server
 would refuse every token. `deploy/.env` is optional and wins over both, for
-what must differ on the NAS: `GOOGLE_OAUTH_REDIRECT_URI` above all.
+what must differ on the NAS.
 
 **`--check` is how you find the paths**, rather than reading them off the NAS
 first: with `LIBRARY_PATH` unset it lists the shared folders it can see and asks
@@ -62,14 +64,8 @@ so a container running as a uid that cannot write to a shared folder comes up
 healthy, accepts a job, and fails on the first file. With `PHOTOTOOLS_UID` unset
 the script reads the library's owner off the NAS and runs the container as that.
 
-`--check` refuses, before anything is built or sent, on the two placements that
-would delete photographs: a publishing folder that **is** the library, or one
-that **contains** it. The server refuses them too; finding out here costs a
-second instead of a whole image transfer.
-
 `REMOTE_DIR` in `deploy/deploy.env` is where the deployment lives on the NAS —
-the compose file, the `.env`, and by default `data/` (the ledger) and
-`publishing/` beneath it. On OMV it belongs beside the other services, in
+the compose file, the `.env`, and by default `data/` (the ledger) beneath it. On OMV it belongs beside the other services, in
 `/srv/dev-disk-by-uuid-…/docker-data/MasterPhotoTools`. `--check` confirms the SSH
 user can write there, since a folder made in the OMV web UI or as root often
 cannot be.
@@ -87,12 +83,8 @@ wrong.
 The job-progress stream sends `X-Accel-Buffering: no`, so nginx passes it
 through as it arrives; no proxy setting is needed for it.
 
-A public HTTPS hostname is also what the two sign-ins need. **Firebase** refuses
-to sign in from a domain not under *Authentication → Settings → Authorized
-domains*. **Google** accepts neither a raw IP nor plain `http` in a redirect URI
-other than `localhost`, so `GOOGLE_OAUTH_REDIRECT_URI` becomes
-`https://<hostname>/api/connectors/google/callback`, in `deploy/.env`, and the
-same string is registered on the OAuth client (MV-12.3).
+A public HTTPS hostname is also what sign-in needs: **Firebase** refuses to sign
+in from a domain not under *Authentication → Settings → Authorized domains*.
 
 Every `.env` and `deploy/deploy.env` are gitignored. What the server needs is
 assembled from them and sent to the NAS as one `.env` with mode 600;
@@ -110,33 +102,18 @@ docker compose -f deploy/docker-compose.yml up -d
 Compose reads its values from the environment or from a `.env` file **beside
 `docker-compose.yml`** — that is `deploy/.env`, not the repository root. Copy
 [`deploy/.env.example`](../deploy/.env.example), which lists every variable with
-what it is for. **Five are required** and compose refuses to start without them:
+what it is for. **Four are required** and compose refuses to start without them:
 
 ```sh
 # deploy/.env
 LIBRARY_PATH=/volume1/photo
 DATA_PATH=/volume1/docker/phototools
-PUBLISHING_PATH=/volume1/docker/phototools/publishing
 FIREBASE_PROJECT_ID=your-project-id
 ALLOWED_UIDS=aBcDeFgHiJkLmNoPqRsTuVwXyZ12
 ```
 
-`PUBLISHING_PATH` is the folder publishing draws from and, on success, **empties**
-of everything Google confirmed receiving. It is required beside the volume that
-declares it rather than defaulted, because the server is the only machine that
-can publish — it holds the Google refresh token — and this folder is the only way
-in. A deployment that genuinely wants no publishing comments out the volume and
-`PUBLISHING_DIR` together.
-
-**It must not be the library, and must not contain it.** The server refuses to
-start if it is either, rather than discovering it at the moment of deletion:
-every other safeguard around the deletion compares against this path, so setting
-it wrongly does not trip them — it moves them. A folder *inside* the library is
-allowed; no tool may write into it, and only that folder is ever emptied.
-
 **The server refuses to start on a configuration it cannot use** — an
-unparseable threshold, a path that will not canonicalise, a publishing folder
-pointed at the library — and says which. It used to discard that error and start
+unparseable threshold, a path that will not canonicalise — and says which. It used to discard that error and start
 with an empty `ROOTS`, so every request was refused and the only clue was a
 warning about `ROOTS` being empty when `ROOTS` was fine and something else
 entirely was wrong. If the container exits immediately, `docker logs` has the
@@ -235,12 +212,10 @@ Two further traps:
 | Variable | Default | Meaning |
 |---|---|---|
 | `ROOTS` | *empty* | Colon-separated directories the application may touch. Each is canonicalised at load and **must exist**. Empty refuses everything. |
-| `STAGING_DIR` | `/tmp/phototools-staging` | Where F11 copies files off the card. Local scratch on the Mac; **not** the NAS staging directory, which is typed into the Ingest screen. |
 | `DATABASE_PATH` | `/tmp/phototools.db` | The SQLite ledger. §7 requires it outside the photo library. Put it somewhere that survives a reboot — the default does not. |
 | `MAX_AGE_DAYS` | `90` | F12 rejects a capture date further than this from now. |
 | `MAX_MEGAPIXELS` | `0` | F12's resolution ceiling, in megapixels. **Zero means no ceiling**, which is the default: publishing is limited by file size, and a frame inside the byte cap is worth keeping whole. Set it to restore §F12's 10. |
 | `MAX_OUTPUT_BYTES` | `10485760` | F12's size ceiling, applied independently of the resolution one. |
-| `PUBLISHING_DIR` | *unset* | The one folder publishing draws from and, on success, empties. **Unset refuses all publishing**, the way an empty `ROOTS` refuses every path: there is no safe default for a folder that may be deleted from. It must already exist — it is never created automatically. Canonicalised at load, so a symlink or a `..` inside it cannot walk the deletion out of it. |
 | `EXIFTOOL_PATH` | *unset* | The `exiftool` to run for every metadata write. Unset means: `PATH`, then the usual Homebrew, MacPorts and distribution locations. A value pointing at nothing is an error rather than a fallback. See [§6](#exiftool-and-where-the-bundle-looks-for-it). |
 
 A threshold that is set but unparseable is a **startup error**, not a silent
@@ -260,20 +235,8 @@ that file is absent.
 | `WEB_ROOT` | *unset* | Directory holding the built web front end. Set to `/srv/web` in the image. Unset means the server serves API only. A path with no `index.html` is logged and ignored. |
 | `FIREBASE_PROJECT_ID` | *unset* | Token `iss` must equal `https://securetoken.google.com/<id>` and `aud` must equal the id exactly. |
 | `ALLOWED_UIDS` | *empty* | Comma-separated Firebase uids permitted to use the system. **Firebase authenticates any Google account in existence; this list is the only thing restricting access to the library** (§5.3). Empty means nobody. |
-| `ADMIN_TOKEN` | *unset* | Break-glass token for when Firebase is unreachable (§5.3). Also what the desktop handoff authenticates with — a road being withdrawn once folder publishing is confirmed (`docs/workflow-plan.md`), after which this is break-glass only. Empty is treated as unset. |
+| `ADMIN_TOKEN` | *unset* | Break-glass token for when Firebase is unreachable (§5.3). Also what the desktop's timeline sync authenticates with, until the desktop has Firebase sign-in. Empty is treated as unset. |
 | `RUST_LOG` | `phototools_server=info,tower_http=info` | Tracing filter. |
-
-### Server only, for publishing
-
-| Variable | Meaning |
-|---|---|
-| `GOOGLE_OAUTH_CLIENT_ID` | From a **Web application** OAuth client. |
-| `GOOGLE_OAUTH_CLIENT_SECRET` | Same client. |
-| `GOOGLE_OAUTH_REDIRECT_URI` | Must be registered on that client **character for character**. |
-| `GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY` | 32 bytes, hex: `openssl rand -hex 32`. Connecting refuses outright without it rather than storing the token in the clear. |
-
-All four are read when publishing is used, not at startup, so a server with none
-of them set starts and serves everything except Google Photos.
 
 ### Web front end, at build time
 
@@ -359,16 +322,13 @@ environment.
 
 ### Point it at the server
 
-> **The handoff is being withdrawn.** Ingest now copies to a folder and the web
-> application publishes that folder (`docs/workflow-plan.md`); WF-5 removes this
-> road once MV-16 confirms the replacement. What follows describes it while it
-> is still here.
-
-The handoff authenticates with the **`ADMIN_TOKEN`**, set in the desktop's server
+The desktop's only use of the server is **timeline sync**: it pulls the phone's
+positions, which only the server receives (`docs/timeline-sync-plan.md`). It
+authenticates with the **`ADMIN_TOKEN`**, set in the desktop's server
 settings as `auth_token`. This is §5.3's break-glass path, used because the
 desktop has a Keychain but no Firebase sign-in yet — see
 [`known-gaps.md`](known-gaps.md#the-desktop-has-no-firebase-sign-in). Without it
-every handoff request is a `401`. When sign-in is wired, the same field carries
+every sync request is a `401`. When sign-in is wired, the same field carries
 an ID token and nothing else changes.
 
 ### Permissions macOS will ask for
@@ -386,50 +346,12 @@ exist (`set_launch_at_login`), but no screen calls them.
 
 ---
 
-## 7. Google Photos
-
-1. In Google Cloud console, create a project and **enable the Photos Library
-   API**.
-2. **Credentials → Create credentials → OAuth client ID → Web application.**
-3. Add the redirect URI. It must match `GOOGLE_OAUTH_REDIRECT_URI` **character
-   for character**, including scheme and port:
-   `http://nas.local:3000/api/connectors/google/callback`
-   > A mismatch fails at Google's end, with an error this server never sees. If
-   > the consent screen returns an error and the logs show nothing, this is why.
-4. **OAuth consent screen** — set it to **In production**.
-   > A project left in **Testing** issues refresh tokens that expire after
-   > **seven days**, and no client configuration avoids it. The reconnect path
-   > is built and works, but it becomes a weekly interruption. "In production"
-   > without verification is fine for personal use: it shows a warning screen
-   > and caps at 100 users.
-5. Generate the encryption key and set it:
-   ```sh
-   openssl rand -hex 32
-   ```
-6. Connect from the web UI, then confirm the token is not readable:
-   ```sh
-   sqlite3 "$DATABASE_PATH" "SELECT * FROM oauth;"
-   # v1:<hex>:<hex>  — anything resembling a token is badly wrong
-   ```
-
-**Before any bulk run, publish one photograph and check the date** (§6.4). The
-Google Photos API cannot delete what it creates, so a mistake found on frame 400
-cannot be undone.
-
----
-
 ## 8. Backups
 
-Back up **`DATABASE_PATH`**. It holds every GPS track ever imported as well as
-the ledger of everything published, and F16's
-deduplication is keyed on it: losing it means the next publish cannot tell which
-photographs Google already has, and the API offers no way to remove the
-duplicates that follow.
-
-The staging directory is not backed up on purpose — it is derivable, and keeping
-it is what lets an interrupted publish resume without re-transferring gigabytes.
-Nothing prunes it, so it grows with every card
-([`known-gaps.md`](known-gaps.md#nothing-cleans-the-staging-directory)).
+Back up **`DATABASE_PATH`**. It holds every GPS track ever imported, every point
+placed by hand and every position the phone reported, and the timeline is not
+derivable from anything else. It also still holds the publishing history from
+before RS-1, which nothing reads any more but nobody should lose by accident.
 
 ---
 
@@ -441,6 +363,4 @@ Nothing prunes it, so it grows with every card
 | Sign-in works, every request is `403` | Your uid is not in `ALLOWED_UIDS`. |
 | Every request is `401` | No token, or `FIREBASE_PROJECT_ID` does not match the token's `aud`. From the desktop, `ADMIN_TOKEN` is unset or does not match. |
 | `/` is a 404, `/api/health` works | `WEB_ROOT` holds no `index.html`. The server logs which path it looked at. |
-| Connecting Google returns an error the logs never mention | The redirect URI does not match the OAuth client exactly. |
-| Publishing refuses to store the token | `GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY` unset or not 32 hex-encoded bytes. |
 | The container is `unhealthy` | The health check is `curl` against `/api/health` inside the container. `docker compose logs masterphototools` — a failed `Ledger::open` is the usual reason, and it means `/data` is not writable by uid 10001. |

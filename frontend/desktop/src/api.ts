@@ -23,8 +23,6 @@ import type {
   DateRepairAction,
   DatesFixRequest,
   DatesScanRequest,
-  DeriveRequest,
-  FillResult,
   GeoScanRow,
   GeotagPreview,
   GeotagRequest,
@@ -33,8 +31,6 @@ import type {
   JobStatus,
   Plan,
   RecordedConflict,
-  RemediateRequest,
-  RemediationPlan,
   RenameAction,
   RenameRequest,
   ScanResult,
@@ -194,10 +190,6 @@ export class TauriApiClient implements ApiClient {
     return invoke<RecordedConflict[]>('track_conflicts', { id });
   }
 
-  fillPublishing(paths: string[]): Promise<FillResult> {
-    return invoke<FillResult>('fill_publishing', { args: { paths } });
-  }
-
   scanGeo(request: DatesScanRequest): Promise<GeoScanRow[]> {
     // Synchronous, like the date scan: it writes nothing, and the rows are the
     // answer rather than something to fetch afterwards.
@@ -216,7 +208,7 @@ export class TauriApiClient implements ApiClient {
   }
 
   // -------------------------------------------------------------------------
-  // Ingest — F11 to F14
+  // Ingest — F11 and F12
   // -------------------------------------------------------------------------
 
   /**
@@ -241,26 +233,13 @@ export class TauriApiClient implements ApiClient {
     });
   }
 
-  remediate(request: RemediateRequest): Promise<RemediationPlan | string> {
-    return invoke<RemediationPlan | string>('remediate', { args: request });
-  }
-
-  deriveRaw(request: DeriveRequest): Promise<string> {
-    return invoke<string>('derive_raw', {
-      path: request.path,
-      outDir: request.out_dir,
-      thresholds: request.thresholds ?? null,
-    });
-  }
-
   // -------------------------------------------------------------------------
   // The desktop's alone
   // -------------------------------------------------------------------------
   //
   // Not on {@link ApiClient}, because the server genuinely cannot do these:
-  // §2.3 puts the card reader on the Mac, and the handoff is the Mac writing to
-  // the NAS share. A view that calls them is a desktop view, and the type
-  // system says so at compile time.
+  // §2.3 puts the card reader on the Mac. A view that calls them is a desktop
+  // view, and the type system says so at compile time.
 
   /** A cheap look at a directory offered as a card — entries only (F10). */
   summariseCard(path: string): Promise<CardSummary> {
@@ -270,24 +249,6 @@ export class TauriApiClient implements ApiClient {
   /** The card's shots, ready to render. Not a job — the scan already ran. */
   readCard(path: string): Promise<CardScan> {
     return invoke<CardScan>('read_card', { path });
-  }
-
-  /** Copy the card's candidates into local staging, verified by hash (G5). */
-  stageCard(path: string): Promise<string> {
-    return invoke<string>('stage_card', { path });
-  }
-
-  /** Hand the derivatives to the server (F16). A job, and a long one. */
-  handOffCard(
-    path: string,
-    derivedDir: string,
-    stagingDir: string,
-  ): Promise<string> {
-    return invoke<string>('hand_off_card', {
-      path,
-      derivedDir,
-      stagingDir,
-    });
   }
 
   async job(id: string): Promise<Job> {

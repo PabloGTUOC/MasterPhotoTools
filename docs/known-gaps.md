@@ -58,6 +58,9 @@ resolved date is right anyway, this stays a limitation; if it is not, it becomes
 
 ### No session discovery
 
+**Closed 2026-11-14 by RS-1:** sessions went with Google Photos publishing
+([`rescope-plan.md`](rescope-plan.md)). Kept for the history.
+
 Specification §8 lists no endpoint that enumerates ingest sessions, so after a handoff the desktop
 reports the session id in its handover panel and **a person copies the UUID into the web publish
 screen**.
@@ -67,6 +70,9 @@ recent sessions with their state — a small endpoint, but one the specification
 adding it is a decision rather than an omission (G11). See **MV-13.4**.
 
 ### Nothing cleans the staging directory
+
+**Closed 2026-11-14 by RS-1:** the handoff and its staging directory were removed, and
+`STAGING_DIR` with them. Kept for the history.
 
 Staged derivatives stay on the NAS after publishing. That is deliberate — it is what lets
 `already_staged` work across restarts, so an interrupted publish does not re-transfer gigabytes — but
@@ -78,11 +84,12 @@ That is a retention policy, not a bug, and it belongs with Phase 14's deployment
 ### The desktop has no Firebase sign-in
 
 `crates/desktop/src/credentials.rs` stores a refresh token in the macOS Keychain, but nothing
-exchanges it for an ID token. The handoff therefore authenticates with §5.3's documented break-glass
-`ADMIN_TOKEN`, carried in `ServerSettings.auth_token`.
+exchanges it for an ID token. The desktop's one use of the server — **timeline sync**, which pulls
+the phone's positions (`docs/timeline-sync-plan.md`) — therefore authenticates with §5.3's documented
+break-glass `ADMIN_TOKEN`, carried in `ServerSettings.auth_token`. (Until 2026-11-14 the card handoff
+used it too; RS-1 removed the handoff.)
 
-This is the one thing standing between the handoff and working end to end, and it is configuration
-rather than code — see **MV-11.1**. When sign-in is wired, the same field carries the ID token and
+It is configuration rather than code. When sign-in is wired, the same field carries the ID token and
 nothing else changes.
 
 ### A date repair on the NAS writes files it cannot confirm, and nobody knows why yet
@@ -139,6 +146,9 @@ but-unconfirmed file counted as nothing, and a failure reported without its
 reason.
 
 ### `check:ingest` part 3 measures the folder screen
+
+**Retired 2026-11-14 by RS-1:** parts (2) and (3), bulk actions and the publish gate, were removed with
+the features they measured. `check:ingest` is part (1), the 400-shot grid, alone.
 
 Its part (3) — *Publish is unreachable until a dry run has been reviewed* — loaded the built
 `/publish` and waited for a button named exactly `Publish`, then for `[data-testid="gate-explanation"]`.
@@ -269,18 +279,21 @@ takes that session. Both now do less, and something else does the rest
   folder, which is where the photographs are by the time anybody wants one.
 - **Publish is the publishing folder.** The session field is gone.
 
-**The code for both withdrawn features is still here** — `ingest::handoff`,
-`ingest::staging`, `ingest::remediation`, `BulkActions.vue`, and the routes and
-commands behind them. WF-5 removes them once MV-16 has confirmed folder
-publishing against real photographs. Deleting a working subsystem before its
-replacement has published anything is the wrong order; the intermediate state
-is deliberate and is recorded here so it is not mistaken for neglect.
+**Updated 2026-11-14 (RS-1):** the withdrawn code is gone — `ingest::handoff`,
+`ingest::staging`, `ingest::remediation`, `BulkActions.vue` and the routes and
+commands behind them — and so are the RAW to JPEG tab (RAW development is
+Rollchrome's Develop) and the Publish screen. The owner dropped Google Photos
+publishing outright, so MV-16 no longer gates anything.
 
 MV-13.3 and MV-13.4 are retired rather than done: their subjects no longer
 exist. MV-13.4 asked whether typing a session id between two screens was good
 enough, and the answer was no.
 
 ### Publishing takes a folder, where §6.3 takes a card session
+
+**Retired 2026-11-14 by RS-1:** Google Photos publishing was removed, both roads with it
+([`rescope-plan.md`](rescope-plan.md)). The `published` and `sessions` tables stay in the schema so a
+NAS database keeps its history; nothing reads or writes them. Kept for the history.
 
 The specification's road to Google Photos is one road: the desktop hands a
 card to the server as a session, and F15 publishes that session. `plan_publish`
@@ -571,6 +584,14 @@ is how film is manufactured and why they do not line up with the frame edges.
 
 ## Places the specification is incomplete or contradicts itself
 
+### F13, F14, F15 and F16 no longer describe the system
+
+The owner rescoped the project on 2026-11-13 ([`rescope-plan.md`](rescope-plan.md)): editing is left to
+the open-source editors, and Google Photos publishing was dropped. RS-1 removed F15 (publishing), F16
+(the handoff and its deduplication), F13's bulk remediation and F14's RAW to JPEG tab. F12's
+validation stays as Ingest's status report, and F14's derivation code stays because validation uses it.
+`SPECIFICATION.md` is not edited (G9); this entry is where the difference is recorded.
+
 Recorded rather than resolved by editing it (G9).
 
 ### §9.3's `distroless/cc` base cannot run §2.6's `exiftool`
@@ -645,13 +666,10 @@ the shots sit as unconfirmed for a person to check — §9.2 invariant 6 applied
 
 ## Not yet built
 
-**One step, held back on purpose: WF-5.** The card handoff
-(`ingest::handoff`, `ingest::staging`), F13's bulk remediation
-(`ingest::remediation`, `BulkActions.vue`) and the publish-by-session path are
-still present and no longer reachable from any screen. They are withdrawn once
-**MV-16** has confirmed folder publishing against real photographs — deleting a
-working subsystem before its replacement has published anything is the wrong
-order. See [`workflow-plan.md`](workflow-plan.md).
+**WF-5 was done by RS-1 (2026-11-14)**, with one difference: the desktop's server
+connection stays, because timeline sync uses it. The rest of the rescope —
+lens correction and capture sharpening in Rollchrome — is in
+[`rescope-plan.md`](rescope-plan.md).
 
 Everything else is built. What remains is
 [`manual-verification.md`](manual-verification.md) — the checks needing a Mac, a

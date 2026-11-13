@@ -1,7 +1,8 @@
 # PhotoTools — working notes for Claude Code
 
-Ingest photographs from a camera SD card, validate and prepare them, publish them to Google Photos,
-and maintain a photo library on a NAS.
+Ingest photographs from a camera SD card and check them, maintain a photo library on a NAS with its
+file tools and the phone's location timeline, and develop RAW files in Rollchrome. (Google Photos
+publishing was removed on 2026-11-14 — [`docs/rescope-plan.md`](docs/rescope-plan.md).)
 
 ## Where the current work is
 
@@ -39,8 +40,8 @@ structured half of that work — 98 for PhotoTools, eight done, and 64 for Rollc
 | [`docs/owntracks-plan.md`](docs/owntracks-plan.md) | The phone reporting its own positions to the server, rolled into a track each day. Built; MV-19 awaits a phone |
 | [`docs/timeline-sync-plan.md`](docs/timeline-sync-plan.md) | Keeping the Mac's timeline and the NAS's the same. Built; MV-18 awaits both machines. **Geopositions only** |
 | [`docs/timeline-plan.md`](docs/timeline-plan.md) | The Timeline tab: the track library on a map, and points placed by hand. Stage A built; MV-17 awaits a browser. Google's location history is Stages B–C, not built |
-| [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder rather than a card session, so the tools have somewhere to run. Built; MV-16 awaits a NAS |
-| [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies, Publish is the folder. Built; WF-5 awaits MV-16 |
+| [`docs/publish-folder-plan.md`](docs/publish-folder-plan.md) | Publishing a folder. **Withdrawn 2026-11-14 (RS-1)** with Google Photos publishing; kept for the history |
+| [`docs/workflow-plan.md`](docs/workflow-plan.md) | Cutting the two screens down to the workflow: Ingest reports and copies. Built; WF-5 done by RS-1 |
 | [`docs/rollchrome/parity-plan.md`](docs/rollchrome/parity-plan.md) | Rollchrome towards replacing Lightroom: three tabs (Develop, Edit, Batch) and the small and medium gaps, RP-1 to RP-13. RP-1 to RP-13, RP-2b, RP-11b, RP-11c and RP-11d done (MV-24 to MV-37 await real files, models and an MCP client) |
 | [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md) | Splitting Edit and Batch Grade out into Rollchrome, a desktop-only film emulator. RC-1 to RC-3 done; Develop next |
 | [`docs/rescope-plan.md`](docs/rescope-plan.md) | **The current direction.** What stays, what goes, and steps RS-1 to RS-4 and DV-6 to DV-10 |
@@ -127,12 +128,12 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 1344 passing (5 ignored)
-cargo test -p phototools-core   # 719 passing — G2
+cargo test --workspace          # 1148 passing (5 ignored)
+cargo test -p phototools-core   # 543 passing — G2
 cargo test -p rollchrome-core   # 469 passing — G2
 cargo test -p rollchrome-core --features film # 490 passing (3 ignored)
 cargo test -p phototools-desktop   # 26 passing
-cargo test -p rollchrome-desktop   # 30 passing
+cargo test -p rollchrome-desktop   # 28 passing
 cargo test -p rollchrome-cli       # 8 passing
 ```
 
@@ -144,7 +145,7 @@ npm --prefix frontend/shared run build     # the shared client, consumed as comp
 npm --prefix frontend/web run typecheck
 npm --prefix frontend/web run build
 npm --prefix frontend/web run check:transport   # no view reaches the network directly
-npm --prefix frontend/web run check:layout      # 12 routes clean at 390 px
+npm --prefix frontend/web run check:layout      # 10 routes clean at 390 px
 npm --prefix frontend/web run check:ingest      # Phase 13 acceptance, measured in a browser
 
 npm --prefix frontend/desktop run typecheck
@@ -194,7 +195,7 @@ over shared components. **Rollchrome**, the editor: one library on top of PhotoT
 
 ```
 crates/core               PhotoTools' functionality — no web framework, no UI, no platform assumptions
-crates/server             axum, on the NAS in Docker. Owns the ledger and Google credentials.
+crates/server             axum, on the NAS in Docker. Owns the ledger and receives the phone's positions.
                           Also serves the built web front end from WEB_ROOT (§2.2).
 crates/desktop            Tauri v2 on macOS. Reads the card, processes locally, hands off.
 
@@ -204,7 +205,7 @@ crates/rollchrome-desktop Tauri v2 on macOS. Rollchrome's commands and preview s
 crates/rollchrome-cli     command-line interface and stdio MCP server over rollchrome-core.
 
 frontend/shared           the API client (compiled), the shared views (source), the design language
-frontend/web              served by the server; archive tools and publishing
+frontend/web              served by the server; archive tools and the timeline
 frontend/desktop          inside Tauri; card review and ingest
 frontend/rollchrome       inside Tauri; Develop, Edit and Batch. Uses shared components and styles,
                           never the HTTP client
@@ -216,7 +217,8 @@ edits. Rollchrome reads PhotoTools' configuration file and keeps its jobs in a l
 (`docs/briefs/RC-2.md`, decisions A and B).
 
 `core` modules map to the specification's §2.5: `media` (the only module permitted to touch image
-bytes), `tools` (F1–F9), `ingest` (F10–F14, F16), `publish` (F15), `ledger`, `jobs`, `config`.
+bytes), `tools` (F1–F9), `ingest` (F10–F12, and F14's derivation, which validation uses), `ledger`,
+`jobs`, `config`. F13's bulk remediation, F15 and F16 were removed by RS-1 (`docs/known-gaps.md`).
 
 Two things sit outside that map, both deliberately and both with no F-number, because inventing
 one would make the code look as though the specification had asked for something it never did:
@@ -225,12 +227,8 @@ one would make the code look as though the specification had asked for something
   ([plan](docs/geotag-plan.md)), and `tools::geotag::place` puts points on the timeline that no
   device recorded, which is why a fix carries whether it was **recorded**, **placed** or
   **inferred** ([plan](docs/timeline-plan.md)).
-- **`publish::folder`** and **`ingest::deliver`** — publishing a folder, and copying a card's
-  passing frames to one. §6.3 publishes a handed-over session
-  ([plan](docs/publish-folder-plan.md)).
-
-`ingest::handoff`, `ingest::staging` and `ingest::remediation` are **still present and unused by any
-screen**. They are withdrawn at WF-5, once MV-16 confirms the replacement — not before.
+- **`ingest::deliver`** — copying a card's passing frames to a folder, which is how photographs leave
+  a card now that the handoff is gone.
 
 ### The front-end boundary
 
@@ -245,9 +243,9 @@ In short:
   `roots` and a `list` function as props rather than reaching for a client, which is why they work
   over HTTP, over Tauri and in a harness. `useRoots` is the view-side composable that supplies
   them.
-- `web/src/views/` and `desktop/src/views/` — screens that genuinely belong to one application.
-  `Publish` is web-only (the Google refresh token lives on one machine); `Ingest` is desktop-only
-  (the card reader is on the Mac).
+- `desktop/src/views/` — screens that genuinely belong to one application. `Ingest` is desktop-only
+  (the card reader is on the Mac). The web app has no screen of its own since `Publish` was removed
+  (RS-1).
 
 A capability that exists in the type system and fails at runtime is worse than one the type system
 never offered. Do not add methods to `ApiClient` that one transport has to throw for.
@@ -283,16 +281,9 @@ The rules that matter:
 
 ## Conventions that are load-bearing
 
-- **A dry run is mandatory before publishing** (§9.2 rule 3), checked against the **database**, not a
-  flag in memory. The Google Photos API cannot delete, so a safeguard a restart forgets is not a
-  safeguard.
-- **`plan_publish` computes a plan; `dry_run` computes it and records that somebody looked.** Using
-  the latter to build a plan inside a publish would let every publish satisfy its own precondition.
 - **Never hold the shared `Arc<Mutex<Ledger>>` across work that reports progress.** `SinkProgress`
   locks the same non-reentrant mutex, so it deadlocks. Long jobs open their own `Ledger`; `open` sets
   a busy timeout for exactly that.
-- **The deduplication key is the *source* hash** — the file on the card, which the camera wrote and
-  nothing rewrites. The derived hash verifies transfers. Conflating them breaks one of the two jobs.
 - **Tests assert the claim, not a proxy for it.** Where a requirement is about ordering, a call is
   counted; where it is about a wait, the requested duration is recorded rather than slept.
 

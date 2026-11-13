@@ -10,10 +10,7 @@ pub mod deliver;
 pub mod derivation;
 pub mod fingerprint;
 pub mod grouping;
-pub mod handoff;
-pub mod remediation;
 pub mod scanner;
-pub mod staging;
 pub mod validation;
 pub mod walk;
 
@@ -23,17 +20,7 @@ pub use deliver::{
 };
 pub use fingerprint::Fingerprint;
 pub use grouping::{group_into_shots, Shot};
-pub use handoff::{
-    items_for, run_handoff, ArrivalReport, Disposition, EntryPlan, Handoff, HandoffItem,
-    HandoffOutcome, Manifest, ManifestEntry, NotReady, Recopy, RecopyReason, SessionClient,
-    SessionPlan,
-};
-pub use remediation::{
-    actions_for, apply_bulk, default_action, plan_bulk, ActionKind, BulkRequest, PlannedAction,
-    RemediationParams, RemediationSummary, RemediationTool,
-};
 pub use scanner::{classify_path, scan_files, AssetKind, ScanProblem, ScannedAsset, ScannedFiles};
-pub use staging::{stage_all, stage_asset, StagedFile, StagingFailure, StagingResult};
 pub use validation::{
     validate, CardValidation, Check, CheckStatus, ClockOffset, FailureClass, Rule, ShotValidation,
 };

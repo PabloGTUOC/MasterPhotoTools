@@ -15,21 +15,13 @@ import {
   type DateRepairAction,
   type DatesFixRequest,
   type DatesScanRequest,
-  type DeriveRequest,
-  type FillResult,
-  type FolderPublishPlan,
   type GeoScanRow,
   type GeotagPreview,
   type GeotagRequest,
   type Job,
   type JobEvent,
   type Plan,
-  type ConnectorStatus,
-  type PublishPlan,
   type RecordedConflict,
-  type RemediateRequest,
-  type RemediationPlan,
-  type SessionShots,
   type RenameAction,
   type RenameRequest,
   type ScanResult,
@@ -117,20 +109,15 @@ export interface ApiClient {
   // F11, F12, F13 — ingest.
   //
   // Only the operations **both** transports genuinely perform. Reading a card's
-  // shot rows and handing a card to the server are the desktop's alone, because
-  // §2.3 puts the card reader on the Mac; publishing is the server's alone,
-  // because that is where the refresh token lives. Those live on the concrete
-  // clients, so a view that needs one has to say which build it belongs to
-  // rather than discovering at runtime that its transport cannot oblige.
+  // shot rows and copying a card to a folder are the desktop's alone, because
+  // §2.3 puts the card reader on the Mac. Those live on the concrete clients,
+  // so a view that needs one has to say which build it belongs to rather than
+  // discovering at runtime that its transport cannot oblige.
 
   /** Scan and record a card. A job. */
   scanCard(path: string): Promise<string>;
   /** Validate a card against F12's three rules. Reads no pixels, so no job. */
   validateCard(request: ValidateRequest): Promise<CardValidation>;
-  /** Apply one F13 action to every shot sharing one failure. */
-  remediate(request: RemediateRequest): Promise<RemediationPlan | string>;
-  /** Derive JPEGs for a card's RAW-only shots (F14). A job. */
-  deriveRaw(request: DeriveRequest): Promise<string>;
 
   // Geotagging — the track library and the matching tool.
   //
@@ -200,21 +187,6 @@ export interface ApiClient {
    */
   planGeotag(request: GeotagRequest): Promise<GeotagPreview>;
   applyGeotag(request: GeotagRequest): Promise<string>;
-
-  // Publishing a folder (`docs/publish-folder-plan.md`).
-  //
-  // Uploading is the server's alone — the Google refresh token lives on one
-  // machine (§2.3) — so only `fillPublishing` is on `ApiClient`; the three that
-  // publish live on the web client, where a view that needs them has to declare
-  // itself a web view.
-
-  /**
-   * Copy folders or files into the publishing folder.
-   *
-   * A copy, never a move: emptying that folder after a successful upload must
-   * remove a second copy, never the only one.
-   */
-  fillPublishing(paths: string[]): Promise<FillResult>;
 
   // F17 — jobs
   job(id: string): Promise<Job>;
@@ -465,57 +437,12 @@ export class HttpApiClient implements ApiClient {
     return this.startJob('/api/tools/geotag/apply', request);
   }
 
-  fillPublishing(paths: string[]): Promise<FillResult> {
-    return this.post('/api/publish/folder/fill', { paths });
-  }
-
-  /** What is sitting in the publishing folder, and what would be uploaded. */
-  async publishingFolder(): Promise<FolderPublishPlan> {
-    const response = await this.send('/api/publish/folder');
-    return this.readJson<FolderPublishPlan>(response, 'the publishing folder');
-  }
-
-  /**
-   * The dry run §9.2 rule 3 requires, recorded against the exact bytes in the
-   * folder — change what is there and the review no longer counts.
-   */
-  planFolderPublish(): Promise<FolderPublishPlan> {
-    return this.post('/api/publish/folder/plan', {});
-  }
-
-  /** Upload the folder, then empty it of everything Google confirmed. */
-  publishFolder(): Promise<string> {
-    return this.startJob('/api/publish/folder/publish', {});
-  }
-
   scanCard(path: string): Promise<string> {
     return this.startJob('/api/ingest/scan', { path });
   }
 
   validateCard(request: ValidateRequest): Promise<CardValidation> {
     return this.post('/api/ingest/validate', request);
-  }
-
-  /**
-   * A dry run answers with the plan; a real run answers with a job id.
-   *
-   * The server distinguishes them by status code, and so does this: the two
-   * shapes are genuinely different answers to genuinely different questions.
-   */
-  async remediate(request: RemediateRequest): Promise<RemediationPlan | string> {
-    const response = await this.send('/api/ingest/remediate', {
-      method: 'POST',
-      body: JSON.stringify(request),
-    });
-    const body = await this.readJson<RemediationPlan & { job_id?: string }>(
-      response,
-      'a remediation plan',
-    );
-    return request.dry_run ? (body as RemediationPlan) : (body.job_id as string);
-  }
-
-  deriveRaw(request: DeriveRequest): Promise<string> {
-    return this.startJob('/api/ingest/derive', request);
   }
 
   async list(path: string): Promise<BrowserEntry[]> {
@@ -527,64 +454,6 @@ export class HttpApiClient implements ApiClient {
   async roots(): Promise<string[]> {
     const response = await this.send('/api/storage/roots');
     return this.readJson<string[]>(response, 'the configured roots');
-  }
-
-  // -------------------------------------------------------------------------
-  // The server's alone — F15 and F16
-  // -------------------------------------------------------------------------
-  //
-  // Not on {@link ApiClient}, and deliberately. The Google refresh token lives
-  // on exactly one machine (§2.3), so these are things only a build talking to
-  // the server can do. A view that calls them is a web view, and the type
-  // system says so at compile time rather than at the moment somebody presses
-  // the button.
-
-  /** A session's shots, with their arrival status. */
-  async sessionShots(sessionId: string): Promise<SessionShots> {
-    const response = await this.send(
-      `/api/ingest/sessions/${encodeURIComponent(sessionId)}/shots`,
-    );
-    return this.readJson<SessionShots>(response, "a session's shots");
-  }
-
-  /**
-   * Work out what publishing would do, and record that somebody looked.
-   *
-   * §9.2 rule 3 and §6.1: the Google Photos API cannot delete, so a mistaken
-   * bulk publish is cleaned up by hand. The server refuses to publish a session
-   * that has had no dry run.
-   */
-  publishDryRun(sessionId: string): Promise<PublishPlan> {
-    return this.post(
-      `/api/ingest/sessions/${encodeURIComponent(sessionId)}/publish`,
-      { dry_run: true },
-    );
-  }
-
-  /** Publish for real. A job. */
-  publish(sessionId: string): Promise<string> {
-    return this.startJob(
-      `/api/ingest/sessions/${encodeURIComponent(sessionId)}/publish`,
-      { dry_run: false },
-    );
-  }
-
-  async googleStatus(): Promise<ConnectorStatus> {
-    const response = await this.send('/api/connectors/google/status');
-    return this.readJson<ConnectorStatus>(response, 'the Google Photos connection');
-  }
-
-  /** Begin the consent flow; the answer is where to send the person (§6.2). */
-  async googleConnect(): Promise<string> {
-    const body = await this.post<{ url: string }>(
-      '/api/connectors/google/connect',
-      {},
-    );
-    return body.url;
-  }
-
-  async googleDisconnect(): Promise<void> {
-    await this.post('/api/connectors/google/disconnect', {});
   }
 
   async job(id: string): Promise<Job> {

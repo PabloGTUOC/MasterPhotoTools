@@ -180,7 +180,7 @@ fi
 step "Directories"
 
 # The deployment's own folder — compose file, .env, and by default the ledger
-# and the publishing folder beneath it. Checked now rather than at the mkdir in
+# beneath it. Checked now rather than at the mkdir in
 # step 5: a folder made through the OMV web UI, or as root, is often not
 # writable by the SSH user, and finding that out after a cross-build wastes the
 # build.
@@ -199,30 +199,12 @@ fi
 }
 
 : "${DATA_PATH:=$REMOTE_DIR/data}"
-: "${PUBLISHING_PATH:=$REMOTE_DIR/publishing}"
 
 nas "test -d '$LIBRARY_PATH'" || die "LIBRARY_PATH $LIBRARY_PATH does not exist on the NAS."
 ok "library      $LIBRARY_PATH"
 note "$(nas "df -h '$LIBRARY_PATH' | tail -1 | awk '{print \$4\" free of \"\$2}'")"
 
-# The one mistake that deletes photographs. The server refuses this at startup
-# too, but finding out here costs a second rather than a whole transfer.
-case "$PUBLISHING_PATH" in
-    "$LIBRARY_PATH"|"$LIBRARY_PATH"/*)
-        [ "$PUBLISHING_PATH" = "$LIBRARY_PATH" ] && die \
-            "PUBLISHING_PATH and LIBRARY_PATH are both $LIBRARY_PATH. Publishing empties that folder — this would delete the library."
-        warn "publishing folder is inside the library"
-        note "allowed, and only that folder is ever emptied — but keep it out of anything you sync"
-        ;;
-esac
-case "$LIBRARY_PATH" in
-    "$PUBLISHING_PATH"/*)
-        die "The library $LIBRARY_PATH sits inside PUBLISHING_PATH $PUBLISHING_PATH. Everything under the publishing folder is published and then deleted."
-        ;;
-esac
-
 ok "data         $DATA_PATH"
-ok "publishing   $PUBLISHING_PATH"
 
 # Whose uid owns the library decides what the container must run as. The image
 # ships uid 10001; if the library belongs to somebody else, say so rather than
@@ -309,11 +291,11 @@ fi
 
 step "Configuration"
 
-SHARED_KEYS='FIREBASE_PROJECT_ID|ALLOWED_UIDS|ADMIN_TOKEN|GOOGLE_OAUTH_CLIENT_ID|GOOGLE_OAUTH_CLIENT_SECRET|GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY|MAX_MEGAPIXELS|MAX_OUTPUT_BYTES|MAX_AGE_DAYS|OWNTRACKS_USER|OWNTRACKS_TOKEN|TIMELINE_OFFSET_MINUTES|RUST_LOG'
-DEPLOY_OWNED='LIBRARY_PATH|DATA_PATH|PUBLISHING_PATH|PHOTOTOOLS_TAG|PHOTOTOOLS_USER|PORT'
+SHARED_KEYS='FIREBASE_PROJECT_ID|ALLOWED_UIDS|ADMIN_TOKEN|MAX_MEGAPIXELS|MAX_OUTPUT_BYTES|MAX_AGE_DAYS|OWNTRACKS_USER|OWNTRACKS_TOKEN|TIMELINE_OFFSET_MINUTES|RUST_LOG'
+DEPLOY_OWNED='LIBRARY_PATH|DATA_PATH|PHOTOTOOLS_TAG|PHOTOTOOLS_USER|PORT'
 
 [ -f .env ] || [ -f deploy/.env ] \
-    || die "Neither .env nor deploy/.env exists. The server's Firebase and Google values live in one of them."
+    || die "Neither .env nor deploy/.env exists. The server's Firebase values live in one of them."
 
 REMOTE_ENV="$(mktemp)"
 chmod 600 "$REMOTE_ENV"
@@ -337,7 +319,6 @@ chmod 600 "$REMOTE_ENV"
                  END { for (i = 1; i <= n; i++) print v[order[i]] }'
     echo "LIBRARY_PATH=$LIBRARY_PATH"
     echo "DATA_PATH=$DATA_PATH"
-    echo "PUBLISHING_PATH=$PUBLISHING_PATH"
     echo "PHOTOTOOLS_TAG=$TAG"
     echo "PHOTOTOOLS_USER=$RUN_AS"
     echo "PORT=$PORT"
@@ -364,20 +345,6 @@ if [ -n "$(server_value OWNTRACKS_USER)" ] && [ -n "$(server_value OWNTRACKS_TOK
     note "a day is counted at TIMELINE_OFFSET_MINUTES=${OFFSET_MINUTES:-0} minutes east of UTC — set it in deploy/.env if that is wrong"
 else
     note "no OWNTRACKS_USER/OWNTRACKS_TOKEN, so the phone's position route refuses everything"
-fi
-
-if [ -n "$(server_value GOOGLE_REFRESH_TOKEN_ENCRYPTION_KEY)" ] && [ -n "$(server_value GOOGLE_OAUTH_CLIENT_ID)" ]; then
-    ok "server: Google OAuth client and encryption key"
-else
-    warn "no Google OAuth client or encryption key — the server starts, and publishing cannot connect"
-fi
-
-# Deliberately not carried over from .env: the Mac's points at localhost, and
-# Google would send the NAS's sign-in back to whichever machine the browser is
-# on. It has to name the NAS, and be registered on the OAuth client.
-if [ -z "$(server_value GOOGLE_OAUTH_REDIRECT_URI)" ]; then
-    warn "GOOGLE_OAUTH_REDIRECT_URI is not set for the NAS — publishing cannot connect to Google until it is"
-    note "put it in deploy/.env; it must be registered on the OAuth client exactly (MV-12.3)"
 fi
 
 # The web UI's Firebase configuration is compiled into the bundle, so it goes
@@ -443,30 +410,30 @@ step "Send to $NAS_SSH"
 
 # Without sudo first, because the SSH user may well be root on OMV and `sudo`
 # is not always installed on a box whose only account is root.
-nas "mkdir -p '$REMOTE_DIR' '$DATA_PATH' '$PUBLISHING_PATH' 2>/dev/null \
-     || sudo -n mkdir -p '$REMOTE_DIR' '$DATA_PATH' '$PUBLISHING_PATH'" \
+nas "mkdir -p '$REMOTE_DIR' '$DATA_PATH' 2>/dev/null \
+     || sudo -n mkdir -p '$REMOTE_DIR' '$DATA_PATH'" \
     || die "Cannot create $REMOTE_DIR on the NAS. Make it by hand, or give $NAS_SSH write access to its parent."
 ok "directories exist"
 
 # Group-writable and setgid, the way every other folder in an OMV docker-data
 # is. The chown below needs root, which an ordinary SSH account does not have;
 # this is what still lets a container running as any member of `users` open
-# the ledger and empty the publishing folder when it fails.
-nas "chmod 2775 '$DATA_PATH' '$PUBLISHING_PATH' 2>/dev/null" || true
+# the ledger.
+nas "chmod 2775 '$DATA_PATH' 2>/dev/null" || true
 
-# Owned by whoever the container runs as, or the ledger cannot be opened and
-# the publishing folder cannot be emptied. The library is left alone: it is the
+# Owned by whoever the container runs as, or the ledger cannot be opened. The
+# library is left alone: it is the
 # user's, and changing its ownership is not this script's business.
 #
 # Giving a folder to another uid needs root, so an ordinary SSH account fails
 # here on every deploy. That is only a problem when the chmod above does not
 # cover it — when the container's group is not the folders' group.
-if ! nas "chown '$RUN_AS' '$DATA_PATH' '$PUBLISHING_PATH' 2>/dev/null \
-          || sudo -n chown '$RUN_AS' '$DATA_PATH' '$PUBLISHING_PATH' 2>/dev/null"; then
-    if [ "$(nas "stat -c '%g' '$DATA_PATH' '$PUBLISHING_PATH' | sort -u")" = "${RUN_AS#*:}" ]; then
-        note "data and publishing stay owned by $NAS_SSH; the container's group, ${RUN_AS#*:}, writes to them"
+if ! nas "chown '$RUN_AS' '$DATA_PATH' 2>/dev/null \
+          || sudo -n chown '$RUN_AS' '$DATA_PATH' 2>/dev/null"; then
+    if [ "$(nas "stat -c '%g' '$DATA_PATH'")" = "${RUN_AS#*:}" ]; then
+        note "data stays owned by $NAS_SSH; the container's group, ${RUN_AS#*:}, writes to it"
     else
-        warn "could not chown $DATA_PATH and $PUBLISHING_PATH to $RUN_AS — do it by hand if the server will not start"
+        warn "could not chown $DATA_PATH to $RUN_AS — do it by hand if the server will not start"
     fi
 fi
 

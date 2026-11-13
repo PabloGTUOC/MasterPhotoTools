@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { PUBLISH_STEP, sharedToolLinks, stepLabel } from '@ui/routes';
+import { sharedToolLinks } from '@ui/routes';
 import { refreshRoots } from '@ui/useRoots';
 import { authReady, initAuth, isConfigured, signIn, signOutOfPhotoTools, user } from './auth';
 
@@ -29,7 +29,6 @@ async function signOutAndRefresh() {
 const links = [
   { to: '/', label: 'Home', step: '' },
   ...sharedToolLinks,
-  { to: '/publish', label: 'Publish', step: stepLabel(PUBLISH_STEP) },
 ];
 
 /** The status bar's live clock (§5.8), monospaced and always two digits. */

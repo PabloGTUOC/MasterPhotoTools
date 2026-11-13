@@ -336,17 +336,10 @@ export interface ShotVerdict {
   checks: Check[];
 }
 
-/**
- * One failure class, with what F13 offers for it and how many shots share it.
- *
- * This is what the bulk action bar renders. A card of four hundred frames
- * becomes a handful of rows rather than four hundred prompts.
- */
+/** One failure class, and how many shots share it. */
 export interface FailureGroup {
   failure: string;
   count: number;
-  actions: string[];
-  default_action: string | null;
 }
 
 /** `phototools_core::ingest::ClockOffset` */
@@ -379,113 +372,9 @@ export interface ThresholdOverrides {
   max_output_bytes?: number | null;
 }
 
-export interface RemediateRequest {
-  path: string;
-  failure: string;
-  action: string;
-  date?: string | null;
-  out_dir: string;
-  dry_run?: boolean;
-  thresholds?: ThresholdOverrides | null;
-}
-
-/** `phototools_server::api::RemediationPreview` */
-export interface RemediationPreview {
-  stem: string;
-  action: string;
-  target_dimensions: [number, number] | null;
-  new_date: string | null;
-  destination: string | null;
-}
-
-/** `phototools_server::api::RemediationPlanResponse` */
-export interface RemediationPlan {
-  actions: RemediationPreview[];
-  skipped: Skip[];
-  applied: boolean;
-}
-
-export interface DeriveRequest {
-  path: string;
-  out_dir: string;
-  thresholds?: ThresholdOverrides | null;
-}
-
 export interface ValidateRequest {
   path: string;
   thresholds?: ThresholdOverrides | null;
-}
-
-// ---------------------------------------------------------------------------
-// Publishing — F15, F16
-// ---------------------------------------------------------------------------
-
-/** `phototools_core::publish::PublishItem` */
-export interface PublishItem {
-  shot_id: string;
-  stem: string;
-  source_sha256: string;
-  file_name: string;
-  bytes: number;
-}
-
-/** `phototools_core::publish::Skipped` */
-export interface Skipped {
-  stem: string;
-  reason: string;
-}
-
-/** `phototools_core::publish::ResumeCounts` */
-export interface ResumeCounts {
-  pending: number;
-  uploaded: number;
-  created: number;
-  /** Sent to Google with no answer back. Needs a person to look. */
-  unconfirmed: number;
-}
-
-/**
- * `phototools_core::publish::PublishPlan` — what a publish would do.
- *
- * §9.2 rule 3 makes producing one mandatory before publishing, because the
- * Google Photos API cannot delete what it has created.
- */
-export interface PublishPlan {
-  session_id: string;
-  items: PublishItem[];
-  skipped: Skipped[];
-  total_bytes: number;
-  upload_requests: number;
-  batch_create_requests: number;
-  resuming: ResumeCounts;
-}
-
-/** `phototools_core::publish::ConnectorStatus` */
-export interface ConnectorStatus {
-  connected: boolean;
-  scope: string | null;
-  connected_at: number | null;
-  needs_reauthorisation: boolean;
-  detail: string | null;
-}
-
-/** `phototools_server::api::SessionShot` */
-export interface SessionShot {
-  stem: string;
-  file_name: string;
-  width: number;
-  height: number;
-  bytes: number;
-  capture: string | null;
-  disposition: string;
-  arrival: string;
-}
-
-/** `phototools_server::api::SessionShotsResponse` */
-export interface SessionShots {
-  session_id: string;
-  state: string;
-  shots: SessionShot[];
 }
 
 // ---------------------------------------------------------------------------
@@ -747,51 +636,6 @@ export interface RecordedConflict {
   metres: number;
   /** `kept-existing` or `took-new`. */
   decision: string;
-}
-
-// ---------------------------------------------------------------------------
-// Publishing a folder
-//
-// Beyond the specification, which routes publishing through a card handoff
-// session (§6.3). See `docs/publish-folder-plan.md`.
-// ---------------------------------------------------------------------------
-
-/** One photograph a folder publish would upload. */
-export interface PublishItem {
-  shot_id: string;
-  stem: string;
-  source_sha256: string;
-  /** Relative to the publishing folder, so a file in a subfolder stays distinct. */
-  file_name: string;
-  bytes: number;
-}
-
-export interface PublishSkipped {
-  stem: string;
-  reason: string;
-}
-
-/**
- * What publishing the folder would do.
- *
- * `session_id` is derived from the exact bytes in the folder, so it changes
- * when anything is added, removed or edited — which is what binds the mandatory
- * dry run to what was actually reviewed.
- */
-export interface FolderPublishPlan {
-  session_id: string;
-  items: PublishItem[];
-  skipped: PublishSkipped[];
-  total_bytes: number;
-  upload_requests: number;
-  batch_create_requests: number;
-}
-
-export interface FillResult {
-  copied: number;
-  already_there: number;
-  failed: number;
-  summary: string;
 }
 
 export type GeoStatus =

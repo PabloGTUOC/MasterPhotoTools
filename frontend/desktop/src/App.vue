@@ -3,9 +3,10 @@
  * The desktop shell.
  *
  * **Nothing here needs the server.** Reading a card, checking it, copying it to
- * a folder and every tool tab call `core` directly on this machine; the one
- * command that made an HTTP request was the card handoff, and no screen calls
- * it any more (`docs/workflow-plan.md`).
+ * a folder and every tool tab call `core` directly on this machine. The only
+ * HTTP the desktop makes is timeline sync, which pulls the phone's positions
+ * from the server (`docs/timeline-sync-plan.md`); the card handoff that used to
+ * be the other is gone (`docs/rescope-plan.md`, RS-1).
  *
  * It used to carry a reachability probe and a `// SERVER UNREACHABLE //`
  * banner. Warning about a dependency that no longer exists is worse than
@@ -20,8 +21,7 @@ import { runSync } from './sync';
 
 /**
  * The sidebar reads as the workflow does. Ingest is step 01 because it is
- * where a card enters, and the shared tools number on from there; publishing
- * is the last step and is not offered here (`docs/workflow-plan.md`).
+ * where a card enters, and the shared tools number on from there.
  */
 const rawLinks: Array<{ to: string; label: string }> = [
   { to: '/', label: 'Ingest' },

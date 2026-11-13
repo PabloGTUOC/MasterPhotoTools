@@ -125,20 +125,12 @@ COPY --from=frontend /build/frontend/web/dist /srv/web
 
 # Mount points, created here so a container started without volumes still has
 # somewhere writable to put the ledger rather than failing at open.
-#
-# `/publishing` is a mount point and nothing more: `PUBLISHING_DIR` is
-# deliberately **not** set in this image. Publishing empties that folder, and a
-# folder that exists only inside the container would be emptied of files the
-# operator can no longer reach — or, worse, would strand them in a dead
-# container after a failed upload. Compose sets the variable in the same place
-# it declares the volume, so the two cannot be configured apart.
-RUN mkdir -p /data /library /publishing \
-    && chown phototools:phototools /data /library /publishing
+RUN mkdir -p /data /library \
+    && chown phototools:phototools /data /library
 
 USER phototools
 ENV PORT=3000 \
     DATABASE_PATH=/data/phototools.db \
-    STAGING_DIR=/data/staging \
     WEB_ROOT=/srv/web \
     RUST_LOG=phototools_server=info,tower_http=info
 

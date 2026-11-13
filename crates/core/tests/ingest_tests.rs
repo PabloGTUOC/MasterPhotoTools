@@ -4,8 +4,8 @@ mod fixtures;
 
 use fixtures::{Fixtures, ShotKind};
 use phototools_core::ingest::{
-    group_into_shots, record_scan, scan_card, scan_files, stage_all, AssetKind, Card, Fingerprint,
-    Origin,
+    deliver_all, group_into_shots, record_scan, scan_card, scan_files, AssetKind, Card,
+    Fingerprint, Origin,
 };
 use phototools_core::jobs::InMemoryProgress;
 use phototools_core::ledger::Ledger;
@@ -205,10 +205,11 @@ fn a_read_only_card_scans_and_is_byte_identical_afterwards() {
 
     let scan = scan_card(&Card::at(&root).unwrap(), &progress()).unwrap();
 
-    // Staging reads from the card and writes only to the staging directory.
-    let staging = f.path().join("staging");
+    // Delivery reads from the card and writes only to its destination. It replaced staging as the
+    // copy off a card when the handoff was retired (RS-1).
+    let destination = f.path().join("delivered");
     let candidates: Vec<_> = scan.candidates().cloned().collect();
-    let staged = stage_all(&candidates, &staging, &progress());
+    let delivered = deliver_all(&candidates, &root, &destination, &progress()).unwrap();
 
     #[cfg(unix)]
     {
@@ -219,32 +220,14 @@ fn a_read_only_card_scans_and_is_byte_identical_afterwards() {
     }
 
     assert_eq!(scan.shot_count(), 3);
-    assert!(staged.all_verified(), "{:?}", staged.failed);
-    assert_eq!(staged.staged.len(), 3);
+    assert!(delivered.all_verified(), "{:?}", delivered.failed);
+    assert_eq!(delivered.delivered.len(), 3);
 
     assert_eq!(
         snapshot(&root),
         before,
-        "the card must be byte-identical after a scan and a staging copy"
+        "the card must be byte-identical after a scan and a delivery copy"
     );
-}
-
-#[test]
-fn staged_copies_are_verified_against_the_hash_the_scan_computed() {
-    let f = Fixtures::new();
-    let root = f.card_tree(&[ShotKind::JpegOnly, ShotKind::JpegOnly]);
-    let staging = f.path().join("staging");
-
-    let scan = scan_card(&Card::at(&root).unwrap(), &progress()).unwrap();
-    let candidates: Vec<_> = scan.candidates().cloned().collect();
-    let result = stage_all(&candidates, &staging, &progress());
-
-    assert!(result.all_verified());
-    for staged in &result.staged {
-        let on_disk = std::fs::read(&staged.staged).unwrap();
-        let from_card = std::fs::read(&staged.source).unwrap();
-        assert_eq!(on_disk, from_card, "the copy is the photograph");
-    }
 }
 
 // ---------------------------------------------------------------------------

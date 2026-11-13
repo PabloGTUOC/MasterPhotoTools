@@ -45,8 +45,8 @@ const TYPES = {
 // Workflow order, so the screenshots in `layout-proof/` read the way the
 // navigation bar does.
 const ROUTES = [
-  '/', '/dates', '/rename', '/timeline', '/geotag', '/tiff-to-jpeg', '/raw-to-jpeg',
-  '/split', '/border', '/contact-sheet', '/transform', '/publish',
+  '/', '/dates', '/rename', '/timeline', '/geotag', '/tiff-to-jpeg',
+  '/split', '/border', '/contact-sheet', '/transform',
 ];
 
 if (!existsSync(DIST)) {

@@ -1,5 +1,8 @@
 # Publishing a folder — development plan
 
+> **Withdrawn 2026-11-14 by RS-1** ([`rescope-plan.md`](rescope-plan.md)): the owner dropped Google
+> Photos publishing, and this feature was removed with it. The plan is kept for the history.
+
 > **Built.** PB-1 to PB-9 are done and the gates pass; eight checks await a NAS and a Google
 > account (MV-16). Where the build diverged from this plan the text says so, and the reasons are in
 > [`phase-reports/publish-folder.md`](phase-reports/publish-folder.md). The session road is still

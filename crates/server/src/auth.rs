@@ -184,8 +184,7 @@ pub struct AuthConfig {
     /// The credential a phone posts its positions with
     /// (`docs/owntracks-plan.md`).
     ///
-    /// **`None` refuses every request to that route**, the way an unset
-    /// `PUBLISHING_DIR` refuses all publishing. There is no default credential
+    /// **`None` refuses every request to that route.** There is no default credential
     /// and no "allow when empty": the route is reachable from the public
     /// internet, and a feature nobody configured must be a feature nobody can
     /// use.

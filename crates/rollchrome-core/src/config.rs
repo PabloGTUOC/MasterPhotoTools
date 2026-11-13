@@ -92,8 +92,6 @@ mod tests {
         let dir = PathBuf::from("/tmp/phototools-test");
         let config = Config {
             roots: vec![dir.join("library")],
-            staging_dir: dir.join("staging"),
-            publishing_dir: None,
             thresholds: Thresholds::default(),
             database: dir.join("db.sqlite3"),
         };

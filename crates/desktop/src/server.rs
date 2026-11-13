@@ -6,8 +6,6 @@
 //! the local network needs no certificate.
 
 use phototools_core::error::Error;
-use phototools_core::ingest::{ArrivalReport, Manifest, SessionClient, SessionPlan};
-use phototools_core::jobs::{Job, JobStatus};
 use phototools_core::tools::geotag;
 use serde::{Deserialize, Serialize};
 use std::error::Error as StdError;
@@ -184,13 +182,13 @@ impl ServerConnection {
         }
     }
 
-    /// A client for the handoff, bound to the settings as they stand now.
+    /// A client for timeline sync, bound to the settings as they stand now.
     ///
     /// Separate from the probe client on purpose: [`PROBE_TIMEOUT`] is three
     /// seconds, which is right for "is the NAS there?" and wrong for a request
-    /// that may be copying a gigabyte's worth of answer out of a manifest.
-    pub fn session_client(&self) -> HandoffClient {
-        HandoffClient::new(self.settings())
+    /// that may be carrying a year of tracks.
+    pub fn session_client(&self) -> ServerClient {
+        ServerClient::new(self.settings())
     }
 
     /// Ask the server whether it is there.
@@ -260,40 +258,20 @@ impl ServerConnection {
     }
 }
 
-/// How long a handoff request may take before the NAS is presumed gone.
-const HANDOFF_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a request may take before the NAS is presumed gone.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// How often to ask whether the verification job has finished.
-const POLL_INTERVAL: Duration = Duration::from_secs(2);
-
-/// How long to wait for verification before giving up on it.
-///
-/// Hashing a card's worth of derivatives off the NAS's own disks is minutes,
-/// not seconds, and a bounded wait is what stops a wedged job from hanging the
-/// desktop until somebody notices.
-const VERIFY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-
-#[derive(Debug, Deserialize)]
-struct JobAccepted {
-    job_id: String,
-}
-
-/// The desktop's half of the handoff: HTTP, and nothing else.
-///
-/// Every decision in the protocol — what to copy, what a mismatch means, how
-/// many times to try — lives in `core`'s [`run_handoff`]. This type exists only
-/// to put those two calls on the wire (G1).
-///
-/// [`run_handoff`]: phototools_core::ingest::run_handoff
-pub struct HandoffClient {
+/// The desktop's HTTP client for the server: timeline sync puts its calls on the wire, and nothing
+/// else. What moves is decided in `core` (G1).
+pub struct ServerClient {
     settings: ServerSettings,
     client: reqwest::blocking::Client,
 }
 
-impl HandoffClient {
+impl ServerClient {
     pub fn new(settings: ServerSettings) -> Self {
         let client = reqwest::blocking::Client::builder()
-            .timeout(HANDOFF_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
             .build()
             .unwrap_or_default();
         Self { settings, client }
@@ -332,47 +310,16 @@ impl HandoffClient {
             .json()
             .map_err(|e| Error::Internal(format!("could not read the server's {what}: {e}")))
     }
-
-    /// Poll a job until it is terminal, and fail loudly if it did not succeed.
-    fn await_job(&self, job_id: &str) -> Result<(), Error> {
-        let deadline = std::time::Instant::now() + VERIFY_TIMEOUT;
-
-        loop {
-            let response = self
-                .authorise(self.client.get(self.url(&format!("/api/jobs/{job_id}"))))
-                .send()
-                .map_err(|e| Error::Internal(format!("could not reach the server: {e}")))?;
-            let job: Job = Self::read(response, "job state")?;
-
-            if job.status.is_terminal() {
-                return match job.status {
-                    JobStatus::Completed => Ok(()),
-                    other => Err(Error::Internal(format!(
-                        "the server's verification {other}: {}",
-                        job.error.unwrap_or_else(|| "no reason given".into())
-                    ))),
-                };
-            }
-
-            if std::time::Instant::now() >= deadline {
-                return Err(Error::Internal(format!(
-                    "the server was still verifying after {} minutes",
-                    VERIFY_TIMEOUT.as_secs() / 60
-                )));
-            }
-            std::thread::sleep(POLL_INTERVAL);
-        }
-    }
 }
 
 /// The NAS's timeline, as `geotag::sync` needs to see it
 /// (`docs/timeline-sync-plan.md`).
 ///
-/// The same blocking client the handoff uses, for the same reason: §8 keeps the
+/// A blocking client, because §8 keeps the
 /// desktop's HTTP on the Rust side, away from the webview's CORS and
 /// mixed-content rules. Nothing here decides anything — what moves is worked
 /// out in `core`, which is where it can be tested with neither machine present.
-impl geotag::sync::TimelineRemote for HandoffClient {
+impl geotag::sync::TimelineRemote for ServerClient {
     fn inventory(&self) -> Result<geotag::sync::Inventory, Error> {
         let response = self
             .authorise(self.client.get(self.url("/api/timeline/inventory")))
@@ -411,56 +358,6 @@ impl geotag::sync::TimelineRemote for HandoffClient {
         let _: serde_json::Value = Self::read(response, "the server's answer")?;
         Ok(())
     }
-}
-
-impl SessionClient for HandoffClient {
-    fn open_session(&self, manifest: &Manifest) -> Result<SessionPlan, Error> {
-        let response = self
-            .authorise(self.client.post(self.url("/api/ingest/sessions")))
-            .json(manifest)
-            .send()
-            .map_err(|e| Error::Internal(format!("could not reach the server: {e}")))?;
-
-        Self::read(response, "session plan")
-    }
-
-    fn mark_ready(&self, session_id: &str) -> Result<ArrivalReport, Error> {
-        let response = self
-            .authorise(
-                self.client
-                    .post(self.url(&format!("/api/ingest/sessions/{session_id}/ready"))),
-            )
-            .send()
-            .map_err(|e| Error::Internal(format!("could not reach the server: {e}")))?;
-
-        // Verification is a job (F17), so this returns an id, not an answer.
-        let accepted: JobAccepted = Self::read(response, "verification job")?;
-        self.await_job(&accepted.job_id)?;
-
-        let response = self
-            .authorise(
-                self.client
-                    .get(self.url(&format!("/api/ingest/sessions/{session_id}/shots"))),
-            )
-            .send()
-            .map_err(|e| Error::Internal(format!("could not reach the server: {e}")))?;
-
-        let shots: SessionShots = Self::read(response, "arrival report")?;
-        shots.report.ok_or_else(|| {
-            Error::Internal(
-                "the server finished verifying but produced no report; \
-                 nothing was recopied because nothing is known to be wrong"
-                    .into(),
-            )
-        })
-    }
-}
-
-/// Only the field this side needs. The rest of the response is for the review
-/// grid, which is the web UI's business.
-#[derive(Debug, Deserialize)]
-struct SessionShots {
-    report: Option<ArrivalReport>,
 }
 
 #[cfg(test)]

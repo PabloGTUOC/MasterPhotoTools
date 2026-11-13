@@ -33,8 +33,6 @@ impl TestFixture {
 
         let config = Config {
             roots: vec![root.clone()],
-            staging_dir: staging,
-            publishing_dir: None,
             thresholds: Thresholds::default(),
             database: temp.path().join("ledger.sqlite3"),
         };

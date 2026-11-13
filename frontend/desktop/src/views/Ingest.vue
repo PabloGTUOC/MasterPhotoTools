@@ -35,9 +35,8 @@ const cardPath = ref('');
 /**
  * Where the frames that passed should be copied to.
  *
- * The other road off the card (`docs/publish-folder-plan.md`): instead of
- * handing a session to the server, put the photographs somewhere the tools can
- * work on them. Local when you intend to edit them, the NAS when you do not.
+ * The road off the card: put the photographs somewhere the tools can work on
+ * them. Local when you intend to edit them, the NAS when you do not.
  */
 const workingDir = ref('');
 

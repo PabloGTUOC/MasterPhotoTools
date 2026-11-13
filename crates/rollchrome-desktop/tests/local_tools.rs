@@ -17,8 +17,6 @@ fn fixture() -> Fixture {
 
     let config = Config {
         roots: vec![root.canonicalize().unwrap()],
-        staging_dir: temp.path().join("staging"),
-        publishing_dir: None,
         thresholds: Thresholds::default(),
         database: temp.path().join("ledger.sqlite3"),
     };
@@ -47,68 +45,6 @@ LUT_3D_SIZE 2
 ";
     std::fs::write(&p, content).unwrap();
     p
-}
-
-#[test]
-fn export_edited_image_refuses_destination_inside_publishing_folder() {
-    let mut f = fixture();
-    let pub_dir = f._temp.path().join("publishing");
-    std::fs::create_dir_all(&pub_dir).unwrap();
-    f.config.publishing_dir = Some(pub_dir.canonicalize().unwrap());
-
-    let ledger = Ledger::open(&f.config.database).unwrap();
-    let state = rollchrome_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
-
-    let img_path = f.root.join("source.jpg");
-    image::RgbImage::new(60, 40).save(&img_path).unwrap();
-
-    let recipe = rollchrome_core::media::edit::AdjustmentRecipe::default();
-    let err = rollchrome_desktop::commands::edit::export_edited_image_impl(
-        &state,
-        img_path.to_string_lossy().to_string(),
-        recipe,
-        pub_dir.to_string_lossy().to_string(),
-    )
-    .unwrap_err();
-
-    assert!(
-        err.contains("publishing folder"),
-        "must refuse writing inside Publishing folder (MV-16.7); got: {err}"
-    );
-}
-
-#[test]
-fn bulk_lut_refuses_output_directory_inside_publishing_folder() {
-    let mut f = fixture();
-    let pub_dir = f._temp.path().join("publishing");
-    std::fs::create_dir_all(&pub_dir).unwrap();
-    f.config.publishing_dir = Some(pub_dir.canonicalize().unwrap());
-
-    let ledger = Ledger::open(&f.config.database).unwrap();
-    let state = rollchrome_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
-
-    let img_path = f.root.join("photo.jpg");
-    image::RgbImage::new(60, 40).save(&img_path).unwrap();
-
-    // Import a test LUT into the managed library
-    let cube = create_test_cube(&f.root);
-    rollchrome_desktop::commands::edit::import_lut_impl(&state, cube.to_string_lossy().to_string())
-        .unwrap();
-
-    let err = rollchrome_desktop::commands::edit::plan_bulk_lut_impl(
-        &state,
-        vec![img_path.to_string_lossy().to_string()],
-        "test.cube".into(),
-        1.0,
-        pub_dir.to_string_lossy().to_string(),
-        false,
-    )
-    .unwrap_err();
-
-    assert!(
-        err.contains("publishing folder"),
-        "must refuse output inside Publishing folder (MV-16.7); got: {err}"
-    );
 }
 
 #[test]

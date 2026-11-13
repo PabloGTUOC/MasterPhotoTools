@@ -37,9 +37,9 @@ implement.
 `components/` is a **library**. A component here is transport-free — props in,
 events out, no `@host/api` — so it can be used by a shared view, by one
 application's own view, or by a test harness with no application at all.
-`ShotGrid` and `BulkActions` are used by the desktop alone and still live here,
-because being transport-free is what makes them measurable: `check:ingest`
-mounts them on their own and puts four hundred shots through them.
+`ShotGrid` is used by the desktop alone and still lives here, because being
+transport-free is what makes it measurable: `check:ingest` mounts it on its own
+and puts four hundred shots through it.
 `TrackLibrary` is here for the same reason: the conflict table is the one part
 of geotagging a person has to *judge*, and it can be put in front of a harness
 with no application around it.
@@ -50,10 +50,12 @@ application's `src/views/`:
 | View | Where | Why |
 |---|---|---|
 | `Ingest` | `frontend/desktop/src/views/` | §2.3 puts the card reader on the Mac. The server has no card to read. |
-| `Publish` | `frontend/web/src/views/` | The Google refresh token lives on exactly one machine (§2.3). |
 
-The alternative — putting both in `views/` and having each transport throw for
-the half it cannot do — was rejected. A capability that exists in the type
+The web app had one too, `Publish`, until Google Photos publishing was removed
+(RS-1, 2026-11-14).
+
+The alternative — putting such a screen in `views/` and having the other transport throw for
+what it cannot do — was rejected. A capability that exists in the type
 system and fails at runtime is worse than one the type system never offered:
 the first is discovered by a person pressing a button, the second by a compiler.
 

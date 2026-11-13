@@ -342,14 +342,10 @@ struct Fixture {
 fn fixture() -> Fixture {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("library");
-    let staging = temp.path().join("staging");
     fs::create_dir_all(&root).unwrap();
-    fs::create_dir_all(&staging).unwrap();
     let root = root.canonicalize().unwrap();
     let config = Config {
         roots: vec![root.clone()],
-        staging_dir: staging,
-        publishing_dir: None,
         thresholds: Thresholds::default(),
         database: temp.path().join("ledger.sqlite3"),
     };

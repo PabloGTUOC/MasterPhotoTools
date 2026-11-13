@@ -1,6 +1,6 @@
 # Rescope — PhotoTools manages, Rollchrome develops
 
-> **Planned 2026-11-13. DV-7, DV-8, RS-3, DV-6 (2026-11-13), RS-1 and RS-2 (2026-11-14) done; RS-4, DV-9 and DV-10 next.** Steps have stable ids, `RS-1` onwards for PhotoTools and
+> **Planned 2026-11-13. DV-7, DV-8, RS-3, DV-6 (2026-11-13), RS-1, RS-2 and RS-4 (2026-11-14) done; DV-9 and DV-10 next.** Steps have stable ids, `RS-1` onwards for PhotoTools and
 > `DV-6` onwards for Develop, like the other plans.
 
 ## Why
@@ -112,6 +112,18 @@ an empty sanitised name; sidecar moved; blocks mode byte-identical to before.
 No code expected. Claude checks that every website screen left after RS-1 and RS-2 is in the
 desktop navigation and runs over Tauri, and records the result here. Anything missing becomes a
 step of its own.
+
+**Done 2026-11-14, no code needed.**
+- **Same tabs.** Both applications build their tool tabs from the one `sharedToolRoutes` list: Dates,
+  Rename, Timeline, Geotag, TIFF, Split, Border, Sheet, Transform.
+- **All run locally.** A shared view may call only `ApiClient` methods. The desktop's client implements
+  that interface, and the desktop build typechecks, so every tab runs over Tauri.
+- **What differs:**
+  - Each application's start screen: the website's Dashboard, an index of the same tabs; the desktop's
+    Ingest, since the card reader is on the Mac.
+  - The desktop's Timeline is the shared one plus sync, which pulls the phone's positions from the
+    server.
+  - The phone's receiver stays on the server only, as the owner asked.
 
 ### Rollchrome — Develop
 

@@ -13,9 +13,15 @@ const props = withDefaults(
   defineProps<{
     jobId: string | null;
     canCancel?: boolean;
+    /**
+     * Show the time per item and an estimate of the time left, from the job's own progress
+     * (DV-8). Names the items, e.g. "photograph"; omitted, nothing is shown.
+     */
+    timingItem?: string;
   }>(),
   {
     canCancel: false,
+    timingItem: undefined,
   },
 );
 
@@ -25,6 +31,9 @@ const emit = defineEmits<{
 }>();
 
 const event = ref<JobEvent | null>(null);
+/** When the first update arrived, and when the latest did: the timing is measured between them. */
+const firstAt = ref<number | null>(null);
+const latestAt = ref<number | null>(null);
 const failure = ref<string | null>(null);
 const watching = ref(false);
 let controller: AbortController | null = null;
@@ -48,6 +57,8 @@ watch(
     stop();
     event.value = null;
     failure.value = null;
+    firstAt.value = null;
+    latestAt.value = null;
     if (!id) return;
 
     controller = new AbortController();
@@ -57,6 +68,9 @@ watch(
         id,
         (next) => {
           event.value = next;
+          const now = Date.now();
+          if (firstAt.value === null) firstAt.value = now;
+          latestAt.value = now;
           if (next.terminal) {
             emit('done');
           }
@@ -75,6 +89,31 @@ watch(
 );
 
 onUnmounted(stop);
+
+/** `95` → `1 min 35 s`; under a minute, seconds only. */
+function duration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  return `${m} min ${s % 60} s`;
+}
+
+/**
+ * `1.0 s per photograph · about 2 min 5 s left`. The rate is the time since the first update over
+ * the items finished since then; nothing is shown until one has finished.
+ */
+const timing = computed(() => {
+  const e = event.value;
+  if (!props.timingItem || !e || e.terminal || firstAt.value === null || latestAt.value === null) {
+    return null;
+  }
+  if (e.progress <= 0 || e.total <= 0) return null;
+  const elapsed = (latestAt.value - firstAt.value) / 1000;
+  if (elapsed <= 0) return null;
+  const per = elapsed / e.progress;
+  const left = per * Math.max(0, e.total - e.progress);
+  return `${per.toFixed(1)} s per ${props.timingItem} · about ${duration(left)} left`;
+});
 
 const percent = () => {
   const e = event.value;
@@ -134,6 +173,7 @@ const bar = () => {
     </p>
 
     <p v-if="event?.message" class="job-message">{{ event.message }}</p>
+    <p v-if="timing" class="muted job-timing" data-testid="job-timing">{{ timing }}</p>
     <p v-if="failure" class="error">{{ failure }}</p>
     <p v-if="!watching && !event" class="muted">
       Waiting for the first update<span class="cursor">_</span>

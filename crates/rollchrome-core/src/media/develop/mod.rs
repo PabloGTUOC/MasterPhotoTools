@@ -393,6 +393,25 @@ pub fn reduce_noise(
 
 /// Converts linear ProPhoto RGB pixels to a developed 16-bit ProPhoto RGB image
 /// using the base tone curve and ROMM encoding.
+/// Maps every pixel to three output values in parallel, into one buffer allocated up front (DV-8).
+///
+/// `par_iter().flat_map(|p| [a, b, c]).collect()` builds its result out of many small vectors that
+/// are then joined: on a 10 MP frame that cost about a second per pass and gigabytes of transient
+/// memory, more than demosaicing. The closures are unchanged, so the output is the same, byte for byte.
+pub(crate) fn par_map_rgb<I, O, F>(input: &[I], f: F) -> Vec<O>
+where
+    I: Sync,
+    O: Copy + Default + Send + Sync,
+    F: Fn(&I) -> [O; 3] + Sync + Send,
+{
+    let mut out = vec![O::default(); input.len() * 3];
+    out.par_chunks_exact_mut(3)
+        .zip(input.par_iter())
+        .with_min_len(4096)
+        .for_each(|(o, i)| o.copy_from_slice(&f(i)));
+    out
+}
+
 pub fn linear_to_developed(
     width: u32,
     height: u32,
@@ -400,18 +419,15 @@ pub fn linear_to_developed(
     orientation: u16,
     demosaic: Demosaic,
 ) -> Result<Developed, Error> {
-    let u16_data: Vec<u16> = pixels
-        .into_par_iter()
-        .flat_map(|p| {
-            let mut out = [0u16; 3];
-            for c in 0..3 {
-                let t = tone::base_tone(p[c]);
-                let enc = tone::prophoto_encode(t);
-                out[c] = (enc * 65535.0).round().clamp(0.0, 65535.0) as u16;
-            }
-            out
-        })
-        .collect();
+    let u16_data: Vec<u16> = par_map_rgb(pixels, |p| {
+        let mut out = [0u16; 3];
+        for c in 0..3 {
+            let t = tone::base_tone(p[c]);
+            let enc = tone::prophoto_encode(t);
+            out[c] = (enc * 65535.0).round().clamp(0.0, 65535.0) as u16;
+        }
+        out
+    });
 
     let image = match image::ImageBuffer::from_raw(width, height, u16_data) {
         Some(img) => img,

@@ -21,8 +21,8 @@ use crate::media::edit::lut::Lut;
 use crate::media::film::Grain;
 use crate::media::looks::builtin::{builtin_look_list, BuiltinLookInfo};
 use crate::tools::develop::{
-    execute_develop, plan_develop_with as core_plan_develop_with, DevelopItem, DevelopOutput,
-    DevelopPlan, DevelopSummary, NEUTRAL_LOOK,
+    execute_develop_with, plan_develop_with as core_plan_develop_with, Concurrency, DevelopItem,
+    DevelopOutput, DevelopPlan, DevelopSummary, DEFAULT_JOBS, NEUTRAL_LOOK,
 };
 use crate::tools::develop_folder::{raw_names, refuse_card_folder, FolderStore};
 use crate::tools::edit::{
@@ -277,7 +277,12 @@ impl Automation {
         if let Some(dir) = custom_output {
             store = store.with_output_dir(dir);
         }
-        Ok(execute_develop(reviewed.plan, &mut store, p))
+        Ok(execute_develop_with(
+            reviewed.plan,
+            &mut store,
+            p,
+            Concurrency::for_this_machine(DEFAULT_JOBS),
+        ))
     }
 
     /// Resolves where a develop run writes: `None` for `Developed` beside the photographs, or the

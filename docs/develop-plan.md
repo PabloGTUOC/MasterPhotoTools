@@ -1,6 +1,6 @@
 # Develop — RAW files to finished photographs, a film look each
 
-> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 done ([brief](briefs/DV-3.md)): 12 built-in looks ship; Velvia and Astia did not pass. RP-1 built ([brief](briefs/RP-1.md)): Develop screen exists with preview, look picker, exposure slider, dry run, and export. DV-4 done ([brief](briefs/DV-4.md)): 18 film stocks simulated by spektrafilm-rs with grain control and GPU acceleration; the repository is GPL-3.0-or-later. DV-5 done ([brief](briefs/DV-5.md)): noise reduction before the look. DV-7 done ([brief](briefs/DV-7.md)): developing without a look, output folder, long edge, JPEG + TIFF.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
+> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 done ([brief](briefs/DV-3.md)): 12 built-in looks ship; Velvia and Astia did not pass. RP-1 built ([brief](briefs/RP-1.md)): Develop screen exists with preview, look picker, exposure slider, dry run, and export. DV-4 done ([brief](briefs/DV-4.md)): 18 film stocks simulated by spektrafilm-rs with grain control and GPU acceleration; the repository is GPL-3.0-or-later. DV-5 done ([brief](briefs/DV-5.md)): noise reduction before the look. DV-7 done ([brief](briefs/DV-7.md)): developing without a look, output folder, long edge, JPEG + TIFF. DV-8 done ([brief](briefs/DV-8.md)): 2.9–4.5× faster, four photographs at once.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
 > ([`rollchrome-plan.md`](rollchrome-plan.md)). DV-1 needs RC-1. Nothing here touches PhotoTools.
 >
 > **Functionality first.** The screen is discussed with the owner before it becomes a step
@@ -270,6 +270,15 @@ Now:
   because the two outputs are in different colour spaces.
 
 With the defaults, plans, plan hashes and output bytes are what they were.
+
+### `DV-8` · Speed
+
+**Done ([DV-8](briefs/DV-8.md)).** Two per-pixel conversions were collected in a way that cost more than
+demosaicing; filling their buffers in place made one photograph 2.4× faster and cut its peak memory by
+two thirds, with byte-identical output. Develop then runs four photographs at once, within half the
+machine's memory, writing in plan order. On the owner's XZ-1 files it went from 20 to 90 photographs a minute
+neutral and from 20 to 58 with Portra 400. The progress line shows the time per photograph and the time
+left.
 
 ### The screen — RP-1
 

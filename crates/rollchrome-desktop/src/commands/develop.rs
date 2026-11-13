@@ -285,8 +285,14 @@ pub fn apply_develop_impl(
             let existing = store.existing_outputs()?;
             let plan = core_plan_develop_with(&items, format, &output, &existing);
             let skipped = plan.skipped.clone();
-            let summary =
-                rollchrome_core::tools::develop::execute_develop(plan, &mut store, progress);
+            let summary = rollchrome_core::tools::develop::execute_develop_with(
+                plan,
+                &mut store,
+                progress,
+                rollchrome_core::tools::develop::Concurrency::for_this_machine(
+                    rollchrome_core::tools::develop::DEFAULT_JOBS,
+                ),
+            );
             let all_skipped = [skipped, summary.metadata_skipped].concat();
             Ok(phototools_core::tools::summarise(
                 summary.developed.len(),

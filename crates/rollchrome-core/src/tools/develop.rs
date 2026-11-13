@@ -6,16 +6,17 @@
 //! Conforms to rule R2: zero filesystem types in this module. All filesystem
 //! operations are abstracted behind the `DevelopStore` trait.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
+use std::sync::{mpsc, Mutex};
 
 use phototools_core::error::Error;
 use phototools_core::jobs::Progress;
 use phototools_core::media::raw::RAW_EXTENSIONS;
 use phototools_core::tools::Skip;
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::media::develop::par_map_rgb;
 use crate::media::develop::preview::resize_linear;
 use crate::media::develop::{
     develop_linear, linear_to_developed, reduce_noise, render_sized, DevelopOptions, Look,
@@ -491,16 +492,13 @@ fn encode_film_jpeg(
     pixels: Vec<[f32; 3]>,
     quality: u8,
 ) -> Result<Vec<u8>, String> {
-    let u8_data: Vec<u8> = pixels
-        .into_par_iter()
-        .flat_map(|p| {
-            [
-                (p[0] * 255.0).round().clamp(0.0, 255.0) as u8,
-                (p[1] * 255.0).round().clamp(0.0, 255.0) as u8,
-                (p[2] * 255.0).round().clamp(0.0, 255.0) as u8,
-            ]
-        })
-        .collect();
+    let u8_data: Vec<u8> = par_map_rgb(&pixels, |p| {
+        [
+            (p[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+            (p[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+            (p[2] * 255.0).round().clamp(0.0, 255.0) as u8,
+        ]
+    });
     let img = image::RgbImage::from_raw(width, height, u8_data)
         .ok_or_else(|| "failed to create RgbImage buffer".to_string())?;
     let opts = phototools_core::media::jpeg::JpegOptions::deliverable(quality);
@@ -510,21 +508,98 @@ fn encode_film_jpeg(
 
 /// Encodes a film render's linear ProPhoto as a 16-bit TIFF with its ICC profile.
 fn encode_film_tiff(width: u32, height: u32, pixels: Vec<[f32; 3]>) -> Result<Vec<u8>, String> {
-    let u16_data: Vec<u16> = pixels
-        .into_par_iter()
-        .flat_map(|p| {
-            let mut out = [0u16; 3];
-            for c in 0..3 {
-                let enc = crate::media::develop::tone::prophoto_encode(p[c].max(0.0));
-                out[c] = (enc * 65535.0).round().clamp(0.0, 65535.0) as u16;
-            }
-            out
-        })
-        .collect();
+    let u16_data: Vec<u16> = par_map_rgb(&pixels, |p| {
+        let mut out = [0u16; 3];
+        for c in 0..3 {
+            let enc = crate::media::develop::tone::prophoto_encode(p[c].max(0.0));
+            out[c] = (enc * 65535.0).round().clamp(0.0, 65535.0) as u16;
+        }
+        out
+    });
     let icc_profile =
         crate::media::develop::render::prophoto_icc_profile().map_err(|e| e.to_string())?;
     crate::media::develop::render::encode_tiff(width, height, &u16_data, &icc_profile)
         .map_err(|e| e.to_string())
+}
+
+/// How many photographs a run develops at once (DV-8).
+///
+/// Each photograph already uses every core while it demosaics, denoises and converts, but reading,
+/// JPEG encoding, the film simulation's GPU queue and the metadata write are serial, and a second
+/// photograph fills those gaps. Memory, not cores, is the real limit: a photograph's peak is
+/// estimated from its file size and the run keeps only as many in flight as fit in the budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Concurrency {
+    /// The most photographs in flight at once; at least 1.
+    pub max_jobs: usize,
+    /// The bytes of estimated peak memory the photographs in flight may hold together. One
+    /// photograph always runs, however large.
+    pub memory_budget: u64,
+}
+
+impl Concurrency {
+    /// One photograph after another: what Develop did before DV-8.
+    pub fn sequential() -> Self {
+        Self {
+            max_jobs: 1,
+            memory_budget: u64::MAX,
+        }
+    }
+
+    /// Up to `max_jobs` photographs, within half of this machine's physical memory.
+    ///
+    /// Half, because the system, the application and the preview need the rest, and swapping costs
+    /// far more than a photograph waiting its turn. Unknown memory counts as 8 GB.
+    pub fn for_this_machine(max_jobs: usize) -> Self {
+        Self {
+            max_jobs: max_jobs.max(1),
+            memory_budget: physical_memory().unwrap_or(8 << 30) / 2,
+        }
+    }
+}
+
+/// The photographs a run develops at once by default (DV-8).
+///
+/// Measured on the owner's six XZ-1 ORFs on a 10-core Mac (2026-11-13): 1, 2, 3, 4 and 5 at once gave
+/// 44, 56, 71, 90 and 81 photographs a minute developed neutrally, and 27, 36, 50, 58 and 55 through
+/// Portra 400. Beyond four the photographs only compete for the same cores.
+pub const DEFAULT_JOBS: usize = 4;
+
+/// The machine's physical memory in bytes, if the platform says.
+pub fn physical_memory() -> Option<u64> {
+    #[cfg(unix)]
+    {
+        // SAFETY: sysconf reads two system constants and has no preconditions.
+        let (pages, page_size) = unsafe {
+            (
+                libc::sysconf(libc::_SC_PHYS_PAGES),
+                libc::sysconf(libc::_SC_PAGESIZE),
+            )
+        };
+        if pages > 0 && page_size > 0 {
+            return Some(pages as u64 * page_size as u64);
+        }
+        None
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+/// Estimated peak memory of developing one photograph, from its file size (DV-8).
+///
+/// Measured on 2026-11-13 (release build, peak resident size of the whole process):
+/// - an XZ-1 ORF, 11 MB for 10 MP: 1.5 GB neutral, 2.1 GB with a film stock;
+/// - an X-Trans RAF, 20 MB for 24 MP: 3.5 GB neutral.
+///
+/// Pixels are estimated at 1.25 per byte of file, the densest of those, so a compressed RAW is never
+/// underestimated. Per pixel: 160 bytes developed neutrally or with a LUT, 250 through the film
+/// simulation, and 50 more when a TIFF is written beside the JPEG.
+pub fn estimated_peak(file_len: usize, film: bool, two_outputs: bool) -> u64 {
+    let pixels = file_len as u64 * 5 / 4;
+    let per_pixel = if film { 250 } else { 160 } + if two_outputs { 50 } else { 0 };
+    pixels * per_pixel
 }
 
 /// Executes a development plan, one photograph after another.
@@ -533,38 +608,215 @@ pub fn execute_develop(
     store: &mut dyn DevelopStore,
     progress: &dyn Progress,
 ) -> DevelopSummary {
-    let total = plan.actions.len() as u64;
+    execute_develop_with(plan, store, progress, Concurrency::sequential())
+}
+
+/// One photograph handed to a worker.
+struct Job {
+    index: usize,
+    look: ResolvedLook,
+    raw: Vec<u8>,
+}
+
+/// A photograph read and costed, waiting for room in the memory budget.
+struct Staged {
+    job: Job,
+    cost: u64,
+}
+
+/// Executes a development plan with several photographs in flight (DV-8).
+///
+/// The store is only ever used from the calling thread: reading, resolving looks, writing and
+/// carrying metadata stay serial, so one persistent exiftool (G4) serves the whole run. Workers only
+/// develop and encode. Outputs are written **in plan order**, so the summary, the progress and the
+/// files on disk come out exactly as a sequential run's, whatever finishes first. With
+/// [`Concurrency::sequential`] the store sees the same calls, in the same order, as before DV-8.
+///
+/// At most `max_jobs` photographs are between "read" and "written" at any moment, which bounds the
+/// encoded outputs held waiting for an earlier, slower photograph.
+pub fn execute_develop_with(
+    plan: DevelopPlan,
+    store: &mut dyn DevelopStore,
+    progress: &dyn Progress,
+    concurrency: Concurrency,
+) -> DevelopSummary {
+    let total = plan.actions.len();
     let mut summary = DevelopSummary {
         developed: Vec::new(),
         skipped: plan.skipped.clone(),
         failures: Vec::new(),
         metadata_skipped: Vec::new(),
     };
+    let jobs = concurrency.max_jobs.max(1);
+    let film_data_dir = store.film_data_dir().map(Path::to_path_buf);
+    let plan = &plan;
+    let film_data_dir = film_data_dir.as_deref();
 
-    let mut look_cache: HashMap<String, Result<ResolvedLook, String>> = HashMap::new();
+    let (job_tx, job_rx) = mpsc::channel::<Job>();
+    let job_rx = Mutex::new(job_rx);
+    let (done_tx, done_rx) = mpsc::channel::<(usize, Result<Vec<Encoded>, String>)>();
 
-    for (done, action) in plan.actions.iter().enumerate() {
-        if progress.cancelled() {
-            break;
+    std::thread::scope(|scope| {
+        for _ in 0..jobs {
+            let job_rx = &job_rx;
+            let done_tx = done_tx.clone();
+            scope.spawn(move || loop {
+                let next = job_rx
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .recv();
+                let Ok(job) = next else { break };
+                let index = job.index;
+                let action = &plan.actions[index];
+                // A panic in one photograph must fail that photograph, not the run (G10).
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    develop_one(action, &job.look, &job.raw, plan, film_data_dir)
+                }))
+                .unwrap_or_else(|_| {
+                    Err("developing this photograph failed unexpectedly".to_string())
+                });
+                // The RAW bytes go before the result is sent, so they never sit in memory twice.
+                drop(job);
+                if done_tx.send((index, result)).is_err() {
+                    break;
+                }
+            });
         }
-        progress.report(done as u64, total, &action.source);
+        drop(done_tx);
 
-        let look_res = look_cache
-            .entry(action.look.clone())
-            .or_insert_with(|| resolve_look(&action.look, store).map_err(|e| e.to_string()));
-        let look = match look_res {
-            Ok(l) => l.clone(),
-            Err(reason) => {
-                summary.failures.push(Skip {
+        let mut look_cache: HashMap<String, Result<ResolvedLook, String>> = HashMap::new();
+        let mut finished: BTreeMap<usize, Result<Vec<Encoded>, String>> = BTreeMap::new();
+        let mut in_flight: HashMap<usize, u64> = HashMap::new();
+        let mut reserved: u64 = 0;
+        let mut staged: Option<Staged> = None;
+        let mut next = 0;
+        let mut written = 0;
+        let mut cancelled = false;
+
+        loop {
+            // Write what is ready first, so a finished photograph's outputs leave memory before
+            // another photograph is read.
+            while let Some(result) = finished.remove(&written) {
+                write_outcome(&plan.actions[written], result, store, &mut summary);
+                written += 1;
+            }
+
+            // Start photographs while the window and the memory budget allow.
+            loop {
+                if progress.cancelled() {
+                    cancelled = true;
+                    staged = None;
+                    break;
+                }
+                if staged.is_none() {
+                    if next >= total || next >= written + jobs {
+                        break;
+                    }
+                    let action = &plan.actions[next];
+                    progress.report(written as u64, total as u64, &action.source);
+                    let index = next;
+                    next += 1;
+
+                    let look = match look_cache.entry(action.look.clone()).or_insert_with(|| {
+                        resolve_look(&action.look, store).map_err(|e| e.to_string())
+                    }) {
+                        Ok(l) => l.clone(),
+                        Err(reason) => {
+                            finished.insert(index, Err(reason.clone()));
+                            continue;
+                        }
+                    };
+                    let raw = match store.read(&action.source) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            finished.insert(index, Err(e.to_string()));
+                            continue;
+                        }
+                    };
+                    let cost = estimated_peak(
+                        raw.len(),
+                        matches!(look, ResolvedLook::Film { .. }),
+                        plan.also.is_some(),
+                    );
+                    staged = Some(Staged {
+                        job: Job { index, look, raw },
+                        cost,
+                    });
+                }
+                let Some(s) = staged.take() else { break };
+                if !in_flight.is_empty()
+                    && reserved.saturating_add(s.cost) > concurrency.memory_budget
+                {
+                    staged = Some(s);
+                    break;
+                }
+                let index = s.job.index;
+                reserved = reserved.saturating_add(s.cost);
+                in_flight.insert(index, s.cost);
+                if job_tx.send(s.job).is_err() {
+                    reserved = reserved.saturating_sub(s.cost);
+                    in_flight.remove(&index);
+                    finished.insert(index, Err("the develop workers stopped".to_string()));
+                }
+            }
+
+            // Photographs that failed before reaching a worker are ready at once.
+            while let Some(result) = finished.remove(&written) {
+                write_outcome(&plan.actions[written], result, store, &mut summary);
+                written += 1;
+            }
+
+            if in_flight.is_empty() && staged.is_none() && (next >= total || cancelled) {
+                break;
+            }
+            if in_flight.is_empty() {
+                continue;
+            }
+            match done_rx.recv() {
+                Ok((index, result)) => {
+                    if let Some(cost) = in_flight.remove(&index) {
+                        reserved = reserved.saturating_sub(cost);
+                    }
+                    finished.insert(index, result);
+                }
+                Err(_) => break,
+            }
+        }
+        drop(job_tx);
+    });
+
+    store.finish();
+    progress.report(total as u64, total as u64, "done");
+    summary
+}
+
+/// Writes one photograph's outputs and carries its metadata, recording what happened.
+fn write_outcome(
+    action: &DevelopAction,
+    result: Result<Vec<Encoded>, String>,
+    store: &mut dyn DevelopStore,
+    summary: &mut DevelopSummary,
+) {
+    let encoded = match result {
+        Ok(e) => e,
+        Err(reason) => {
+            summary.failures.push(Skip {
+                file: action.source.clone(),
+                reason,
+            });
+            return;
+        }
+    };
+    for out in encoded {
+        match store.create_new(&out.output, &out.bytes) {
+            Ok(()) => {}
+            Err(Error::Refused(reason)) => {
+                summary.skipped.push(Skip {
                     file: action.source.clone(),
-                    reason: reason.clone(),
+                    reason,
                 });
                 continue;
             }
-        };
-
-        let raw_bytes = match store.read(&action.source) {
-            Ok(b) => b,
             Err(e) => {
                 summary.failures.push(Skip {
                     file: action.source.clone(),
@@ -572,58 +824,23 @@ pub fn execute_develop(
                 });
                 continue;
             }
-        };
+        }
 
-        let encoded = match develop_one(action, &look, &raw_bytes, &plan, store.film_data_dir()) {
-            Ok(e) => e,
-            Err(reason) => {
-                summary.failures.push(Skip {
-                    file: action.source.clone(),
-                    reason,
-                });
-                continue;
-            }
-        };
+        summary.developed.push(out.output.clone());
 
-        for out in encoded {
-            match store.create_new(&out.output, &out.bytes) {
-                Ok(()) => {}
-                Err(Error::Refused(reason)) => {
-                    summary.skipped.push(Skip {
-                        file: action.source.clone(),
-                        reason,
-                    });
-                    continue;
-                }
-                Err(e) => {
-                    summary.failures.push(Skip {
-                        file: action.source.clone(),
-                        reason: e.to_string(),
-                    });
-                    continue;
-                }
-            }
-
-            summary.developed.push(out.output.clone());
-
-            if let Err(e) = store.carry_metadata(
-                &action.source,
-                &out.output,
-                out.width,
-                out.height,
-                out.format,
-            ) {
-                summary.metadata_skipped.push(Skip {
-                    file: action.source.clone(),
-                    reason: e.to_string(),
-                });
-            }
+        if let Err(e) = store.carry_metadata(
+            &action.source,
+            &out.output,
+            out.width,
+            out.height,
+            out.format,
+        ) {
+            summary.metadata_skipped.push(Skip {
+                file: action.source.clone(),
+                reason: e.to_string(),
+            });
         }
     }
-
-    store.finish();
-    progress.report(total, total, "done");
-    summary
 }
 
 #[cfg(test)]

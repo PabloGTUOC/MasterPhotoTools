@@ -46,6 +46,17 @@ without a physical film simulation**. Spektrafilm's film stocks are what the oth
 **Keep:**
 - Ingest's scan, validate and deliver (card → folder, verified by hash; G5);
 - Takeout import (`f2_takeout`): it reads local files and never talks to Google.
+- **The location path, untouched** (owner, 2026-11-13: the phone engine "is to remain only there, not
+  in the desktop app", and the desktop calls the website to get locations and apply them locally):
+  - the server's `/api/timeline/owntracks` receiver, and the `/api/timeline/tracks`,
+    `/api/timeline/deletions` and inventory routes that sync uses;
+  - the desktop's `sync_timeline` command;
+  - the desktop's connection to the website (server settings, `session_client`).
+  The card hand-off being removed shares that connection, so the connection must not be deleted with
+  it.
+  - **Acceptance:** MV-18 (timeline sync) still applies, and the sync tests pass with unchanged
+    counts.
+  - The desktop app gains no phone receiver.
 
 **Ledger:** leave old ledger tables in place with no migration that drops them. A database on the
 NAS may still hold rows, and a published-photo record must not disappear. The code simply stops

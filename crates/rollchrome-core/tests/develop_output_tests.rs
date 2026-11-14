@@ -510,3 +510,85 @@ fn a_film_look_writes_jpeg_and_tiff_and_a_long_edge_downsizes_them() {
         assert_eq!(w.max(h), 32, "{name} is {w}x{h}");
     }
 }
+
+#[test]
+fn neutral_applies_the_make_exposure_and_a_look_does_not() {
+    let width = 48u32;
+    let height = 32u32;
+    let pixels = vec![3000u16; (width * height) as usize];
+
+    let rc_dng = DngBuilder::new_bayer(width, height).build(&pixels);
+    let mut nikon_builder = DngBuilder::new_bayer(width, height);
+    nikon_builder.make = "NIKON CORPORATION".to_string();
+    let nikon_dng = nikon_builder.build(&pixels);
+
+    // 1. Developed with NEUTRAL_LOOK: Nikon's centre pixel is brighter in every channel
+    let mut store_neutral = MemStore::default();
+    store_neutral
+        .sources
+        .insert("rc.dng".to_string(), rc_dng.clone());
+    store_neutral
+        .sources
+        .insert("nikon.dng".to_string(), nikon_dng.clone());
+
+    let plan_neutral = plan_develop(
+        &[
+            item("rc.dng", Some(NEUTRAL_LOOK)),
+            item("nikon.dng", Some(NEUTRAL_LOOK)),
+        ],
+        JPEG,
+        &BTreeSet::new(),
+    );
+    let summary_neutral = execute_develop(plan_neutral, &mut store_neutral, &NoopProgress);
+    assert_eq!(summary_neutral.developed.len(), 2);
+    assert!(
+        summary_neutral.failures.is_empty(),
+        "{:?}",
+        summary_neutral.failures
+    );
+
+    let rc_img = image::load_from_memory(&store_neutral.written["rc.jpg"])
+        .unwrap()
+        .to_rgb8();
+    let nikon_img = image::load_from_memory(&store_neutral.written["nikon.jpg"])
+        .unwrap()
+        .to_rgb8();
+
+    let rc_p = rc_img.get_pixel(width / 2, height / 2);
+    let nikon_p = nikon_img.get_pixel(width / 2, height / 2);
+    assert!(
+        nikon_p[0] > rc_p[0] && nikon_p[1] > rc_p[1] && nikon_p[2] > rc_p[2],
+        "Nikon centre pixel {:?} must be brighter in every channel than Rollchrome {:?}",
+        nikon_p,
+        rc_p
+    );
+
+    // 2. Developed with builtin:fujifilm-classic-chrome: two outputs are byte-identical
+    let look_id = "builtin:fujifilm-classic-chrome";
+    let mut store_look = MemStore::default();
+    store_look.sources.insert("rc.dng".to_string(), rc_dng);
+    store_look
+        .sources
+        .insert("nikon.dng".to_string(), nikon_dng);
+
+    let plan_look = plan_develop(
+        &[
+            item("rc.dng", Some(look_id)),
+            item("nikon.dng", Some(look_id)),
+        ],
+        JPEG,
+        &BTreeSet::new(),
+    );
+    let summary_look = execute_develop(plan_look, &mut store_look, &NoopProgress);
+    assert_eq!(summary_look.developed.len(), 2);
+    assert!(
+        summary_look.failures.is_empty(),
+        "{:?}",
+        summary_look.failures
+    );
+
+    assert_eq!(
+        store_look.written["rc.jpg"], store_look.written["nikon.jpg"],
+        "Built-in look outputs must be byte-identical regardless of make calibration"
+    );
+}

@@ -195,6 +195,15 @@ A strength setting, with automatic radius.
 **Acceptance:** edge sharpness measured on a test chart, with no halo beyond a stated overshoot,
 and a speed budget per photograph.
 
+#### `DV-11` · A camera-standard tone curve for "None (neutral)"
+Added 2026-11-14 after the owner's first test: a neutral JPEG came out muted and flat beside the camera's
+own rendering. Neutral used the flat base curve the built-in looks were fitted on. It gets a tone curve
+measured from the camera JPEGs embedded in the owner's XZ-1 ORFs, applied per channel; the looks keep
+their base. [Brief](briefs/DV-11.md).
+
+**Acceptance:** contrast, blacks, whites and saturation within a few percent of the camera's JPEG on
+the owner's six XZ-1 files.
+
 ## Order
 
 | # | Step | Why here | Who |
@@ -207,6 +216,7 @@ and a speed budget per photograph.
 | 6 | DV-6 | Already briefed | local model or agy |
 | 7 | DV-9 | Needs a design note first | Claude, then agy |
 | 8 | DV-10 | After lens correction, in pipeline order | agy |
+| 9 | DV-11 | A defect the owner found on first use | agy |
 
 agy runs only on Gemini Flash. One brief per step, a fresh conversation each time, and the credit
 cost reported per brief.

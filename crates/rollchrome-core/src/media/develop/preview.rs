@@ -237,8 +237,8 @@ impl DevelopPreview {
 
         let (look_obj, tone_curve) = match preview_look {
             Some(PreviewLook::Look(l)) => (Some(l), super::ToneCurve::Base),
-            Some(PreviewLook::Neutral) | None => (None, super::ToneCurve::Standard),
-            Some(PreviewLook::Film(_)) => unreachable!(),
+            // Neutral and no look are the same picture (DV-7); film returned above.
+            _ => (None, super::ToneCurve::Standard),
         };
 
         let exp_scale = 2.0f32.powf(exposure_ev);

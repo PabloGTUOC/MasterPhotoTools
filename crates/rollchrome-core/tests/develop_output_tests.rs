@@ -11,8 +11,8 @@ use phototools_core::config::{Config, Thresholds};
 use phototools_core::error::Error;
 use rollchrome_core::automation::{Automation, DevelopRequest};
 use rollchrome_core::media::develop::{
-    develop, develop_linear, downscaled_size, linear_to_developed_with, render, DevelopOptions,
-    Look, OutputFormat, ToneCurve,
+    develop, develop_linear, develop_neutral, downscaled_size, linear_to_developed_with, render,
+    DevelopOptions, Look, OutputFormat, ToneCurve,
 };
 use rollchrome_core::media::film::Grain;
 use rollchrome_core::tools::develop::{
@@ -196,7 +196,7 @@ fn jpeg_and_tiff_writes_both_and_carries_metadata_to_both() {
     let summary = execute_develop(plan, &mut store, &NoopProgress);
 
     assert_eq!(summary.developed, vec!["a.jpg", "a.tif"]);
-    let developed = develop(&raw, &DevelopOptions { exposure_ev: 0.0 }).unwrap();
+    let developed = develop_neutral(&raw, &DevelopOptions { exposure_ev: 0.0 }).unwrap();
     assert_eq!(
         store.written["a.jpg"],
         render(&developed, None, JPEG).unwrap().bytes
@@ -270,7 +270,7 @@ fn a_long_edge_downscales_the_jpeg_and_the_tiff_after_the_look() {
 #[test]
 fn a_long_edge_larger_than_the_frame_keeps_its_size() {
     let raw = dng(48, 32);
-    let developed = develop(&raw, &DevelopOptions { exposure_ev: 0.0 }).unwrap();
+    let developed = develop_neutral(&raw, &DevelopOptions { exposure_ev: 0.0 }).unwrap();
     let mut store = mem_store_with("a.dng", raw);
     let output = DevelopOutput {
         also_tiff: true,

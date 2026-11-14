@@ -463,10 +463,10 @@ fn develop_one(
     let mut encoded = Vec::with_capacity(outputs.len());
     match look {
         ResolvedLook::Neutral | ResolvedLook::Look(_) => {
+            // A LUT look was fitted on the base curve; a photograph with no look gets the standard one.
             let (look_arg, tone) = match look {
                 ResolvedLook::Look(l) => (Some(l), ToneCurve::Base),
-                ResolvedLook::Neutral => (None, ToneCurve::Standard),
-                ResolvedLook::Film { .. } => unreachable!(),
+                _ => (None, ToneCurve::Standard),
             };
             let developed = linear_to_developed_with(
                 linear.width,

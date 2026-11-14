@@ -494,6 +494,21 @@ pub fn linear_to_developed(
     )
 }
 
+/// Fully develops raw file bytes as Develop's "None (neutral)" does: on the standard curve rather than
+/// the base the looks were fitted on (DV-11). Tests compare neutral output against this, so the
+/// definition of the neutral picture lives in one place.
+pub fn develop_neutral(raw: &[u8], options: &DevelopOptions) -> Result<Developed, Error> {
+    let linear = develop_linear(raw, options)?;
+    linear_to_developed_with(
+        linear.width,
+        linear.height,
+        &linear.pixels,
+        linear.orientation,
+        linear.demosaic,
+        ToneCurve::Standard,
+    )
+}
+
 /// Fully develops raw file bytes into 16-bit ProPhoto RGB image.
 pub fn develop(raw: &[u8], options: &DevelopOptions) -> Result<Developed, Error> {
     let linear = develop_linear(raw, options)?;

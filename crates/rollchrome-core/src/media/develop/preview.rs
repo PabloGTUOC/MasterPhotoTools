@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use std::path::Path;
 
 use crate::media::develop::render::{render, Look, OutputFormat, Rendered};
-use crate::media::develop::{develop_linear, linear_to_developed, DevelopOptions, LinearProPhoto};
+use crate::media::develop::{develop_linear, DevelopOptions, LinearProPhoto};
 use crate::media::film::{render_film, FilmBackend, FilmOutput, Grain};
 use crate::media::segment::to_upright;
 use crate::tools::develop::ResolvedLook;
@@ -235,9 +235,10 @@ impl DevelopPreview {
             });
         }
 
-        let look_obj = match preview_look {
-            Some(PreviewLook::Look(l)) => Some(l),
-            _ => None,
+        let (look_obj, tone_curve) = match preview_look {
+            Some(PreviewLook::Look(l)) => (Some(l), super::ToneCurve::Base),
+            // Neutral and no look are the same picture (DV-7); film returned above.
+            _ => (None, super::ToneCurve::Standard),
         };
 
         let exp_scale = 2.0f32.powf(exposure_ev);
@@ -251,12 +252,13 @@ impl DevelopPreview {
                 .collect()
         };
 
-        let developed = linear_to_developed(
+        let developed = super::linear_to_developed_with(
             source.width,
             source.height,
             &scaled_pixels,
             1,
             source.demosaic,
+            tone_curve,
         )?;
 
         render(&developed, look_obj, OutputFormat::Jpeg { quality: 90 })

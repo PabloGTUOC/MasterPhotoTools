@@ -3,7 +3,7 @@ mod support;
 use phototools_core::error::Error;
 use rollchrome_core::media::develop::colour::{camera_to_prophoto, invert_3x3_f32, mul_3x3_vec};
 use rollchrome_core::media::develop::{
-    develop, develop_linear, render, Demosaic, DevelopOptions, Look, OutputFormat,
+    develop, develop_linear, develop_neutral, render, Demosaic, DevelopOptions, Look, OutputFormat,
 };
 use rollchrome_core::media::edit::lut::Lut;
 use rollchrome_core::media::film::Grain;
@@ -1232,7 +1232,8 @@ fn a_preview_at_an_exposure_matches_a_full_development_at_that_exposure() {
     let exposure_ev = 1.0f32;
 
     // Full render at exposure_ev
-    let full_dev = develop(&dng, &DevelopOptions { exposure_ev }).expect("full develop");
+    // No look is the neutral picture, on the standard curve (DV-11).
+    let full_dev = develop_neutral(&dng, &DevelopOptions { exposure_ev }).expect("full develop");
     let full_rendered =
         render(&full_dev, None, OutputFormat::Jpeg { quality: 90 }).expect("full render");
     let full_img = image::load_from_memory(&full_rendered.bytes)

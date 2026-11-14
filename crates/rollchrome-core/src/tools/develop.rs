@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use crate::media::develop::par_map_rgb;
 use crate::media::develop::preview::resize_linear;
 use crate::media::develop::{
-    correct_lens, develop_linear, linear_to_developed, reduce_noise, render_sized, DevelopOptions,
-    Look, OutputFormat,
+    correct_lens, develop_linear, linear_to_developed_with, reduce_noise, render_sized,
+    DevelopOptions, Look, OutputFormat, ToneCurve,
 };
 use crate::media::film::{render_film, FilmBackend, FilmOutput, Grain};
 
@@ -463,20 +463,22 @@ fn develop_one(
     let mut encoded = Vec::with_capacity(outputs.len());
     match look {
         ResolvedLook::Neutral | ResolvedLook::Look(_) => {
-            let look = match look {
-                ResolvedLook::Look(l) => Some(l),
-                _ => None,
+            // A LUT look was fitted on the base curve; a photograph with no look gets the standard one.
+            let (look_arg, tone) = match look {
+                ResolvedLook::Look(l) => (Some(l), ToneCurve::Base),
+                _ => (None, ToneCurve::Standard),
             };
-            let developed = linear_to_developed(
+            let developed = linear_to_developed_with(
                 linear.width,
                 linear.height,
                 &denoised,
                 linear.orientation,
                 linear.demosaic,
+                tone,
             )
             .map_err(|e| e.to_string())?;
             for (format, output) in outputs {
-                let r = render_sized(&developed, look, format, plan.long_edge)
+                let r = render_sized(&developed, look_arg, format, plan.long_edge)
                     .map_err(|e| e.to_string())?;
                 encoded.push(Encoded {
                     format,

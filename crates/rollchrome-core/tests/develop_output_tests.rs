@@ -11,7 +11,8 @@ use phototools_core::config::{Config, Thresholds};
 use phototools_core::error::Error;
 use rollchrome_core::automation::{Automation, DevelopRequest};
 use rollchrome_core::media::develop::{
-    develop, downscaled_size, render, DevelopOptions, Look, OutputFormat,
+    develop, develop_linear, develop_neutral, downscaled_size, linear_to_developed_with, render,
+    DevelopOptions, Look, OutputFormat, ToneCurve,
 };
 use rollchrome_core::media::film::Grain;
 use rollchrome_core::tools::develop::{
@@ -112,9 +113,36 @@ fn neutral_develops_a_photograph_with_no_look_applied() {
 
     assert_eq!(summary.developed, vec!["a.jpg"]);
     assert!(summary.failures.is_empty(), "{:?}", summary.failures);
+    let linear = develop_linear(&raw, &DevelopOptions { exposure_ev: 0.0 }).unwrap();
+    let developed = linear_to_developed_with(
+        linear.width,
+        linear.height,
+        &linear.pixels,
+        linear.orientation,
+        linear.demosaic,
+        ToneCurve::Standard,
+    )
+    .unwrap();
+    let expected = render(&developed, None, JPEG).unwrap();
+    assert_eq!(store.written["a.jpg"], expected.bytes);
+}
+
+#[test]
+fn a_look_still_develops_on_the_base_curve() {
+    let raw = dng(48, 32);
+    let mut store = mem_store_with("a.dng", raw.clone());
+    let look_id = "builtin:fujifilm-classic-chrome";
+    let look = rollchrome_core::media::looks::builtin::builtin_look("fujifilm-classic-chrome")
+        .expect("builtin look");
+
+    let plan = plan_develop(&[item("a.dng", Some(look_id))], JPEG, &BTreeSet::new());
+    let summary = execute_develop(plan, &mut store, &NoopProgress);
+
+    assert_eq!(summary.developed, vec!["a.jpg"]);
+    assert!(summary.failures.is_empty(), "{:?}", summary.failures);
     let expected = render(
         &develop(&raw, &DevelopOptions { exposure_ev: 0.0 }).unwrap(),
-        None,
+        Some(&look),
         JPEG,
     )
     .unwrap();
@@ -168,7 +196,7 @@ fn jpeg_and_tiff_writes_both_and_carries_metadata_to_both() {
     let summary = execute_develop(plan, &mut store, &NoopProgress);
 
     assert_eq!(summary.developed, vec!["a.jpg", "a.tif"]);
-    let developed = develop(&raw, &DevelopOptions { exposure_ev: 0.0 }).unwrap();
+    let developed = develop_neutral(&raw, &DevelopOptions { exposure_ev: 0.0 }).unwrap();
     assert_eq!(
         store.written["a.jpg"],
         render(&developed, None, JPEG).unwrap().bytes
@@ -242,7 +270,7 @@ fn a_long_edge_downscales_the_jpeg_and_the_tiff_after_the_look() {
 #[test]
 fn a_long_edge_larger_than_the_frame_keeps_its_size() {
     let raw = dng(48, 32);
-    let developed = develop(&raw, &DevelopOptions { exposure_ev: 0.0 }).unwrap();
+    let developed = develop_neutral(&raw, &DevelopOptions { exposure_ev: 0.0 }).unwrap();
     let mut store = mem_store_with("a.dng", raw);
     let output = DevelopOutput {
         also_tiff: true,

@@ -431,17 +431,30 @@ where
     out
 }
 
-pub fn linear_to_developed(
+/// The tone curve applied when converting linear ProPhoto RGB to developed image (DV-11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToneCurve {
+    /// The base tone curve (gentle lift + quadratic shoulder), under the built-in and custom LUT looks.
+    Base,
+    /// The camera-standard S-curve, for a photograph with no look.
+    Standard,
+}
+
+pub fn linear_to_developed_with(
     width: u32,
     height: u32,
     pixels: &[[f32; 3]],
     orientation: u16,
     demosaic: Demosaic,
+    tone: ToneCurve,
 ) -> Result<Developed, Error> {
     let u16_data: Vec<u16> = par_map_rgb(pixels, |p| {
         let mut out = [0u16; 3];
         for c in 0..3 {
-            let t = tone::base_tone(p[c]);
+            let t = match tone {
+                ToneCurve::Base => tone::base_tone(p[c]),
+                ToneCurve::Standard => tone::standard_tone(p[c]),
+            };
             let enc = tone::prophoto_encode(t);
             out[c] = (enc * 65535.0).round().clamp(0.0, 65535.0) as u16;
         }
@@ -462,6 +475,38 @@ pub fn linear_to_developed(
         orientation,
         demosaic,
     })
+}
+
+pub fn linear_to_developed(
+    width: u32,
+    height: u32,
+    pixels: &[[f32; 3]],
+    orientation: u16,
+    demosaic: Demosaic,
+) -> Result<Developed, Error> {
+    linear_to_developed_with(
+        width,
+        height,
+        pixels,
+        orientation,
+        demosaic,
+        ToneCurve::Base,
+    )
+}
+
+/// Fully develops raw file bytes as Develop's "None (neutral)" does: on the standard curve rather than
+/// the base the looks were fitted on (DV-11). Tests compare neutral output against this, so the
+/// definition of the neutral picture lives in one place.
+pub fn develop_neutral(raw: &[u8], options: &DevelopOptions) -> Result<Developed, Error> {
+    let linear = develop_linear(raw, options)?;
+    linear_to_developed_with(
+        linear.width,
+        linear.height,
+        &linear.pixels,
+        linear.orientation,
+        linear.demosaic,
+        ToneCurve::Standard,
+    )
 }
 
 /// Fully develops raw file bytes into 16-bit ProPhoto RGB image.

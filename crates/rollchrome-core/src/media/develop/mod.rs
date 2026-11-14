@@ -23,12 +23,16 @@ use rawler::rawsource::RawSource;
 use rayon::prelude::*;
 
 pub mod colour;
+pub mod frame;
+pub mod neutral;
 pub mod preview;
 pub mod render;
 pub mod sharpen;
 pub mod tone;
 pub mod xtrans;
 
+pub use frame::{camera_frame, crop_to_frame, FrameRect};
+pub use neutral::{apply_neutral, calibration_for, NeutralCalibration};
 pub use preview::{DevelopPreview, PREVIEW_DRAFT_EDGE, PREVIEW_MAX_EDGE};
 pub use render::{
     downscaled_size, prophoto_icc_profile, render, render_sized, Look, LookSpace, OutputFormat,
@@ -382,8 +386,12 @@ pub fn reduce_noise(
         return pixels.to_vec();
     }
 
+    // Measured on PB081584 at 100%: noise reduction 25 with luminance 25 leaves face detail
+    // 0.92 against the camera's 1.43 and erases texture. Colour noise reduction at 25 removes
+    // blotches (chroma noise 4.60 -> 0.27); at luminance 10 (amount * 0.4), noise is 2.08
+    // (the camera's level) and face detail is 2.20 (DV-12).
     let detail = crate::media::edit::detail::Detail {
-        noise_luminance: amount,
+        noise_luminance: amount * 0.4,
         noise_colour: amount,
         ..Default::default()
     };
@@ -495,10 +503,19 @@ pub fn linear_to_developed(
 }
 
 /// Fully develops raw file bytes as Develop's "None (neutral)" does: on the standard curve rather than
-/// the base the looks were fitted on (DV-11). Tests compare neutral output against this, so the
+/// the base the looks were fitted on (DV-11, DV-12). Tests compare neutral output against this, so the
 /// definition of the neutral picture lives in one place.
 pub fn develop_neutral(raw: &[u8], options: &DevelopOptions) -> Result<Developed, Error> {
-    let linear = develop_linear(raw, options)?;
+    let mut linear = develop_linear(raw, options)?;
+    if let Some(frame) = frame::camera_frame(raw) {
+        frame::crop_to_frame(&mut linear, frame);
+    }
+    let lens_info = crate::media::lens::lens_info(raw);
+    let cal = match lens_info {
+        Some(ref info) => neutral::calibration_for(&info.make, &info.model),
+        None => neutral::NeutralCalibration::default(),
+    };
+    neutral::apply_neutral(&mut linear.pixels, &cal);
     linear_to_developed_with(
         linear.width,
         linear.height,

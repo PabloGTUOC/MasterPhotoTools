@@ -55,6 +55,7 @@ pub struct DevelopPreview {
     full: LinearProPhoto,
     draft: LinearProPhoto,
     source_long_edge: u32,
+    calibration: super::neutral::NeutralCalibration,
 }
 
 impl DevelopPreview {
@@ -71,7 +72,15 @@ impl DevelopPreview {
         if lens {
             let _ = crate::media::develop::correct_lens(&mut linear, raw);
         }
-        Self::from_linear(linear, max_edge)
+        if let Some(frame) = crate::media::develop::frame::camera_frame(raw) {
+            crate::media::develop::frame::crop_to_frame(&mut linear, frame);
+        }
+        let mut preview = Self::from_linear(linear, max_edge)?;
+        let cal = crate::media::lens::lens_info(raw)
+            .map(|info| crate::media::develop::neutral::calibration_for(&info.make, &info.model))
+            .unwrap_or_default();
+        preview.calibration = cal;
+        Ok(preview)
     }
 
     /// Creates a preview holding full and draft upright linear representations.
@@ -137,6 +146,7 @@ impl DevelopPreview {
                 demosaic: linear.demosaic,
             },
             source_long_edge,
+            calibration: super::neutral::NeutralCalibration::default(),
         })
     }
 
@@ -243,7 +253,7 @@ impl DevelopPreview {
 
         let exp_scale = 2.0f32.powf(exposure_ev);
 
-        let scaled_pixels: Vec<[f32; 3]> = if (exp_scale - 1.0).abs() <= 1e-6 {
+        let mut scaled_pixels: Vec<[f32; 3]> = if (exp_scale - 1.0).abs() <= 1e-6 {
             denoised_pixels
         } else {
             denoised_pixels
@@ -251,6 +261,10 @@ impl DevelopPreview {
                 .map(|p| [p[0] * exp_scale, p[1] * exp_scale, p[2] * exp_scale])
                 .collect()
         };
+
+        if tone_curve == super::ToneCurve::Standard {
+            super::neutral::apply_neutral(&mut scaled_pixels, &self.calibration);
+        }
 
         let developed = super::linear_to_developed_with(
             source.width,

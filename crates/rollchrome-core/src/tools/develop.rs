@@ -437,6 +437,9 @@ fn develop_one(
     } else {
         None
     };
+    if let Some(frame) = crate::media::develop::frame::camera_frame(raw_bytes) {
+        crate::media::develop::frame::crop_to_frame(&mut linear, frame);
+    }
     let denoised = reduce_noise(
         linear.width,
         linear.height,
@@ -464,14 +467,25 @@ fn develop_one(
     match look {
         ResolvedLook::Neutral | ResolvedLook::Look(_) => {
             // A LUT look was fitted on the base curve; a photograph with no look gets the standard one.
-            let (look_arg, tone) = match look {
-                ResolvedLook::Look(l) => (Some(l), ToneCurve::Base),
-                _ => (None, ToneCurve::Standard),
+            let (look_arg, tone, pixels) = match look {
+                ResolvedLook::Look(l) => (Some(l), ToneCurve::Base, denoised),
+                _ => {
+                    let mut pixels = denoised;
+                    let lens_info = crate::media::lens::lens_info(raw_bytes);
+                    let cal = match lens_info {
+                        Some(ref info) => {
+                            crate::media::develop::neutral::calibration_for(&info.make, &info.model)
+                        }
+                        None => crate::media::develop::neutral::NeutralCalibration::default(),
+                    };
+                    crate::media::develop::neutral::apply_neutral(&mut pixels, &cal);
+                    (None, ToneCurve::Standard, pixels)
+                }
             };
             let developed = linear_to_developed_with(
                 linear.width,
                 linear.height,
-                &denoised,
+                &pixels,
                 linear.orientation,
                 linear.demosaic,
                 tone,

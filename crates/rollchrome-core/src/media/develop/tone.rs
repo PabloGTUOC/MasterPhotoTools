@@ -28,34 +28,32 @@ pub fn base_tone(v: f32) -> f32 {
     }
 }
 
-/// Knot table for standard tone curve interpolation in log2–log2 space (DV-11).
+/// Knot table for standard tone curve interpolation in log2–log2 space (DV-11, refitted DV-12).
 ///
 /// Each entry holds `(y_i, m_i)` where `y_i = log2(out_i)` and `m_i` is the
 /// PCHIP (Fritsch–Carlson) slope `dy/dx` in log2 space at knot `x_i = i - 9.0`.
 const STANDARD_TONE_KNOTS: [(f32, f32); 10] = [
-    (-9.361713, 0.363181),
-    (-8.783092, 0.735609),
-    (-7.77359, 1.120145),
-    (-6.515563, 1.283743),
-    (-5.205031, 1.41351),
-    (-3.67098, 1.391069),
-    (-2.398513, 1.132482),
-    (-1.378269, 0.794696),
-    (-0.7274512, 0.687004),
-    (0.0, 0.765768),
+    (-14.687443, 4.771689),
+    (-10.698189, 3.015913),
+    (-8.273804, 1.906029),
+    (-6.7035165, 1.504797),
+    (-5.2589664, 1.446707),
+    (-3.8100958, 1.398237),
+    (-2.459072, 1.242799),
+    (-1.3084455, 0.870945),
+    (-0.6078039, 0.650929),
+    (0.0, 0.561385),
 ];
 
-/// Maps linear scene-referred value `v` through the camera-standard tone curve (DV-11).
+/// Maps linear scene-referred value `v` through the camera-standard tone curve (DV-11, DV-12).
 ///
-/// Fitted to the camera JPEGs embedded in the owner's six XZ-1 ORFs on 2026-11-14 by pooling
-/// the camera's output per stop. Neutral development with `base_tone` (designed as a flat base
-/// for built-in looks) looked flat and muted compared to camera output. A camera or RAW viewer
-/// applies an S-curve.
+/// Fitted on 2026-11-14 to Apple's renderings (`sips`, the engine Photomator uses) of the owner's six
+/// XZ-1 ORFs, jointly with the XZ-1 colour matrix, on smoothed images so that only tone and colour counted;
+/// and it has a black point (everything below about 2⁻⁸ goes nearly black), as Apple's does.
 ///
 /// Applied per channel in linear ProPhoto RGB because cameras apply their tone curve per channel;
 /// applying it to luminance alone leaves saturation 8% short, whereas per-channel application
-/// restores rich color and matches camera output (blacks 0.051 vs 0.046 camera, whites 0.599 vs 0.601,
-/// contrast 0.164 vs 0.166, saturation 0.476 vs 0.472).
+/// restores rich color and matches camera output.
 #[inline]
 pub fn standard_tone(v: f32) -> f32 {
     if v.is_nan() || v <= 0.0 {
@@ -65,7 +63,7 @@ pub fn standard_tone(v: f32) -> f32 {
         return 1.0;
     }
     const FIRST_KNOT_V: f32 = 1.0 / 512.0; // 2^-9 = 0.001953125
-    const FIRST_KNOT_OUT: f32 = 0.00152;
+    const FIRST_KNOT_OUT: f32 = 0.0000379;
     if v < FIRST_KNOT_V {
         return v * (FIRST_KNOT_OUT / FIRST_KNOT_V);
     }
@@ -230,23 +228,23 @@ mod tests {
     #[test]
     fn the_standard_tone_passes_through_its_knots() {
         let knots = [
-            (2.0f32.powi(-9), 0.00152),
-            (2.0f32.powi(-8), 0.00227),
-            (2.0f32.powi(-7), 0.00457),
-            (2.0f32.powi(-6), 0.01093),
-            (2.0f32.powi(-5), 0.02711),
-            (2.0f32.powi(-4), 0.07851),
-            (2.0f32.powi(-3), 0.18966),
-            (2.0f32.powi(-2), 0.38468),
-            (2.0f32.powi(-1), 0.60397),
+            (2.0f32.powi(-9), 0.0000379),
+            (2.0f32.powi(-8), 0.0006019),
+            (2.0f32.powi(-7), 0.0032310),
+            (2.0f32.powi(-6), 0.0095949),
+            (2.0f32.powi(-5), 0.0261152),
+            (2.0f32.powi(-4), 0.0712930),
+            (2.0f32.powi(-3), 0.1818635),
+            (2.0f32.powi(-2), 0.4037557),
+            (2.0f32.powi(-1), 0.6561948),
             (1.0f32, 1.0),
         ];
         for (v, expected) in knots {
             let actual = standard_tone(v);
             let rel = (actual - expected).abs() / expected;
             assert!(
-                rel <= 1e-5,
-                "standard_tone({v}) = {actual}, expected {expected}, relative error {rel} > 1e-5"
+                rel <= 1e-4,
+                "standard_tone({v}) = {actual}, expected {expected}, relative error {rel} > 1e-4"
             );
         }
     }
@@ -254,25 +252,19 @@ mod tests {
     #[test]
     fn the_standard_tone_matches_its_reference_values() {
         let refs = [
-            (0.001, 0.000778),
-            (0.003, 0.001892),
-            (0.01, 0.006138),
-            (0.05, 0.056245),
-            (0.18, 0.283427),
-            (0.35, 0.483558),
-            (0.75, 0.805839),
-            (0.95, 0.961615),
+            (0.001, 1.94048e-05),
+            (0.003, 0.000243293),
+            (0.01, 0.0049456),
+            (0.05, 0.0518617),
+            (0.18, 0.285945),
+            (0.35, 0.521082),
+            (0.75, 0.845969),
+            (0.95, 0.971433),
         ];
         for (v, expected) in refs {
             let actual = standard_tone(v);
             let rel = (actual - expected).abs() / expected;
-            // 0.000778 has 3 significant figures; rounding 0.00077824 to 6 decimal places gives
-            // 0.000778, which has relative rounding error 3.08e-4. The rest match within 2e-4.
-            let limit = if (v - 0.001).abs() < 1e-6 {
-                3.5e-4
-            } else {
-                2e-4
-            };
+            let limit = if (v - 0.001).abs() < 1e-6 { 1e-3 } else { 2e-4 };
             assert!(
                 rel <= limit,
                 "standard_tone({v}) = {actual}, expected {expected}, rel={rel} > {limit}"

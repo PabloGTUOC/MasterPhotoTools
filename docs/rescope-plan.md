@@ -204,6 +204,15 @@ their base. [Brief](briefs/DV-11.md).
 **Acceptance:** contrast, blacks, whites and saturation within a few percent of the camera's JPEG on
 the owner's six XZ-1 files.
 
+#### `DV-12` · Neutral that matches Photomator
+Added 2026-11-14 when the owner compared neutral with Photomator's conversion of the same ORF. Apple's
+rendering is the reference: the curve is refitted to it, Nikon and Fujifilm get Apple's exposure offset,
+the XZ-1 its colour, Olympus files their in-camera 3:2 frame, and luminance noise reduction is 0.4× the
+slider. [Brief](briefs/DV-12.md).
+
+**Acceptance:** every XZ-1 output 3648×2432, and its error against Apple's rendering within 0.002 of
+the fit's.
+
 ## Order
 
 | # | Step | Why here | Who |
@@ -217,6 +226,7 @@ the owner's six XZ-1 files.
 | 7 | DV-9 | Needs a design note first | Claude, then agy |
 | 8 | DV-10 | After lens correction, in pipeline order | agy |
 | 9 | DV-11 | A defect the owner found on first use | agy |
+| 10 | DV-12 | The owner's reference is Photomator, not the camera's JPEG | agy |
 
 agy runs only on Gemini Flash. One brief per step, a fresh conversation each time, and the credit
 cost reported per brief.

@@ -107,6 +107,7 @@ fn a_developed_jpeg_carries_the_originals_date_camera_and_position() {
         grain: Grain::Fine,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
 
     let plan = plan_develop(
@@ -170,6 +171,7 @@ fn a_developed_jpeg_says_srgb() {
         grain: Grain::Fine,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
 
     let plan = plan_develop(
@@ -317,6 +319,7 @@ fn a_developed_tiff_says_uncalibrated_and_has_no_interop_index() {
         grain: Grain::Fine,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
 
     let plan = plan_develop(
@@ -376,6 +379,7 @@ fn a_developed_tiff_is_not_taken_for_a_dng() {
         grain: Grain::Fine,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
 
     let plan = plan_develop(
@@ -420,6 +424,7 @@ fn the_tiff_keeps_its_own_profile_after_the_metadata_copy() {
         grain: Grain::Fine,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
 
     let plan = plan_develop(
@@ -480,6 +485,7 @@ fn outputs_go_beside_the_raws_in_developed_and_nothing_is_overwritten() {
         grain: Grain::Fine,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
     let plan = plan_develop(
         &items,
@@ -504,6 +510,7 @@ fn outputs_go_beside_the_raws_in_developed_and_nothing_is_overwritten() {
         grain: Grain::Fine,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
     let plan2 = plan_develop(
         &items2,
@@ -570,6 +577,7 @@ fn one_exiftool_process_carries_the_whole_batch() {
             grain: Grain::Fine,
             noise_reduction: 0.0,
             lens_correction: false,
+            capture_sharpening: 0.0,
         },
         DevelopItem {
             name: "DSCF0002.dng".to_string(),
@@ -578,6 +586,7 @@ fn one_exiftool_process_carries_the_whole_batch() {
             grain: Grain::Fine,
             noise_reduction: 0.0,
             lens_correction: false,
+            capture_sharpening: 0.0,
         },
         DevelopItem {
             name: "DSCF0003.dng".to_string(),
@@ -586,6 +595,7 @@ fn one_exiftool_process_carries_the_whole_batch() {
             grain: Grain::Fine,
             noise_reduction: 0.0,
             lens_correction: false,
+            capture_sharpening: 0.0,
         },
     ];
 

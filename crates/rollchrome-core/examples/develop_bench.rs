@@ -2,7 +2,7 @@
 //!
 //! ```sh
 //! cargo run --release -p rollchrome-core --features film --example develop_bench -- \
-//!     <raw folder> <look> [jpeg|tiff|both] [jobs] [lens]
+//!     <raw folder> <look> [jpeg|tiff|both] [jobs] [lens|nolens] [sharpen 0..100]
 //! ```
 //!
 //! The RAW files are copied into a temporary folder first, so the source folder is never written
@@ -49,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let format_arg = rest.first().map(String::as_str).unwrap_or("jpeg");
     let jobs: usize = rest.get(1).map(|j| j.parse()).transpose()?.unwrap_or(1);
     let lens = rest.get(2).is_some_and(|l| l == "lens");
+    let sharpen: f32 = rest.get(3).map(|s| s.parse()).transpose()?.unwrap_or(0.0);
 
     let temp = tempfile::tempdir()?;
     let raw_dir = temp.path().join("raws");
@@ -91,6 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             grain: Grain::Fine,
             noise_reduction: 25.0,
             lens_correction: lens,
+            capture_sharpening: sharpen,
         })
         .collect();
 

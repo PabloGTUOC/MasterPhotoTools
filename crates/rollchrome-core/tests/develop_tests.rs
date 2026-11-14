@@ -1574,6 +1574,7 @@ fn the_plan_refuses_noise_outside_0_to_100() {
             grain: Grain::Off,
             noise_reduction: -1.0,
             lens_correction: false,
+            capture_sharpening: 0.0,
         },
         DevelopItem {
             name: "over.dng".to_string(),
@@ -1582,6 +1583,7 @@ fn the_plan_refuses_noise_outside_0_to_100() {
             grain: Grain::Off,
             noise_reduction: 100.5,
             lens_correction: false,
+            capture_sharpening: 0.0,
         },
         DevelopItem {
             name: "nan.dng".to_string(),
@@ -1590,6 +1592,7 @@ fn the_plan_refuses_noise_outside_0_to_100() {
             grain: Grain::Off,
             noise_reduction: f32::NAN,
             lens_correction: false,
+            capture_sharpening: 0.0,
         },
         DevelopItem {
             name: "zero.dng".to_string(),
@@ -1598,6 +1601,7 @@ fn the_plan_refuses_noise_outside_0_to_100() {
             grain: Grain::Off,
             noise_reduction: 0.0,
             lens_correction: false,
+            capture_sharpening: 0.0,
         },
         DevelopItem {
             name: "hundred.dng".to_string(),
@@ -1606,6 +1610,7 @@ fn the_plan_refuses_noise_outside_0_to_100() {
             grain: Grain::Off,
             noise_reduction: 100.0,
             lens_correction: false,
+            capture_sharpening: 0.0,
         },
     ];
 
@@ -1678,6 +1683,7 @@ fn a_camera_look_export_at_zero_noise_is_unchanged() {
             noise_reduction: 0.0,
             also_output: None,
             lens_correction: false,
+            capture_sharpening: 0.0,
         }],
         skipped: Vec::new(),
         also: None,
@@ -1732,6 +1738,7 @@ fn a_camera_look_export_with_noise_reduction_differs() {
             noise_reduction: 50.0,
             also_output: None,
             lens_correction: false,
+            capture_sharpening: 0.0,
         }],
         skipped: Vec::new(),
         also: None,

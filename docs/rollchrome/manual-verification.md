@@ -486,3 +486,12 @@ the automated check drives the screen against a stub.
       **Pass:** neither appears under "developed without lens correction". If the D60's does, note the reason it gives.
       **Result:**
 
+## MV-45 — Capture sharpening (DV-10)
+
+[`develop-plan.md`](../develop-plan.md), done. Needs a Mac running Rollchrome and the owner's RAW files.
+
+- [ ] **MV-45.1 — Sharpening at 0, 50 and 100.**
+      **Run:** develop one photograph three times, at each strength, and compare them at 100 % in Photomator or Preview.
+      **Pass:** 50 looks crisper than 0 with no halos at high-contrast edges and no grit in sky or skin; 100 is stronger and still clean. Note which strength you prefer as the default.
+      **Result:**
+

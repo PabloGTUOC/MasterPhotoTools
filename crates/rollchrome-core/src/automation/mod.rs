@@ -59,6 +59,9 @@ pub struct DevelopRequest {
     /// Correct each photograph for its lens (DV-9). Absent means off.
     #[serde(default)]
     pub lens_correction: bool,
+    /// Capture sharpening strength, 0–100 (DV-10). Absent means none.
+    #[serde(default)]
+    pub capture_sharpening: f32,
 }
 
 /// Parameters for planning or running batch 3D LUT grading.
@@ -182,6 +185,7 @@ impl Automation {
                     grain: r.grain,
                     noise_reduction: r.noise_reduction,
                     lens_correction: r.lens_correction,
+                    capture_sharpening: r.capture_sharpening,
                 });
             }
         } else {
@@ -199,6 +203,7 @@ impl Automation {
                         grain: r.grain,
                         noise_reduction: r.noise_reduction,
                         lens_correction: r.lens_correction,
+                        capture_sharpening: r.capture_sharpening,
                     });
                 } else if !resolved_folder.join(name).is_file() {
                     missing_skipped.push(Skip {
@@ -213,6 +218,7 @@ impl Automation {
                         grain: r.grain,
                         noise_reduction: r.noise_reduction,
                         lens_correction: r.lens_correction,
+                        capture_sharpening: r.capture_sharpening,
                     });
                 }
             }

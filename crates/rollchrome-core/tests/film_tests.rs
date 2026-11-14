@@ -523,6 +523,7 @@ fn a_film_tiff_is_16_bit_prophoto_with_its_profile() {
         grain: Grain::Off,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
 
     let plan = plan_develop(
@@ -644,6 +645,7 @@ fn a_film_jpeg_is_8_bit_srgb() {
         grain: Grain::Off,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
 
     let plan = plan_develop(
@@ -704,6 +706,7 @@ fn grain_is_carried_through_the_plan() {
         grain: Grain::Standard,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
     let plan_std = plan_develop(
         &items_std,
@@ -720,6 +723,7 @@ fn grain_is_carried_through_the_plan() {
         grain: Grain::Off,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
     let plan_off = plan_develop(
         &items_off,
@@ -740,6 +744,7 @@ fn grain_is_carried_through_the_plan() {
         only: vec!["photo.dng".to_string()],
         output: Default::default(),
         lens_correction: false,
+        capture_sharpening: 0.0,
     };
     let rev1 = engine.plan_develop(&req1).expect("plan 1");
 
@@ -753,6 +758,7 @@ fn grain_is_carried_through_the_plan() {
         only: vec!["photo.dng".to_string()],
         output: Default::default(),
         lens_correction: false,
+        capture_sharpening: 0.0,
     };
     let rev2 = engine.plan_develop(&req2).expect("plan 2");
 
@@ -978,6 +984,7 @@ fn film_noise_reduction_happens_before_the_film() {
         grain: Grain::Off,
         noise_reduction: 50.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
 
     let plan = plan_develop(

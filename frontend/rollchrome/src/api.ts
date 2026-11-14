@@ -939,6 +939,8 @@ export interface DevelopItem {
   noise_reduction?: number;
   /** Correct the lens from the lensfun database (DV-9). */
   lens_correction?: boolean;
+  /** Capture sharpening strength, 0–100 (DV-10). */
+  capture_sharpening?: number;
 }
 
 /**

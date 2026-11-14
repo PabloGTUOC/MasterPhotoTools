@@ -14,6 +14,8 @@ export interface PhotoAssignment {
   noise_reduction?: number;
   /** Lens correction (DV-9); absent means on, the default for a photograph. */
   lens_correction?: boolean;
+  /** Capture sharpening 0–100 (DV-10); absent means 50, the default for a photograph. */
+  capture_sharpening?: number;
 }
 
 export const moduleFolder = ref('');

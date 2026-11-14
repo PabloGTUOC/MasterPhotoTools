@@ -195,7 +195,8 @@ fn tools_schema_list() -> Value {
                         "output_folder": { "type": "string", "description": "Folder to write into (default: Developed beside the RAW files)" },
                         "long_edge": { "type": "integer", "minimum": 1, "description": "Downscale so the long edge is at most this many pixels (default: full size)" },
                         "also_tiff": { "type": "boolean", "description": "With format jpeg, also write a 16-bit TIFF of each photograph (default false)" },
-                        "lens_correction": { "type": "boolean", "description": "Correct distortion, lateral CA and vignetting from the lensfun database when the lens is known (default false)" }
+                        "lens_correction": { "type": "boolean", "description": "Correct distortion, lateral CA and vignetting from the lensfun database when the lens is known (default false)" },
+                        "capture_sharpening": { "type": "number", "minimum": 0.0, "maximum": 100.0, "description": "Capture sharpening strength, 0 to 100 (default 0)" }
                     },
                     "required": ["folder", "look"]
                 }
@@ -218,6 +219,7 @@ fn tools_schema_list() -> Value {
                         "long_edge": { "type": "integer", "minimum": 1, "description": "Downscale so the long edge is at most this many pixels (default: full size)" },
                         "also_tiff": { "type": "boolean", "description": "With format jpeg, also write a 16-bit TIFF of each photograph (default false)" },
                         "lens_correction": { "type": "boolean", "description": "Correct distortion, lateral CA and vignetting from the lensfun database when the lens is known (default false)" },
+                        "capture_sharpening": { "type": "number", "minimum": 0.0, "maximum": 100.0, "description": "Capture sharpening strength, 0 to 100 (default 0)" },
                         "plan_sha256": { "type": "string", "description": "SHA-256 hash of the reviewed plan from plan_develop" }
                     },
                     "required": ["folder", "look", "plan_sha256"]
@@ -431,6 +433,7 @@ fn parse_develop_request(args: &Map<String, Value>) -> Result<DevelopRequest, St
         only,
         output,
         lens_correction: opt_bool(args, "lens_correction", false)?,
+        capture_sharpening: opt_f32(args, "capture_sharpening", 0.0)?,
     })
 }
 

@@ -416,6 +416,7 @@ fn item(lens: bool) -> DevelopItem {
         grain: Grain::Off,
         noise_reduction: 0.0,
         lens_correction: lens,
+        capture_sharpening: 0.0,
     }
 }
 

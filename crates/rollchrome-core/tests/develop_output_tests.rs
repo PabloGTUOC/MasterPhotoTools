@@ -45,6 +45,7 @@ fn item(name: &str, look: Option<&str>) -> DevelopItem {
         grain: Grain::Off,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }
 }
 
@@ -368,6 +369,7 @@ fn request(folder: &Path, output: DevelopOutput) -> DevelopRequest {
         only: Vec::new(),
         output,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }
 }
 

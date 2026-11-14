@@ -312,6 +312,22 @@ const selectedLens = computed<boolean | 'mixed'>(() => {
   return selection.value.every((name) => lensOf(name) === first) ? first : 'mixed';
 });
 
+// DV-10: capture sharpening, 50 unless a photograph's assignment set it.
+const SHARPEN_DEFAULT = 50;
+const selectedSharpening = computed(() => {
+  if (selection.value.length === 0) return SHARPEN_DEFAULT;
+  return moduleAssignments.value[selection.value[0]]?.capture_sharpening ?? SHARPEN_DEFAULT;
+});
+
+function onSharpenChange(capture_sharpening: number) {
+  const updated = { ...moduleAssignments.value };
+  for (const name of selection.value) {
+    const existing = updated[name] ?? { look: null, exposure_ev: 0.0, grain: 'fine', noise_reduction: 25 };
+    updated[name] = { ...existing, capture_sharpening };
+  }
+  moduleAssignments.value = updated;
+}
+
 function onLensChange(lens_correction: boolean) {
   const updated = { ...moduleAssignments.value };
   for (const name of selection.value) {
@@ -643,6 +659,7 @@ function makeItems(): DevelopItem[] {
       grain: a.grain ?? 'fine',
       noise_reduction: a.noise_reduction ?? 25,
       lens_correction: a.lens_correction ?? true,
+      capture_sharpening: a.capture_sharpening ?? SHARPEN_DEFAULT,
     };
   });
 }
@@ -1086,6 +1103,23 @@ onMounted(async () => {
               data-testid="noise-slider"
               @change="onNoiseChange"
               @update:model-value="onNoiseInput"
+            />
+          </div>
+
+          <!-- Capture sharpening (DV-10). Not shown in the reduced preview; it acts at 100%. -->
+          <div class="control-row">
+            <AdjustmentSlider
+              label="Capture sharpening"
+              :min="0"
+              :max="100"
+              :step="5"
+              :default-value="50"
+              :model-value="selectedSharpening"
+              :disabled="selection.length === 0 || isDeveloping"
+              test-id="sharpen-slider"
+              data-testid="sharpen-slider"
+              @change="onSharpenChange"
+              @update:model-value="onSharpenChange"
             />
           </div>
 

@@ -42,6 +42,9 @@ pub struct DevelopItem {
     /// Correct distortion, lateral CA and vignetting from the lens database (DV-9).
     #[serde(default)]
     pub lens_correction: bool,
+    /// Capture sharpening strength, 0–100 (DV-10). Absent means none.
+    #[serde(default)]
+    pub capture_sharpening: f32,
 }
 
 /// The reserved look id that develops a photograph with no look applied (DV-7).
@@ -102,6 +105,13 @@ pub struct DevelopAction {
     /// Lens correction (DV-9). Skipped when off, so a plan without it serialises as before.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub lens_correction: bool,
+    /// Capture sharpening strength (DV-10). Skipped when 0, for the same reason.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub capture_sharpening: f32,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 /// Result of planning a folder's development.
@@ -264,6 +274,16 @@ pub fn plan_develop_with(
             continue;
         }
 
+        // Capture sharpening range check: finite and within [0.0, 100.0] (DV-10)
+        if !item.capture_sharpening.is_finite() || !(0.0..=100.0).contains(&item.capture_sharpening)
+        {
+            skipped.push(Skip {
+                file: item.name,
+                reason: "capture sharpening must be between 0 and 100".to_string(),
+            });
+            continue;
+        }
+
         // Compute output filename: <stem>.<ext>
         let stem = match item.name.rfind('.') {
             Some(idx) => &item.name[..idx],
@@ -315,6 +335,7 @@ pub fn plan_develop_with(
             noise_reduction: item.noise_reduction,
             also_output,
             lens_correction: item.lens_correction,
+            capture_sharpening: item.capture_sharpening,
         });
     }
 
@@ -423,6 +444,21 @@ fn develop_one(
         action.noise_reduction,
         1.0,
     );
+    // After the lens and the noise, before the look: grain is added later and never sharpened (DV-10).
+    let denoised = if action.capture_sharpening > 0.0 {
+        crate::media::develop::sharpen::capture_sharpen(
+            linear.width,
+            linear.height,
+            &denoised,
+            action.capture_sharpening,
+            crate::media::develop::sharpen::sigma_for(matches!(
+                linear.demosaic,
+                crate::media::develop::Demosaic::XTrans
+            )),
+        )
+    } else {
+        denoised
+    };
 
     let mut encoded = Vec::with_capacity(outputs.len());
     match look {
@@ -1009,6 +1045,7 @@ mod tests {
             grain: Grain::Fine,
             noise_reduction: 0.0,
             lens_correction: false,
+            capture_sharpening: 0.0,
         }];
         let existing = BTreeSet::new();
 
@@ -1042,6 +1079,7 @@ mod tests {
             grain: Grain::Fine,
             noise_reduction: 0.0,
             lens_correction: false,
+            capture_sharpening: 0.0,
         }];
         let existing = BTreeSet::new();
         let plan = plan_develop(&items, OutputFormat::Tiff, &existing);
@@ -1064,6 +1102,7 @@ mod tests {
             grain: Grain::Fine,
             noise_reduction: 0.0,
             lens_correction: false,
+            capture_sharpening: 0.0,
         }];
         let plan = plan_develop(&items, OutputFormat::Jpeg { quality: 90 }, &existing);
 
@@ -1088,6 +1127,7 @@ mod tests {
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
                 lens_correction: false,
+                capture_sharpening: 0.0,
             },
             DevelopItem {
                 name: "IMG_0001.CR2".to_string(),
@@ -1096,6 +1136,7 @@ mod tests {
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
                 lens_correction: false,
+                capture_sharpening: 0.0,
             },
         ];
         let existing = BTreeSet::new();
@@ -1123,6 +1164,7 @@ mod tests {
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
                 lens_correction: false,
+                capture_sharpening: 0.0,
             },
             DevelopItem {
                 name: "notes.txt".to_string(),
@@ -1131,6 +1173,7 @@ mod tests {
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
                 lens_correction: false,
+                capture_sharpening: 0.0,
             },
         ];
         let existing = BTreeSet::new();
@@ -1154,6 +1197,7 @@ mod tests {
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
                 lens_correction: false,
+                capture_sharpening: 0.0,
             },
             DevelopItem {
                 name: "B.RAF".to_string(),
@@ -1162,6 +1206,7 @@ mod tests {
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
                 lens_correction: false,
+                capture_sharpening: 0.0,
             },
             DevelopItem {
                 name: "C.RAF".to_string(),
@@ -1170,6 +1215,7 @@ mod tests {
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
                 lens_correction: false,
+                capture_sharpening: 0.0,
             },
             DevelopItem {
                 name: "D.RAF".to_string(),
@@ -1178,6 +1224,7 @@ mod tests {
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
                 lens_correction: false,
+                capture_sharpening: 0.0,
             },
             DevelopItem {
                 name: "E.RAF".to_string(),
@@ -1186,6 +1233,7 @@ mod tests {
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
                 lens_correction: false,
+                capture_sharpening: 0.0,
             },
         ];
         let existing = BTreeSet::new();
@@ -1211,6 +1259,7 @@ mod tests {
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
                 lens_correction: false,
+                capture_sharpening: 0.0,
             },
             DevelopItem {
                 name: "a/b.RAF".to_string(),
@@ -1219,6 +1268,7 @@ mod tests {
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
                 lens_correction: false,
+                capture_sharpening: 0.0,
             },
             DevelopItem {
                 name: "".to_string(),
@@ -1227,6 +1277,7 @@ mod tests {
                 grain: Grain::Fine,
                 noise_reduction: 0.0,
                 lens_correction: false,
+                capture_sharpening: 0.0,
             },
         ];
         let existing = BTreeSet::new();
@@ -1265,6 +1316,7 @@ mod tests {
                     noise_reduction: 0.0,
                     also_output: None,
                     lens_correction: false,
+                    capture_sharpening: 0.0,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1275,6 +1327,7 @@ mod tests {
                     noise_reduction: 0.0,
                     also_output: None,
                     lens_correction: false,
+                    capture_sharpening: 0.0,
                 },
             ],
             skipped: Vec::new(),
@@ -1331,6 +1384,7 @@ mod tests {
                     noise_reduction: 0.0,
                     also_output: None,
                     lens_correction: false,
+                    capture_sharpening: 0.0,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1341,6 +1395,7 @@ mod tests {
                     noise_reduction: 0.0,
                     also_output: None,
                     lens_correction: false,
+                    capture_sharpening: 0.0,
                 },
             ],
             skipped: Vec::new(),
@@ -1387,6 +1442,7 @@ mod tests {
                     noise_reduction: 0.0,
                     also_output: None,
                     lens_correction: false,
+                    capture_sharpening: 0.0,
                 },
                 DevelopAction {
                     source: "good.dng".to_string(),
@@ -1397,6 +1453,7 @@ mod tests {
                     noise_reduction: 0.0,
                     also_output: None,
                     lens_correction: false,
+                    capture_sharpening: 0.0,
                 },
             ],
             skipped: Vec::new(),
@@ -1437,6 +1494,7 @@ mod tests {
                     noise_reduction: 0.0,
                     also_output: None,
                     lens_correction: false,
+                    capture_sharpening: 0.0,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1447,6 +1505,7 @@ mod tests {
                     noise_reduction: 0.0,
                     also_output: None,
                     lens_correction: false,
+                    capture_sharpening: 0.0,
                 },
             ],
             skipped: Vec::new(),
@@ -1490,6 +1549,7 @@ mod tests {
                     noise_reduction: 0.0,
                     also_output: None,
                     lens_correction: false,
+                    capture_sharpening: 0.0,
                 },
                 DevelopAction {
                     source: "raw2.dng".to_string(),
@@ -1500,6 +1560,7 @@ mod tests {
                     noise_reduction: 0.0,
                     also_output: None,
                     lens_correction: false,
+                    capture_sharpening: 0.0,
                 },
             ],
             skipped: Vec::new(),

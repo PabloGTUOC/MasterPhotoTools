@@ -58,6 +58,7 @@ fn plan_develop_refuses_a_folder_outside_the_roots() {
         grain: Grain::Fine,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
 
     let err = plan_develop_impl(
@@ -96,6 +97,7 @@ fn plan_develop_plans_a_folder_inside_the_roots() {
             grain: Grain::Fine,
             noise_reduction: 0.0,
             lens_correction: false,
+            capture_sharpening: 0.0,
         },
         DevelopItem {
             name: "DSCF0002.dng".to_string(),
@@ -104,6 +106,7 @@ fn plan_develop_plans_a_folder_inside_the_roots() {
             grain: Grain::Fine,
             noise_reduction: 0.0,
             lens_correction: false,
+            capture_sharpening: 0.0,
         },
         DevelopItem {
             name: "notes.txt".to_string(),
@@ -112,6 +115,7 @@ fn plan_develop_plans_a_folder_inside_the_roots() {
             grain: Grain::Fine,
             noise_reduction: 0.0,
             lens_correction: false,
+            capture_sharpening: 0.0,
         },
     ];
 
@@ -458,6 +462,7 @@ fn plan_develop_refuses_an_output_folder_outside_the_roots() {
         grain: Grain::Fine,
         noise_reduction: 0.0,
         lens_correction: false,
+        capture_sharpening: 0.0,
     }];
     let err = plan_develop_impl(
         &state,

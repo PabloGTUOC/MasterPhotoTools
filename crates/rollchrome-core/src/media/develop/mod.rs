@@ -25,6 +25,7 @@ use rayon::prelude::*;
 pub mod colour;
 pub mod preview;
 pub mod render;
+pub mod sharpen;
 pub mod tone;
 pub mod xtrans;
 

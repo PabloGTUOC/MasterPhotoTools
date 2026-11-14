@@ -33,6 +33,7 @@
  * 28. Saving calls saveFilmLut with the folder, the stock and the balance, and shows the returned path (DV-6).
  * 29. Saving a LUT leaves Run enabled after a dry run (DV-6).
  * 30. Lens correction is on for a new photograph, reaches the dry run and the preview, and turning it off locks Run (DV-9).
+ * 31. Capture sharpening shows 50 for a new photograph, reaches the dry run, and changing it locks Run (DV-10).
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -1195,6 +1196,33 @@ try {
   if (!item30b || item30b.lens_correction !== false) {
     failures.push(`The dry run must carry lens_correction: false after unticking, got ${JSON.stringify(item30b)}`);
   }
+
+  // -------------------------------------------------------------------------
+  // 31. Capture sharpening (DV-10)
+  // -------------------------------------------------------------------------
+  console.log('31. Checking capture sharpening defaults to 50, reaches the dry run, and locks Run...');
+  const sharpenNumber = page.locator('[data-testid="sharpen-slider-number"]');
+  await page.locator('.thumbnail-card[data-filename="DSCF0005.RAF"]').click();
+  await page.waitForTimeout(150);
+  const shown31 = await sharpenNumber.inputValue().catch(() => null);
+  if (Number(shown31) !== 50) {
+    failures.push(`Capture sharpening must show 50 for a new photograph, got "${shown31}"`);
+  }
+  await dryRunBtn.click();
+  await page.waitForTimeout(200);
+  await sharpenNumber.fill('80');
+  await sharpenNumber.dispatchEvent('change');
+  await page.waitForTimeout(150);
+  if (!(await runBtn.isDisabled())) {
+    failures.push('Changing capture sharpening must disable Run until a new dry run');
+  }
+  await dryRunBtn.click();
+  await page.waitForTimeout(200);
+  const items31 = await page.evaluate(() => window.__DEVELOP_STUB__.lastPlanItems);
+  const item31 = items31?.find((it) => it.name === 'DSCF0005.RAF');
+  if (!item31 || item31.capture_sharpening !== 80) {
+    failures.push(`The dry run must carry capture_sharpening 80, got ${JSON.stringify(item31)}`);
+  }
 } catch (err) {
   failures.push(`Test execution threw: ${err instanceof Error ? err.stack : String(err)}`);
 } finally {
@@ -1209,5 +1237,5 @@ if (failures.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log('\ncheck:develop PASSED: all 30 checks verified successfully.');
+  console.log('\ncheck:develop PASSED: all 31 checks verified successfully.');
 }

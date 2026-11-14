@@ -132,6 +132,7 @@ fn a_path_outside_the_roots_is_refused_before_anything_runs() {
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
         output: Default::default(),
+        lens_correction: false,
     };
     let err = auto.plan_develop(&dev_outside).unwrap_err();
     assert!(matches!(err, Error::AccessDenied(_)));
@@ -226,6 +227,7 @@ fn a_develop_plan_writes_nothing() {
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
         output: Default::default(),
+        lens_correction: false,
     };
     let reviewed = auto.plan_develop(&req).expect("plan_develop");
     assert_eq!(reviewed.plan.actions.len(), 1);
@@ -255,6 +257,7 @@ fn running_develop_needs_the_hash_of_the_plan_that_was_reviewed() {
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
         output: Default::default(),
+        lens_correction: false,
     };
     let reviewed = auto.plan_develop(&req).expect("plan_develop");
 
@@ -288,6 +291,7 @@ fn a_new_file_in_the_way_changes_the_hash_and_refuses_the_run() {
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
         output: Default::default(),
+        lens_correction: false,
     };
     let reviewed = auto.plan_develop(&req).expect("initial plan");
     assert_eq!(reviewed.plan.actions.len(), 2);
@@ -322,6 +326,7 @@ fn develop_writes_into_developed_and_never_overwrites() {
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
         output: Default::default(),
+        lens_correction: false,
     };
     let summary1 = auto
         .run_develop(&req1, None, &NoopProgress)
@@ -341,6 +346,7 @@ fn develop_writes_into_developed_and_never_overwrites() {
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
         output: Default::default(),
+        lens_correction: false,
     };
     let summary2 = auto
         .run_develop(&req2, None, &NoopProgress)
@@ -376,6 +382,7 @@ fn develop_on_a_card_is_refused_before_anything_is_written() {
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
         output: Default::default(),
+        lens_correction: false,
     };
 
     let plan_err = auto.plan_develop(&req).unwrap_err();
@@ -584,6 +591,7 @@ fn a_cancelled_run_stops_and_reports_what_it_did() {
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
         output: Default::default(),
+        lens_correction: false,
     };
 
     let summary = auto
@@ -615,6 +623,7 @@ fn a_look_changed_after_the_plan_refuses_the_develop_run() {
         format: OutputFormat::Jpeg { quality: 92 },
         only: Vec::new(),
         output: Default::default(),
+        lens_correction: false,
     };
 
     let reviewed = auto

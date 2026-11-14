@@ -2,7 +2,7 @@
 //!
 //! ```sh
 //! cargo run --release -p rollchrome-core --features film --example develop_bench -- \
-//!     <raw folder> <look> [jpeg|tiff|both] [jobs]
+//!     <raw folder> <look> [jpeg|tiff|both] [jobs] [lens]
 //! ```
 //!
 //! The RAW files are copied into a temporary folder first, so the source folder is never written
@@ -48,6 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let format_arg = rest.first().map(String::as_str).unwrap_or("jpeg");
     let jobs: usize = rest.get(1).map(|j| j.parse()).transpose()?.unwrap_or(1);
+    let lens = rest.get(2).is_some_and(|l| l == "lens");
 
     let temp = tempfile::tempdir()?;
     let raw_dir = temp.path().join("raws");
@@ -89,6 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             exposure_ev: 0.0,
             grain: Grain::Fine,
             noise_reduction: 25.0,
+            lens_correction: lens,
         })
         .collect();
 
@@ -109,11 +111,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let total = timing.start.elapsed().as_secs_f64();
 
     println!(
-        "look={look} format={format_arg} jobs={jobs} photos={photos} developed={} failures={}",
+        "look={look} format={format_arg} jobs={jobs} lens={lens} photos={photos} developed={} failures={}",
         summary.developed.len(),
         summary.failures.len()
     );
-    for f in &summary.failures {
+    for f in summary.failures.iter().chain(&summary.lens_skipped) {
         println!("  failed {}: {}", f.file, f.reason);
     }
     println!(

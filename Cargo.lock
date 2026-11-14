@@ -5381,6 +5381,7 @@ dependencies = [
  "openblas-src",
  "ort",
  "phototools-core",
+ "quick-xml",
  "rawler",
  "rayon",
  "reqwest 0.13.4",

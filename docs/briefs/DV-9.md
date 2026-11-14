@@ -106,3 +106,86 @@ reduction and before the look.
 - **`check:develop` 30:** the checkbox exists, defaults on, is carried into the dry-run items, and locks Run
   when changed.
 - **All gates pass.**
+
+## Report
+
+Implemented by Claude on 2026-11-14.
+
+**What was done**
+- **`media::lens`:**
+  - `db` parses the 56 lensfun files: 1,059 cameras, 1,580 lenses and 52 mounts, in 89 ms on first use.
+  - `model` holds distortion (ptlens, poly3, poly5), TCA (linear, poly3) and vignetting (pa); the
+    interpolation; the fill scale; and the single bilinear resample.
+  - `mod` holds `lens_info`, which reads make, model, lens name, focal length and f-number through
+    `rawler`'s metadata; the matching; and `profile_for` and `correct`.
+- **`develop::correct_lens`:** applied in `develop_one` straight after `develop_linear`, and in
+  `DevelopPreview::new_with_lens`. The desktop preview cache is keyed on (path, lens).
+- **`lens_correction`:**
+  - on `DevelopItem`, `DevelopAction` (skipped in serialisation when off) and `DevelopRequest`;
+  - CLI `--lens`, MCP `lens_correction`;
+  - `DevelopSummary.lens_skipped` for photographs developed uncorrected, with the reason.
+- **Screen:** a Lens correction checkbox for the selection, on by default; the preview follows it.
+- **Data:** `data/lensfun/` holds the XML, `COPYING.CC_BY-SA_3.0` and a README recording lensfun commit
+  `52cf1a7`. `quick-xml` is recorded in `known-gaps.md` (G8).
+
+**Measured on the owner's six XZ-1 ORFs** (neutral JPEG, one at a time, release build): all six matched
+*XZ-1 & compatibles (Standard)*, and none was reported in `lens_skipped`.
+
+| | Per photograph |
+|---|---|
+| Without correction | 1.34 s |
+| With correction | 1.26 s |
+
+The two times are within run-to-run noise: the resample costs less than the measurement varies.
+
+Also matched by name in a probe: the chart X-Pro2 RAF's *XF35mmF1.4 R* (distortion, TCA and vignetting).
+
+**Mechanical test changes:** `lens_correction: false` added to the existing `DevelopItem`,
+`DevelopAction` and `DevelopRequest` literals. The 14 calls to `preview_develop_impl` in
+`develop_desktop.rs` gained `false`. No assertion changed.
+
+**Found while testing:** the first run of
+`distortion_is_interpolated_between_focal_lengths_and_held_outside` compared floats exactly (−0.20000002
+against −0.2). The new test was fixed to use a tolerance; the code was right. Clippy asked for one match
+guard in the parser.
+
+**Gates** (`gate-dv9.log`)
+
+| Gate | Result |
+|---|---|
+| fmt / clippy / build | rc 0 |
+| `--workspace` | **1162 passed**, 0 failed, 5 ignored (1148 + 14) |
+| `phototools-core` | 543 |
+| `rollchrome-core` | **483** (469 + 14) |
+| `--features film` | **504 passed, 3 ignored** |
+| `phototools-desktop` | 26 |
+| `rollchrome-desktop` | 28 |
+| `rollchrome-cli` | 8 |
+| `check:develop` | **30 / 30** |
+| Every other check and build | pass |
+
+**Unverified**
+- A Nikon D60 NEF and an X100VI RAF: no file of either was available. lensfun has both, but whether
+  `rawler`'s lens name for the D60's kit lens matches lensfun's spelling is unknown.
+- How the corrected XZ-1 photographs look: the tests prove the geometry on synthetic pictures. This is
+  MV-44.
+
+## Review
+
+**Approved**, with the caveat that **the reviewer wrote the code**, so this is not an independent review.
+
+**What was checked**
+- **Gates:** run on the branch.
+- **Off by default in data:** a plan with lens correction off serialises exactly as before (test 12), so old
+  plans, hashes and bytes hold.
+- **Refusal:** a file with no profile develops uncorrected and says why (test 13). An unknown lens is
+  refused rather than guessed (test 4).
+- **The geometry is measured, not assumed:**
+  - a known distortion is straightened to under 0.5 px (it started visibly bent, over 2 px);
+  - a flat field returns within 1 %;
+  - fringes of over 1.5 px return within 0.3 px;
+  - no edge pixel samples outside the frame. The test calls the same `source_pixel` that `apply` uses.
+- **Licences:** lensfun data CC BY-SA 3.0, shipped with its licence and provenance. greycard was read, not
+  copied.
+- **G8:** `quick-xml` and `libc` are recorded.
+

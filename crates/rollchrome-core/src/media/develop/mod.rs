@@ -66,6 +66,24 @@ pub struct LinearProPhoto {
     pub demosaic: Demosaic,
 }
 
+/// Corrects a linear development for its lens, from the lensfun database (DV-9).
+///
+/// Runs on the linear image in sensor orientation, which is what the lens models assume, and before
+/// noise reduction and the look. `Err` carries why nothing was corrected — no profile, or no focal
+/// length — and leaves the pixels as they were: an uncorrected photograph, not a failed one.
+pub fn correct_lens(
+    linear: &mut LinearProPhoto,
+    raw: &[u8],
+) -> Result<crate::media::lens::Applied, String> {
+    let info = crate::media::lens::lens_info(raw)
+        .ok_or_else(|| "the file's camera could not be read".to_string())?;
+    let profile = crate::media::lens::profile_for(&info, linear.width, linear.height)?;
+    let (pixels, applied) =
+        crate::media::lens::correct(linear.width, linear.height, &linear.pixels, &profile);
+    linear.pixels = pixels;
+    Ok(applied)
+}
+
 /// Developed 16-bit ProPhoto RGB image.
 pub struct Developed {
     /// 16-bit ProPhoto RGB image buffer with ROMM transfer function applied.

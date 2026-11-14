@@ -551,6 +551,8 @@ G8 asks for the reason, not just the addition.
 | `tauri-plugin-autostart` | `desktop` | Launch at login (build plan Phase 14). §2.6 names no mechanism and the macOS one is a LaunchAgent. |
 | `ort` `=2.0.0-rc.13` | `rollchrome-core` (was `core` until RC-1), optional (`segment`), enabled by `rollchrome-desktop` | Automatic subject and sky masks through ONNX Runtime (edit plan ED-22, ED-23); the owner's choice. Raised the MSRV to 1.88. Details and the two models' hashes in [`rollchrome/phase-reports/edit-round-3.md`](rollchrome/phase-reports/edit-round-3.md). |
 | `spektrafilm-core`, `spektrafilm-gpu`, `spektrafilm-math` | `rollchrome-core`, optional (`film`), enabled by `rollchrome-desktop` and `rollchrome-cli` | 18 simulated film stocks for Develop (DV-4), bringing `wgpu` for hardware-accelerated preview/export and BLAS (`accelerate-src` on macOS, `openblas-src` on Linux) for spectral math. |
+| `libc` | `rollchrome-core` | Develop runs as many photographs at once as fit in half the machine's memory (DV-8), and `sysconf` is how a POSIX system says how much it has. Already in the tree through other crates. |
+| `quick-xml` | `rollchrome-core` | Reads the lensfun lens database shipped in `data/lensfun/` for Develop's lens correction (DV-9). Already in the tree through another crate. |
 
 ### Linux CI build with OpenBLAS unverified locally
 

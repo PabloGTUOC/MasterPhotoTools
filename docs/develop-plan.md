@@ -1,6 +1,6 @@
 # Develop — RAW files to finished photographs, a film look each
 
-> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 done ([brief](briefs/DV-3.md)): 12 built-in looks ship; Velvia and Astia did not pass. RP-1 built ([brief](briefs/RP-1.md)): Develop screen exists with preview, look picker, exposure slider, dry run, and export. DV-4 done ([brief](briefs/DV-4.md)): 18 film stocks simulated by spektrafilm-rs with grain control and GPU acceleration; the repository is GPL-3.0-or-later. DV-5 done ([brief](briefs/DV-5.md)): noise reduction before the look. DV-7 done ([brief](briefs/DV-7.md)): developing without a look, output folder, long edge, JPEG + TIFF. DV-8 done ([brief](briefs/DV-8.md)): 2.9–4.5× faster, four photographs at once. DV-6 done ([brief](briefs/DV-6.md)): Save as LUT.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
+> **DV-1 done and merged (2026-11-06, [brief](briefs/DV-1.md)); DV-2a and DV-2b done: Develop's function is complete ([DV-2a](briefs/DV-2a.md), [DV-2b](briefs/DV-2b.md)). DV-1b fixed the first real-file defect (an X-Pro2 RAF crashed the crop step). DV-3 done ([brief](briefs/DV-3.md)): 12 built-in looks ship; Velvia and Astia did not pass. RP-1 built ([brief](briefs/RP-1.md)): Develop screen exists with preview, look picker, exposure slider, dry run, and export. DV-4 done ([brief](briefs/DV-4.md)): 18 film stocks simulated by spektrafilm-rs with grain control and GPU acceleration; the repository is GPL-3.0-or-later. DV-5 done ([brief](briefs/DV-5.md)): noise reduction before the look. DV-7 done ([brief](briefs/DV-7.md)): developing without a look, output folder, long edge, JPEG + TIFF. DV-8 done ([brief](briefs/DV-8.md)): 2.9–4.5× faster, four photographs at once. DV-6 done ([brief](briefs/DV-6.md)): Save as LUT. DV-9 done ([brief](briefs/DV-9.md)): lens correction.** Rollchrome's third screen, beside the Edit and Batch Grade it inherits
 > ([`rollchrome-plan.md`](rollchrome-plan.md)). DV-1 needs RC-1. Nothing here touches PhotoTools.
 >
 > **Functionality first.** The screen is discussed with the owner before it becomes a step
@@ -279,6 +279,13 @@ two thirds, with byte-identical output. Develop then runs four photographs at on
 machine's memory, writing in plan order. On the owner's XZ-1 files it went from 20 to 90 photographs a minute
 neutral and from 20 to 58 with Portra 400. The progress line shows the time per photograph and the time
 left.
+
+### `DV-9` · Lens correction
+
+**Done ([DV-9](briefs/DV-9.md)).** Distortion, lateral CA and vignetting from the lensfun database,
+shipped in the application. Matched by camera for a fixed lens and by name for an interchangeable one;
+anything short of a confident match corrects nothing and says why. All six of the owner's XZ-1 files
+matched, at no measurable cost in time. On by default in the screen, off unless asked for in scripts.
 
 ### The screen — RP-1
 

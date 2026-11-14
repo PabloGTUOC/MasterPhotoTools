@@ -4,6 +4,7 @@ pub mod develop;
 pub mod edit;
 pub mod film;
 pub mod histogram;
+pub mod lens;
 pub mod looks;
 pub mod segment;
 

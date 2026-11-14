@@ -163,6 +163,7 @@ fn items(store: &LogStore, look: &str) -> Vec<DevelopItem> {
             exposure_ev: 0.0,
             grain: Grain::Off,
             noise_reduction: 10.0,
+            lens_correction: false,
         })
         .collect()
 }

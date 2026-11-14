@@ -138,7 +138,8 @@ pub fn develop_thumbnail_impl(
     rollchrome_core::tools::develop_folder::thumbnail(&path, 360).map_err(describe)
 }
 
-/// Generates or renders an upright develop preview JPEG for display (DV-4: takes grain, DV-5: takes noise_reduction).
+/// Generates or renders an upright develop preview JPEG for display (DV-4: takes grain, DV-5: takes
+/// noise_reduction, DV-9: takes lens_correction).
 // A Tauri command receives its arguments by name from the front end; grouping them would change the IPC contract.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -150,6 +151,7 @@ pub async fn preview_develop(
     draft: bool,
     grain: Option<Grain>,
     noise_reduction: Option<f32>,
+    lens_correction: Option<bool>,
     app: tauri::AppHandle,
 ) -> Result<tauri::ipc::Response, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -163,6 +165,7 @@ pub async fn preview_develop(
             draft,
             grain,
             noise_reduction,
+            lens_correction.unwrap_or(false),
         )
     })
     .await
@@ -181,6 +184,7 @@ pub fn preview_develop_impl(
     draft: bool,
     grain: Option<Grain>,
     noise_reduction: Option<f32>,
+    lens_correction: bool,
 ) -> Result<Vec<u8>, String> {
     validate_filename(&name).map_err(describe)?;
     let config = state.config();
@@ -200,7 +204,7 @@ pub fn preview_develop_impl(
     };
 
     let preview = state
-        .get_or_create_develop_preview(&path)
+        .get_or_create_develop_preview_with(&path, lens_correction)
         .map_err(describe)?;
     let grain_setting = grain.unwrap_or(Grain::Fine);
     let nr = noise_reduction.unwrap_or(0.0);

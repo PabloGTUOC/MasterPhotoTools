@@ -363,6 +363,7 @@ export class RollchromeClient {
     draft: boolean,
     grain?: Grain,
     noiseReduction?: number,
+    lensCorrection?: boolean,
   ): Promise<Uint8Array> {
     const res = await invoke<ArrayBuffer | Uint8Array>('preview_develop', {
       folder,
@@ -372,6 +373,7 @@ export class RollchromeClient {
       draft,
       grain,
       noiseReduction,
+      lensCorrection,
     });
     return res instanceof Uint8Array ? res : new Uint8Array(res);
   }
@@ -935,6 +937,8 @@ export interface DevelopItem {
   exposure_ev: number;
   grain?: Grain;
   noise_reduction?: number;
+  /** Correct the lens from the lensfun database (DV-9). */
+  lens_correction?: boolean;
 }
 
 /**

@@ -12,7 +12,7 @@ publishing was removed on 2026-11-14 — [`docs/rescope-plan.md`](docs/rescope-p
 emulator, in the same repository (RC-1 to RC-3, 2026-11-06). [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md)
 has the decisions and the steps; RC-1 to RC-3 are done, and Develop's first step,
 [DV-1](docs/briefs/DV-1.md), the neutral RAW development, is done, and so are DV-2a
-and DV-2b: Develop's function is complete, DV-3 added twelve built-in looks fitted from chart photographs, DV-4 added 18 physical film simulations with grain, DV-5 noise reduction before the look, DV-7 developing without a look and output choices, DV-8 four photographs at once and 2.9–4.5× faster, DV-6 film stocks saved as LUTs, and RP-1 gave it its screen. The state
+and DV-2b: Develop's function is complete, DV-3 added twelve built-in looks fitted from chart photographs, DV-4 added 18 physical film simulations with grain, DV-5 noise reduction before the look, DV-7 developing without a look and output choices, DV-8 four photographs at once and 2.9–4.5× faster, DV-6 film stocks saved as LUTs, DV-9 lens correction, and RP-1 gave it its screen. The state
 before the split is frozen on the **`FullEdition`** branch.
 
 **The project was rescoped on 2026-11-13** ([`docs/rescope-plan.md`](docs/rescope-plan.md)): editing is left to
@@ -28,7 +28,7 @@ cause: **the tools had only ever been exercised with typed file paths, and the f
 pointing at a folder the normal gesture.**
 
 The numbered checks in [`manual-verification.md`](docs/manual-verification.md) remain the
-structured half of that work — 98 for PhotoTools, eight done, and 64 for Rollchrome in
+structured half of that work — 98 for PhotoTools, eight done, and 66 for Rollchrome in
 [`docs/rollchrome/manual-verification.md`](docs/rollchrome/manual-verification.md), same ids.
 
 | Read this | For |
@@ -128,10 +128,10 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 1148 passing (5 ignored)
+cargo test --workspace          # 1162 passing (5 ignored)
 cargo test -p phototools-core   # 543 passing — G2
-cargo test -p rollchrome-core   # 469 passing — G2
-cargo test -p rollchrome-core --features film # 490 passing (3 ignored)
+cargo test -p rollchrome-core   # 483 passing — G2
+cargo test -p rollchrome-core --features film # 504 passing (3 ignored)
 cargo test -p phototools-desktop   # 26 passing
 cargo test -p rollchrome-desktop   # 28 passing
 cargo test -p rollchrome-cli       # 8 passing

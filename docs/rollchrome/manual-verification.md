@@ -473,3 +473,16 @@ the automated check drives the screen against a stub.
       **Pass:** nothing fails for memory, and the machine stays usable during the run. Note the seconds per photograph here.
       **Result:**
 
+## MV-44 — Lens correction (DV-9)
+
+[`develop-plan.md`](../develop-plan.md), done. Needs a Mac running Rollchrome and the owner's RAW files.
+
+- [ ] **MV-44.1 — XZ-1 at 6 mm.**
+      **Run:** open an XZ-1 photograph taken at the wide end with a straight line near an edge, toggle Lens correction.
+      **Pass:** the line straightens and the corners brighten slightly; nothing at the edges is empty.
+      **Result:**
+- [ ] **MV-44.2 — X100VI and Nikon D60.**
+      **Run:** develop one RAF and one NEF with Lens correction on.
+      **Pass:** neither appears under "developed without lens correction". If the D60's does, note the reason it gives.
+      **Result:**
+

@@ -1,6 +1,6 @@
 # Rescope — PhotoTools manages, Rollchrome develops
 
-> **Planned 2026-11-13. DV-7, DV-8, RS-3, DV-6 (2026-11-13), RS-1, RS-2, RS-4, DV-9, DV-10, DV-11 and DV-12 (2026-11-14) done. Every step of the rescope is built; what remains is the owner's manual checks.** Steps have stable ids, `RS-1` onwards for PhotoTools and
+> **Planned 2026-11-13. DV-7, DV-8, RS-3, DV-6 (2026-11-13), RS-1, RS-2, RS-4, DV-9, DV-10, DV-11 and DV-12 (2026-11-14) done; DV-13 briefed (2026-11-15). Every step of the rescope is built; what remains is the owner's manual checks.** Steps have stable ids, `RS-1` onwards for PhotoTools and
 > `DV-6` onwards for Develop, like the other plans.
 
 ## Why
@@ -213,6 +213,15 @@ slider. [Brief](briefs/DV-12.md).
 **Acceptance:** every XZ-1 output 3648×2432, and its error against Apple's rendering within 0.002 of
 the fit's.
 
+#### `DV-13` · The camera's own distortion correction
+Added 2026-11-15 when the owner saw the geometry of a 6 mm XZ-1 photograph differ from macOS's with lens
+correction off. Olympus writes its distortion correction into every ORF (maker note `0x150A`); Apple and
+the camera always apply it, and so will Develop, before the 3:2 frame. lensfun's XZ-1 profile corrects
+about 1.8× too much, so its distortion is skipped for a file that carries its own. [Brief](briefs/DV-13.md).
+
+**Acceptance:** geometry within 1.5 px rms of Apple's rendering on the owner's XZ-1 files at 6, 6.5 and
+24 mm, in 4:3 and 3:2, with lens correction on or off.
+
 ## Order
 
 | # | Step | Why here | Who |
@@ -227,6 +236,7 @@ the fit's.
 | 8 | DV-10 | After lens correction, in pipeline order | agy |
 | 9 | DV-11 | A defect the owner found on first use | agy |
 | 10 | DV-12 | The owner's reference is Photomator, not the camera's JPEG | agy |
+| 11 | DV-13 | A difference the owner saw against macOS at the wide end | agy |
 
 agy runs only on Gemini Flash. One brief per step, a fresh conversation each time, and the credit
 cost reported per brief.

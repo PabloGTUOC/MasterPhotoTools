@@ -31,7 +31,10 @@ pub mod sharpen;
 pub mod tone;
 pub mod xtrans;
 
-pub use frame::{camera_frame, crop_to_frame, FrameRect};
+pub use frame::{
+    apply_camera_geometry, camera_distortion, camera_frame, crop_to_frame, undistort,
+    CameraDistortion, FrameRect,
+};
 pub use neutral::{apply_neutral, calibration_for, NeutralCalibration};
 pub use preview::{DevelopPreview, PREVIEW_DRAFT_EDGE, PREVIEW_MAX_EDGE};
 pub use render::{
@@ -82,7 +85,10 @@ pub fn correct_lens(
 ) -> Result<crate::media::lens::Applied, String> {
     let info = crate::media::lens::lens_info(raw)
         .ok_or_else(|| "the file's camera could not be read".to_string())?;
-    let profile = crate::media::lens::profile_for(&info, linear.width, linear.height)?;
+    let mut profile = crate::media::lens::profile_for(&info, linear.width, linear.height)?;
+    if frame::camera_distortion(raw).is_some() {
+        profile.correction.distortion = None;
+    }
     let (pixels, applied) =
         crate::media::lens::correct(linear.width, linear.height, &linear.pixels, &profile);
     linear.pixels = pixels;
@@ -507,9 +513,7 @@ pub fn linear_to_developed(
 /// definition of the neutral picture lives in one place.
 pub fn develop_neutral(raw: &[u8], options: &DevelopOptions) -> Result<Developed, Error> {
     let mut linear = develop_linear(raw, options)?;
-    if let Some(frame) = frame::camera_frame(raw) {
-        frame::crop_to_frame(&mut linear, frame);
-    }
+    frame::apply_camera_geometry(&mut linear, raw);
     let lens_info = crate::media::lens::lens_info(raw);
     let cal = match lens_info {
         Some(ref info) => neutral::calibration_for(&info.make, &info.model),

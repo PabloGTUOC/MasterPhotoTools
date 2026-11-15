@@ -437,9 +437,7 @@ fn develop_one(
     } else {
         None
     };
-    if let Some(frame) = crate::media::develop::frame::camera_frame(raw_bytes) {
-        crate::media::develop::frame::crop_to_frame(&mut linear, frame);
-    }
+    crate::media::develop::frame::apply_camera_geometry(&mut linear, raw_bytes);
     let denoised = reduce_noise(
         linear.width,
         linear.height,

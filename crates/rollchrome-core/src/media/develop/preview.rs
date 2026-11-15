@@ -72,9 +72,7 @@ impl DevelopPreview {
         if lens {
             let _ = crate::media::develop::correct_lens(&mut linear, raw);
         }
-        if let Some(frame) = crate::media::develop::frame::camera_frame(raw) {
-            crate::media::develop::frame::crop_to_frame(&mut linear, frame);
-        }
+        crate::media::develop::frame::apply_camera_geometry(&mut linear, raw);
         let mut preview = Self::from_linear(linear, max_edge)?;
         let cal = crate::media::lens::lens_info(raw)
             .map(|info| crate::media::develop::neutral::calibration_for(&info.make, &info.model))

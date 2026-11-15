@@ -12,7 +12,7 @@ publishing was removed on 2026-11-14 — [`docs/rescope-plan.md`](docs/rescope-p
 emulator, in the same repository (RC-1 to RC-3, 2026-11-06). [`docs/rollchrome-plan.md`](docs/rollchrome-plan.md)
 has the decisions and the steps; RC-1 to RC-3 are done, and Develop's first step,
 [DV-1](docs/briefs/DV-1.md), the neutral RAW development, is done, and so are DV-2a
-and DV-2b: Develop's function is complete, DV-3 added twelve built-in looks fitted from chart photographs, DV-4 added 18 physical film simulations with grain, DV-5 noise reduction before the look, DV-7 developing without a look and output choices, DV-8 four photographs at once and 2.9–4.5× faster, DV-6 film stocks saved as LUTs, DV-9 lens correction, DV-10 capture sharpening, DV-11 and DV-12 a neutral that matches Photomator (Apple's curve, the camera's frame, gentler noise reduction), and RP-1 gave it its screen. The state
+and DV-2b: Develop's function is complete, DV-3 added twelve built-in looks fitted from chart photographs, DV-4 added 18 physical film simulations with grain, DV-5 noise reduction before the look, DV-7 developing without a look and output choices, DV-8 four photographs at once and 2.9–4.5× faster, DV-6 film stocks saved as LUTs, DV-9 lens correction, DV-10 capture sharpening, DV-11 and DV-12 a neutral that matches Photomator (Apple's curve, the camera's frame, gentler noise reduction), DV-13 the camera's own distortion correction, and RP-1 gave it its screen. The state
 before the split is frozen on the **`FullEdition`** branch.
 
 **The project was rescoped on 2026-11-13** ([`docs/rescope-plan.md`](docs/rescope-plan.md)): editing is left to
@@ -128,10 +128,10 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 1181 passing (5 ignored)
+cargo test --workspace          # 1188 passing (5 ignored)
 cargo test -p phototools-core   # 543 passing — G2
-cargo test -p rollchrome-core   # 502 passing — G2
-cargo test -p rollchrome-core --features film # 523 passing (3 ignored)
+cargo test -p rollchrome-core   # 509 passing — G2
+cargo test -p rollchrome-core --features film # 530 passing (3 ignored)
 cargo test -p phototools-desktop   # 26 passing
 cargo test -p rollchrome-desktop   # 28 passing
 cargo test -p rollchrome-cli       # 8 passing

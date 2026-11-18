@@ -1,6 +1,6 @@
 # Rescope — PhotoTools manages, Rollchrome develops
 
-> **Planned 2026-11-13. DV-7, DV-8, RS-3, DV-6 (2026-11-13), RS-1, RS-2, RS-4, DV-9, DV-10, DV-11 and DV-12 (2026-11-14) done; DV-13 (2026-11-15) done; DV-14 briefed (2026-11-18). Every step of the rescope is built; what remains is the owner's manual checks.** Steps have stable ids, `RS-1` onwards for PhotoTools and
+> **Planned 2026-11-13. DV-7, DV-8, RS-3, DV-6 (2026-11-13), RS-1, RS-2, RS-4, DV-9, DV-10, DV-11 and DV-12 (2026-11-14) done; DV-13 (2026-11-15) done; DV-14 (2026-11-18) done. Every step of the rescope is built; what remains is the owner's manual checks.** Steps have stable ids, `RS-1` onwards for PhotoTools and
 > `DV-6` onwards for Develop, like the other plans.
 
 ## Why

@@ -1,6 +1,6 @@
 # Rescope — PhotoTools manages, Rollchrome develops
 
-> **Planned 2026-11-13. DV-7, DV-8, RS-3, DV-6 (2026-11-13), RS-1, RS-2, RS-4, DV-9, DV-10, DV-11 and DV-12 (2026-11-14) done; DV-13 (2026-11-15) done. Every step of the rescope is built; what remains is the owner's manual checks.** Steps have stable ids, `RS-1` onwards for PhotoTools and
+> **Planned 2026-11-13. DV-7, DV-8, RS-3, DV-6 (2026-11-13), RS-1, RS-2, RS-4, DV-9, DV-10, DV-11 and DV-12 (2026-11-14) done; DV-13 (2026-11-15) done; DV-14 briefed (2026-11-18). Every step of the rescope is built; what remains is the owner's manual checks.** Steps have stable ids, `RS-1` onwards for PhotoTools and
 > `DV-6` onwards for Develop, like the other plans.
 
 ## Why
@@ -222,6 +222,15 @@ about 1.8× too much, so its distortion is skipped for a file that carries its o
 **Acceptance:** geometry within 1.5 px rms of Apple's rendering on the owner's XZ-1 files at 6, 6.5 and
 24 mm, in 4:3 and 3:2, with lens correction on or off.
 
+#### `DV-14` · Detail like Apple's
+Added 2026-11-18, the next item after DV-13. Measured against Apple's renderings, Develop's neutral lacked
+a mild 1–4 px sharpening, and its fixed noise reduction smoothed clean low-ISO files far more than Apple's.
+Noise reduction now scales with the noise measured in each photograph (25 is the XZ-1 at ISO 400), and the
+neutral picture gets a band-limited output sharpening. X-Trans detail is a separate step. [Brief](briefs/DV-14.md).
+
+**Acceptance:** on the owner's seven XZ-1 files and the D610, detail within 0.07 of Apple's and flat-area
+noise within 0.75–1.25 of it.
+
 ## Order
 
 | # | Step | Why here | Who |
@@ -237,6 +246,7 @@ about 1.8× too much, so its distortion is skipped for a file that carries its o
 | 9 | DV-11 | A defect the owner found on first use | agy |
 | 10 | DV-12 | The owner's reference is Photomator, not the camera's JPEG | agy |
 | 11 | DV-13 | A difference the owner saw against macOS at the wide end | agy |
+| 12 | DV-14 | The last measured difference from Photomator on Bayer cameras | agy |
 
 agy runs only on Gemini Flash. One brief per step, a fresh conversation each time, and the credit
 cost reported per brief.

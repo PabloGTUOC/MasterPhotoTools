@@ -56,6 +56,7 @@ pub struct DevelopPreview {
     draft: LinearProPhoto,
     source_long_edge: u32,
     calibration: super::neutral::NeutralCalibration,
+    noise_level: f32,
 }
 
 impl DevelopPreview {
@@ -83,6 +84,7 @@ impl DevelopPreview {
 
     /// Creates a preview holding full and draft upright linear representations.
     pub fn from_linear(linear: LinearProPhoto, max_edge: u32) -> Result<Self, Error> {
+        let noise_level = super::noise::noise_level(&linear.pixels, linear.width, linear.height);
         let (up_w, up_h, upright_pixels) = if linear.orientation <= 1 {
             (linear.width, linear.height, linear.pixels)
         } else {
@@ -145,6 +147,7 @@ impl DevelopPreview {
             },
             source_long_edge,
             calibration: super::neutral::NeutralCalibration::default(),
+            noise_level,
         })
     }
 
@@ -195,11 +198,13 @@ impl DevelopPreview {
 
         let source = if draft { &self.draft } else { &self.full };
         let scale = self.noise_scale(draft);
+        let effective_nr =
+            super::noise::effective_noise_reduction(noise_reduction, self.noise_level);
         let denoised_pixels = super::reduce_noise(
             source.width,
             source.height,
             &source.pixels,
-            noise_reduction,
+            effective_nr,
             scale,
         );
 
@@ -290,6 +295,10 @@ impl DevelopPreview {
 
     pub fn draft_height(&self) -> u32 {
         self.draft.height
+    }
+
+    pub fn noise_level(&self) -> f32 {
+        self.noise_level
     }
 }
 

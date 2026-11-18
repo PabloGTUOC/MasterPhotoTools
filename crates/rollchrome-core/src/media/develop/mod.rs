@@ -25,6 +25,7 @@ use rayon::prelude::*;
 pub mod colour;
 pub mod frame;
 pub mod neutral;
+pub mod noise;
 pub mod preview;
 pub mod render;
 pub mod sharpen;
@@ -36,11 +37,13 @@ pub use frame::{
     CameraDistortion, FrameRect,
 };
 pub use neutral::{apply_neutral, calibration_for, NeutralCalibration};
+pub use noise::{effective_noise_reduction, noise_level, NOISE_REFERENCE};
 pub use preview::{DevelopPreview, PREVIEW_DRAFT_EDGE, PREVIEW_MAX_EDGE};
 pub use render::{
     downscaled_size, prophoto_icc_profile, render, render_sized, Look, LookSpace, OutputFormat,
     Rendered,
 };
+pub use sharpen::{output_sharpen, OUTPUT_SHARPEN};
 
 /// Options controlling RAW development.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -520,14 +523,16 @@ pub fn develop_neutral(raw: &[u8], options: &DevelopOptions) -> Result<Developed
         None => neutral::NeutralCalibration::default(),
     };
     neutral::apply_neutral(&mut linear.pixels, &cal);
-    linear_to_developed_with(
+    let mut developed = linear_to_developed_with(
         linear.width,
         linear.height,
         &linear.pixels,
         linear.orientation,
         linear.demosaic,
         ToneCurve::Standard,
-    )
+    )?;
+    sharpen::output_sharpen(&mut developed.image);
+    Ok(developed)
 }
 
 /// Fully develops raw file bytes into 16-bit ProPhoto RGB image.

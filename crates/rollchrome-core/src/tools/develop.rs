@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use crate::media::develop::par_map_rgb;
 use crate::media::develop::preview::resize_linear;
 use crate::media::develop::{
-    correct_lens, develop_linear, linear_to_developed_with, reduce_noise, render_sized,
-    DevelopOptions, Look, OutputFormat, ToneCurve,
+    correct_lens, develop_linear, effective_noise_reduction, linear_to_developed_with, noise_level,
+    output_sharpen, reduce_noise, render_sized, DevelopOptions, Look, OutputFormat, ToneCurve,
 };
 use crate::media::film::{render_film, FilmBackend, FilmOutput, Grain};
 
@@ -438,11 +438,13 @@ fn develop_one(
         None
     };
     crate::media::develop::frame::apply_camera_geometry(&mut linear, raw_bytes);
+    let level = noise_level(&linear.pixels, linear.width, linear.height);
+    let effective_nr = effective_noise_reduction(action.noise_reduction, level);
     let denoised = reduce_noise(
         linear.width,
         linear.height,
         &linear.pixels,
-        action.noise_reduction,
+        effective_nr,
         1.0,
     );
     // After the lens and the noise, before the look: grain is added later and never sharpened (DV-10).
@@ -480,7 +482,7 @@ fn develop_one(
                     (None, ToneCurve::Standard, pixels)
                 }
             };
-            let developed = linear_to_developed_with(
+            let mut developed = linear_to_developed_with(
                 linear.width,
                 linear.height,
                 &pixels,
@@ -489,6 +491,9 @@ fn develop_one(
                 tone,
             )
             .map_err(|e| e.to_string())?;
+            if matches!(look, ResolvedLook::Neutral) {
+                output_sharpen(&mut developed.image);
+            }
             for (format, output) in outputs {
                 let r = render_sized(&developed, look_arg, format, plan.long_edge)
                     .map_err(|e| e.to_string())?;

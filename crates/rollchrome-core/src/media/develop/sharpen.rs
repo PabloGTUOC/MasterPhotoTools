@@ -137,3 +137,107 @@ pub fn capture_sharpen(
     });
     out
 }
+
+/// Output sharpening strength for the neutral picture (DV-14).
+///
+/// Mild band-limited sharpening: luminance + 0.3 * (blur σ 1 - blur σ 3), which matches
+/// Apple's rendering at 1–4 px frequencies without sharpening the finest scale.
+pub const OUTPUT_SHARPEN: f32 = 0.3;
+
+/// Output sharpening for the developed 16-bit ProPhoto neutral image (DV-14).
+///
+/// Runs on the developed 16-bit ProPhoto image, ROMM-encoded, after the tone curve:
+/// 1. Y = (0.288040·R + 0.711874·G + 0.000086·B) / 65535 per pixel.
+/// 2. b1 = Gaussian blur of Y with σ 1.0, and b3 with σ 3.0, in full-resolution pixels.
+/// 3. d = OUTPUT_SHARPEN × (b1 − b3) × 65535. Add the same d to R, G and B, round, and clamp to 0..=65535.
+pub fn output_sharpen(image: &mut image::ImageBuffer<image::Rgb<u16>, Vec<u16>>) {
+    let w = image.width() as usize;
+    let h = image.height() as usize;
+    if w == 0 || h == 0 {
+        return;
+    }
+
+    let y_plane: Vec<f32> = image
+        .par_chunks_exact(3)
+        .map(|px| {
+            (px[0] as f32 * Y_WEIGHTS[0]
+                + px[1] as f32 * Y_WEIGHTS[1]
+                + px[2] as f32 * Y_WEIGHTS[2])
+                / 65535.0
+        })
+        .collect();
+
+    let k1 = kernel(1.0);
+    let k3 = kernel(3.0);
+    let b1 = blur(&y_plane, w, h, &k1);
+    let b3 = blur(&y_plane, w, h, &k3);
+
+    image
+        .par_chunks_exact_mut(3)
+        .zip(b1.par_iter().zip(b3.par_iter()))
+        .for_each(|(px, (&b1_val, &b3_val))| {
+            let d = OUTPUT_SHARPEN * (b1_val - b3_val) * 65535.0;
+            px[0] = (px[0] as f32 + d).round().clamp(0.0, 65535.0) as u16;
+            px[1] = (px[1] as f32 + d).round().clamp(0.0, 65535.0) as u16;
+            px[2] = (px[2] as f32 + d).round().clamp(0.0, 65535.0) as u16;
+        });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_sharpening_leaves_a_flat_image_unchanged() {
+        let w = 64;
+        let h = 16;
+        let mut img =
+            image::ImageBuffer::from_pixel(w, h, image::Rgb([30000u16, 30000u16, 30000u16]));
+        let orig = img.clone();
+        output_sharpen(&mut img);
+        assert_eq!(img, orig);
+    }
+
+    #[test]
+    fn output_sharpening_lifts_both_sides_of_an_edge_and_keeps_grey() {
+        let w = 64;
+        let h = 16;
+        let mut img = image::ImageBuffer::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let v = if x < 32 { 19661u16 } else { 39321u16 };
+                img.put_pixel(x, y, image::Rgb([v, v, v]));
+            }
+        }
+
+        output_sharpen(&mut img);
+
+        // R = G = B at every pixel
+        for p in img.pixels() {
+            assert_eq!(p[0], p[1]);
+            assert_eq!(p[1], p[2]);
+        }
+
+        // Row 8 must read, within ±2:
+        // x = 0 → 19661, 28 → 18953, 30 → 18192, 31 → 18877, 32 → 40105, 33 → 40790, 35 → 40029, 63 → 39321
+        let expected = [
+            (0, 19661i32),
+            (28, 18953i32),
+            (30, 18192i32),
+            (31, 18877i32),
+            (32, 40105i32),
+            (33, 40790i32),
+            (35, 40029i32),
+            (63, 39321i32),
+        ];
+
+        for (x, exp) in expected {
+            let actual = img.get_pixel(x, 8)[0] as i32;
+            let diff = (actual - exp).abs();
+            assert!(
+                diff <= 2,
+                "At x={x}, y=8: actual {actual}, expected {exp} (diff {diff} > 2)"
+            );
+        }
+    }
+}

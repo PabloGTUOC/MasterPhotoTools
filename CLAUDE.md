@@ -170,6 +170,7 @@ npm --prefix frontend/rollchrome run check:local-detail # RP-11b local detail ac
 npm --prefix frontend/rollchrome run check:object   # RP-11c object mask acceptance, measured in a browser
 npm --prefix frontend/rollchrome run check:people   # RP-11d people mask acceptance, measured in a browser
 npm --prefix frontend/rollchrome run check:shell    # UI-1 the whole app: no page scroll, navigation fixed, at 1024–1920
+npm --prefix frontend/rollchrome run check:edit-layout # UI-2 Edit: nothing clipped, Export always visible, panel resizable
 ```
 
 `check:layout` and `check:ingest` drive Chromium and write screenshots to

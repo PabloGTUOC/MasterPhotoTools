@@ -184,6 +184,12 @@ export interface EditContext {
   onVignetteSliderChange: (prop: keyof Vignette, val: number) => void;
   onGrainSliderInput: (prop: keyof FilmGrain, val: number) => void;
   onGrainSliderChange: (prop: keyof FilmGrain, val: number) => void;
+
+  // History section
+  historyEntries: Ref<Array<{ label: string }>>;
+  reversedHistory: ComputedRef<Array<{ label: string; index: number }>>;
+  historyCursor: Ref<number>;
+  jumpToHistory: (index: number) => void;
 }
 
 export const EDIT_CONTEXT: InjectionKey<EditContext> = Symbol('edit');

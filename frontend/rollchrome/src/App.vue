@@ -174,8 +174,12 @@ nav {
 
 .content {
   min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
   padding: var(--space-4) var(--space-5) var(--space-5);
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 /* --- status bar (§5.8) ---------------------------------------------------- */
@@ -194,5 +198,20 @@ nav {
   letter-spacing: 0.1em;
   color: var(--text-muted);
   white-space: nowrap;
+}
+</style>
+
+<style>
+/* Rollchrome global rule: hide browser spin buttons on number inputs (UI-2) */
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  display: none;
+  margin: 0;
 }
 </style>

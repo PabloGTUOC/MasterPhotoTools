@@ -116,6 +116,7 @@ function handleImport() {
         :list="props.list"
         :selectable="['cube', '3dl', 'png']"
         placeholder="/path/to/lut.cube"
+        :overlay="true"
       />
       <div v-else class="lut-picker__simple-import">
         <label class="field">

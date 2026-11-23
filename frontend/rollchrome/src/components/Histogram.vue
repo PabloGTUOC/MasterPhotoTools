@@ -13,7 +13,7 @@
  * - In RGB the three channels share one scale and are screen-blended, so where
  *   they overlap reads as their mix, as in every darkroom application.
  */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 
 export type HistogramMode = 'rgb' | 'luma' | 'red' | 'green' | 'blue';
 
@@ -25,6 +25,35 @@ export interface HistogramCounts {
   pixels: number;
   highlightClipped: number;
   shadowClipped: number;
+}
+
+const STORAGE_KEY_HISTOGRAM_OPEN = 'rollchrome.edit.histogramOpen';
+
+function loadHistogramOpen(): boolean {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_HISTOGRAM_OPEN);
+    if (raw !== null) {
+      return raw === 'true';
+    }
+  } catch {
+    // fallback
+  }
+  return true;
+}
+
+function saveHistogramOpen(open: boolean) {
+  try {
+    localStorage.setItem(STORAGE_KEY_HISTOGRAM_OPEN, String(open));
+  } catch {
+    // ignore
+  }
+}
+
+const isOpen = ref(loadHistogramOpen());
+
+function toggleHistogram() {
+  isOpen.value = !isOpen.value;
+  saveHistogramOpen(isOpen.value);
 }
 
 const props = defineProps<{
@@ -112,47 +141,66 @@ const label = computed(
 </script>
 
 <template>
-  <div class="histogram" data-testid="histogram">
-    <svg
-      class="histogram__plot"
-      :class="{ 'is-rgb': mode === 'rgb' }"
-      viewBox="0 0 255 100"
-      preserveAspectRatio="none"
-      role="img"
-      :aria-label="label"
-      data-testid="histogram-plot"
-    >
-      <path
-        v-for="p in paths"
-        :key="p.channel"
-        class="histogram__channel"
-        :class="`histogram__channel--${p.channel}`"
-        :d="p.d"
-        :data-channel="p.channel"
-      />
-    </svg>
-    <p v-if="!histogram" class="histogram__empty">No frame yet</p>
-
-    <div class="histogram__modes" role="group" aria-label="Histogram channel">
+  <div class="histogram" data-testid="histogram" :class="{ 'is-open': isOpen, 'is-collapsed': !isOpen }">
+    <div class="histogram__header">
       <button
-        v-for="m in MODES"
-        :key="m.key"
         type="button"
-        class="histogram__mode"
-        :class="{ active: mode === m.key }"
-        :aria-pressed="mode === m.key"
-        :title="m.name"
-        :data-testid="`histogram-mode-${m.key}`"
-        @click="emit('update:mode', m.key)"
+        class="ghost histogram__toggle"
+        data-testid="histogram-toggle"
+        :aria-expanded="isOpen"
+        @click="toggleHistogram"
       >
-        {{ m.label }}
+        <span class="histogram__chevron" :class="{ 'is-expanded': isOpen }">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path d="M4 2L8 6L4 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/>
+          </svg>
+        </span>
+        Histogram
       </button>
     </div>
 
-    <p class="histogram__clipping" data-testid="histogram-clipping">
-      <span>Shadows clipped <strong data-testid="histogram-shadow-clipped">{{ shadowText }}</strong></span>
-      <span>Highlights clipped <strong data-testid="histogram-highlight-clipped">{{ highlightText }}</strong></span>
-    </p>
+    <div v-show="isOpen" class="histogram__content">
+      <svg
+        class="histogram__plot"
+        :class="{ 'is-rgb': mode === 'rgb' }"
+        viewBox="0 0 255 100"
+        preserveAspectRatio="none"
+        role="img"
+        :aria-label="label"
+        data-testid="histogram-plot"
+      >
+        <path
+          v-for="p in paths"
+          :key="p.channel"
+          class="histogram__channel"
+          :class="`histogram__channel--${p.channel}`"
+          :d="p.d"
+          :data-channel="p.channel"
+        />
+      </svg>
+      <p v-if="!histogram" class="histogram__empty">No frame yet</p>
+
+      <div class="histogram__modes" role="group" aria-label="Histogram channel">
+        <button
+          v-for="m in MODES"
+          :key="m.key"
+          type="button"
+          class="histogram__mode"
+          :class="{ active: mode === m.key }"
+          :aria-pressed="mode === m.key"
+          :title="m.name"
+          :data-testid="`histogram-mode-${m.key}`"
+          @click="emit('update:mode', m.key)"
+        >
+          {{ m.label }}
+        </button>
+      </div>
+
+      <p class="histogram__clipping" data-testid="histogram-clipping">
+        <span>Shadows clipped <strong data-testid="histogram-shadow-clipped">{{ shadowText }}</strong></span>
+        <span>Highlights clipped <strong data-testid="histogram-highlight-clipped">{{ highlightText }}</strong></span>
+      </p>
+    </div>
   </div>
 </template>
 
@@ -164,6 +212,46 @@ const label = computed(
   padding: var(--space-2);
   border: var(--border-hair);
   background: var(--bg-panel);
+}
+
+.histogram__header {
+  display: flex;
+  align-items: center;
+}
+
+.histogram__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 40px;
+  height: 40px;
+  padding: 0 var(--space-1);
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--text-heading);
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-none);
+}
+
+.histogram__toggle:hover {
+  color: var(--accent);
+}
+
+.histogram__chevron {
+  display: inline-flex;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.histogram__chevron.is-expanded {
+  transform: rotate(90deg);
+}
+
+.histogram__content {
+  position: relative;
+  display: grid;
+  gap: var(--space-2);
 }
 
 .histogram__plot {

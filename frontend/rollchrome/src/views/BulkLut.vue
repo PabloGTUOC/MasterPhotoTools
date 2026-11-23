@@ -542,6 +542,7 @@ onMounted(() => {
           :roots-error="rootsError"
           :list="listRoots"
           :disabled="isGrading || isBusy"
+          :overlay="true"
         />
       </div>
 

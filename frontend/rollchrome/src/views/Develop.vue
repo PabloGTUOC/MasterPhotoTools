@@ -1035,6 +1035,7 @@ onMounted(async () => {
         :roots-error="rootsError"
         :list="listRoots"
         :disabled="isDeveloping || isPlanning"
+        :overlay="true"
         data-testid="develop-folder-input"
       />
       <div v-if="folderError" class="error-line" role="alert">
@@ -1423,6 +1424,7 @@ onMounted(async () => {
             :roots-error="rootsError"
             :list="listRoots"
             :disabled="isDeveloping || isPlanning"
+            :overlay="true"
             data-testid="develop-output-folder"
           />
 

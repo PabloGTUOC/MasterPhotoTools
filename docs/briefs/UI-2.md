@@ -1,6 +1,6 @@
 # `UI-2` · Edit's panel, as a desktop application's
 
-> **Status:** briefed
+> **Status:** approved
 > **Plan:** [`docs/rollchrome/app-layout.md`](../rollchrome/app-layout.md) and
 > [`ui-review.md`](../rollchrome/ui-review.md), step UI-2. **Branch:** `ui-2`, cut from `main` after UI-4 is merged.
 
@@ -292,3 +292,29 @@ None.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved** (2026-11-24, on `54c2012`, with one change by the architect).
+
+**Gates, re-run by the architect.** fmt, clippy and build are clean. The Rust counts are unchanged:
+workspace 1205 (5 ignored), phototools-core 546, **rollchrome-core 523** (the Report's 372 and 377 are a
+summing slip), film 544 (3 ignored), desktop 26, rollchrome-desktop 28, cli 8. All 31 front-end gates
+pass:
+- check:edit-layout, 51 assertions;
+- check:export, 11;
+- check:shell;
+- PhotoTools' web and desktop checks, unchanged after the shared `PathField` gained `overlay`.
+
+**The one change, the brief's own gap.** The brief put the export settings in an Export section **closed by
+default**. check:export, rightly left untouched, then could not reach them. The Report says so with the
+output, as asked. The section now opens by default. The panel scrolls anyway, and nothing is lost.
+check:export passes unchanged.
+
+**The diff.**
+- Within scope: the panel's header, scrolling body and fixed footer; the histogram toggle (remembered);
+  the 320–560 divider (remembered); wrapping grids; the global no-spin rule; the one-row toolbar with its
+  full names in `title` and `aria-label`; and `PathField`'s overlay, on every Rollchrome picker
+  (LutPicker's import included, which is consistent with rule 6).
+- `edit-harness/index.html` gained a full-height root so the single-screen harness has the height the new
+  layout fills. That is harness plumbing, not an assertion.
+- A screenshot at 1280 with the panel at 320 px shows the toolbar on one row and Export pinned.
+

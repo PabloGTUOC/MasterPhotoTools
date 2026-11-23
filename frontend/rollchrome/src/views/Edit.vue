@@ -5091,7 +5091,7 @@ provide(EDIT_CONTEXT, {
           <CollapsibleSection
             title="Export"
             test-id="section-export"
-            :default-open="false"
+            :default-open="true"
             :show-reset="false"
           >
             <div class="adjustment-panel__export-settings">

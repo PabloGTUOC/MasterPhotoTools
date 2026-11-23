@@ -48,12 +48,14 @@ pub struct DerivedJpeg {
     pub height: u32,
 }
 
-/// The RAW containers F14 names.
+/// The RAW containers supported.
+///
+/// ORF and RW2 were added beyond F14's list for the owner's cameras.
 ///
 /// **CR3 is deliberately absent.** It uses an ISO-BMFF container rather than a
 /// TIFF-based one and needs separate handling; F14 puts it out of scope until
 /// needed, and silently mis-handling it would be worse than declining it.
-pub const RAW_EXTENSIONS: &[&str] = &["dng", "nef", "arw", "cr2", "raf", "orf"];
+pub const RAW_EXTENSIONS: &[&str] = &["dng", "nef", "arw", "cr2", "raf", "orf", "rw2"];
 
 pub fn is_raw(path: &Path) -> bool {
     path.extension()

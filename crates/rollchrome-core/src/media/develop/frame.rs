@@ -23,13 +23,13 @@ pub struct CameraDistortion {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ByteOrder {
+pub(super) enum ByteOrder {
     LittleEndian,
     BigEndian,
 }
 
 impl ByteOrder {
-    fn read_u16(self, buf: &[u8], offset: usize) -> Option<u16> {
+    pub(super) fn read_u16(self, buf: &[u8], offset: usize) -> Option<u16> {
         let bytes = buf.get(offset..offset.checked_add(2)?)?;
         Some(match self {
             ByteOrder::LittleEndian => u16::from_le_bytes([bytes[0], bytes[1]]),
@@ -37,7 +37,7 @@ impl ByteOrder {
         })
     }
 
-    fn read_u32(self, buf: &[u8], offset: usize) -> Option<u32> {
+    pub(super) fn read_u32(self, buf: &[u8], offset: usize) -> Option<u32> {
         let bytes = buf.get(offset..offset.checked_add(4)?)?;
         Some(match self {
             ByteOrder::LittleEndian => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
@@ -45,7 +45,7 @@ impl ByteOrder {
         })
     }
 
-    fn read_f32(self, buf: &[u8], offset: usize) -> Option<f32> {
+    pub(super) fn read_f32(self, buf: &[u8], offset: usize) -> Option<f32> {
         let bytes = buf.get(offset..offset.checked_add(4)?)?;
         Some(match self {
             ByteOrder::LittleEndian => f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
@@ -54,7 +54,7 @@ impl ByteOrder {
     }
 }
 
-fn find_tag_entry(
+pub(super) fn find_tag_entry(
     buf: &[u8],
     ifd_offset: usize,
     tag: u16,
@@ -77,7 +77,12 @@ fn find_tag_entry(
     None
 }
 
-fn find_tag_u32(buf: &[u8], ifd_offset: usize, tag: u16, order: ByteOrder) -> Option<u32> {
+pub(super) fn find_tag_u32(
+    buf: &[u8],
+    ifd_offset: usize,
+    tag: u16,
+    order: ByteOrder,
+) -> Option<u32> {
     find_tag_entry(buf, ifd_offset, tag, order).map(|(_, _, val)| val)
 }
 
@@ -173,7 +178,7 @@ pub fn camera_distortion(raw: &[u8]) -> Option<CameraDistortion> {
 
 /// Bilinear sample of all channels at a pixel-centre coordinate, clamped to the image boundary.
 #[inline]
-fn sample_bilinear(pixels: &[[f32; 3]], w: usize, h: usize, x: f32, y: f32) -> [f32; 3] {
+pub(super) fn sample_bilinear(pixels: &[[f32; 3]], w: usize, h: usize, x: f32, y: f32) -> [f32; 3] {
     let x = x.clamp(0.0, (w - 1) as f32);
     let y = y.clamp(0.0, (h - 1) as f32);
     let x0 = x.floor() as usize;
@@ -231,12 +236,15 @@ pub fn undistort(linear: &mut LinearProPhoto, d: CameraDistortion) {
     linear.pixels = out;
 }
 
-/// Applies camera geometry corrections to a linear development in place (DV-13):
+/// Applies camera geometry corrections to a linear development in place (DV-13, DV-15):
 /// undistorts according to the camera's distortion parameters if present,
 /// then crops to the aspect frame if present.
 pub fn apply_camera_geometry(linear: &mut LinearProPhoto, raw: &[u8]) {
     if let Some(distortion) = camera_distortion(raw) {
         undistort(linear, distortion);
+    }
+    if let Some(d) = super::panasonic::panasonic_distortion(raw) {
+        super::panasonic::undistort_panasonic(linear, d);
     }
     if let Some(frame) = camera_frame(raw) {
         crop_to_frame(linear, frame);

@@ -26,6 +26,7 @@ pub mod colour;
 pub mod frame;
 pub mod neutral;
 pub mod noise;
+pub mod panasonic;
 pub mod preview;
 pub mod render;
 pub mod sharpen;
@@ -89,7 +90,7 @@ pub fn correct_lens(
     let info = crate::media::lens::lens_info(raw)
         .ok_or_else(|| "the file's camera could not be read".to_string())?;
     let mut profile = crate::media::lens::profile_for(&info, linear.width, linear.height)?;
-    if frame::camera_distortion(raw).is_some() {
+    if frame::camera_distortion(raw).is_some() || panasonic::panasonic_distortion(raw).is_some() {
         profile.correction.distortion = None;
     }
     let (pixels, applied) =
@@ -365,8 +366,16 @@ fn develop_linear_impl(raw: &[u8], options: &DevelopOptions) -> Result<LinearPro
         });
     }
 
-    let ori = raw_image.orientation.to_u16();
-    let orientation = if ori == 0 { 1 } else { ori };
+    let orientation = if let Some(v) = panasonic::rw2_orientation(raw) {
+        v
+    } else {
+        let ori = raw_image.orientation.to_u16();
+        if ori == 0 {
+            1
+        } else {
+            ori
+        }
+    };
 
     Ok(LinearProPhoto {
         width: final_w,

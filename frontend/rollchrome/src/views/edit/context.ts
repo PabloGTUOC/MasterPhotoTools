@@ -5,6 +5,7 @@ import type {
   AutoTarget,
   BlackAndWhite,
   ColorWheel as ColorWheelType,
+  Detail,
   HslAdjustments,
   LookEffects,
   LutLibraryList,
@@ -152,6 +153,13 @@ export interface EditContext {
   setToneMapper: (mode: 'none' | 'aces') => void;
   onLooksSliderInput: (prop: keyof LookEffects, val: number) => void;
   onLooksSliderChange: (prop: keyof LookEffects, val: number) => void;
+
+  // Detail section
+  resetDetail: () => void;
+  zoom: Ref<'fit' | number>;
+  onDetailSliderInput: (prop: keyof Detail, val: number) => void;
+  onDetailSliderChange: (prop: keyof Detail, val: number) => void;
+  toggleHotPixels: () => void;
 }
 
 export const EDIT_CONTEXT: InjectionKey<EditContext> = Symbol('edit');

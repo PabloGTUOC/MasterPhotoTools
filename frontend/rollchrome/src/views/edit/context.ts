@@ -1,5 +1,13 @@
 import type { ComputedRef, InjectionKey, Ref } from 'vue';
-import type { AdjustmentRecipe, AutoTarget, Mask, ToneCurves } from '@host/api';
+import type {
+  AdjustmentRecipe,
+  AutoTarget,
+  BlackAndWhite,
+  HslAdjustments,
+  Mask,
+  PointColour,
+  ToneCurves,
+} from '@host/api';
 
 export type EyedropperTarget =
   | 'white-balance'
@@ -17,6 +25,19 @@ export type AutoDownloadState = {
   asBackground?: boolean;
   componentForMaskId?: string;
 } | null;
+
+export type BwBandKey = keyof BlackAndWhite;
+
+export interface BwBandDef {
+  key: BwBandKey;
+  label: string;
+}
+
+export interface HslBandDef {
+  key: keyof HslAdjustments;
+  label: string;
+  hueDeg: number;
+}
 
 export interface EditContext {
   // Basic section
@@ -67,6 +88,31 @@ export interface EditContext {
   resetToneCurve: () => void;
   onCurvesInput: (curves: ToneCurves) => void;
   onCurvesChange: (curves: ToneCurves) => void;
+
+  // Colour / HSL section
+  resetHsl: () => void;
+  toggleBlackAndWhite: () => void;
+  isBwMixDefault: ComputedRef<boolean> | Ref<boolean>;
+  resetBwMix: () => void;
+  BW_BANDS: readonly BwBandDef[] | BwBandDef[];
+  getBwBand: (key: BwBandKey) => number;
+  onBwSliderInput: (key: BwBandKey, val: number) => void;
+  onBwSliderChange: (key: BwBandKey, val: number) => void;
+  HSL_BANDS: HslBandDef[];
+  selectedHslBand: Ref<keyof HslAdjustments>;
+  isBandModified: (key: keyof HslAdjustments) => boolean;
+  selectHslBand: (key: keyof HslAdjustments) => void;
+  currentBandDef: ComputedRef<HslBandDef>;
+  resetCurrentHslBand: () => void;
+  onHslSliderInput: (prop: 'hue' | 'saturation' | 'luminance', val: number) => void;
+  onHslSliderChange: (prop: 'hue' | 'saturation' | 'luminance', val: number) => void;
+  togglePointColourEyedropper: () => void;
+  selectedPointIndex: Ref<number>;
+  selectPoint: (idx: number) => void;
+  selectedPoint: ComputedRef<PointColour | null>;
+  onPointColourSliderInput: (prop: 'hue_shift' | 'saturation' | 'luminance' | 'range', val: number) => void;
+  onPointColourSliderChange: (prop: 'hue_shift' | 'saturation' | 'luminance' | 'range', val: number) => void;
+  deleteSelectedPoint: () => void;
 }
 
 export const EDIT_CONTEXT: InjectionKey<EditContext> = Symbol('edit');

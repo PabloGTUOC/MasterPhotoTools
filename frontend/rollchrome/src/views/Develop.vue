@@ -1696,7 +1696,7 @@ onMounted(async () => {
 .thumb-container {
   width: 100%;
   aspect-ratio: 3 / 2;
-  background: var(--bg-deep);
+  background: var(--bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1793,7 +1793,7 @@ onMounted(async () => {
   width: 100%;
   height: calc(100vh - var(--preview-top, 240px));
   min-height: 360px;
-  background: var(--bg-deep);
+  background: var(--bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1967,7 +1967,7 @@ onMounted(async () => {
   font-family: var(--font-mono);
   font-size: 12px;
   padding: 2px 8px;
-  background: var(--bg-deep);
+  background: var(--bg);
   border: var(--border-hair);
   border-radius: 2px;
 }
@@ -2059,7 +2059,7 @@ onMounted(async () => {
   bottom: 0;
   width: 100vw;
   height: 100vh;
-  background: var(--bg-deep);
+  background: var(--bg);
   z-index: var(--z-lightbox);
   display: flex;
   align-items: center;

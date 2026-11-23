@@ -443,3 +443,13 @@ fn deriving_a_batch_starts_one_exiftool_process_not_one_per_file() {
         "G4: one persistent process for the batch, not one per file"
     );
 }
+
+#[test]
+fn an_rw2_is_a_raw_file() {
+    assert!(phototools_core::media::is_raw(std::path::Path::new(
+        "x.rw2"
+    )));
+    assert!(phototools_core::media::is_raw(std::path::Path::new(
+        "X.RW2"
+    )));
+}

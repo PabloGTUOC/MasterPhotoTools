@@ -49,6 +49,27 @@ fn f1_falls_through_to_create_date_when_date_time_original_is_absent() {
 }
 
 #[test]
+fn a_panasonic_rw2_is_read_like_a_tiff() {
+    let f = Fixtures::new();
+    let path = f.raw_with_metadata(
+        "p.rw2",
+        640,
+        480,
+        "2026:11:22 11:47:29",
+        "DMC-LX100",
+        "LUMIX",
+    );
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[2] = 0x55;
+    bytes[3] = 0x00;
+    std::fs::write(&path, bytes).unwrap();
+
+    let meta = read_meta(&path).unwrap();
+    assert_eq!(meta.camera.as_deref(), Some("DMC-LX100"));
+    assert_eq!(meta.capture, Some(dt("2026:11:22 11:47:29")));
+}
+
+#[test]
 fn f1_prefers_date_time_original_over_create_date() {
     let f = Fixtures::new();
     let path = f.jpeg_with_tags(

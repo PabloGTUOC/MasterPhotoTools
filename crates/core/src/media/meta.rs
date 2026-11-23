@@ -308,7 +308,92 @@ fn read_image_meta_from_memory(path: &Path) -> MediaMeta {
     }
 }
 
+/// Reads metadata from a Panasonic/Leica RW2/RWL file.
+///
+/// An RW2 is a TIFF whose header has `55 00` (`II U \0`) instead of `2A 00` (`II * \0`).
+/// nom-exif rejects it unless those two bytes are patched to `2A 00` in memory (G3: in-process,
+/// no external program).
+///
+/// IFD0 tag `0x0118` (`RawDataOffset`) marks where the raw sensor data begins (typically ~636 KB).
+/// Reading up to `RawDataOffset` rather than the whole 15–30 MB file avoids scanning ~6 GB on a
+/// card of 400 RW2s while giving nom-exif all the IFDs and embedded JPEG it needs.
+fn rw2_metadata_len(head: &[u8], file_len: u64) -> Option<u64> {
+    if head.len() < 4 || &head[0..4] != b"IIU\0" {
+        return None;
+    }
+    let walk = || -> Option<u64> {
+        let ifd_offset = u32::from_le_bytes(head.get(4..8)?.try_into().ok()?) as usize;
+        let count = u16::from_le_bytes(
+            head.get(ifd_offset..ifd_offset.checked_add(2)?)?
+                .try_into()
+                .ok()?,
+        ) as usize;
+        for i in 0..count {
+            let entry_offset = ifd_offset.checked_add(2)?.checked_add(i.checked_mul(12)?)?;
+            let entry = head.get(entry_offset..entry_offset.checked_add(12)?)?;
+            let tag = u16::from_le_bytes(entry[0..2].try_into().ok()?);
+            if tag == 0x0118 {
+                let typ = u16::from_le_bytes(entry[2..4].try_into().ok()?);
+                let cnt = u32::from_le_bytes(entry[4..8].try_into().ok()?);
+                if typ == 4 && cnt == 1 {
+                    let val = u32::from_le_bytes(entry[8..12].try_into().ok()?) as u64;
+                    if val > 8 {
+                        return Some(val.min(file_len));
+                    }
+                }
+            }
+        }
+        None
+    };
+
+    Some(walk().unwrap_or(file_len))
+}
+
+fn read_rw2_meta(path: &Path) -> Option<MediaMeta> {
+    use nom_exif::{MediaParser, MediaSource};
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let file_len = file.metadata().ok()?.len();
+    if file_len < 4 {
+        return None;
+    }
+
+    let head_limit = 65536u64.min(file_len);
+    let mut buf = Vec::with_capacity(head_limit as usize);
+    (&mut file).take(head_limit).read_to_end(&mut buf).ok()?;
+
+    let meta_len = rw2_metadata_len(&buf, file_len)?;
+
+    if meta_len > buf.len() as u64 {
+        let remaining = meta_len - buf.len() as u64;
+        file.take(remaining).read_to_end(&mut buf).ok()?;
+    } else {
+        buf.truncate(meta_len as usize);
+    }
+
+    if buf.len() < 4 {
+        return Some(MediaMeta::empty());
+    }
+
+    buf[2] = 0x2A;
+    buf[3] = 0x00;
+
+    let Ok(source) = MediaSource::from_memory(buf) else {
+        return Some(MediaMeta::empty());
+    };
+    let mut parser = MediaParser::new();
+    match parser.parse_exif(source) {
+        Ok(iter) => Some(collect_image(iter)),
+        Err(_) => Some(MediaMeta::empty()),
+    }
+}
+
 fn read_image_meta(path: &Path) -> MediaMeta {
+    if let Some(meta) = read_rw2_meta(path) {
+        return meta;
+    }
+
     use nom_exif::{MediaParser, MediaSource};
 
     let mut parser = MediaParser::new();
@@ -1311,5 +1396,28 @@ mod geo_tests {
         // 0°N 0°E is in the Gulf of Guinea, and it is where every "absent means
         // zero" bug puts a photograph.
         assert_eq!(MediaMeta::empty().gps, None);
+    }
+
+    #[test]
+    fn an_rw2_is_read_only_up_to_its_raw_data() {
+        let mut head = Vec::new();
+        head.extend_from_slice(b"IIU\0");
+        head.extend_from_slice(&8u32.to_le_bytes()); // IFD0 at 8
+        head.extend_from_slice(&1u16.to_le_bytes()); // 1 entry
+                                                     // Entry: tag 0x0118, type 4 (LONG), count 1, value 636416
+        head.extend_from_slice(&0x0118u16.to_le_bytes());
+        head.extend_from_slice(&4u16.to_le_bytes());
+        head.extend_from_slice(&1u32.to_le_bytes());
+        head.extend_from_slice(&636416u32.to_le_bytes());
+
+        assert_eq!(rw2_metadata_len(&head, 15_000_000), Some(636416));
+        assert_eq!(rw2_metadata_len(&head, 1000), Some(1000));
+
+        let mut tiff_head = head.clone();
+        tiff_head[2] = b'*';
+        assert_eq!(rw2_metadata_len(&tiff_head, 15_000_000), None);
+
+        let cut_head = &head[..10];
+        assert_eq!(rw2_metadata_len(cut_head, 15_000_000), Some(15_000_000));
     }
 }

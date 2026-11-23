@@ -14,7 +14,7 @@ use std::time::SystemTime;
 /// Extensions F1 handles, grouped as the specification lists them.
 pub const IMAGE_EXTENSIONS: [&str; 8] =
     ["jpg", "jpeg", "png", "gif", "tif", "tiff", "heic", "heif"];
-pub const RAW_EXTENSIONS: [&str; 5] = ["dng", "nef", "arw", "cr2", "raf"];
+pub const RAW_EXTENSIONS: [&str; 7] = ["dng", "nef", "arw", "cr2", "raf", "orf", "rw2"];
 pub const VIDEO_EXTENSIONS: [&str; 7] = ["mov", "mp4", "m4v", "mts", "m2ts", "3gp", "avi"];
 
 /// How far a metadata date may sit from the filesystem date before the file is

@@ -117,7 +117,9 @@ asked for.
 1. **Film looks in Edit as LUTs** (no grain or halation) **are enough.**
 2. **Split `Edit.vue` before UI-2.**
 
-**The order is** DV-17 → **UI-1 → UI-4 → UI-2 → UI-3 → UI-5**.
+**The order is** DV-17 → **UI-1 → UI-4 → UI-2 → UI-3 → UI-5**, superseded the same day by
+[`app-layout.md`](app-layout.md). There, the owner asked for a desktop application's layout and added UI-6
+(the status strip), UI-7 (Develop with a filmstrip) and UI-8 (Edit opening a folder).
 
 DV-17 (Develop's preview) is already with agy and is consistent with UI-1. UI-1 goes after it, so the two
 do not edit the same screen at once.

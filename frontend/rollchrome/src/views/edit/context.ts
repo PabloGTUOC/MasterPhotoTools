@@ -6,6 +6,7 @@ import type {
   BlackAndWhite,
   ColorWheel as ColorWheelType,
   Detail,
+  FilmGrain,
   HslAdjustments,
   LookEffects,
   LutLibraryList,
@@ -13,6 +14,7 @@ import type {
   Mask,
   PointColour,
   ToneCurves,
+  Vignette,
 } from '@host/api';
 
 export type EyedropperTarget =
@@ -175,6 +177,13 @@ export interface EditContext {
   toggleFlipH: () => void;
   isFlipV: ComputedRef<boolean>;
   toggleFlipV: () => void;
+
+  // Effects section
+  resetEffects: () => void;
+  onVignetteSliderInput: (prop: keyof Vignette, val: number) => void;
+  onVignetteSliderChange: (prop: keyof Vignette, val: number) => void;
+  onGrainSliderInput: (prop: keyof FilmGrain, val: number) => void;
+  onGrainSliderChange: (prop: keyof FilmGrain, val: number) => void;
 }
 
 export const EDIT_CONTEXT: InjectionKey<EditContext> = Symbol('edit');

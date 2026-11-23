@@ -46,3 +46,11 @@
   letter-spacing: 0.04em;
   white-space: nowrap;
 }
+
+.effects-group-title {
+  font-family: var(--font-label);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}

@@ -18,7 +18,7 @@
  *   Any change invalidates the dry run. Skipped items listed with reasons. JobProgress with cancel.
  * - State persistence: Module-level state preserves folder, assignments, and selection across tab switches.
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { BrowserEntry } from '@phototools/shared';
 import type {
   BuiltinLookInfo,
@@ -90,6 +90,162 @@ const previewUrl = ref<string | null>(null);
 const isPreviewLoading = ref(false);
 const previewError = ref<string | null>(null);
 let previewSeq = 0;
+
+// Preview enlargement overlay (DV-17)
+const isEnlarged = ref(false);
+watch(previewUrl, (url) => {
+  if (!url) isEnlarged.value = false;
+});
+
+// Workspace sizing & divider (DV-17)
+const workspaceEl = ref<HTMLElement | null>(null);
+const previewDisplayEl = ref<HTMLElement | null>(null);
+
+const DEFAULT_PHOTOS_WIDTH = 280;
+const STORAGE_KEY_PHOTOS_WIDTH = 'rollchrome.develop.photosWidth';
+
+function loadPhotosWidth(): number {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_PHOTOS_WIDTH);
+    if (raw !== null) {
+      const val = Number(raw);
+      if (Number.isFinite(val) && val >= 200) {
+        return Math.round(val);
+      }
+    }
+  } catch {
+    // fallback to default
+  }
+  return DEFAULT_PHOTOS_WIDTH;
+}
+
+function savePhotosWidth(width: number) {
+  try {
+    localStorage.setItem(STORAGE_KEY_PHOTOS_WIDTH, String(Math.round(width)));
+  } catch {
+    // ignore
+  }
+}
+
+const photosWidth = ref<number>(loadPhotosWidth());
+
+function clampPhotosWidth(width: number): number {
+  const wsWidth = workspaceEl.value
+    ? workspaceEl.value.getBoundingClientRect().width
+    : typeof window !== 'undefined'
+      ? window.innerWidth - 32
+      : 1248;
+  const maxWidth = Math.max(200, Math.floor((wsWidth - 372) / 2));
+  return Math.min(Math.max(200, Math.round(width)), maxWidth);
+}
+
+const maxPhotosWidth = computed(() => {
+  const wsWidth = workspaceEl.value
+    ? workspaceEl.value.getBoundingClientRect().width
+    : typeof window !== 'undefined'
+      ? window.innerWidth - 32
+      : 1248;
+  return Math.max(200, Math.floor((wsWidth - 372) / 2));
+});
+
+function setPhotosWidth(width: number) {
+  const clamped = clampPhotosWidth(width);
+  photosWidth.value = clamped;
+  savePhotosWidth(clamped);
+}
+
+let isDraggingDivider = false;
+let dividerStartX = 0;
+let dividerStartWidth = DEFAULT_PHOTOS_WIDTH;
+
+function onDividerPointerDown(e: PointerEvent) {
+  isDraggingDivider = true;
+  dividerStartX = e.clientX;
+  dividerStartWidth = photosWidth.value;
+  try {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  } catch {
+    // fallback
+  }
+}
+
+function onDividerPointerMove(e: PointerEvent) {
+  if (!isDraggingDivider) return;
+  const delta = e.clientX - dividerStartX;
+  setPhotosWidth(dividerStartWidth + delta);
+}
+
+function onDividerPointerUp(e: PointerEvent) {
+  if (isDraggingDivider) {
+    isDraggingDivider = false;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function onDividerKeyDown(e: KeyboardEvent) {
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    setPhotosWidth(photosWidth.value - 40);
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    setPhotosWidth(photosWidth.value + 40);
+  }
+}
+
+function onWindowPointerMove(e: PointerEvent) {
+  if (!isDraggingDivider) return;
+  const delta = e.clientX - dividerStartX;
+  setPhotosWidth(dividerStartWidth + delta);
+}
+
+function onWindowPointerUp() {
+  if (isDraggingDivider) {
+    isDraggingDivider = false;
+  }
+}
+
+function onWindowKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && isEnlarged.value) {
+    isEnlarged.value = false;
+  }
+}
+
+function updatePreviewTop() {
+  if (!previewDisplayEl.value || !workspaceEl.value) return;
+  const rect = previewDisplayEl.value.getBoundingClientRect();
+  const pageEl = workspaceEl.value.closest('.develop-page');
+  const bottomPadding = pageEl
+    ? parseFloat(window.getComputedStyle(pageEl).paddingBottom) || 16
+    : 16;
+  const top = Math.round(rect.top + bottomPadding);
+  workspaceEl.value.style.setProperty('--preview-top', `${top}px`);
+}
+
+function onWindowResize() {
+  updatePreviewTop();
+  const clamped = clampPhotosWidth(photosWidth.value);
+  if (clamped !== photosWidth.value) {
+    photosWidth.value = clamped;
+    savePhotosWidth(clamped);
+  }
+}
+
+watch(photos, () => {
+  if (photos.value.length > 0) {
+    nextTick(() => {
+      updatePreviewTop();
+      const clamped = clampPhotosWidth(photosWidth.value);
+      if (clamped !== photosWidth.value) {
+        photosWidth.value = clamped;
+        savePhotosWidth(clamped);
+      }
+    });
+  }
+});
 
 interface WantedPreviewState {
   folder: string;
@@ -794,6 +950,11 @@ function handleJobDone() {
 // ---------------------------------------------------------------------------
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', onWindowResize);
+  window.removeEventListener('keydown', onWindowKeyDown);
+  window.removeEventListener('pointermove', onWindowPointerMove);
+  window.removeEventListener('pointerup', onWindowPointerUp);
+  isEnlarged.value = false;
   thumbnailToken++;
   for (const u of Object.values(thumbnailUrls.value)) {
     URL.revokeObjectURL(u);
@@ -806,6 +967,20 @@ onBeforeUnmount(() => {
 });
 
 onMounted(async () => {
+  window.addEventListener('resize', onWindowResize);
+  window.addEventListener('keydown', onWindowKeyDown);
+  window.addEventListener('pointermove', onWindowPointerMove);
+  window.addEventListener('pointerup', onWindowPointerUp);
+
+  nextTick(() => {
+    updatePreviewTop();
+    const clamped = clampPhotosWidth(photosWidth.value);
+    if (clamped !== photosWidth.value) {
+      photosWidth.value = clamped;
+      savePhotosWidth(clamped);
+    }
+  });
+
   try {
     const [looks, films, luts] = await Promise.all([
       desktop.listBuiltinLooks(),
@@ -870,8 +1045,13 @@ onMounted(async () => {
       </div>
     </section>
 
-    <!-- Main workspace: Photographs Grid + Preview & Controls -->
-    <div v-if="photos.length > 0" class="workspace">
+    <!-- Main workspace: Photographs Grid + Divider + Preview & Controls -->
+    <div
+      v-if="photos.length > 0"
+      ref="workspaceEl"
+      class="workspace"
+      :style="{ '--photos-width': `${photosWidth}px` }"
+    >
       <!-- Left: Photographs grid -->
       <section class="photos-panel">
         <header class="panel-head">
@@ -921,20 +1101,48 @@ onMounted(async () => {
         </div>
       </section>
 
-      <!-- Right: Preview and adjustments -->
-      <aside class="controls-panel">
-        <!-- Preview display -->
+      <!-- Divider -->
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize photographs panel"
+        tabindex="0"
+        data-testid="develop-divider"
+        class="develop-divider"
+        :aria-valuenow="photosWidth"
+        aria-valuemin="200"
+        :aria-valuemax="maxPhotosWidth"
+        @pointerdown="onDividerPointerDown"
+        @pointermove="onDividerPointerMove"
+        @pointerup="onDividerPointerUp"
+        @pointercancel="onDividerPointerUp"
+        @keydown="onDividerKeyDown"
+      />
+
+      <!-- Preview panel -->
+      <section class="preview-panel">
         <div class="preview-box" data-testid="preview-container">
           <div class="preview-header">
             <span class="preview-title mono">
               {{ lastClicked ?? 'No photograph selected' }}
             </span>
-            <span v-if="isPreviewLoading" class="preview-loading mono">
-              Developing<span class="cursor">_</span>
-            </span>
+            <div class="preview-header-actions">
+              <span v-if="isPreviewLoading" class="preview-loading mono">
+                Developing<span class="cursor">_</span>
+              </span>
+              <button
+                v-if="previewUrl"
+                type="button"
+                class="secondary preview-enlarge-btn"
+                data-testid="preview-enlarge"
+                @click="isEnlarged = true"
+              >
+                Enlarge
+              </button>
+            </div>
           </div>
 
-          <div class="preview-display">
+          <div ref="previewDisplayEl" class="preview-display">
             <img
               v-if="previewUrl"
               :src="previewUrl"
@@ -950,7 +1158,10 @@ onMounted(async () => {
             </div>
           </div>
         </div>
+      </section>
 
+      <!-- Right: Adjustments and controls -->
+      <aside class="controls-panel">
         <!-- Adjustments for selection -->
         <div class="adjustments-box" :class="{ disabled: selection.length === 0 }">
           <div class="selection-summary mono">
@@ -1289,6 +1500,28 @@ onMounted(async () => {
       </aside>
     </div>
 
+    <!-- Enlarge overlay (DV-17) -->
+    <div
+      v-if="isEnlarged && previewUrl"
+      class="preview-overlay"
+      data-testid="preview-overlay"
+    >
+      <button
+        type="button"
+        class="secondary preview-overlay-close"
+        data-testid="preview-overlay-close"
+        @click="isEnlarged = false"
+      >
+        Close
+      </button>
+      <img
+        :src="previewUrl"
+        :alt="lastClicked ?? 'Preview'"
+        class="preview-overlay-img"
+        @click="isEnlarged = false"
+      />
+    </div>
+
     <!-- Review plan details -->
     <section v-if="reviewedPlan" class="review-section" data-testid="review-section">
       <header class="review-head">
@@ -1348,7 +1581,6 @@ onMounted(async () => {
   display: grid;
   gap: var(--space-4);
   padding: var(--space-4);
-  max-width: 1400px;
   margin: 0 auto;
 }
 
@@ -1373,17 +1605,21 @@ onMounted(async () => {
 
 .workspace {
   display: grid;
-  grid-template-columns: 1fr 400px;
-  gap: var(--space-4);
+  grid-template-columns: var(--photos-width, 280px) 12px minmax(0, 1fr) 360px;
+  column-gap: 0;
+  row-gap: var(--space-4);
   align-items: start;
 }
 
 .photos-panel {
   display: grid;
+  align-content: start;
   gap: var(--space-3);
   border: var(--border-hair);
   padding: var(--space-3);
   background: var(--bg-surface);
+  overflow-y: auto;
+  max-height: calc(100vh - var(--preview-top, 240px));
 }
 
 .panel-head {
@@ -1403,8 +1639,38 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: var(--space-2);
-  max-height: 700px;
-  overflow-y: auto;
+}
+
+.develop-divider {
+  width: 12px;
+  cursor: col-resize;
+  align-self: stretch;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  user-select: none;
+  touch-action: none;
+  outline: none;
+}
+
+.develop-divider::after {
+  content: '';
+  width: 1px;
+  height: 100%;
+  background: var(--grid);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.develop-divider:hover::after,
+.develop-divider:focus::after,
+.develop-divider:focus-visible::after {
+  background: var(--accent);
+}
+
+.preview-panel {
+  position: sticky;
+  top: var(--space-4);
+  min-width: 0;
 }
 
 .thumbnail-card {
@@ -1430,7 +1696,7 @@ onMounted(async () => {
 .thumb-container {
   width: 100%;
   aspect-ratio: 3 / 2;
-  background: var(--bg-deep);
+  background: var(--bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1478,6 +1744,7 @@ onMounted(async () => {
 .controls-panel {
   display: grid;
   gap: var(--space-3);
+  margin-left: var(--space-4);
 }
 
 .preview-box {
@@ -1493,6 +1760,22 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
+  min-height: 40px;
+}
+
+.preview-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.preview-enlarge-btn {
+  min-height: 40px;
+  height: 40px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-label);
+  border-radius: 2px;
+  font-size: 13px;
 }
 
 .preview-title {
@@ -1508,8 +1791,9 @@ onMounted(async () => {
 
 .preview-display {
   width: 100%;
-  aspect-ratio: 3 / 2;
-  background: var(--bg-deep);
+  height: calc(100vh - var(--preview-top, 240px));
+  min-height: 360px;
+  background: var(--bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1683,7 +1967,7 @@ onMounted(async () => {
   font-family: var(--font-mono);
   font-size: 12px;
   padding: 2px 8px;
-  background: var(--bg-deep);
+  background: var(--bg);
   border: var(--border-hair);
   border-radius: 2px;
 }
@@ -1764,6 +2048,56 @@ onMounted(async () => {
 @keyframes blink {
   50% {
     opacity: 0;
+  }
+}
+
+.preview-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg);
+  z-index: var(--z-lightbox);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-overlay-img {
+  width: 100vw;
+  height: 100vh;
+  object-fit: contain;
+  cursor: pointer;
+}
+
+.preview-overlay-close {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  min-height: 40px;
+  height: 40px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-label);
+  border-radius: 2px;
+  font-size: 13px;
+  z-index: 1;
+}
+
+@media (max-width: 1099.98px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr) 360px;
+  }
+
+  .photos-panel {
+    grid-column: 1 / -1;
+    max-height: 280px;
+  }
+
+  .develop-divider {
+    display: none;
   }
 }
 </style>

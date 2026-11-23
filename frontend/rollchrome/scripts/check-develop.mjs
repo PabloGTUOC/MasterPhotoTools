@@ -34,6 +34,9 @@
  * 29. Saving a LUT leaves Run enabled after a dry run (DV-6).
  * 30. Lens correction is on for a new photograph, reaches the dry run and the preview, and turning it off locks Run (DV-9).
  * 31. Capture sharpening shows 50 for a new photograph, reaches the dry run, and changing it locks Run (DV-10).
+ * 32. The preview uses the window: at 1280x900 >= 520x520, at 1920x1080 >= 1150x700, naturalWidth > 0 (DV-17).
+ * 33. The divider resizes (120px drag widens photos / narrows preview, 2000px left clamps to 200px), and remembers across reload (DV-17).
+ * 34. Enlarge opens full-window overlay with naturalWidth > 0; Escape and Close button close it (DV-17).
  */
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -1223,6 +1226,198 @@ try {
   if (!item31 || item31.capture_sharpening !== 80) {
     failures.push(`The dry run must carry capture_sharpening 80, got ${JSON.stringify(item31)}`);
   }
+
+  // -------------------------------------------------------------------------
+  // 32. The preview uses the window (DV-17)
+  // -------------------------------------------------------------------------
+  console.log('32. Checking preview uses the window at 1280x900 and 1920x1080...');
+  const previewDisplay32 = page.locator('[data-testid="preview-container"] .preview-display');
+  const box1280 = await previewDisplay32.boundingBox();
+  if (!box1280 || box1280.width < 520 || box1280.height < 520) {
+    failures.push(
+      `Preview display at 1280x900 must be at least 520x520, got ${box1280?.width}x${box1280?.height}`,
+    );
+  }
+
+  // Set viewport to 1920x1080 and re-measure
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.waitForTimeout(200);
+
+  const box1920 = await previewDisplay32.boundingBox();
+  if (!box1920 || box1920.width < 1150 || box1920.height < 700) {
+    failures.push(
+      `Preview display at 1920x1080 must be at least 1150x700, got ${box1920?.width}x${box1920?.height}`,
+    );
+  }
+  const screenshotPath1920 = join(OUT, 'develop-1920.png');
+  await page.screenshot({ path: screenshotPath1920, fullPage: true });
+  console.log(`Wrote layout screenshot proof to ${screenshotPath1920}`);
+
+  // Check 1024x768 stacked layout (below 1100px) without horizontal overflow
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.waitForTimeout(200);
+  const overflow1024 = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  if (overflow1024) {
+    failures.push('At 1024x768 the page must not overflow horizontally');
+  }
+  const screenshotPath1024 = join(OUT, 'develop-1024.png');
+  await page.screenshot({ path: screenshotPath1024, fullPage: true });
+  console.log(`Wrote layout screenshot proof to ${screenshotPath1024}`);
+
+  // Set viewport back to 1280x900 afterwards
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(200);
+
+  const previewNatWidth32 = await page.evaluate(() => {
+    const img = document.querySelector('[data-testid="preview-image"]');
+    return img ? img.naturalWidth : 0;
+  });
+  if (previewNatWidth32 <= 0) {
+    failures.push(`Preview image naturalWidth must be > 0, got ${previewNatWidth32}`);
+  }
+
+  const screenshotPath1280 = join(OUT, 'develop.png');
+  await page.screenshot({ path: screenshotPath1280, fullPage: true });
+  console.log(`Wrote layout screenshot proof to ${screenshotPath1280}`);
+
+  // -------------------------------------------------------------------------
+  // 33. The divider resizes and remembers (DV-17)
+  // -------------------------------------------------------------------------
+  console.log('33. Checking divider resizes and remembers...');
+  const divider33 = page.locator('[data-testid="develop-divider"]');
+  const photosPanel33 = page.locator('.photos-panel');
+  const previewDisplay33 = page.locator('[data-testid="preview-container"] .preview-display');
+
+  const photosBoxBefore = await photosPanel33.boundingBox();
+  const previewBoxBefore = await previewDisplay33.boundingBox();
+  const dividerBox = await divider33.boundingBox();
+
+  if (!dividerBox || !photosBoxBefore || !previewBoxBefore) {
+    failures.push('Missing bounding box for divider, photos panel, or preview display');
+  } else {
+    const startX = dividerBox.x + dividerBox.width / 2;
+    const startY = dividerBox.y + dividerBox.height / 2;
+
+    // Drag develop-divider 120 px to the right with page.mouse
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + 120, startY, { steps: 5 });
+    await page.mouse.up();
+    await page.waitForTimeout(100);
+
+    const photosBoxAfterRight = await photosPanel33.boundingBox();
+    const previewBoxAfterRight = await previewDisplay33.boundingBox();
+
+    const photosDiff = (photosBoxAfterRight?.width ?? 0) - photosBoxBefore.width;
+    const previewDiff = previewBoxBefore.width - (previewBoxAfterRight?.width ?? 0);
+
+    if (Math.abs(photosDiff - 120) > 4) {
+      failures.push(`Photos panel must become 120 ± 4 px wider, changed by ${photosDiff}px`);
+    }
+    if (Math.abs(previewDiff - 120) > 4) {
+      failures.push(`Preview display must become 120 ± 4 px narrower, changed by ${previewDiff}px`);
+    }
+
+    // Drag it 2000 px to the left
+    const dividerBox2 = await divider33.boundingBox();
+    const startX2 = (dividerBox2?.x ?? startX) + (dividerBox2?.width ?? 12) / 2;
+    const startY2 = (dividerBox2?.y ?? startY) + (dividerBox2?.height ?? 100) / 2;
+
+    await page.mouse.move(startX2, startY2);
+    await page.mouse.down();
+    await page.mouse.move(startX2 - 2000, startY2, { steps: 5 });
+    await page.mouse.up();
+    await page.waitForTimeout(100);
+
+    const photosBoxLeft = await photosPanel33.boundingBox();
+    if (!photosBoxLeft || Math.abs(photosBoxLeft.width - 200) > 1) {
+      failures.push(`Photos panel must clamp to 200 ± 1 px, got ${photosBoxLeft?.width}px`);
+    }
+
+    // Reload the page and reopen the folder the way the script already does
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForTimeout(200);
+
+    const folderInput33 = page.locator('input[placeholder="/path/to/raw/photos"]');
+    await folderInput33.fill('/Volumes/Photos/RAW');
+    await folderInput33.press('Enter');
+    await page.waitForSelector('.thumbnail-card:nth-child(6)', { timeout: 3000 });
+    await page.waitForTimeout(300);
+
+    const photosBoxReloaded = await page.locator('.photos-panel').boundingBox();
+    if (!photosBoxReloaded || Math.abs(photosBoxReloaded.width - 200) > 1) {
+      failures.push(`Photos panel must remember 200 ± 1 px across reload, got ${photosBoxReloaded?.width}px`);
+    }
+
+    // Clear rollchrome.develop.photosWidth at the end, so later checks start from default
+    await page.evaluate(() => localStorage.removeItem('rollchrome.develop.photosWidth'));
+  }
+
+  // -------------------------------------------------------------------------
+  // 34. Enlarge (DV-17)
+  // -------------------------------------------------------------------------
+  console.log('34. Checking enlarge overlay, Escape, and Close button...');
+  // Ensure preview is loaded for a selected photograph
+  const enlargeBtn = page.locator('[data-testid="preview-enlarge"]');
+  if (!(await enlargeBtn.isVisible())) {
+    await page.locator('.thumbnail-card:nth-child(1)').click();
+    await page.waitForSelector('[data-testid="preview-image"]', { timeout: 3000 });
+    await page.waitForTimeout(200);
+  }
+
+  await enlargeBtn.click();
+  await page.waitForTimeout(150);
+
+  const overlay34 = page.locator('[data-testid="preview-overlay"]');
+  if (!(await overlay34.isVisible())) {
+    failures.push('preview-overlay must be visible after clicking preview-enlarge');
+  }
+
+  const overlayBox = await overlay34.boundingBox();
+  const vp34 = page.viewportSize();
+  if (
+    !overlayBox ||
+    !vp34 ||
+    Math.abs(overlayBox.width - vp34.width) > 1 ||
+    Math.abs(overlayBox.height - vp34.height) > 1 ||
+    Math.abs(overlayBox.x) > 1 ||
+    Math.abs(overlayBox.y) > 1
+  ) {
+    failures.push(
+      `preview-overlay bounding box must match viewport (${vp34?.width}x${vp34?.height}), got ${JSON.stringify(overlayBox)}`,
+    );
+  }
+
+  const overlayImgNaturalWidth = await page.evaluate(() => {
+    const img = document.querySelector('[data-testid="preview-overlay"] img');
+    return img ? img.naturalWidth : 0;
+  });
+  if (overlayImgNaturalWidth <= 0) {
+    failures.push(`Overlay preview image must have naturalWidth > 0, got ${overlayImgNaturalWidth}`);
+  }
+
+  // Press Escape: the overlay is gone
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  if (await overlay34.isVisible()) {
+    failures.push('preview-overlay must close when Escape is pressed');
+  }
+
+  // Open it again and click Close: it is gone
+  await enlargeBtn.click();
+  await page.waitForTimeout(150);
+  if (!(await overlay34.isVisible())) {
+    failures.push('preview-overlay must be visible after clicking preview-enlarge again');
+  }
+
+  const closeBtn34 = page.locator('[data-testid="preview-overlay"] button');
+  await closeBtn34.click();
+  await page.waitForTimeout(150);
+  if (await overlay34.isVisible()) {
+    failures.push('preview-overlay must close when Close button is clicked');
+  }
 } catch (err) {
   failures.push(`Test execution threw: ${err instanceof Error ? err.stack : String(err)}`);
 } finally {
@@ -1237,5 +1432,5 @@ if (failures.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log('\ncheck:develop PASSED: all 31 checks verified successfully.');
+  console.log('\ncheck:develop PASSED: all 34 checks verified successfully.');
 }

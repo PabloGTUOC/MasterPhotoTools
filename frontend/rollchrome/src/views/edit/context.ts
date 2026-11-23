@@ -13,6 +13,7 @@ import type {
   LutRef,
   Mask,
   PointColour,
+  Snapshot,
   ToneCurves,
   Vignette,
 } from '@host/api';
@@ -190,6 +191,13 @@ export interface EditContext {
   reversedHistory: ComputedRef<Array<{ label: string; index: number }>>;
   historyCursor: Ref<number>;
   jumpToHistory: (index: number) => void;
+
+  // Snapshots section
+  newSnapshotName: Ref<string>;
+  snapshotMessage: Ref<string>;
+  saveSnapshot: () => void;
+  restoreSnapshot: (snap: Snapshot) => void;
+  deleteSnapshot: (name: string) => void;
 }
 
 export const EDIT_CONTEXT: InjectionKey<EditContext> = Symbol('edit');

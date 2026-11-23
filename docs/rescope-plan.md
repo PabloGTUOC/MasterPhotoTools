@@ -1,6 +1,6 @@
 # Rescope — PhotoTools manages, Rollchrome develops
 
-> **Planned 2026-11-13. DV-7, DV-8, RS-3, DV-6 (2026-11-13), RS-1, RS-2, RS-4, DV-9, DV-10, DV-11 and DV-12 (2026-11-14) done; DV-13 (2026-11-15) done; DV-14 (2026-11-18) done; DV-15 (2026-11-23) done. Every step of the rescope is built; what remains is the owner's manual checks.** Steps have stable ids, `RS-1` onwards for PhotoTools and
+> **Planned 2026-11-13. DV-7, DV-8, RS-3, DV-6 (2026-11-13), RS-1, RS-2, RS-4, DV-9, DV-10, DV-11 and DV-12 (2026-11-14) done; DV-13 (2026-11-15) done; DV-14 (2026-11-18) done; DV-15 and DV-16 (2026-11-23) done; DV-17 briefed. Every step of the rescope is built; what remains is the owner's manual checks.** Steps have stable ids, `RS-1` onwards for PhotoTools and
 > `DV-6` onwards for Develop, like the other plans.
 
 ## Why
@@ -240,6 +240,20 @@ camera's own distortion correction (IFD0 `0x0119`, 12.4 px at 10.9 mm) was ignor
 **Acceptance:** the date and orientation read on the owner's five RW2 files; geometry within 1.0 px rms of
 the camera's JPEG at 10.9 and 14.9 mm.
 
+#### `DV-16` · The LX100's black level
+Added 2026-11-23 when the owner saw P1100539's neutral look nothing like the camera's picture. RW2 files
+state their black 15 units low (128 for 143), which left a magenta cast: red/green 1.064–1.087 on grey
+against the camera's ~1.0. A small fix by the architect. [Record](briefs/DV-16.md).
+
+**Acceptance:** grey within 0.012 of the camera's JPEG on the owner's five files.
+
+#### `DV-17` · A preview the size of the window
+Added 2026-11-23 at the owner's request: Develop's preview sat in a 400 px column, about 165×250 px for a
+portrait whatever the window. It becomes the screen's main column, with a draggable photographs panel and a
+full-window Enlarge. [Brief](briefs/DV-17.md).
+
+**Acceptance:** at least 520×520 at 1280×900 and 1150×700 at 1920×1080, measured in check:develop.
+
 ## Order
 
 | # | Step | Why here | Who |
@@ -257,6 +271,8 @@ the camera's JPEG at 10.9 and 14.9 mm.
 | 11 | DV-13 | A difference the owner saw against macOS at the wide end | agy |
 | 12 | DV-14 | The last measured difference from Photomator on Bayer cameras | agy |
 | 13 | DV-15 | The owner's new camera, an LX100 | agy |
+| 14 | DV-16 | A colour cast on the LX100 | Claude |
+| 15 | DV-17 | The owner found Develop's preview too small | agy |
 
 agy runs only on Gemini Flash. One brief per step, a fresh conversation each time, and the credit
 cost reported per brief.

@@ -1,6 +1,6 @@
 # `UI-1` · The window is the frame
 
-> **Status:** briefed
+> **Status:** approved
 > **Plan:** [`docs/rollchrome/ui-review.md`](../rollchrome/ui-review.md), step UI-1. **Branch:** `ui-1`, cut from
 > `main` once this brief is there.
 
@@ -283,3 +283,35 @@ None.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved** (2026-11-23, on `dd4a3a1`).
+
+**Gates, re-run by the architect.** fmt, clippy and build are clean. The Rust counts are unchanged:
+
+| Gate | Result |
+|---|---|
+| `cargo test --workspace` | 1205, 5 ignored |
+| `cargo test -p phototools-core` | 546 |
+| `cargo test -p rollchrome-core` | 523, 0 ignored (the Report's "5 ignored" for this crate is a slip) |
+| `cargo test -p rollchrome-core --features film` | 544, 3 ignored |
+| desktop | 26 |
+| rollchrome-desktop | 28 |
+| rollchrome-cli | 8 |
+
+Every front-end gate passes, including the new **check:shell**. check:develop still has 34 checks.
+
+**The diff.**
+- Only `App.vue`, `package.json`, the harness, `check-shell.mjs` and this file changed. No view and no
+  existing check was touched.
+- The shell is `height: 100vh` with the content area scrolling. The rail is 56 px, with
+  number-over-abbreviation tabs, `aria-label` and `title`, and the glow only on the display-sized number.
+- Every token used is defined.
+- check:shell asserts each item the brief lists, at all three sizes: no page scroll, the rail at the top and
+  full height, links inside the viewport, width, tab height, names and navigation. Its final line says
+  "PASSED cleanly" rather than a count, which is a cosmetic difference.
+
+**One restoration by the architect.** The comment explaining why the active marker is a left border had
+been deleted with the old styles. Its reason still holds, so it is back (house style: comments say why).
+
+**Unverified:** the real app. The owner sees it in the next test build.
+

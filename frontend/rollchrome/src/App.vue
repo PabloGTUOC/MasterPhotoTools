@@ -117,6 +117,8 @@ nav {
   padding: var(--space-1) 0;
   text-decoration: none;
   color: var(--text-disabled);
+  /* The active marker is a left border, so the tab never moves as it
+     activates — a shifting nav is the fastest way to feel cheap. */
   border-left: 2px solid transparent;
   transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }

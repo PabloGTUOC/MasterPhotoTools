@@ -107,11 +107,17 @@ asked for.
 
 | Step | What | Size |
 |---|---|---|
-| **UI-1** | **The shell.** The window, not the page, is the frame: shell `height: 100vh`, each screen scrolls inside its own areas, and the navigation never moves. The sidebar becomes a 56 px icon-and-number rail; the status bar goes. A check asserts the navigation's position after scrolling every screen, at 1024–1920. | Small |
+| **UI-1** | **The shell.** The window, not the page, is the frame: shell `height: 100vh`, each screen scrolls inside its own areas, and the navigation never moves. The sidebar becomes a 56 px number-and-abbreviation rail; the status bar stays (28 px, and part of the design language). [Brief](../briefs/UI-1.md). A check asserts the navigation's position after scrolling every screen, at 1024–1920. | Small |
 | **UI-2** | **Edit's panel and image area.** No clipped control at 1024–1920: masks in two columns, HSL swatches wrapping, grading tabs fitting or scrolling, the wheel not cut. No spin arrows. Histogram collapsible and unpinned. The panel resizable between 320 and 560 px and remembered. The view toolbar on one row with a compact overflow. Pickers open as overlays. A check measures every control against the panel that clips it, as this review did. | Medium |
 | **UI-3** | **Looks and RAW in Edit.** The look picker groups Built-in looks, Film simulations and the LUT library; a film look applies as its LUT. RAW opens through the neutral development and exports at full size. | Medium |
 | UI-4 | **Split `Edit.vue`** into the screen, the panel and one component per section, with no change in behaviour. Optional; it makes UI-2 and later work cheaper and safer. It could go first if the owner prefers. | Medium |
 | UI-5 | Batch laid out in two columns, with the notice beside Run. | Small |
+
+**The owner's decisions (2026-11-23).**
+1. **Film looks in Edit as LUTs** (no grain or halation) **are enough.**
+2. **Split `Edit.vue` before UI-2.**
+
+**The order is** DV-17 → **UI-1 → UI-4 → UI-2 → UI-3 → UI-5**.
 
 DV-17 (Develop's preview) is already with agy and is consistent with UI-1. UI-1 goes after it, so the two
 do not edit the same screen at once.

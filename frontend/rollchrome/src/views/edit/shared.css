@@ -1,0 +1,56 @@
+.effects-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+}
+
+.effects-group {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-hair);
+  background: var(--bg-panel);
+}
+
+.auto-busy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--accent);
+}
+
+.auto-busy button {
+  min-height: 40px;
+  font-size: 12px;
+}
+
+.mask-note {
+  margin: 0;
+  font-family: var(--font-label);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.brush-tool__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.brush-tool__row button {
+  padding: 0 var(--space-1);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.effects-group-title {
+  font-family: var(--font-label);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}

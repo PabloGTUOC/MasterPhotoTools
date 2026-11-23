@@ -26,6 +26,12 @@ export interface EditContext {
   compareMode: Ref<'off' | 'side-by-side' | 'split'>;
   toggleEyedropper: () => void;
   isBwActive: ComputedRef<boolean> | Ref<boolean>;
+
+  // Presence section
+  resetPresence: () => void;
+  isReadOnly: Ref<boolean>;
+  onPresenceSliderInput: (prop: 'clarity' | 'texture' | 'dehaze', val: number) => void;
+  onPresenceSliderChange: (prop: 'clarity' | 'texture' | 'dehaze', val: number) => void;
 }
 
 export const EDIT_CONTEXT: InjectionKey<EditContext> = Symbol('edit');

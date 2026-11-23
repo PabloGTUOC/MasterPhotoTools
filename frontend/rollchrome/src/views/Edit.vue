@@ -14,6 +14,7 @@
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
 import { EDIT_CONTEXT } from './edit/context';
 import BasicSection from './edit/BasicSection.vue';
+import PresenceSection from './edit/PresenceSection.vue';
 import type {
   AdjustmentRecipe,
   AutoTarget,
@@ -4016,6 +4017,10 @@ provide(EDIT_CONTEXT, {
   compareMode,
   toggleEyedropper,
   isBwActive,
+  resetPresence,
+  isReadOnly,
+  onPresenceSliderInput,
+  onPresenceSliderChange,
 });
 </script>
 
@@ -4798,52 +4803,7 @@ provide(EDIT_CONTEXT, {
           <BasicSection />
 
           <!-- Presence (RP-8) -->
-          <CollapsibleSection
-            title="Presence"
-            test-id="section-presence"
-            v-show="!selectedMask"
-            :default-open="false"
-            @reset="resetPresence"
-          >
-            <div class="presence-panel" data-testid="presence-panel">
-              <AdjustmentSlider
-                label="Clarity"
-                :model-value="recipe.detail?.clarity ?? 0"
-                :min="-100"
-                :max="100"
-                :step="1"
-                :default-value="0"
-                :disabled="loading || isReadOnly"
-                test-id="presence-clarity"
-                @update:model-value="(v) => onPresenceSliderInput('clarity', v)"
-                @change="(v) => onPresenceSliderChange('clarity', v)"
-              />
-              <AdjustmentSlider
-                label="Texture"
-                :model-value="recipe.detail?.texture ?? 0"
-                :min="-100"
-                :max="100"
-                :step="1"
-                :default-value="0"
-                :disabled="loading || isReadOnly"
-                test-id="presence-texture"
-                @update:model-value="(v) => onPresenceSliderInput('texture', v)"
-                @change="(v) => onPresenceSliderChange('texture', v)"
-              />
-              <AdjustmentSlider
-                label="Dehaze"
-                :model-value="recipe.detail?.dehaze ?? 0"
-                :min="-100"
-                :max="100"
-                :step="1"
-                :default-value="0"
-                :disabled="loading || isReadOnly"
-                test-id="presence-dehaze"
-                @update:model-value="(v) => onPresenceSliderInput('dehaze', v)"
-                @change="(v) => onPresenceSliderChange('dehaze', v)"
-              />
-            </div>
-          </CollapsibleSection>
+          <PresenceSection />
 
           <!-- 1b. Masks (ED-20) -->
           <CollapsibleSection
@@ -8046,14 +8006,6 @@ provide(EDIT_CONTEXT, {
   font-size: 12px;
   color: var(--text-heading);
   padding: var(--space-1) 0;
-}
-
-/* Presence Section (RP-8) */
-.presence-panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2) 0;
 }
 
 /* Detail Section (RP-7) */

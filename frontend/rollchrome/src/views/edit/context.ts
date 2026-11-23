@@ -3,6 +3,7 @@ import type {
   AdjustmentRecipe,
   AutoTarget,
   BlackAndWhite,
+  ColorWheel as ColorWheelType,
   HslAdjustments,
   Mask,
   PointColour,
@@ -37,6 +38,13 @@ export interface HslBandDef {
   key: keyof HslAdjustments;
   label: string;
   hueDeg: number;
+}
+
+export type GradingWheelKey = 'shadows' | 'midtones' | 'highlights' | 'global';
+
+export interface GradingWheelDef {
+  key: GradingWheelKey;
+  label: string;
 }
 
 export interface EditContext {
@@ -113,6 +121,19 @@ export interface EditContext {
   onPointColourSliderInput: (prop: 'hue_shift' | 'saturation' | 'luminance' | 'range', val: number) => void;
   onPointColourSliderChange: (prop: 'hue_shift' | 'saturation' | 'luminance' | 'range', val: number) => void;
   deleteSelectedPoint: () => void;
+
+  // Colour Grading section
+  resetGrading: () => void;
+  GRADING_WHEELS: GradingWheelDef[];
+  selectedGradingWheel: Ref<GradingWheelKey>;
+  isGradingWheelModified: (key: GradingWheelKey) => boolean;
+  selectGradingWheel: (key: GradingWheelKey) => void;
+  currentGradingWheelDef: ComputedRef<GradingWheelDef>;
+  resetCurrentGradingWheel: () => void;
+  onGradingWheelInput: (val: ColorWheelType) => void;
+  onGradingWheelChange: (val: ColorWheelType) => void;
+  onGradingParamInput: (param: 'blending' | 'balance', val: number) => void;
+  onGradingParamChange: (param: 'blending' | 'balance', val: number) => void;
 }
 
 export const EDIT_CONTEXT: InjectionKey<EditContext> = Symbol('edit');

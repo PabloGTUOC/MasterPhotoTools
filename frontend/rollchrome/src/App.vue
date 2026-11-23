@@ -9,9 +9,9 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 
 const links = [
-  { to: '/', label: 'Develop', step: '01' },
-  { to: '/edit', label: 'Edit', step: '02' },
-  { to: '/batch', label: 'Batch', step: '03' },
+  { to: '/', label: 'Develop', abbr: 'DEV', step: '01' },
+  { to: '/edit', label: 'Edit', abbr: 'EDT', step: '02' },
+  { to: '/batch', label: 'Batch', abbr: 'BAT', step: '03' },
 ];
 
 /** The status bar's live clock (§5.8). */
@@ -31,14 +31,21 @@ onUnmounted(() => window.clearInterval(ticking));
 <template>
   <div class="shell crt-boot">
     <aside class="sidebar">
-      <div class="brand">
-        <span class="brand__name">ROLLCHROME</span>
-        <span class="brand__sub">// EDIT</span>
+      <div class="brand" title="Rollchrome">
+        <span class="brand__name">RC</span>
       </div>
 
       <nav>
-        <RouterLink v-for="link in links" :key="link.to" :to="link.to" class="nav-item">
-          <span class="nav-item__step">{{ link.step }}</span>{{ link.label }}
+        <RouterLink
+          v-for="link in links"
+          :key="link.to"
+          :to="link.to"
+          class="nav-item"
+          :aria-label="link.label"
+          :title="link.label"
+        >
+          <span class="nav-item__step">{{ link.step }}</span>
+          <span class="nav-item__label">{{ link.abbr }}</span>
         </RouterLink>
       </nav>
 
@@ -61,8 +68,9 @@ onUnmounted(() => window.clearInterval(ticking));
 <style scoped>
 .shell {
   display: grid;
-  grid-template-columns: 232px 1fr;
-  min-height: 100vh;
+  grid-template-columns: 56px minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* --- sidebar (§6.4): the roll list pattern, applied to tools ------------- */
@@ -70,16 +78,19 @@ onUnmounted(() => window.clearInterval(ticking));
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-4) var(--space-3);
+  width: 56px;
+  box-sizing: border-box;
+  padding: var(--space-2) 0;
   border-right: var(--border-hair);
   background: var(--bg-elevated);
 }
 
 .brand {
-  display: grid;
-  gap: 2px;
-  padding: var(--space-2) var(--space-2) var(--space-5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) 0 var(--space-4);
+  user-select: none;
 }
 .brand__name {
   font-family: var(--font-ui);
@@ -88,71 +99,84 @@ onUnmounted(() => window.clearInterval(ticking));
   letter-spacing: 0.08em;
   color: var(--text-heading);
 }
-.brand__sub {
-  font-family: var(--font-label);
-  font-size: 12px;
-  letter-spacing: 0.1em;
-  color: var(--text-disabled);
-}
 
 nav {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 1px;
 }
 
 .nav-item {
-  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 56px;
+  box-sizing: border-box;
+  padding: var(--space-1) 0;
   text-decoration: none;
-  font-family: var(--font-label);
-  font-size: 13px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: var(--text-disabled);
-  /* The active marker is a left border, so the label never moves as it
+  /* The active marker is a left border, so the tab never moves as it
      activates — a shifting nav is the fastest way to feel cheap. */
   border-left: 2px solid transparent;
-  transition: color var(--dur-fast) var(--ease);
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 .nav-item:hover {
   color: var(--text);
   background: var(--bg-panel);
 }
 
-/* Fixed width so the labels line up in a column rather than stepping in and
-   out by a character. Dimmer than the label, including on the active item:
-   the number is an index, the word is the thing. */
 .nav-item__step {
-  display: inline-block;
-  width: 3ch;
-  color: var(--text-disabled);
+  font-family: var(--font-display);
+  font-size: 20px;
+  line-height: 1.1;
+  color: inherit;
   text-shadow: none;
 }
+
+.nav-item__label {
+  font-family: var(--font-label);
+  font-size: 11px;
+  line-height: 1.1;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: inherit;
+  text-shadow: none;
+}
+
 .nav-item.router-link-exact-active {
   color: var(--accent);
   border-left-color: var(--accent);
   background: var(--bg-panel);
+}
+.nav-item.router-link-exact-active .nav-item__step {
+  color: var(--accent);
   text-shadow: var(--glow-phosphor);
+}
+.nav-item.router-link-exact-active .nav-item__label {
+  color: var(--accent);
+  text-shadow: none;
 }
 
 .spacer {
   flex: 1;
 }
 
-
 /* --- main column --------------------------------------------------------- */
 
 .main {
   display: grid;
   grid-template-rows: 1fr auto;
-  min-height: 100vh;
+  height: 100vh;
   min-width: 0;
 }
 
 .content {
-  padding: var(--space-5) var(--space-6) var(--space-7);
+  min-height: 0;
+  padding: var(--space-4) var(--space-5) var(--space-5);
   overflow-y: auto;
 }
-
 
 /* --- status bar (§5.8) ---------------------------------------------------- */
 

@@ -58,6 +58,7 @@ import type {
 } from '@host/api';
 import { desktop } from '@host/api';
 import AdjustmentSlider from '../components/AdjustmentSlider.vue';
+import CollapsibleSection from '../components/CollapsibleSection.vue';
 import CropOverlay from '../components/CropOverlay.vue';
 import Histogram, { type HistogramMode } from '../components/Histogram.vue';
 import MaskOverlay, { type OverlayMask } from '../components/MaskOverlay.vue';
@@ -152,6 +153,102 @@ const frameHeight = ref(854);
 const baseProxyWidth = ref(1280);
 const baseProxyHeight = ref(854);
 let resizeObserver: ResizeObserver | null = null;
+
+// Workspace sizing & divider (UI-2)
+const DEFAULT_PANEL_WIDTH = 380;
+const MIN_PANEL_WIDTH = 320;
+const MAX_PANEL_WIDTH = 560;
+const STORAGE_KEY_PANEL_WIDTH = 'rollchrome.edit.panelWidth';
+
+function loadPanelWidth(): number {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_PANEL_WIDTH);
+    if (raw !== null) {
+      const val = Number(raw);
+      if (Number.isFinite(val) && val >= MIN_PANEL_WIDTH && val <= MAX_PANEL_WIDTH) {
+        return Math.round(val);
+      }
+    }
+  } catch {
+    // fallback to default
+  }
+  return DEFAULT_PANEL_WIDTH;
+}
+
+function savePanelWidth(width: number) {
+  try {
+    localStorage.setItem(STORAGE_KEY_PANEL_WIDTH, String(Math.round(width)));
+  } catch {
+    // ignore
+  }
+}
+
+const panelWidth = ref<number>(loadPanelWidth());
+
+function clampPanelWidth(width: number): number {
+  return Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, Math.round(width)));
+}
+
+function setPanelWidth(width: number) {
+  const clamped = clampPanelWidth(width);
+  panelWidth.value = clamped;
+  savePanelWidth(clamped);
+}
+
+let isDraggingDivider = false;
+let dividerStartX = 0;
+let dividerStartWidth = DEFAULT_PANEL_WIDTH;
+
+function onEditDividerPointerDown(e: PointerEvent) {
+  isDraggingDivider = true;
+  dividerStartX = e.clientX;
+  dividerStartWidth = panelWidth.value;
+  try {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  } catch {
+    // fallback
+  }
+}
+
+function onEditDividerPointerMove(e: PointerEvent) {
+  if (!isDraggingDivider) return;
+  const delta = e.clientX - dividerStartX;
+  // Panel is on right: dragging left (negative delta) widens panel, dragging right narrows panel
+  setPanelWidth(dividerStartWidth - delta);
+}
+
+function onEditDividerPointerUp(e: PointerEvent) {
+  if (isDraggingDivider) {
+    isDraggingDivider = false;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function onEditDividerKeyDown(e: KeyboardEvent) {
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    setPanelWidth(panelWidth.value + 40);
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    setPanelWidth(panelWidth.value - 40);
+  }
+}
+
+function onWindowPointerMove(e: PointerEvent) {
+  if (!isDraggingDivider) return;
+  const delta = e.clientX - dividerStartX;
+  setPanelWidth(dividerStartWidth - delta);
+}
+
+function onWindowPointerUp() {
+  if (isDraggingDivider) {
+    isDraggingDivider = false;
+  }
+}
 
 // Roots and listing for PathField
 const { roots, failure: rootsError } = useRoots();
@@ -3968,6 +4065,8 @@ onMounted(() => {
   refreshPresets();
   window.addEventListener('keydown', handleKeyDown);
   window.addEventListener('keyup', handleKeyUp);
+  window.addEventListener('pointermove', onWindowPointerMove);
+  window.addEventListener('pointerup', onWindowPointerUp);
 
   if (viewportContainerRef.value) {
     resizeObserver = new ResizeObserver((entries) => {
@@ -3986,6 +4085,8 @@ onUnmounted(() => {
   window.clearTimeout(noticeTimer);
   window.removeEventListener('keydown', handleKeyDown);
   window.removeEventListener('keyup', handleKeyUp);
+  window.removeEventListener('pointermove', onWindowPointerMove);
+  window.removeEventListener('pointerup', onWindowPointerUp);
 
   if (resizeObserver) {
     resizeObserver.disconnect();
@@ -4157,6 +4258,7 @@ provide(EDIT_CONTEXT, {
         :list="listRoots"
         placeholder="/path/to/image.jpg"
         :selectable="['jpg', 'jpeg', 'tif', 'tiff']"
+        :overlay="true"
       />
 
       <div v-if="loading" class="edit-screen__loading" data-testid="edit-loading">
@@ -4173,8 +4275,8 @@ provide(EDIT_CONTEXT, {
       </div>
     </div>
 
-    <!-- Workspace: canvas viewport on the left, adjustment panel on the right -->
-    <div class="edit-screen__workspace">
+    <!-- Workspace: canvas viewport on the left, divider, adjustment panel on the right -->
+    <div class="edit-screen__workspace" :style="{ '--panel-width': `${panelWidth}px` }">
       <!-- Photograph Canvas Viewport -->
       <div class="canvas-viewport" data-testid="canvas-viewport">
         <div
@@ -4352,11 +4454,13 @@ provide(EDIT_CONTEXT, {
             class="secondary canvas-viewport__before-btn"
             data-testid="before-after-btn"
             :class="{ active: isBefore }"
+            title="Before / After (Hold or \)"
+            aria-label="Before / After (Hold or \)"
             @pointerdown="setBefore(true)"
             @pointerup="setBefore(false)"
             @pointerleave="setBefore(false)"
           >
-            {{ isBefore ? 'Before (Original)' : 'Before / After (Hold or \\)' }}
+            {{ isBefore ? 'Before' : 'Before ⁄ After' }}
           </button>
           <button
             type="button"
@@ -4415,7 +4519,8 @@ provide(EDIT_CONTEXT, {
             data-testid="clip-shadow-btn"
             :class="{ active: showShadowClip }"
             :aria-pressed="showShadowClip"
-            title="Show crushed shadows in blue"
+            title="Shadow clipping"
+            aria-label="Shadow clipping"
             @click="showShadowClip = !showShadowClip"
           >
             <span
@@ -4423,7 +4528,7 @@ provide(EDIT_CONTEXT, {
               :class="{ lit: (histogram?.shadowClipped ?? 0) > 0 }"
               data-testid="clip-shadow-indicator"
             ></span>
-            Shadow clipping
+            Shadows
           </button>
           <button
             type="button"
@@ -4431,7 +4536,8 @@ provide(EDIT_CONTEXT, {
             data-testid="clip-highlight-btn"
             :class="{ active: showHighlightClip }"
             :aria-pressed="showHighlightClip"
-            title="Show blown highlights in red"
+            title="Highlight clipping"
+            aria-label="Highlight clipping"
             @click="showHighlightClip = !showHighlightClip"
           >
             <span
@@ -4439,10 +4545,28 @@ provide(EDIT_CONTEXT, {
               :class="{ lit: (histogram?.highlightClipped ?? 0) > 0 }"
               data-testid="clip-highlight-indicator"
             ></span>
-            Highlight clipping
+            Highlights
           </button>
         </div>
       </div>
+
+      <!-- Resizable divider (UI-2) -->
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize adjustments panel"
+        tabindex="0"
+        data-testid="edit-divider"
+        class="edit-divider"
+        :aria-valuenow="panelWidth"
+        aria-valuemin="320"
+        aria-valuemax="560"
+        @pointerdown="onEditDividerPointerDown"
+        @pointermove="onEditDividerPointerMove"
+        @pointerup="onEditDividerPointerUp"
+        @pointercancel="onEditDividerPointerUp"
+        @keydown="onEditDividerKeyDown"
+      />
 
       <!-- Side panel: Parametric adjustments & LUT grading -->
       <aside class="adjustment-panel">
@@ -4962,180 +5086,190 @@ provide(EDIT_CONTEXT, {
 
           <!-- 10. Versions (RP-6) -->
           <VersionsSection />
+
+          <!-- Export Settings Collapsible Section (UI-2) -->
+          <CollapsibleSection
+            title="Export"
+            test-id="section-export"
+            :default-open="true"
+            :show-reset="false"
+          >
+            <div class="adjustment-panel__export-settings">
+              <PathField
+                v-model="exportDir"
+                label="Destination folder"
+                :roots="roots"
+                :roots-error="rootsError"
+                :list="listRoots"
+                placeholder="/path/to/output_folder"
+                :overlay="true"
+              />
+
+              <!-- Format selection -->
+              <div class="adjustment-panel__export-row">
+                <label class="adjustment-panel__export-label">Format</label>
+                <select
+                  v-model="exportState.formatKind"
+                  class="adjustment-panel__export-select"
+                  data-testid="export-format-select"
+                >
+                  <option value="AsSource">As source</option>
+                  <option value="Jpeg">JPEG</option>
+                  <option value="Tiff">TIFF</option>
+                  <option value="Png">PNG</option>
+                  <option value="Webp">WebP</option>
+                  <option value="Avif">AVIF</option>
+                </select>
+              </div>
+
+              <!-- Quality for JPEG -->
+              <div v-if="exportState.formatKind === 'Jpeg'" class="adjustment-panel__export-row">
+                <label class="adjustment-panel__export-label">Quality (1–100)</label>
+                <input
+                  v-model.number="exportState.jpegQuality"
+                  type="number"
+                  min="1"
+                  max="100"
+                  class="adjustment-panel__export-input"
+                  data-testid="export-quality-input"
+                />
+              </div>
+
+              <!-- Quality for AVIF -->
+              <div v-if="exportState.formatKind === 'Avif'" class="adjustment-panel__export-row">
+                <label class="adjustment-panel__export-label">Quality (1–100)</label>
+                <input
+                  v-model.number="exportState.avifQuality"
+                  type="number"
+                  min="1"
+                  max="100"
+                  class="adjustment-panel__export-input"
+                  data-testid="export-quality-input"
+                />
+              </div>
+
+              <!-- Bits for TIFF -->
+              <div v-if="exportState.formatKind === 'Tiff'" class="adjustment-panel__export-row">
+                <label class="adjustment-panel__export-label">Bit depth</label>
+                <select
+                  v-model.number="exportState.tiffBits"
+                  class="adjustment-panel__export-select"
+                  data-testid="export-bits-select"
+                >
+                  <option :value="8">8-bit</option>
+                  <option :value="16">16-bit</option>
+                </select>
+              </div>
+
+              <!-- Bits for PNG -->
+              <div v-if="exportState.formatKind === 'Png'" class="adjustment-panel__export-row">
+                <label class="adjustment-panel__export-label">Bit depth</label>
+                <select
+                  v-model.number="exportState.pngBits"
+                  class="adjustment-panel__export-select"
+                  data-testid="export-bits-select"
+                >
+                  <option :value="8">8-bit</option>
+                  <option :value="16">16-bit</option>
+                </select>
+              </div>
+
+              <!-- WebP notice -->
+              <div v-if="exportState.formatKind === 'Webp'" class="adjustment-panel__export-notice" data-testid="export-webp-notice">
+                WebP is lossless.
+              </div>
+
+              <!-- Size options -->
+              <div class="adjustment-panel__export-row">
+                <label class="adjustment-panel__export-label">Size</label>
+                <select
+                  v-model="exportState.resizeKind"
+                  class="adjustment-panel__export-select"
+                  data-testid="export-size-select"
+                >
+                  <option value="Full">Full</option>
+                  <option value="LongEdge">Long edge</option>
+                  <option value="Megapixels">Megapixels</option>
+                </select>
+              </div>
+
+              <!-- Numeric input for LongEdge or Megapixels -->
+              <div v-if="exportState.resizeKind !== 'Full'" class="adjustment-panel__export-row">
+                <label class="adjustment-panel__export-label">
+                  {{ exportState.resizeKind === 'LongEdge' ? 'Long edge (px)' : 'Megapixels (MP)' }}
+                </label>
+                <input
+                  v-model="exportState.resizeValue"
+                  type="number"
+                  min="1"
+                  class="adjustment-panel__export-input"
+                  data-testid="export-size-input"
+                />
+              </div>
+
+              <!-- Output sharpening -->
+              <div class="adjustment-panel__export-row">
+                <label class="adjustment-panel__export-label">Output sharpening</label>
+                <select
+                  v-model="exportState.outputSharpening"
+                  class="adjustment-panel__export-select"
+                  data-testid="export-sharpening-select"
+                >
+                  <option value="Off">Off</option>
+                  <option value="Screen">Screen</option>
+                  <option value="Print">Print</option>
+                </select>
+              </div>
+
+              <!-- Name template -->
+              <div class="adjustment-panel__export-row">
+                <label class="adjustment-panel__export-label">File name template</label>
+                <input
+                  v-model="exportState.nameTemplate"
+                  type="text"
+                  placeholder="{name}{edit}"
+                  class="adjustment-panel__export-input"
+                  data-testid="export-template-input"
+                />
+                <span class="adjustment-panel__export-tokens" data-testid="export-template-tokens">
+                  Tokens: {name}, {version}, {date}, {edit}
+                </span>
+              </div>
+
+              <!-- Live example -->
+              <div class="adjustment-panel__export-example" data-testid="export-name-example">
+                Example: {{ liveExampleName }}
+              </div>
+
+              <!-- Metadata policy -->
+              <div class="adjustment-panel__export-row">
+                <label class="adjustment-panel__export-label">Metadata</label>
+                <select
+                  v-model="exportState.metadataPolicy"
+                  class="adjustment-panel__export-select"
+                  data-testid="export-metadata-select"
+                >
+                  <option value="All">All</option>
+                  <option value="NoLocation">No location</option>
+                  <option value="None">None</option>
+                </select>
+              </div>
+
+              <!-- Size validation error message -->
+              <div v-if="!isResizeValid" class="adjustment-panel__export-size-error" data-testid="export-size-error">
+                {{ resizeInvalidReason }}
+              </div>
+            </div>
+          </CollapsibleSection>
         </div>
 
-        <!-- Save Status Line -->
-        <div class="adjustment-panel__status" data-testid="save-status">
-          <span v-if="saveStatus" :class="{ error: saveStatus.startsWith('Couldn\'t') || saveStatus.startsWith('Autosave disabled') }">
-            {{ saveStatus }}
-          </span>
-        </div>
-
-        <!-- Export Render Section -->
-        <div class="adjustment-panel__export">
-          <span class="adjustment-panel__group-title">Export Render</span>
-          <PathField
-            v-model="exportDir"
-            label="Destination folder"
-            :roots="roots"
-            :roots-error="rootsError"
-            :list="listRoots"
-            placeholder="/path/to/output_folder"
-          />
-
-          <!-- Format selection -->
-          <div class="adjustment-panel__export-row">
-            <label class="adjustment-panel__export-label">Format</label>
-            <select
-              v-model="exportState.formatKind"
-              class="adjustment-panel__export-select"
-              data-testid="export-format-select"
-            >
-              <option value="AsSource">As source</option>
-              <option value="Jpeg">JPEG</option>
-              <option value="Tiff">TIFF</option>
-              <option value="Png">PNG</option>
-              <option value="Webp">WebP</option>
-              <option value="Avif">AVIF</option>
-            </select>
-          </div>
-
-          <!-- Quality for JPEG -->
-          <div v-if="exportState.formatKind === 'Jpeg'" class="adjustment-panel__export-row">
-            <label class="adjustment-panel__export-label">Quality (1–100)</label>
-            <input
-              v-model.number="exportState.jpegQuality"
-              type="number"
-              min="1"
-              max="100"
-              class="adjustment-panel__export-input"
-              data-testid="export-quality-input"
-            />
-          </div>
-
-          <!-- Quality for AVIF -->
-          <div v-if="exportState.formatKind === 'Avif'" class="adjustment-panel__export-row">
-            <label class="adjustment-panel__export-label">Quality (1–100)</label>
-            <input
-              v-model.number="exportState.avifQuality"
-              type="number"
-              min="1"
-              max="100"
-              class="adjustment-panel__export-input"
-              data-testid="export-quality-input"
-            />
-          </div>
-
-          <!-- Bits for TIFF -->
-          <div v-if="exportState.formatKind === 'Tiff'" class="adjustment-panel__export-row">
-            <label class="adjustment-panel__export-label">Bit depth</label>
-            <select
-              v-model.number="exportState.tiffBits"
-              class="adjustment-panel__export-select"
-              data-testid="export-bits-select"
-            >
-              <option :value="8">8-bit</option>
-              <option :value="16">16-bit</option>
-            </select>
-          </div>
-
-          <!-- Bits for PNG -->
-          <div v-if="exportState.formatKind === 'Png'" class="adjustment-panel__export-row">
-            <label class="adjustment-panel__export-label">Bit depth</label>
-            <select
-              v-model.number="exportState.pngBits"
-              class="adjustment-panel__export-select"
-              data-testid="export-bits-select"
-            >
-              <option :value="8">8-bit</option>
-              <option :value="16">16-bit</option>
-            </select>
-          </div>
-
-          <!-- WebP notice -->
-          <div v-if="exportState.formatKind === 'Webp'" class="adjustment-panel__export-notice" data-testid="export-webp-notice">
-            WebP is lossless.
-          </div>
-
-          <!-- Size options -->
-          <div class="adjustment-panel__export-row">
-            <label class="adjustment-panel__export-label">Size</label>
-            <select
-              v-model="exportState.resizeKind"
-              class="adjustment-panel__export-select"
-              data-testid="export-size-select"
-            >
-              <option value="Full">Full</option>
-              <option value="LongEdge">Long edge</option>
-              <option value="Megapixels">Megapixels</option>
-            </select>
-          </div>
-
-          <!-- Numeric input for LongEdge or Megapixels -->
-          <div v-if="exportState.resizeKind !== 'Full'" class="adjustment-panel__export-row">
-            <label class="adjustment-panel__export-label">
-              {{ exportState.resizeKind === 'LongEdge' ? 'Long edge (px)' : 'Megapixels (MP)' }}
-            </label>
-            <input
-              v-model="exportState.resizeValue"
-              type="number"
-              min="1"
-              class="adjustment-panel__export-input"
-              data-testid="export-size-input"
-            />
-          </div>
-
-          <!-- Output sharpening -->
-          <div class="adjustment-panel__export-row">
-            <label class="adjustment-panel__export-label">Output sharpening</label>
-            <select
-              v-model="exportState.outputSharpening"
-              class="adjustment-panel__export-select"
-              data-testid="export-sharpening-select"
-            >
-              <option value="Off">Off</option>
-              <option value="Screen">Screen</option>
-              <option value="Print">Print</option>
-            </select>
-          </div>
-
-          <!-- Name template -->
-          <div class="adjustment-panel__export-row">
-            <label class="adjustment-panel__export-label">File name template</label>
-            <input
-              v-model="exportState.nameTemplate"
-              type="text"
-              placeholder="{name}{edit}"
-              class="adjustment-panel__export-input"
-              data-testid="export-template-input"
-            />
-            <span class="adjustment-panel__export-tokens" data-testid="export-template-tokens">
-              Tokens: {name}, {version}, {date}, {edit}
+        <!-- Fixed footer (UI-2) -->
+        <footer class="adjustment-panel__footer">
+          <!-- Save Status Line -->
+          <div class="adjustment-panel__status" data-testid="save-status">
+            <span v-if="saveStatus" :class="{ error: saveStatus.startsWith('Couldn\'t') || saveStatus.startsWith('Autosave disabled') }">
+              {{ saveStatus }}
             </span>
-          </div>
-
-          <!-- Live example -->
-          <div class="adjustment-panel__export-example" data-testid="export-name-example">
-            Example: {{ liveExampleName }}
-          </div>
-
-          <!-- Metadata policy -->
-          <div class="adjustment-panel__export-row">
-            <label class="adjustment-panel__export-label">Metadata</label>
-            <select
-              v-model="exportState.metadataPolicy"
-              class="adjustment-panel__export-select"
-              data-testid="export-metadata-select"
-            >
-              <option value="All">All</option>
-              <option value="NoLocation">No location</option>
-              <option value="None">None</option>
-            </select>
-          </div>
-
-          <!-- Size validation error message -->
-          <div v-if="!isResizeValid" class="adjustment-panel__export-size-error" data-testid="export-size-error">
-            {{ resizeInvalidReason }}
           </div>
 
           <div class="adjustment-panel__export-actions">
@@ -5171,7 +5305,7 @@ provide(EDIT_CONTEXT, {
           <div v-if="exportError" class="error adjustment-panel__export-error" data-testid="export-error">
             {{ exportError }}
           </div>
-        </div>
+        </footer>
       </aside>
     </div>
     <div v-if="notice" class="edit-notice" role="status" data-testid="edit-notice">
@@ -5271,10 +5405,36 @@ provide(EDIT_CONTEXT, {
 
 .edit-screen__workspace {
   display: grid;
-  grid-template-columns: 1fr 340px;
-  gap: var(--space-4);
-  min-height: 540px;
+  grid-template-columns: minmax(0, 1fr) 12px var(--panel-width, 380px);
+  column-gap: 0;
+  min-height: 0;
   height: 100%;
+}
+
+.edit-divider {
+  width: 12px;
+  cursor: col-resize;
+  align-self: stretch;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  user-select: none;
+  touch-action: none;
+  outline: none;
+}
+
+.edit-divider::after {
+  content: '';
+  width: 1px;
+  height: 100%;
+  background: var(--grid);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.edit-divider:hover::after,
+.edit-divider:focus::after,
+.edit-divider:focus-visible::after {
+  background: var(--accent);
 }
 
 /* --- Canvas Viewport (§1.1 isolated surround above scanlines) ------------ */
@@ -5284,7 +5444,7 @@ provide(EDIT_CONTEXT, {
   grid-template-rows: 1fr auto;
   background: var(--canvas-surround);
   border: var(--border-hair);
-  min-height: 480px;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -5423,9 +5583,12 @@ provide(EDIT_CONTEXT, {
 
 .canvas-viewport__view-btn {
   min-height: 40px;
+  height: 40px;
   min-width: 40px;
-  padding: var(--space-2) var(--space-3);
-  font-size: 12px;
+  padding: 0 var(--space-2);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .canvas-viewport__view-btn.active {
@@ -5438,10 +5601,11 @@ provide(EDIT_CONTEXT, {
   align-items: center;
   justify-content: center;
   min-height: 40px;
-  min-width: 48px;
-  padding: 0 var(--space-2);
+  height: 40px;
+  min-width: 40px;
+  padding: 0 var(--space-1);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
 }
 
@@ -5456,15 +5620,28 @@ provide(EDIT_CONTEXT, {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-2);
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
   background: rgba(10, 10, 15, 0.6);
+}
+
+.canvas-viewport__overlay button {
+  min-height: 40px;
+  height: 40px;
+  padding: 0 var(--space-2);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .canvas-viewport__before-btn {
   min-height: 40px;
-  padding: var(--space-2) var(--space-4);
-  font-size: 12px;
+  height: 40px;
+  padding: 0 var(--space-2);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .canvas-viewport__before-btn.active {
@@ -5481,10 +5658,13 @@ provide(EDIT_CONTEXT, {
 .canvas-viewport__clip-btn {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   min-height: 40px;
-  padding: var(--space-2) var(--space-3);
-  font-size: 12px;
+  height: 40px;
+  padding: 0 var(--space-2);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .canvas-viewport__clip-btn.active {
@@ -5521,7 +5701,8 @@ provide(EDIT_CONTEXT, {
   background: var(--bg-elevated);
   border: var(--border-hair);
   overflow-y: auto;
-  max-height: calc(100vh - 180px);
+  min-height: 0;
+  height: 100%;
 }
 
 .adjustment-panel__header {
@@ -5535,9 +5716,35 @@ provide(EDIT_CONTEXT, {
  * there when Curves or Colour is being adjusted. The negative offset cancels the
  * panel's padding, so nothing shows through above it. */
 .adjustment-panel__histogram {
+  position: relative;
+}
+
+.adjustment-panel__histogram.is-open {
   position: sticky;
   top: calc(-1 * var(--space-3));
   z-index: var(--z-content);
+}
+
+.adjustment-panel__footer {
+  position: sticky;
+  bottom: calc(-1 * var(--space-3));
+  margin-top: auto;
+  margin-left: calc(-1 * var(--space-3));
+  margin-right: calc(-1 * var(--space-3));
+  margin-bottom: calc(-1 * var(--space-3));
+  padding: var(--space-3);
+  background: var(--bg-elevated);
+  border-top: var(--border-hair);
+  z-index: var(--z-content);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.adjustment-panel__export-settings {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
 }
 
 .adjustment-panel__title {
@@ -5797,7 +6004,7 @@ provide(EDIT_CONTEXT, {
 
 .component-add-menu {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: var(--space-1);
 }
 

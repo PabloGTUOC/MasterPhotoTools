@@ -23,7 +23,8 @@
     "check:local-detail": "node scripts/check-local-detail.mjs",
     "check:object": "node scripts/check-object.mjs",
     "check:people": "node scripts/check-people.mjs",
-    "check:shell": "node scripts/check-shell.mjs"
+    "check:shell": "node scripts/check-shell.mjs",
+    "check:edit-layout": "node scripts/check-edit-layout.mjs"
   },
   "dependencies": {
     "@phototools/shared": "file:../shared",

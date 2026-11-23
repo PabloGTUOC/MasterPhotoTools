@@ -125,7 +125,7 @@ const {
 
 .grading-tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
   gap: var(--space-1);
 }
 
@@ -181,6 +181,8 @@ const {
   gap: var(--space-2);
   padding: var(--space-2) 0;
   width: 100%;
+  max-width: 240px;
+  height: auto;
 }
 
 .grading-wheel-header {

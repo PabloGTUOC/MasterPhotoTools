@@ -10,49 +10,84 @@
  * Transport-free, like everything in `components/`: `roots` and `list` arrive
  * as props from a view that has a client.
  */
-import { ref } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import FolderPicker from './FolderPicker.vue';
 import type { BrowserEntry } from '@phototools/shared';
 
-const props = defineProps<{
-  modelValue: string;
-  label: string;
-  roots: string[];
-  /** Why `roots` could not be had, if asking failed; see FolderPicker. */
-  rootsError?: string | null;
-  list: (path: string) => Promise<BrowserEntry[]>;
-  placeholder?: string;
-  hint?: string;
-  chooseLabel?: string;
-  /**
-   * The value names a file, not a folder.
-   *
-   * A picker can only choose directories, so choosing one here replaces the
-   * directory and keeps the file name that was already there. Typing is
-   * untouched — only the picker's result is rewritten.
-   */
-  keepFileName?: boolean;
-  /**
-   * File extensions, without the dot, that the picker may choose directly.
-   *
-   * With these, choosing a file *is* the answer and `keepFileName` never comes
-   * into it. Without them the picker offers folders only, which is right for an
-   * output path that does not exist yet.
-   */
-  selectable?: string[];
-  /**
-   * The name to use when `keepFileName` is set and the field is still empty.
-   *
-   * Without it, choosing a folder into an empty file field yields the folder
-   * itself, and the tool is then asked to write its output over a directory —
-   * which fails at the filesystem with "Is a directory", far from the cause.
-   */
-  fileNameFallback?: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    modelValue: string;
+    label: string;
+    roots: string[];
+    /** Why `roots` could not be had, if asking failed; see FolderPicker. */
+    rootsError?: string | null;
+    list: (path: string) => Promise<BrowserEntry[]>;
+    placeholder?: string;
+    hint?: string;
+    chooseLabel?: string;
+    /**
+     * The value names a file, not a folder.
+     *
+     * A picker can only choose directories, so choosing one here replaces the
+     * directory and keeps the file name that was already there. Typing is
+     * untouched — only the picker's result is rewritten.
+     */
+    keepFileName?: boolean;
+    /**
+     * File extensions, without the dot, that the picker may choose directly.
+     *
+     * With these, choosing a file *is* the answer and `keepFileName` never comes
+     * into it. Without them the picker offers folders only, which is right for an
+     * output path that does not exist yet.
+     */
+    selectable?: string[];
+    /**
+     * The name to use when `keepFileName` is set and the field is still empty.
+     *
+     * Without it, choosing a folder into an empty file field yields the folder
+     * itself, and the tool is then asked to write its output over a directory —
+     * which fails at the filesystem with "Is a directory", far from the cause.
+     */
+    fileNameFallback?: string;
+    /**
+     * When true, FolderPicker opens in an absolutely positioned popover below the field
+     * rather than pushing the layout.
+     */
+    overlay?: boolean;
+  }>(),
+  {
+    overlay: false,
+  },
+);
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 
 const picking = ref(false);
+const fieldRef = ref<HTMLElement | null>(null);
+
+function onWindowKeyDown(e: KeyboardEvent) {
+  if (props.overlay && picking.value && e.key === 'Escape') {
+    e.preventDefault();
+    picking.value = false;
+  }
+}
+
+function onWindowPointerDown(e: MouseEvent | PointerEvent) {
+  if (!props.overlay || !picking.value) return;
+  if (fieldRef.value && !fieldRef.value.contains(e.target as Node)) {
+    picking.value = false;
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onWindowKeyDown);
+  window.addEventListener('pointerdown', onWindowPointerDown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onWindowKeyDown);
+  window.removeEventListener('pointerdown', onWindowPointerDown);
+});
 
 /** Whether the picker handed back one of the file types this field accepts. */
 function isChosenFile(path: string): boolean {
@@ -80,7 +115,7 @@ function choose(path: string) {
 </script>
 
 <template>
-  <div class="path-field">
+  <div ref="fieldRef" class="path-field" :class="{ 'path-field--overlay': props.overlay }">
     <label class="field">
       <span>{{ props.label }}</span>
       <div class="row">
@@ -104,16 +139,21 @@ function choose(path: string) {
       <small v-if="props.hint" class="muted">{{ props.hint }}</small>
     </label>
 
-    <FolderPicker
+    <div
       v-if="picking"
-      :roots="props.roots"
-      :roots-error="props.rootsError"
-      :list="props.list"
-      :choose-label="props.chooseLabel"
-      :selectable="props.selectable"
-      @choose="choose"
-      @cancel="picking = false"
-    />
+      class="path-field__picker-wrap"
+      :class="{ 'path-field__popover': props.overlay }"
+    >
+      <FolderPicker
+        :roots="props.roots"
+        :roots-error="props.rootsError"
+        :list="props.list"
+        :choose-label="props.chooseLabel"
+        :selectable="props.selectable"
+        @choose="choose"
+        @cancel="picking = false"
+      />
+    </div>
   </div>
 </template>
 
@@ -121,6 +161,21 @@ function choose(path: string) {
 .path-field {
   display: grid;
   gap: 8px;
+}
+.path-field--overlay {
+  position: relative;
+}
+.path-field__popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  max-height: 60vh;
+  overflow-y: auto;
+  z-index: var(--z-modal);
+  background: var(--bg-elevated);
+  border: var(--border-hair);
+  box-sizing: border-box;
 }
 .row {
   display: flex;

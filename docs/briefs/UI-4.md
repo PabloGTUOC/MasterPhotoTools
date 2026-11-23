@@ -135,7 +135,97 @@ Commit on `ui-4` with imperative subjects under 72 characters and no model name 
 
 ## Report
 
-*Written by the implementer.*
+### Implementation Summary
+
+All thirteen adjustment sections were extracted from `frontend/rollchrome/src/views/Edit.vue` into individual components under `frontend/rollchrome/src/views/edit/` in the exact table order specified by the brief. Shared reactive state and handlers are provided via `EDIT_CONTEXT` in `context.ts`. Shared CSS rules across sections were placed into `src/views/edit/shared.css`.
+
+Each section was verified with `npm --prefix frontend/rollchrome run typecheck`, `npm --prefix frontend/rollchrome run check:edit`, and section-specific test suites, followed by a dedicated commit on `ui-4`:
+
+1. **Basic** (`BasicSection.vue`): Commit `e6dd487` (*"Move Edit's Basic section into its own file"*).
+2. **Presence** (`PresenceSection.vue`): Commit `ce8f036` (*"Move Edit's Presence section into its own file"*).
+3. **Masks** (`MasksSection.vue`): Commit `927e450` (*"Move Edit's Masks section into its own file"*). Passed `check:masks` (13/13).
+4. **Tone Curve** (`ToneCurveSection.vue`): Commit `468801d` (*"Move Edit's Tone Curve section into its own file"*).
+5. **Colour / HSL** (`HslSection.vue`): Commit `f604e8d` (*"Move Edit's Colour / HSL section into its own file"*). Passed `check:colour` (11/11).
+6. **Colour Grading** (`ColourGradingSection.vue`): Commit `2b4ad39` (*"Move Edit's Colour Grading section into its own file"*). Passed `check:colour` (11/11).
+7. **Look** (`LookSection.vue`): Commit `920c22b` (*"Move Edit's Look section into its own file"*).
+8. **Detail** (`DetailSection.vue`): Commit `6abd908` (*"Move Edit's Detail section into its own file"*). Passed `check:detail` (13/13).
+9. **Geometry** (`GeometrySection.vue`): Commit `3cb910e` (*"Move Edit's Geometry section into its own file"*).
+10. **Effects** (`EffectsSection.vue`): Commit `f58de66` (*"Move Edit's Effects section into its own file"*).
+11. **History** (`HistorySection.vue`): Commit `5cfe557` (*"Move Edit's History section into its own file"*). Passed `check:history` (16/16).
+12. **Snapshots** (`SnapshotsSection.vue`): Commit `b6d4df7` (*"Move Edit's Snapshots section into its own file"*). Passed `check:history` (16/16).
+13. **Versions** (`VersionsSection.vue`): Commit `9f4e493` (*"Move Edit's Versions section into its own file"*). Passed `check:versions` (14/14).
+
+### Deviations
+
+None.
+
+### Rules Kept in Two Places / Shared Styles
+
+- `shared.css` (`src/views/edit/shared.css`): Holds rules that match elements across multiple sections or inside `Edit.vue`'s mask takeover panel:
+  - `.effects-panel`, `.effects-group`, `.effects-group-title`: Shared between `EffectsSection.vue`, `MasksSection.vue`, and `Edit.vue`.
+  - `.auto-busy`: Shared between `BasicSection.vue` and `MasksSection.vue`.
+  - `.brush-tool__row`, `.mask-note`: Shared between `MasksSection.vue` and `Edit.vue`.
+- Unused component imports in `Edit.vue` (`JobProgress`, `CurveEditor`, `ColorWheel`, `LutPicker`, `CollapsibleSection`) were removed from `Edit.vue` as their sections were extracted to satisfy `vue-tsc`'s `TS6133` unused-variable check.
+
+### Gate Output
+
+Every command in the full gate list was executed in the foreground once at completion:
+
+#### Backend Gates
+- `cargo fmt --all --check`: clean exit 0, no formatting errors.
+- `cargo clippy --workspace --all-targets -- -D warnings`: `Finished dev profile [unoptimized + debuginfo] target(s) in 1.25s`, 0 warnings, 0 errors.
+- `cargo build --workspace`: `Finished dev profile [unoptimized + debuginfo] target(s) in 0.66s`, 0 errors.
+- `cargo test --workspace`: **1205 passing (5 ignored), 0 failed**.
+- `cargo test -p phototools-core`: **546 passing, 0 failed**.
+- `cargo test -p rollchrome-core`: **523 passing (0 ignored), 0 failed**.
+- `cargo test -p rollchrome-core --features film`: **544 passing (3 ignored), 0 failed**.
+- `cargo test -p phototools-desktop`: **26 passing, 0 failed**.
+- `cargo test -p rollchrome-desktop`: **28 passing, 0 failed**.
+- `cargo test -p rollchrome-cli`: **8 passing, 0 failed**.
+
+#### Frontend Gates
+- `npm --prefix frontend/shared run build`: clean exit 0.
+- `npm --prefix frontend/web run typecheck`: clean exit 0.
+- `npm --prefix frontend/web run build`: clean exit 0 (`built in 1.06s`).
+- `npm --prefix frontend/web run check:transport`: `transport check: 23 files, no view reaches the network directly`.
+- `npm --prefix frontend/web run check:layout`: `All 10 routes clean at 390x844. Screenshots in layout-proof/`.
+- `npm --prefix frontend/web run check:ingest`: `ingest check: 400 shots render responsively` (first paint: 578 ms, DOM rows: 29 of 400, filter: 7.2 ms, scroll: 13.8 ms/frame).
+- `npm --prefix frontend/desktop run typecheck`: clean exit 0.
+- `npm --prefix frontend/desktop run build`: clean exit 0 (`built in 949ms`).
+- `npm --prefix frontend/desktop run check:transport`: `transport check: 25 files, no view reaches the network directly`.
+- `npm --prefix frontend/rollchrome run typecheck`: clean exit 0.
+- `npm --prefix frontend/rollchrome run build`: clean exit 0 (`built in 978ms`).
+- `npm --prefix frontend/rollchrome run check:transport`: `transport check: 39 files, no view reaches the network directly and no HTTP client is imported`.
+- `npm --prefix frontend/rollchrome run check:edit`: `PASSED all checks` (drag frames p95: 12.7 ms <= 50 ms budget, settle frames p95: 46.4 ms <= 120 ms budget).
+- `npm --prefix frontend/rollchrome run check:bulk-lut`: `check:bulk-lut PASSED cleanly: all acceptance assertions and benchmarks verified`.
+- `npm --prefix frontend/rollchrome run check:develop`: `check:develop PASSED: all 34 checks verified successfully`.
+- `npm --prefix frontend/rollchrome run check:viewing`: `PASSED all 18 viewing requirements successfully`.
+- `npm --prefix frontend/rollchrome run check:colour`: `PASSED: all 11 colour tool checks passed cleanly`.
+- `npm --prefix frontend/rollchrome run check:history`: `Assertions run: 16 / 16. All 16 assertions PASSED cleanly`.
+- `npm --prefix frontend/rollchrome run check:versions`: `Assertions run: 14/14. All 14 assertions PASSED!`.
+- `npm --prefix frontend/rollchrome run check:detail`: `Assertions run: 13/13. All 13 assertions PASSED!`.
+- `npm --prefix frontend/rollchrome run check:export`: `Ran 11 browser assertions. Failures: 0. All 11 assertions PASSED`.
+- `npm --prefix frontend/rollchrome run check:point`: `Assertions executed: 11/11. ALL 11 ASSERTIONS PASSED`.
+- `npm --prefix frontend/rollchrome run check:masks`: `Assertions executed: 13/13. ALL 13 ASSERTIONS PASSED`.
+- `npm --prefix frontend/rollchrome run check:local-detail`: `All 8 assertions passed cleanly`.
+- `npm --prefix frontend/rollchrome run check:object`: `Completed 15 assertions with 0 failures. All 15 assertions passed!`.
+- `npm --prefix frontend/rollchrome run check:people`: `Assertions executed: 7/7. ALL 7 ASSERTIONS PASSED`.
+- `npm --prefix frontend/rollchrome run check:shell`: `102 assertions passed. check:shell PASSED cleanly`.
+
+### Edit.vue Line Counts
+
+| Section | Before (`main`) | After (`ui-4`) | Delta |
+|---|---|---|---|
+| **Script** | 4,001 | 4,146 | +145 |
+| **Template** | 2,535 | 1,052 | -1,483 |
+| **Style** | 1,811 | 672 | -1,139 |
+| **Total** | 8,349 | 5,872 | -2,477 |
+
+`Edit.vue`'s template is 1,052 lines, well below the required 1,300 lines limit.
+
+### Unverified
+
+None.
 
 ---
 

@@ -1,5 +1,5 @@
 import type { ComputedRef, InjectionKey, Ref } from 'vue';
-import type { AdjustmentRecipe, AutoTarget, Mask } from '@host/api';
+import type { AdjustmentRecipe, AutoTarget, Mask, ToneCurves } from '@host/api';
 
 export type EyedropperTarget =
   | 'white-balance'
@@ -62,6 +62,11 @@ export interface EditContext {
   selectedMaskId: Ref<string | null>;
   toggleMask: (id: string, field: 'enabled' | 'invert') => void;
   deleteMask: (id: string) => void;
+
+  // Tone Curve section
+  resetToneCurve: () => void;
+  onCurvesInput: (curves: ToneCurves) => void;
+  onCurvesChange: (curves: ToneCurves) => void;
 }
 
 export const EDIT_CONTEXT: InjectionKey<EditContext> = Symbol('edit');

@@ -16,6 +16,7 @@ import { EDIT_CONTEXT } from './edit/context';
 import BasicSection from './edit/BasicSection.vue';
 import PresenceSection from './edit/PresenceSection.vue';
 import MasksSection from './edit/MasksSection.vue';
+import ToneCurveSection from './edit/ToneCurveSection.vue';
 import type {
   AdjustmentRecipe,
   AutoTarget,
@@ -51,7 +52,6 @@ import AdjustmentSlider from '../components/AdjustmentSlider.vue';
 import CollapsibleSection from '../components/CollapsibleSection.vue';
 import ColorWheel from '../components/ColorWheel.vue';
 import CropOverlay from '../components/CropOverlay.vue';
-import CurveEditor from '../components/CurveEditor.vue';
 import Histogram, { type HistogramMode } from '../components/Histogram.vue';
 import MaskOverlay, { type OverlayMask } from '../components/MaskOverlay.vue';
 import PresetBar from '../components/PresetBar.vue';
@@ -4041,6 +4041,9 @@ provide(EDIT_CONTEXT, {
   selectedMaskId,
   toggleMask,
   deleteMask,
+  resetToneCurve,
+  onCurvesInput,
+  onCurvesChange,
 });
 </script>
 
@@ -4833,21 +4836,7 @@ provide(EDIT_CONTEXT, {
           </p>
 
           <!-- 2. Tone Curve -->
-          <CollapsibleSection
-            title="Tone Curve"
-            test-id="section-tone-curve"
-            v-show="!selectedMask"
-            :default-open="false"
-            @reset="resetToneCurve"
-          >
-            <CurveEditor
-              :model-value="recipe.curves"
-              test-id="tone-curve-editor"
-              :disabled="loading || isReadOnly"
-              @update:model-value="onCurvesInput"
-              @change="onCurvesChange"
-            />
-          </CollapsibleSection>
+          <ToneCurveSection />
 
           <!-- 3. Colour / HSL -->
           <CollapsibleSection

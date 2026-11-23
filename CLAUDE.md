@@ -169,10 +169,11 @@ npm --prefix frontend/rollchrome run check:masks    # RP-11 masks acceptance, me
 npm --prefix frontend/rollchrome run check:local-detail # RP-11b local detail acceptance, measured in a browser
 npm --prefix frontend/rollchrome run check:object   # RP-11c object mask acceptance, measured in a browser
 npm --prefix frontend/rollchrome run check:people   # RP-11d people mask acceptance, measured in a browser
+npm --prefix frontend/rollchrome run check:shell    # UI-1 the whole app: no page scroll, navigation fixed, at 1024–1920
 ```
 
 `check:layout` and `check:ingest` drive Chromium and write screenshots to
-`frontend/web/layout-proof/`; `check:edit`, `check:bulk-lut`, `check:develop`, `check:viewing`, `check:colour`, `check:history`, `check:versions`, `check:detail`, `check:export`, `check:point`, `check:masks`, `check:local-detail`, `check:object` and `check:people` drive Chromium and write screenshots to
+`frontend/web/layout-proof/`; `check:edit`, `check:bulk-lut`, `check:develop`, `check:viewing`, `check:colour`, `check:history`, `check:versions`, `check:detail`, `check:export`, `check:point`, `check:masks`, `check:local-detail`, `check:object`, `check:people` and `check:shell` drive Chromium and write screenshots to
 `frontend/rollchrome/layout-proof/`. They assert **numbers**, not shapes — a change that makes the grid
 or preview slower or unwindows it fails them.
 

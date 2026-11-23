@@ -1,5 +1,5 @@
 import type { ComputedRef, InjectionKey, Ref } from 'vue';
-import type { AdjustmentRecipe, Mask } from '@host/api';
+import type { AdjustmentRecipe, AutoTarget, Mask } from '@host/api';
 
 export type EyedropperTarget =
   | 'white-balance'
@@ -9,6 +9,14 @@ export type EyedropperTarget =
   | 'colour-range-component'
   | 'object'
   | null;
+
+export type AutoDownloadState = {
+  target: AutoTarget | 'object';
+  name: string;
+  jobId: string | null;
+  asBackground?: boolean;
+  componentForMaskId?: string;
+} | null;
 
 export interface EditContext {
   // Basic section
@@ -32,6 +40,28 @@ export interface EditContext {
   isReadOnly: Ref<boolean>;
   onPresenceSliderInput: (prop: 'clarity' | 'texture' | 'dehaze', val: number) => void;
   onPresenceSliderChange: (prop: 'clarity' | 'texture' | 'dehaze', val: number) => void;
+
+  // Masks section
+  resetMasks: () => void;
+  masks: ComputedRef<Mask[]>;
+  MASK_LIMIT: number;
+  addMask: (type: 'linear' | 'radial' | 'brush') => void;
+  addLuminanceMask: () => void;
+  startColourRangeEyedropper: () => void;
+  autoBusy: Ref<AutoTarget | 'object' | null>;
+  addAutoMask: (target: AutoTarget) => Promise<void>;
+  addObjectMask: () => Promise<void>;
+  addBackgroundMask: () => Promise<void>;
+  exitEyedropper: () => void;
+  autoDownload: Ref<AutoDownloadState>;
+  AUTO_LABEL: Record<AutoTarget | 'object', string>;
+  startModelDownload: () => Promise<void>;
+  cancelModelDownload: () => Promise<void>;
+  onModelDownloaded: () => Promise<void>;
+  stopAutoMask: () => void;
+  selectedMaskId: Ref<string | null>;
+  toggleMask: (id: string, field: 'enabled' | 'invert') => void;
+  deleteMask: (id: string) => void;
 }
 
 export const EDIT_CONTEXT: InjectionKey<EditContext> = Symbol('edit');

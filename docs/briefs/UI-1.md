@@ -171,7 +171,112 @@ not merge.
 
 ## Report
 
-*Written by the implementer.*
+### What was done
+1. **The shell (`frontend/rollchrome/src/App.vue`)**:
+   - Replaced `.shell`'s `min-height: 100vh` with `height: 100vh; overflow: hidden; grid-template-columns: 56px minmax(0, 1fr);`.
+   - Replaced `.main`'s `min-height: 100vh` with `height: 100vh; min-width: 0; grid-template-rows: 1fr auto;`.
+   - Added `min-height: 0;` to `.content` (which already has `overflow-y: auto;`), ensuring content areas scroll internally and the application page never scrolls. Tighter padding set to `var(--space-4) var(--space-5) var(--space-5)`.
+   - Preserved `.statusbar` as-is.
+
+2. **The rail (`frontend/rollchrome/src/App.vue`)**:
+   - Configured `.sidebar` to 56px width (`box-sizing: border-box; width: 56px; padding: var(--space-2) 0; border-right: var(--border-hair); background: var(--bg-elevated);`).
+   - Centred brand `RC` in existing font (`var(--font-ui)`) and colour (`var(--text-heading)`) with `title="Rollchrome"`. Removed `// EDIT`.
+   - Tab items rendered as 56px wide and at least 56px tall (`min-height: 56px;`) `RouterLink`s. Step number (`01`, `02`, `03`) displayed in `var(--font-display)` (20px) above 11px three-letter label (`DEV`, `EDT`, `BAT`) in `var(--font-label)`.
+   - Each tab has `aria-label` and `title` set to `Develop`, `Edit`, and `Batch`.
+   - Active tab preserves accent colour, panel background, and 2px left border; phosphor glow is applied exclusively to the display-sized number (`.nav-item__step`) with no glow on the 11px label (`text-shadow: none`).
+   - Maintained `nav` container and `to` paths (`/`, `/edit`, `/batch`).
+
+3. **Whole-application check (`check:shell`)**:
+   - Added `frontend/rollchrome/scripts/app-harness/index.html`.
+   - Added `frontend/rollchrome/scripts/app-harness/stub-api.ts` proxying the three screens' stub APIs with route-based priority.
+   - Added `frontend/rollchrome/scripts/app-harness/main.ts` with imports pointing to `../../src/`.
+   - Added `frontend/rollchrome/scripts/check-shell.mjs` verifying Develop, Edit, Batch, and the rail at 1024×700, 1280×800, and 1920×1080 against all page scroll, sidebar geometry, link containment, and navigation requirements, writing proofs to `layout-proof/shell-<screen>-<width>.png`.
+   - Added `"check:shell": "node scripts/check-shell.mjs"` to `frontend/rollchrome/package.json`.
+
+### Deviations
+None.
+
+### Gate results
+1. `cargo fmt --all --check`
+   Clean exit 0.
+2. `cargo clippy --workspace --all-targets -- -D warnings`
+   `Finished dev profile [unoptimized + debuginfo] target(s) in 0.67s`, 0 warnings.
+3. `cargo build --workspace`
+   `Finished dev profile [unoptimized + debuginfo] target(s) in 0.55s`, clean exit 0.
+4. `cargo test --workspace`
+   1205 passed; 0 failed; 5 ignored.
+5. `cargo test -p phototools-core`
+   546 passed; 0 failed; 0 ignored (G2).
+6. `cargo test -p rollchrome-core`
+   523 passed; 0 failed; 5 ignored (G2).
+7. `cargo test -p rollchrome-core --features film`
+   544 passed; 0 failed; 3 ignored.
+8. `cargo test -p phototools-desktop`
+   26 passed; 0 failed; 0 ignored.
+9. `cargo test -p rollchrome-desktop`
+   28 passed; 0 failed; 0 ignored.
+10. `cargo test -p rollchrome-cli`
+    8 passed; 0 failed; 0 ignored.
+11. `npm --prefix frontend/shared run build`
+    Clean exit 0.
+12. `npm --prefix frontend/web run typecheck`
+    Clean exit 0.
+13. `npm --prefix frontend/web run build`
+    98 modules transformed, built in 1.04s.
+14. `npm --prefix frontend/web run check:transport`
+    23 files, no view reaches the network directly.
+15. `npm --prefix frontend/web run check:layout`
+    All 10 routes clean at 390x844.
+16. `npm --prefix frontend/web run check:ingest`
+    400 shots render responsively.
+17. `npm --prefix frontend/desktop run typecheck`
+    Clean exit 0.
+18. `npm --prefix frontend/desktop run build`
+    92 modules transformed, built in 953ms.
+19. `npm --prefix frontend/desktop run check:transport`
+    25 files, no view reaches the network directly.
+20. `npm --prefix frontend/rollchrome run typecheck`
+    Clean exit 0.
+21. `npm --prefix frontend/rollchrome run build`
+    85 modules transformed, built in 978ms.
+22. `npm --prefix frontend/rollchrome run check:transport`
+    25 files, no view reaches the network directly and no HTTP client is imported.
+23. `npm --prefix frontend/rollchrome run check:edit`
+    PASSED all checks.
+24. `npm --prefix frontend/rollchrome run check:bulk-lut`
+    PASSED cleanly: all acceptance assertions and benchmarks verified.
+25. `npm --prefix frontend/rollchrome run check:develop`
+    PASSED: all 34 checks verified successfully.
+26. `npm --prefix frontend/rollchrome run check:viewing`
+    PASSED all 18 viewing requirements successfully.
+27. `npm --prefix frontend/rollchrome run check:colour`
+    PASSED: all 11 colour tool checks passed cleanly.
+28. `npm --prefix frontend/rollchrome run check:history`
+    All 16 assertions PASSED cleanly.
+29. `npm --prefix frontend/rollchrome run check:versions`
+    All 14 assertions PASSED!
+30. `npm --prefix frontend/rollchrome run check:detail`
+    All 13 assertions PASSED!
+31. `npm --prefix frontend/rollchrome run check:export`
+    All 11 assertions PASSED.
+32. `npm --prefix frontend/rollchrome run check:point`
+    ALL 11 ASSERTIONS PASSED.
+33. `npm --prefix frontend/rollchrome run check:masks`
+    ALL 13 ASSERTIONS PASSED.
+34. `npm --prefix frontend/rollchrome run check:local-detail`
+    All 8 assertions passed cleanly.
+35. `npm --prefix frontend/rollchrome run check:object`
+    All 15 assertions passed!
+36. `npm --prefix frontend/rollchrome run check:people`
+    ALL 7 ASSERTIONS PASSED.
+37. `npm --prefix frontend/rollchrome run check:shell`
+    102 assertions passed. check:shell PASSED cleanly.
+
+### Failing existing checks
+None.
+
+### Left unverified
+None.
 
 ---
 

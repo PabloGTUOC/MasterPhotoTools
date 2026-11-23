@@ -223,6 +223,13 @@ fn develop_linear_impl(raw: &[u8], options: &DevelopOptions) -> Result<LinearPro
         }
     }
 
+    // A Panasonic RW2 states its black 15 units low (DV-16), so the file's levels are replaced,
+    // placed by the sensor's own CFA rather than rawler's fixed red, green, green, blue.
+    if let (Some(rgb), Demosaic::Bayer) = (panasonic::rw2_black_levels(raw), demosaic) {
+        let levels = panasonic::black_by_cfa_position(rgb, &cfa);
+        raw_image.blacklevel = rawler::rawimage::BlackLevel::new(&levels, 2, 2, 1);
+    }
+
     // Step 3: Rescale sensor levels to 0.0..1.0
     raw_image
         .apply_scaling()

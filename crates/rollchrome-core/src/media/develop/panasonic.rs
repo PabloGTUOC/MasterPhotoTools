@@ -18,6 +18,43 @@ pub struct PanasonicDistortion {
     pub on: bool,
 }
 
+/// What Panasonic's black-level tags understate the sensor's black by, in raw units.
+///
+/// The LX100 writes 128 in `0x1C`–`0x1E`, yet in an ISO 400 frame not one pixel in ten thousand
+/// reads below 143. With 128 every channel keeps 15 units of black, which the camera's 2.8× red gain
+/// turns into a magenta cast: red/green 1.087 on grey paving where the camera's JPEG has 1.000, and
+/// 1.011 at 143 (DV-16). rawspeed, darktable's decoder, adds the same 15 to every Panasonic body.
+pub const RW2_BLACK_BIAS: u16 = 15;
+
+/// The sensor's black level for red, green and blue, from an RW2's IFD0 tags `0x1C`, `0x1D` and
+/// `0x1E` plus [`RW2_BLACK_BIAS`].
+///
+/// rawler reads the same tags but without the bias, and lays them out red, green, green, blue
+/// whatever the CFA, so a BGGR sensor gets red's value on its blue pixels. `None` unless the header
+/// is `IIU\0` and all three tags are SHORTs (type 3, count 1).
+pub fn rw2_black_levels(raw: &[u8]) -> Option<[u16; 3]> {
+    if raw.len() < 8 || &raw[0..4] != b"IIU\0" {
+        return None;
+    }
+    let order = ByteOrder::LittleEndian;
+    let ifd0_offset = order.read_u32(raw, 4)? as usize;
+    let mut levels = [0u16; 3];
+    for (level, tag) in levels.iter_mut().zip([0x1C, 0x1D, 0x1E]) {
+        let (typ, cnt, val) = find_tag_entry(raw, ifd0_offset, tag, order)?;
+        if typ != 3 || cnt != 1 {
+            return None;
+        }
+        *level = ((val & 0xFFFF) as u16).checked_add(RW2_BLACK_BIAS)?;
+    }
+    Some(levels)
+}
+
+/// Red, green and blue black levels laid out by a 2×2 CFA's positions, row by row, the order rawler's
+/// `BlackLevel` and its scaling read them in.
+pub fn black_by_cfa_position(rgb: [u16; 3], cfa: &rawler::CFA) -> [u16; 4] {
+    std::array::from_fn(|i| rgb[cfa.color_at(i / 2, i % 2).min(2)])
+}
+
 /// Reads the EXIF orientation from an RW2 file's IFD0 tag `0x0112`.
 ///
 /// Returns `None` unless the header is `IIU\0`, the tag exists as a SHORT (type 3, count 1),
@@ -280,6 +317,42 @@ mod tests {
             let _ = rw2_orientation(truncated);
             let _ = panasonic_distortion(truncated);
         }
+    }
+
+    #[test]
+    fn the_rw2_black_level_carries_panasonic_s_bias() {
+        let black = |r: u32, g: u32, b: u32| [(0x1C, 3, 1, r), (0x1D, 3, 1, g), (0x1E, 3, 1, b)];
+        let lx100 = make_synthetic_rw2(b"IIU\0", &black(128, 128, 128), &[]);
+        assert_eq!(rw2_black_levels(&lx100), Some([143, 143, 143]));
+
+        let uneven = make_synthetic_rw2(b"IIU\0", &black(120, 130, 140), &[]);
+        assert_eq!(rw2_black_levels(&uneven), Some([135, 145, 155]));
+
+        let tiff = make_synthetic_rw2(b"II*\0", &black(128, 128, 128), &[]);
+        assert_eq!(rw2_black_levels(&tiff), None);
+
+        let missing_blue = make_synthetic_rw2(b"IIU\0", &black(128, 128, 128)[..2], &[]);
+        assert_eq!(rw2_black_levels(&missing_blue), None);
+
+        let long = make_synthetic_rw2(
+            b"IIU\0",
+            &[(0x1C, 4, 1, 128), (0x1D, 3, 1, 128), (0x1E, 3, 1, 128)],
+            &[],
+        );
+        assert_eq!(rw2_black_levels(&long), None);
+    }
+
+    #[test]
+    fn the_black_level_follows_the_sensor_s_cfa() {
+        let rgb = [10, 20, 30];
+        assert_eq!(
+            black_by_cfa_position(rgb, &rawler::CFA::new("BGGR")),
+            [30, 20, 20, 10]
+        );
+        assert_eq!(
+            black_by_cfa_position(rgb, &rawler::CFA::new("RGGB")),
+            [10, 20, 20, 30]
+        );
     }
 
     #[test]

@@ -1,10 +1,14 @@
 import type { ComputedRef, InjectionKey, Ref } from 'vue';
+import type { BrowserEntry } from '@phototools/shared';
 import type {
   AdjustmentRecipe,
   AutoTarget,
   BlackAndWhite,
   ColorWheel as ColorWheelType,
   HslAdjustments,
+  LookEffects,
+  LutLibraryList,
+  LutRef,
   Mask,
   PointColour,
   ToneCurves,
@@ -134,6 +138,20 @@ export interface EditContext {
   onGradingWheelChange: (val: ColorWheelType) => void;
   onGradingParamInput: (param: 'blending' | 'balance', val: number) => void;
   onGradingParamChange: (param: 'blending' | 'balance', val: number) => void;
+
+  // Look section
+  resetLook: () => void;
+  lutList: Ref<LutLibraryList>;
+  roots: Ref<string[]>;
+  rootsError: Ref<string | null>;
+  listRoots: (p: string) => Promise<BrowserEntry[]>;
+  setLut: (lut: LutRef | null) => void;
+  setLutIntensity: (val: number) => void;
+  onLutIntensityChange: (val: number) => void;
+  handleImportLut: (path: string) => Promise<void>;
+  setToneMapper: (mode: 'none' | 'aces') => void;
+  onLooksSliderInput: (prop: keyof LookEffects, val: number) => void;
+  onLooksSliderChange: (prop: keyof LookEffects, val: number) => void;
 }
 
 export const EDIT_CONTEXT: InjectionKey<EditContext> = Symbol('edit');

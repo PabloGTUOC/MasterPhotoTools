@@ -1,4 +1,4 @@
-import type { ComputedRef, InjectionKey, Ref } from 'vue';
+import type { ComputedRef, InjectionKey, Ref, WritableComputedRef } from 'vue';
 import type { BrowserEntry } from '@phototools/shared';
 import type {
   AdjustmentRecipe,
@@ -160,6 +160,21 @@ export interface EditContext {
   onDetailSliderInput: (prop: keyof Detail, val: number) => void;
   onDetailSliderChange: (prop: keyof Detail, val: number) => void;
   toggleHotPixels: () => void;
+
+  // Geometry section
+  resetGeometry: () => void;
+  toggleCropMode: () => void;
+  selectedAspect: WritableComputedRef<string> | Ref<string>;
+  onAspectChange: () => void;
+  straightenAngle: WritableComputedRef<number> | Ref<number>;
+  onStraightenInput: (val: number) => void;
+  onStraightenChange: (val: number) => void;
+  rotateCCW: () => void;
+  rotateCW: () => void;
+  isFlipH: ComputedRef<boolean>;
+  toggleFlipH: () => void;
+  isFlipV: ComputedRef<boolean>;
+  toggleFlipV: () => void;
 }
 
 export const EDIT_CONTEXT: InjectionKey<EditContext> = Symbol('edit');

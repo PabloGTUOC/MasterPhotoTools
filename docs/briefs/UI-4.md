@@ -1,6 +1,6 @@
 # `UI-4` · Edit's sections in files of their own
 
-> **Status:** briefed
+> **Status:** approved
 > **Plan:** [`docs/rollchrome/ui-review.md`](../rollchrome/ui-review.md), step UI-4 (the owner chose it before
 > UI-2). **Branch:** `ui-4`, cut from `main` once this brief is there.
 
@@ -232,3 +232,23 @@ None.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved** (2026-11-23, on `49d8544`).
+
+**Gates, re-run by the architect.** fmt, clippy and build are clean. The Rust counts are unchanged: workspace
+1205 (5 ignored), phototools-core 546, rollchrome-core 523, film 544 (3 ignored), desktop 26,
+rollchrome-desktop 28, cli 8. All 30 front-end gates pass, `check:shell` included, with their messages
+unchanged.
+
+**Nothing changed on screen.** The architect mounted the whole application from `main` and from `ui-4` at
+1440×900, opened every section, and screenshotted the adjustments panel at 13 scroll positions: its full
+height, 7,729 px on both. **All 13 pairs are pixel-identical** (0 pixels differing by more than 8 levels).
+
+**The diff.**
+- Only `Edit.vue`, the 13 sections, `context.ts`, `shared.css` and this file changed. No check, shared
+  component or Rust was touched.
+- `EditContext` is typed field by field, with no `any`.
+- `Edit.vue`'s template went from 2,535 to 1,052 lines, and the file from 8,349 to 5,872.
+- Rules shared by several sections are in `shared.css`, and the Report lists them.
+- Thirteen commits, one per section, as asked.
+

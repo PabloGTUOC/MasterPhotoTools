@@ -198,6 +198,22 @@ export interface EditContext {
   saveSnapshot: () => void;
   restoreSnapshot: (snap: Snapshot) => void;
   deleteSnapshot: (name: string) => void;
+
+  // Versions section
+  currentVersionName: ComputedRef<string>;
+  editingCurrentVersion: Ref<boolean>;
+  renameCurrentInput: Ref<string>;
+  submitRenameCurrent: () => void;
+  startRenameCurrent: () => void;
+  newVersionInput: Ref<string>;
+  createVersion: () => void;
+  versionMessage: Ref<string>;
+  editingVersionName: Ref<string | null>;
+  renameOtherInput: Ref<string>;
+  submitRenameOther: (oldName: string) => void;
+  switchVersion: (targetName: string) => void;
+  startRenameOther: (oldName: string) => void;
+  deleteVersion: (name: string) => void;
 }
 
 export const EDIT_CONTEXT: InjectionKey<EditContext> = Symbol('edit');

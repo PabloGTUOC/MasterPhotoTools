@@ -172,6 +172,13 @@ F14 puts Canon's CR3 out of scope: it is an ISO-BMFF container rather than a TIF
 separate handling. `RAW_EXTENSIONS` omits it and a test asserts the omission. A CR3 on a card is
 reported as underivable — **MV-10.5** confirms that reads as a clear message rather than a crash.
 
+### The RAW list goes beyond F14's
+
+F14 names DNG, NEF, ARW, CR2 and RAF. `media::raw::RAW_EXTENSIONS` also takes ORF and, since DV-15
+(2026-11-23), RW2, because the owner shoots an Olympus XZ-1 and a Panasonic LX100. The specification is
+not edited (G9). An RW2's metadata is read by changing its `U` header to TIFF's `*` in memory, up to the
+file's RawDataOffset; width and height stay 0 for it ([DV-15](briefs/DV-15.md)).
+
 ### Rung 3 sends Fujifilm X-Trans files through a Bayer demosaic
 
 Rung 3 is rawler's own development, the only rung on the Linux server. rawler 0.7.2 has no X-Trans

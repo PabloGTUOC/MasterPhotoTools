@@ -1,6 +1,6 @@
 # Rescope — PhotoTools manages, Rollchrome develops
 
-> **Planned 2026-11-13. DV-7, DV-8, RS-3, DV-6 (2026-11-13), RS-1, RS-2, RS-4, DV-9, DV-10, DV-11 and DV-12 (2026-11-14) done; DV-13 (2026-11-15) done; DV-14 (2026-11-18) done. Every step of the rescope is built; what remains is the owner's manual checks.** Steps have stable ids, `RS-1` onwards for PhotoTools and
+> **Planned 2026-11-13. DV-7, DV-8, RS-3, DV-6 (2026-11-13), RS-1, RS-2, RS-4, DV-9, DV-10, DV-11 and DV-12 (2026-11-14) done; DV-13 (2026-11-15) done; DV-14 (2026-11-18) done; DV-15 briefed (2026-11-23). Every step of the rescope is built; what remains is the owner's manual checks.** Steps have stable ids, `RS-1` onwards for PhotoTools and
 > `DV-6` onwards for Develop, like the other plans.
 
 ## Why
@@ -231,6 +231,15 @@ neutral picture gets a band-limited output sharpening. X-Trans detail is a separ
 **Acceptance:** on the owner's seven XZ-1 files and the D610, detail within 0.07 of Apple's and flat-area
 noise within 0.75–1.25 of it.
 
+#### `DV-15` · Panasonic RW2: the LX100
+Added 2026-11-23 when the owner got a Panasonic Lumix LX100. rawler decodes its RW2 files and the neutral
+develops them well, but nothing else did: `.rw2` was not a RAW extension, the metadata reader returned
+nothing (an RW2's TIFF header says `U` where TIFF says `*`), portraits came out on their side, and the
+camera's own distortion correction (IFD0 `0x0119`, 12.4 px at 10.9 mm) was ignored. [Brief](briefs/DV-15.md).
+
+**Acceptance:** the date and orientation read on the owner's five RW2 files; geometry within 1.0 px rms of
+the camera's JPEG at 10.9 and 14.9 mm.
+
 ## Order
 
 | # | Step | Why here | Who |
@@ -247,6 +256,7 @@ noise within 0.75–1.25 of it.
 | 10 | DV-12 | The owner's reference is Photomator, not the camera's JPEG | agy |
 | 11 | DV-13 | A difference the owner saw against macOS at the wide end | agy |
 | 12 | DV-14 | The last measured difference from Photomator on Bayer cameras | agy |
+| 13 | DV-15 | The owner's new camera, an LX100 | agy |
 
 agy runs only on Gemini Flash. One brief per step, a fresh conversation each time, and the credit
 cost reported per brief.

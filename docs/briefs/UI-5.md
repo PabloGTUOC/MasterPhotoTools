@@ -99,10 +99,91 @@ subjects under 72 characters and no model name anywhere. Do not merge.
 
 ## Report
 
-*Written by the implementer.*
+### What was done
+- Refactored `frontend/rollchrome/src/views/BulkLut.vue` into a two-column desktop application layout:
+  - The page head shrunk to one line: `h1` and `p.muted` sit side-by-side without wrapping.
+  - Left column (`minmax(0, 1fr)`): "What to grade" (`PathListField` with textarea, "Add a folder...", and "Include subfolders") and "Where" (destination `PathField` with overlay). The textarea grows via flex to fill column height (at least 6 rows) and scrolls on its own.
+  - Resizable divider (`data-testid="batch-settings-divider"`) clamping between 320px and 560px, remembered in localStorage as `rollchrome.batch.settingsWidth`.
+  - Right column (`360px` default): "Grade with" toggle (3D LUT or Preset), preset select or `LutPicker` (with look groups and intensity slider), scrolling on its own above a fixed action footer with Dry run, Grade button, and `gate-explanation`.
+  - Details drawer inset: Batch sets `strip.detailsInsetRight` from its settings column with a `ResizeObserver` (`settingsColumnRef`, `updateStripInset`), and resets it to 0 on unmount.
+- Added `frontend/rollchrome/scripts/check-batch-layout.mjs` on the whole-application harness:
+  - Asserts at 1024×700 and 1920×1080 that `.content`'s `scrollHeight <= clientHeight + 1`.
+  - Asserts `dry-run-button`, `run-button`, and `gate-explanation` lie inside the viewport.
+  - Asserts divider clamps to 320 and 560 and remembered width persists across reload.
+  - Asserts no control inside the screen is clipped by its nearest clipping ancestor for both LUT and Preset sources at widths 320 and 560.
+  - Asserts after a dry run that the drawer's right edge is at or left of the right column's left edge (±1).
+  - Writes screenshots `layout-proof/batch-layout-1024.png` and `layout-proof/batch-layout-1920.png`.
+- Added `"check:batch-layout": "node scripts/check-batch-layout.mjs"` to `frontend/rollchrome/package.json`.
+
+### Deviations
+None.
+
+### Gate results
+- `cargo fmt --all --check`: clean (code 0)
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean (code 0)
+- `cargo build --workspace`: clean, built in 5.62s (code 0)
+- `cargo test --workspace`: 1215 passed, 0 failed, 5 ignored (code 0)
+- `cargo test -p phototools-core`: 546 passed, 0 failed (398 lib + 46 ingest + 4 ledger + 45 media + 13 raw + 38 tools + 2 validation) (code 0)
+- `cargo test -p rollchrome-core`: 531 passed, 0 failed (199 lib + 61 automation + 13 batch + 12 curves + 42 develop + 31 film_stock + 13 grading + 11 hsv + 29 lens + 43 masks + 13 object + 13 point + 5 sharpen + 45 tools) (code 0)
+- `cargo test -p rollchrome-core --features film`: 553 passed, 0 failed, 3 ignored (code 0)
+- `cargo test -p phototools-desktop`: 26 passed, 0 failed (19 lib + 7 local_tools) (code 0)
+- `cargo test -p rollchrome-desktop`: 29 passed, 0 failed (4 bulk_edit + 12 develop + 13 local_tools) (code 0)
+- `cargo test -p rollchrome-cli`: 8 passed, 0 failed (code 0)
+- `npm --prefix frontend/shared run build`: clean (code 0)
+- `npm --prefix frontend/web run typecheck`: clean (code 0)
+- `npm --prefix frontend/web run build`: clean (code 0)
+- `npm --prefix frontend/web run check:transport`: 23 files, no view reaches network directly (code 0)
+- `npm --prefix frontend/web run check:layout`: 10 routes clean at 390x844 (code 0)
+- `npm --prefix frontend/web run check:ingest`: 400 shots render responsively (code 0)
+- `npm --prefix frontend/desktop run typecheck`: clean (code 0)
+- `npm --prefix frontend/desktop run build`: clean (code 0)
+- `npm --prefix frontend/desktop run check:transport`: 25 files, no view reaches network directly (code 0)
+- `npm --prefix frontend/rollchrome run typecheck`: clean (code 0)
+- `npm --prefix frontend/rollchrome run build`: clean (code 0)
+- `npm --prefix frontend/rollchrome run check:transport`: 41 files, no view reaches network directly and no HTTP client imported (code 0)
+- `npm --prefix frontend/rollchrome run check:edit`: drag p95 12.6ms, settle p95 46.8ms, all touch targets and checks passed (code 0)
+- `npm --prefix frontend/rollchrome run check:bulk-lut`: all acceptance assertions and benchmarks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:develop`: 34 checks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:viewing`: 18 checks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:colour`: 11 checks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:history`: 16 checks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:versions`: 14 checks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:detail`: 13 checks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:export`: 11 checks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:point`: 11 checks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:masks`: 13 checks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:local-detail`: 8 checks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:object`: 15 checks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:people`: 7 checks verified (code 0)
+- `npm --prefix frontend/rollchrome run check:shell`: 108 assertions passed (code 0)
+- `npm --prefix frontend/rollchrome run check:edit-layout`: 51 assertions passed (code 0)
+- `npm --prefix frontend/rollchrome run check:strip`: 70 assertions passed (code 0)
+- `npm --prefix frontend/rollchrome run check:edit-folder`: 32 assertions passed (code 0)
+- `npm --prefix frontend/rollchrome run check:batch-layout`: 64 assertions passed (code 0)
+
+### Anything unverified
+None.
 
 ---
 
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved.**
+
+**Checked.**
+- **Gates.** I re-ran the full gate list on `3d26bf4`, plus `check:edit-layout`, `check:strip`, `check:edit-folder` and
+  `check:batch-layout`: 34 of 34 rc=0, with workspace 1215 (5 ignored).
+- **Diff.** I read the diff of `BulkLut.vue` and `check-batch-layout.mjs`.
+  - Every CSS variable is a defined token, except `--settings-width`, which the screen sets inline.
+  - No raw colours or z-index values.
+  - The drawer inset follows Develop's pattern: a `ResizeObserver` on the right column, reset to 0 on unmount.
+  - `check-bulk-lut.mjs` is unchanged (G7).
+- **Screenshots.** At 1024 and 1920 they show two columns, the drawer beside the right column, Dry run and Grade on
+  screen, and nothing scrolling.
+
+**Fixed by the architect.** The Batch stand-in (`bulk-lut-harness/stub-api.ts`) named looks
+`Builtin - builtin:<id>.cube`, not as the library does. Since UI-3, `check:strip`'s "first LUT" is a camera look, so
+the picker showed an empty selection in every Batch screenshot. It now uses `Builtin - <Maker> <Name>.cube` and
+`<Name> (spektrafilm).cube`; `check:strip`, `check:bulk-lut` and `check:batch-layout` pass.

@@ -142,10 +142,15 @@ export class StubDesktopApiClient {
   }
 
   async ensureLookLut(lookId: string): Promise<LutRef> {
-    return {
-      name: `Builtin - ${lookId}.cube`,
-      sha256: `sha_${lookId.replace(/[^a-zA-Z0-9]/g, '_')}`,
-    };
+    // The library's own naming (look_luts.rs), so the picker recognises the look it just chose.
+    const builtin = (await this.listBuiltinLooks()).find((l) => l.id === lookId);
+    const film = (await this.listFilmLooks()).find((l) => l.id === lookId);
+    const name = builtin
+      ? `Builtin - ${builtin.maker} ${builtin.name}.cube`
+      : film
+        ? `${film.name} (spektrafilm).cube`
+        : `${lookId}.cube`;
+    return { name, sha256: `sha_${lookId.replace(/[^a-zA-Z0-9]/g, '_')}` };
   }
 
   async planBulkLut(

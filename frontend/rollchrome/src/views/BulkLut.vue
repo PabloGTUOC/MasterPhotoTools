@@ -19,7 +19,7 @@
  * - Job execution: Followed with JobProgress with cancellation support. Written, skipped,
  *   failed, and metadata skipped counts are reported; refusals from core are shown verbatim.
  */
-import { computed, inject, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { BrowserEntry } from '@phototools/shared';
 import type {
   AdjustmentRecipe,
@@ -460,9 +460,159 @@ function fileName(p: string): string {
   return parts[parts.length - 1] || p;
 }
 
+// Workspace sizing & divider (UI-5)
+const MIN_SETTINGS_WIDTH = 320;
+const MAX_SETTINGS_WIDTH = 560;
+const DEFAULT_SETTINGS_WIDTH = 360;
+const STORAGE_KEY_SETTINGS_WIDTH = 'rollchrome.batch.settingsWidth';
+
+function loadSettingsWidth(): number {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_SETTINGS_WIDTH);
+    if (raw !== null) {
+      const val = Number(raw);
+      if (Number.isFinite(val) && val >= MIN_SETTINGS_WIDTH && val <= MAX_SETTINGS_WIDTH) {
+        return Math.round(val);
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return DEFAULT_SETTINGS_WIDTH;
+}
+
+function saveSettingsWidth(width: number) {
+  try {
+    localStorage.setItem(STORAGE_KEY_SETTINGS_WIDTH, String(Math.round(width)));
+  } catch {
+    // ignore
+  }
+}
+
+const settingsWidth = ref<number>(loadSettingsWidth());
+
+function clampSettingsWidth(width: number): number {
+  return Math.min(MAX_SETTINGS_WIDTH, Math.max(MIN_SETTINGS_WIDTH, Math.round(width)));
+}
+
+function setSettingsWidth(width: number) {
+  const clamped = clampSettingsWidth(width);
+  settingsWidth.value = clamped;
+  saveSettingsWidth(clamped);
+  updateStripInset();
+}
+
+let isDraggingDivider = false;
+let dividerStartX = 0;
+let dividerStartWidth = DEFAULT_SETTINGS_WIDTH;
+
+function onDividerPointerDown(e: PointerEvent) {
+  isDraggingDivider = true;
+  dividerStartX = e.clientX;
+  dividerStartWidth = settingsWidth.value;
+  try {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  } catch {
+    // fallback
+  }
+}
+
+function onDividerPointerMove(e: PointerEvent) {
+  if (!isDraggingDivider) return;
+  const delta = e.clientX - dividerStartX;
+  // Right column: dragging left (negative delta) widens it, dragging right narrows it
+  setSettingsWidth(dividerStartWidth - delta);
+}
+
+function onDividerPointerUp(e: PointerEvent) {
+  if (isDraggingDivider) {
+    isDraggingDivider = false;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function onDividerKeyDown(e: KeyboardEvent) {
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    setSettingsWidth(settingsWidth.value + 40);
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    setSettingsWidth(settingsWidth.value - 40);
+  }
+}
+
+function onWindowPointerMove(e: PointerEvent) {
+  if (!isDraggingDivider) return;
+  const delta = e.clientX - dividerStartX;
+  setSettingsWidth(dividerStartWidth - delta);
+}
+
+function onWindowPointerUp() {
+  if (isDraggingDivider) {
+    isDraggingDivider = false;
+  }
+}
+
+function onWindowResize() {
+  const clamped = clampSettingsWidth(settingsWidth.value);
+  if (clamped !== settingsWidth.value) {
+    settingsWidth.value = clamped;
+    saveSettingsWidth(clamped);
+  }
+  updateStripInset();
+}
+
+const settingsColumnRef = ref<HTMLElement | null>(null);
+let insetObserver: ResizeObserver | null = null;
+function updateStripInset() {
+  if (!strip || !settingsColumnRef.value) return;
+  const container = document.getElementById('status-strip-details')?.parentElement;
+  if (!container) return;
+  const inset = container.getBoundingClientRect().right - settingsColumnRef.value.getBoundingClientRect().left;
+  strip.detailsInsetRight = Math.max(0, Math.round(inset));
+}
+
+watch(settingsColumnRef, (panel) => {
+  insetObserver?.disconnect();
+  insetObserver = null;
+  if (!strip) return;
+  if (!panel || typeof ResizeObserver === 'undefined') {
+    strip.detailsInsetRight = 0;
+    return;
+  }
+  insetObserver = new ResizeObserver(updateStripInset);
+  insetObserver.observe(panel);
+  insetObserver.observe(document.documentElement);
+  updateStripInset();
+});
+
 onMounted(() => {
+  window.addEventListener('resize', onWindowResize);
+  window.addEventListener('pointermove', onWindowPointerMove);
+  window.addEventListener('pointerup', onWindowPointerUp);
+  nextTick(() => {
+    const clamped = clampSettingsWidth(settingsWidth.value);
+    if (clamped !== settingsWidth.value) {
+      settingsWidth.value = clamped;
+      saveSettingsWidth(clamped);
+    }
+    updateStripInset();
+  });
   refreshLuts();
   refreshPresets();
+});
+
+onBeforeUnmount(() => {
+  insetObserver?.disconnect();
+  insetObserver = null;
+  if (strip) strip.detailsInsetRight = 0;
+  window.removeEventListener('resize', onWindowResize);
+  window.removeEventListener('pointermove', onWindowPointerMove);
+  window.removeEventListener('pointerup', onWindowPointerUp);
 });
 </script>
 
@@ -475,152 +625,181 @@ onMounted(() => {
       </p>
     </header>
 
-    <div class="form-container">
-      <div class="form-settings">
+    <div
+      class="batch-workspace"
+      :style="{ '--settings-width': `${settingsWidth}px` }"
+    >
+      <!-- Left Column: What to grade + Where -->
+      <section class="batch-left-column">
         <div class="inputs-section">
-        <PathListField
-          v-model="inputsText"
-          label="Source photographs (JPEG or TIFF)"
-          placeholder="/path/to/folder or /path/to/image.jpg (one per line)"
-          :roots="roots"
-          :roots-error="rootsError"
-          :list="listRoots"
-          :disabled="isGrading || isBusy"
-          :rows="4"
-        />
-
-        <label class="checkbox">
-          <input
-            v-model="recursive"
-            type="checkbox"
+          <span class="source-label">What to grade</span>
+          <PathListField
+            v-model="inputsText"
+            label="Source photographs (JPEG or TIFF)"
+            placeholder="/path/to/folder or /path/to/image.jpg (one per line)"
+            :roots="roots"
+            :roots-error="rootsError"
+            :list="listRoots"
             :disabled="isGrading || isBusy"
+            :rows="6"
           />
-          <span>Include subfolders</span>
-        </label>
-      </div>
 
-      <div class="source-section">
-        <span class="source-label" id="batch-source-label">Grade with</span>
-        <div class="source-toggle" role="group" aria-labelledby="batch-source-label">
-          <button
-            type="button"
-            class="source-toggle__btn"
-            :class="{ active: source === 'lut' }"
-            :aria-pressed="source === 'lut'"
+          <label class="checkbox">
+            <input
+              v-model="recursive"
+              type="checkbox"
+              :disabled="isGrading || isBusy"
+            />
+            <span>Include subfolders</span>
+          </label>
+        </div>
+
+        <div class="destination-section">
+          <span class="source-label">Where</span>
+          <PathField
+            v-model="outDir"
+            label="Destination folder"
+            placeholder="/path/to/destination"
+            :roots="roots"
+            :roots-error="rootsError"
+            :list="listRoots"
             :disabled="isGrading || isBusy"
-            data-testid="source-lut"
-            @click="source = 'lut'"
-          >
-            3D LUT
-          </button>
-          <button
-            type="button"
-            class="source-toggle__btn"
-            :class="{ active: source === 'preset' }"
-            :aria-pressed="source === 'preset'"
-            :disabled="isGrading || isBusy"
-            data-testid="source-preset"
-            @click="source = 'preset'"
-          >
-            Preset
-          </button>
+            :overlay="true"
+          />
         </div>
-      </div>
+      </section>
 
-      <div v-if="source === 'preset'" class="preset-section">
-        <label class="source-label" for="batch-preset">Preset</label>
-        <select
-          id="batch-preset"
-          v-model="selectedPreset"
-          class="preset-select"
-          data-testid="batch-preset-select"
-          :disabled="isGrading || isBusy || presetNames.length === 0"
-        >
-          <option value="" disabled>
-            {{ presetNames.length ? 'Choose a preset…' : 'No presets yet: save one in Edit' }}
-          </option>
-          <option v-for="p in presetNames" :key="p" :value="p">{{ p }}</option>
-        </select>
-        <p class="muted preset-note">
-          The whole look is applied: tone, colour, curves, grading, effects and any LUT the
-          preset uses. Crop, rotation and masks are never part of a preset: they belong to the
-          photograph they were made on.
-        </p>
-      </div>
+      <!-- Resizable divider -->
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize batch settings panel"
+        tabindex="0"
+        data-testid="batch-settings-divider"
+        class="batch-settings-divider"
+        :aria-valuenow="settingsWidth"
+        :aria-valuemin="MIN_SETTINGS_WIDTH"
+        :aria-valuemax="MAX_SETTINGS_WIDTH"
+        @pointerdown="onDividerPointerDown"
+        @pointermove="onDividerPointerMove"
+        @pointerup="onDividerPointerUp"
+        @pointercancel="onDividerPointerUp"
+        @keydown="onDividerKeyDown"
+      />
 
-      <div v-else class="lut-section">
-        <LutPicker
-          :model-value="selectedLut"
-          :intensity="intensity"
-          :luts="lutList.luts"
-          :errors="lutList.errors"
-          :roots="roots"
-          :roots-error="rootsError"
-          :list="listRoots"
-          :disabled="isGrading || isBusy"
-          @update:model-value="onLutChange"
-          @update:intensity="onIntensityInput"
-          @change="onIntensityChange"
-          @import="handleImportLut"
-        />
-      </div>
+      <!-- Right Column: Grade with settings + fixed actions footer -->
+      <aside ref="settingsColumnRef" class="batch-settings-column">
+        <div class="batch-settings-body">
+          <div class="source-section">
+            <span class="source-label" id="batch-source-label">Grade with</span>
+            <div class="source-toggle" role="group" aria-labelledby="batch-source-label">
+              <button
+                type="button"
+                class="source-toggle__btn"
+                :class="{ active: source === 'lut' }"
+                :aria-pressed="source === 'lut'"
+                :disabled="isGrading || isBusy"
+                data-testid="source-lut"
+                @click="source = 'lut'"
+              >
+                3D LUT
+              </button>
+              <button
+                type="button"
+                class="source-toggle__btn"
+                :class="{ active: source === 'preset' }"
+                :aria-pressed="source === 'preset'"
+                :disabled="isGrading || isBusy"
+                data-testid="source-preset"
+                @click="source = 'preset'"
+              >
+                Preset
+              </button>
+            </div>
+          </div>
 
-      <div class="destination-section">
-        <PathField
-          v-model="outDir"
-          label="Destination folder"
-          placeholder="/path/to/destination"
-          :roots="roots"
-          :roots-error="rootsError"
-          :list="listRoots"
-          :disabled="isGrading || isBusy"
-          :overlay="true"
-        />
-      </div>
-    </div>
+          <div v-if="source === 'preset'" class="preset-section">
+            <label class="source-label" for="batch-preset">Preset</label>
+            <select
+              id="batch-preset"
+              v-model="selectedPreset"
+              class="preset-select"
+              data-testid="batch-preset-select"
+              :disabled="isGrading || isBusy || presetNames.length === 0"
+            >
+              <option value="" disabled>
+                {{ presetNames.length ? 'Choose a preset…' : 'No presets yet: save one in Edit' }}
+              </option>
+              <option v-for="p in presetNames" :key="p" :value="p">{{ p }}</option>
+            </select>
+            <p class="muted preset-note">
+              The whole look is applied: tone, colour, curves, grading, effects and any LUT the
+              preset uses. Crop, rotation and masks are never part of a preset: they belong to the
+              photograph they were made on.
+            </p>
+          </div>
 
-    <div class="actions-section">
-        <div class="button-row">
-          <button
-            type="button"
-            class="secondary"
-            :disabled="!canPlan"
-            data-testid="dry-run-button"
-            @click="runDryRun"
-          >
-            <template v-if="isBusy">
-              Planning<span class="cursor">_</span>
-            </template>
-            <template v-else>
-              Dry run
-            </template>
-          </button>
-
-          <button
-            type="button"
-            class="primary"
-            :disabled="!canRun"
-            data-testid="run-button"
-            @click="runBulkLut"
-          >
-            <template v-if="isGrading && !jobId">
-              Starting<span class="cursor">_</span>
-            </template>
-            <template v-else>
-              {{ runButtonLabel }}
-            </template>
-          </button>
+          <div v-else class="lut-section">
+            <LutPicker
+              :model-value="selectedLut"
+              :intensity="intensity"
+              :luts="lutList.luts"
+              :errors="lutList.errors"
+              :roots="roots"
+              :roots-error="rootsError"
+              :list="listRoots"
+              :disabled="isGrading || isBusy"
+              @update:model-value="onLutChange"
+              @update:intensity="onIntensityInput"
+              @change="onIntensityChange"
+              @import="handleImportLut"
+            />
+          </div>
         </div>
 
-        <div
-          v-if="lockReasons.length"
-          class="gate-explanation"
-          data-testid="gate-explanation"
-          role="status"
-        >
-          <p v-for="reason in lockReasons" :key="reason">{{ reason }}</p>
+        <div class="actions-section">
+          <div class="button-row">
+            <button
+              type="button"
+              class="secondary"
+              :disabled="!canPlan"
+              data-testid="dry-run-button"
+              @click="runDryRun"
+            >
+              <template v-if="isBusy">
+                Planning<span class="cursor">_</span>
+              </template>
+              <template v-else>
+                Dry run
+              </template>
+            </button>
+
+            <button
+              type="button"
+              class="primary"
+              :disabled="!canRun"
+              data-testid="run-button"
+              @click="runBulkLut"
+            >
+              <template v-if="isGrading && !jobId">
+                Starting<span class="cursor">_</span>
+              </template>
+              <template v-else>
+                {{ runButtonLabel }}
+              </template>
+            </button>
+          </div>
+
+          <div
+            v-if="lockReasons.length"
+            class="gate-explanation"
+            data-testid="gate-explanation"
+            role="status"
+          >
+            <p v-for="reason in lockReasons" :key="reason">{{ reason }}</p>
+          </div>
         </div>
-      </div>
+      </aside>
     </div>
 
     <Teleport defer to="#status-strip-line" :disabled="!strip">
@@ -729,16 +908,18 @@ onMounted(() => {
 .bulk-lut-page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-4);
-  max-width: 900px;
+  gap: var(--space-3);
   height: 100%;
+  min-height: 0;
+  width: 100%;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .page-head {
-  display: grid;
-  gap: var(--space-1);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
   flex-shrink: 0;
 }
 
@@ -749,34 +930,138 @@ onMounted(() => {
   text-transform: uppercase;
   color: var(--text);
   margin: 0;
+  white-space: nowrap;
 }
 
-.form-container {
+.page-head p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.batch-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 12px var(--settings-width, 360px);
+  column-gap: 0;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.batch-left-column {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: var(--border-hair);
+  background: var(--bg-panel);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.inputs-section {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  max-height: calc(100vh - 180px);
-  border: var(--border-hair);
-  border-radius: var(--radius-none);
-  background: var(--bg-panel);
+  gap: var(--space-2);
+}
+
+.inputs-section :deep(.path-list-field) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.inputs-section :deep(.path-list-field .field) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.inputs-section :deep(.path-list-field textarea) {
+  flex: 1;
+  min-height: 140px;
+  width: 100%;
+  resize: none;
+  overflow-y: auto;
   box-sizing: border-box;
 }
 
-.form-settings {
+.destination-section {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.batch-settings-divider {
+  grid-column: 2;
+  width: 12px;
+  cursor: col-resize;
+  align-self: stretch;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  user-select: none;
+  touch-action: none;
+  outline: none;
+}
+
+.batch-settings-divider::after {
+  content: '';
+  width: 1px;
+  height: 100%;
+  background: var(--grid);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.batch-settings-divider:hover::after,
+.batch-settings-divider:focus::after,
+.batch-settings-divider:focus-visible::after {
+  background: var(--accent);
+}
+
+.batch-settings-column {
+  grid-column: 3;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  min-width: 0;
+  box-sizing: border-box;
+  background: var(--bg-panel);
+  border: var(--border-hair);
+}
+
+.batch-settings-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-4);
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-4);
 }
 
-.inputs-section,
 .source-section,
 .preset-section,
-.lut-section,
-.destination-section {
+.lut-section {
   display: grid;
   gap: var(--space-3);
 }
@@ -804,7 +1089,7 @@ onMounted(() => {
 .source-toggle {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  max-width: 360px;
+  width: 100%;
   gap: var(--space-1);
 }
 
@@ -825,7 +1110,9 @@ onMounted(() => {
 .preset-select {
   min-height: 40px;
   font-size: 16px;
-  max-width: 480px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .preset-note {

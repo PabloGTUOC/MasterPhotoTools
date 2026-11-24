@@ -200,6 +200,31 @@ try {
     await page.waitForTimeout(100);
 
     await assertShellInvariants('Develop');
+
+    // Filmstrip lies fully inside viewport (UI-7)
+    const filmstripLoc = page.locator('[role="listbox"][aria-label="Photographs"]');
+    const filmstripBox = await filmstripLoc.boundingBox();
+    assert(
+      filmstripBox !== null &&
+        filmstripBox.x >= -1 &&
+        filmstripBox.y >= -1 &&
+        filmstripBox.x + filmstripBox.width <= size.width + 1 &&
+        filmstripBox.y + filmstripBox.height <= size.height + 1,
+      `[Develop ${size.width}×${size.height}] Filmstrip (${JSON.stringify(filmstripBox)}) not fully inside viewport (${size.width}×${size.height})`,
+    );
+
+    // run-button lies inside viewport (UI-7)
+    const runBtnLoc = page.locator('[data-testid="run-button"]');
+    const runBtnBox = await runBtnLoc.boundingBox();
+    assert(
+      runBtnBox !== null &&
+        runBtnBox.x >= -1 &&
+        runBtnBox.y >= -1 &&
+        runBtnBox.x + runBtnBox.width <= size.width + 1 &&
+        runBtnBox.y + runBtnBox.height <= size.height + 1,
+      `[Develop ${size.width}×${size.height}] run-button (${JSON.stringify(runBtnBox)}) not fully inside viewport (${size.width}×${size.height})`,
+    );
+
     await page.screenshot({ path: join(OUT, `shell-develop-${size.width}.png`) });
 
     // =========================================================================

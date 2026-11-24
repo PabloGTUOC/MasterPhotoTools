@@ -35,7 +35,7 @@
  * 30. Lens correction is on for a new photograph, reaches the dry run and the preview, and turning it off locks Run (DV-9).
  * 31. Capture sharpening shows 50 for a new photograph, reaches the dry run, and changing it locks Run (DV-10).
  * 32. The preview uses the window: at 1280x900 >= 520x520, at 1920x1080 >= 1150x700, naturalWidth > 0 (DV-17).
- * 33. The divider resizes (120px drag widens photos / narrows preview, 2000px left clamps to 200px), and remembers across reload (DV-17).
+ * 33. The filmstrip and the settings divider (UI-7).
  * 34. Enlarge opens full-window overlay with naturalWidth > 0; Escape and Close button close it (DV-17).
  */
 
@@ -1283,60 +1283,114 @@ try {
   console.log(`Wrote layout screenshot proof to ${screenshotPath1280}`);
 
   // -------------------------------------------------------------------------
-  // 33. The divider resizes and remembers (DV-17)
+  // 33. The filmstrip and the settings divider (UI-7)
   // -------------------------------------------------------------------------
-  console.log('33. Checking divider resizes and remembers...');
-  const divider33 = page.locator('[data-testid="develop-divider"]');
-  const photosPanel33 = page.locator('.photos-panel');
-  const previewDisplay33 = page.locator('[data-testid="preview-container"] .preview-display');
+  console.log('33. Checking filmstrip alignment, keyboard navigation, and settings divider...');
+  const filmstrip33 = page.locator('[role="listbox"][aria-label="Photographs"]');
+  const cards33 = filmstrip33.locator('.thumbnail-card');
+  const cardCount = await cards33.count();
+  if (cardCount !== 6) {
+    failures.push(`Expected 6 cards in filmstrip, got ${cardCount}`);
+  } else {
+    const tops = [];
+    for (let i = 0; i < cardCount; i++) {
+      const box = await cards33.nth(i).boundingBox();
+      if (box) tops.push(box.y);
+    }
+    if (tops.length !== 6) {
+      failures.push('Could not obtain bounding box for all 6 filmstrip cards');
+    } else {
+      const firstTop = tops[0];
+      for (let i = 1; i < tops.length; i++) {
+        if (Math.abs(tops[i] - firstTop) > 1) {
+          failures.push(`All six cards must share the same top (±1): card 0 has top ${firstTop}, card ${i} has top ${tops[i]}`);
+        }
+      }
+    }
+  }
 
-  const photosBoxBefore = await photosPanel33.boundingBox();
-  const previewBoxBefore = await previewDisplay33.boundingBox();
+  // Select first card to establish known state
+  await cards33.first().dispatchEvent('click');
+  await page.waitForTimeout(100);
+
+  // Clear recorded preview requests
+  await page.evaluate(() => {
+    window.__DEVELOP_STUB__.previewRequests = [];
+  });
+
+  // With focus in the strip, ArrowRight makes the next card is-last-clicked, and next preview request names that photograph
+  await filmstrip33.focus();
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(150);
+
+  const card2 = filmstrip33.locator('.thumbnail-card:nth-child(2)');
+  const card2Last = await card2.evaluate((el) => el.classList.contains('is-last-clicked'));
+  if (!card2Last) {
+    failures.push('ArrowRight with focus in strip must make the next card is-last-clicked');
+  }
+
+  const reqsAfterRight = await page.evaluate(() => window.__DEVELOP_STUB__.previewRequests);
+  const lastReq33 = reqsAfterRight[reqsAfterRight.length - 1];
+  const card2Name = await card2.getAttribute('data-filename');
+  if (!lastReq33 || lastReq33.name !== card2Name) {
+    failures.push(`Next preview request must name ${card2Name}, got '${lastReq33?.name}'`);
+  }
+
+  // Shift+ArrowRight adds the next card to the selection
+  await page.keyboard.press('Shift+ArrowRight');
+  await page.waitForTimeout(150);
+
+  const card3 = filmstrip33.locator('.thumbnail-card:nth-child(3)');
+  const card2Selected = await card2.evaluate((el) => el.classList.contains('active'));
+  const card3Selected = await card3.evaluate((el) => el.classList.contains('active'));
+  const card3Last = await card3.evaluate((el) => el.classList.contains('is-last-clicked'));
+  if (!card2Selected || !card3Selected) {
+    failures.push('Shift+ArrowRight must add the next card to the selection (keeping previous selection)');
+  }
+  if (!card3Last) {
+    failures.push('Shift+ArrowRight must make the newly selected card is-last-clicked');
+  }
+
+  // Dragging develop-settings-divider by -2000 and +2000 clamps settings column to 560 and 320 (±1)
+  const divider33 = page.locator('[data-testid="develop-settings-divider"]');
+  const settingsCol33 = page.locator('.controls-panel');
   const dividerBox = await divider33.boundingBox();
 
-  if (!dividerBox || !photosBoxBefore || !previewBoxBefore) {
-    failures.push('Missing bounding box for divider, photos panel, or preview display');
+  if (!dividerBox) {
+    failures.push('Missing bounding box for develop-settings-divider');
   } else {
     const startX = dividerBox.x + dividerBox.width / 2;
     const startY = dividerBox.y + dividerBox.height / 2;
 
-    // Drag develop-divider 120 px to the right with page.mouse
+    // Drag by -2000
     await page.mouse.move(startX, startY);
     await page.mouse.down();
-    await page.mouse.move(startX + 120, startY, { steps: 5 });
+    await page.mouse.move(startX - 2000, startY, { steps: 5 });
     await page.mouse.up();
     await page.waitForTimeout(100);
 
-    const photosBoxAfterRight = await photosPanel33.boundingBox();
-    const previewBoxAfterRight = await previewDisplay33.boundingBox();
-
-    const photosDiff = (photosBoxAfterRight?.width ?? 0) - photosBoxBefore.width;
-    const previewDiff = previewBoxBefore.width - (previewBoxAfterRight?.width ?? 0);
-
-    if (Math.abs(photosDiff - 120) > 4) {
-      failures.push(`Photos panel must become 120 ± 4 px wider, changed by ${photosDiff}px`);
-    }
-    if (Math.abs(previewDiff - 120) > 4) {
-      failures.push(`Preview display must become 120 ± 4 px narrower, changed by ${previewDiff}px`);
+    const settingsBoxLeft = await settingsCol33.boundingBox();
+    if (!settingsBoxLeft || Math.abs(settingsBoxLeft.width - 560) > 1) {
+      failures.push(`Settings column must clamp to 560 ± 1 px when dragged by -2000, got ${settingsBoxLeft?.width}px`);
     }
 
-    // Drag it 2000 px to the left
+    // Drag by +2000
     const dividerBox2 = await divider33.boundingBox();
     const startX2 = (dividerBox2?.x ?? startX) + (dividerBox2?.width ?? 12) / 2;
     const startY2 = (dividerBox2?.y ?? startY) + (dividerBox2?.height ?? 100) / 2;
 
     await page.mouse.move(startX2, startY2);
     await page.mouse.down();
-    await page.mouse.move(startX2 - 2000, startY2, { steps: 5 });
+    await page.mouse.move(startX2 + 2000, startY2, { steps: 5 });
     await page.mouse.up();
     await page.waitForTimeout(100);
 
-    const photosBoxLeft = await photosPanel33.boundingBox();
-    if (!photosBoxLeft || Math.abs(photosBoxLeft.width - 200) > 1) {
-      failures.push(`Photos panel must clamp to 200 ± 1 px, got ${photosBoxLeft?.width}px`);
+    const settingsBoxRight = await settingsCol33.boundingBox();
+    if (!settingsBoxRight || Math.abs(settingsBoxRight.width - 320) > 1) {
+      failures.push(`Settings column must clamp to 320 ± 1 px when dragged by +2000, got ${settingsBoxRight?.width}px`);
     }
 
-    // Reload the page and reopen the folder the way the script already does
+    // Reload keeps the last width (320 ± 1)
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForTimeout(200);
 
@@ -1346,13 +1400,13 @@ try {
     await page.waitForSelector('.thumbnail-card:nth-child(6)', { timeout: 3000 });
     await page.waitForTimeout(300);
 
-    const photosBoxReloaded = await page.locator('.photos-panel').boundingBox();
-    if (!photosBoxReloaded || Math.abs(photosBoxReloaded.width - 200) > 1) {
-      failures.push(`Photos panel must remember 200 ± 1 px across reload, got ${photosBoxReloaded?.width}px`);
+    const settingsBoxReloaded = await page.locator('.controls-panel').boundingBox();
+    if (!settingsBoxReloaded || Math.abs(settingsBoxReloaded.width - 320) > 1) {
+      failures.push(`Settings column must remember 320 ± 1 px across reload, got ${settingsBoxReloaded?.width}px`);
     }
 
-    // Clear rollchrome.develop.photosWidth at the end, so later checks start from default
-    await page.evaluate(() => localStorage.removeItem('rollchrome.develop.photosWidth'));
+    // Clear rollchrome.develop.settingsWidth at the end
+    await page.evaluate(() => localStorage.removeItem('rollchrome.develop.settingsWidth'));
   }
 
   // -------------------------------------------------------------------------

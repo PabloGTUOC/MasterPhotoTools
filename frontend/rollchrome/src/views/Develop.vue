@@ -31,6 +31,7 @@ import type {
 } from '@host/api';
 import { desktop } from '@host/api';
 import AdjustmentSlider from '../components/AdjustmentSlider.vue';
+import Filmstrip, { type FilmstripItem } from '../components/Filmstrip.vue';
 import JobProgress from '@ui/components/JobProgress.vue';
 import PathField from '@ui/components/PathField.vue';
 import { useRoots } from '@ui/useRoots';
@@ -102,67 +103,54 @@ watch(previewUrl, (url) => {
 const workspaceEl = ref<HTMLElement | null>(null);
 const previewDisplayEl = ref<HTMLElement | null>(null);
 
-const DEFAULT_PHOTOS_WIDTH = 280;
-const STORAGE_KEY_PHOTOS_WIDTH = 'rollchrome.develop.photosWidth';
+const MIN_SETTINGS_WIDTH = 320;
+const MAX_SETTINGS_WIDTH = 560;
+const DEFAULT_SETTINGS_WIDTH = 360;
+const STORAGE_KEY_SETTINGS_WIDTH = 'rollchrome.develop.settingsWidth';
 
-function loadPhotosWidth(): number {
+function loadSettingsWidth(): number {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_PHOTOS_WIDTH);
+    const raw = localStorage.getItem(STORAGE_KEY_SETTINGS_WIDTH);
     if (raw !== null) {
       const val = Number(raw);
-      if (Number.isFinite(val) && val >= 200) {
+      if (Number.isFinite(val) && val >= MIN_SETTINGS_WIDTH && val <= MAX_SETTINGS_WIDTH) {
         return Math.round(val);
       }
     }
   } catch {
     // fallback to default
   }
-  return DEFAULT_PHOTOS_WIDTH;
+  return DEFAULT_SETTINGS_WIDTH;
 }
 
-function savePhotosWidth(width: number) {
+function saveSettingsWidth(width: number) {
   try {
-    localStorage.setItem(STORAGE_KEY_PHOTOS_WIDTH, String(Math.round(width)));
+    localStorage.setItem(STORAGE_KEY_SETTINGS_WIDTH, String(Math.round(width)));
   } catch {
     // ignore
   }
 }
 
-const photosWidth = ref<number>(loadPhotosWidth());
+const settingsWidth = ref<number>(loadSettingsWidth());
 
-function clampPhotosWidth(width: number): number {
-  const wsWidth = workspaceEl.value
-    ? workspaceEl.value.getBoundingClientRect().width
-    : typeof window !== 'undefined'
-      ? window.innerWidth - 32
-      : 1248;
-  const maxWidth = Math.max(200, Math.floor((wsWidth - 372) / 2));
-  return Math.min(Math.max(200, Math.round(width)), maxWidth);
+function clampSettingsWidth(width: number): number {
+  return Math.min(MAX_SETTINGS_WIDTH, Math.max(MIN_SETTINGS_WIDTH, Math.round(width)));
 }
 
-const maxPhotosWidth = computed(() => {
-  const wsWidth = workspaceEl.value
-    ? workspaceEl.value.getBoundingClientRect().width
-    : typeof window !== 'undefined'
-      ? window.innerWidth - 32
-      : 1248;
-  return Math.max(200, Math.floor((wsWidth - 372) / 2));
-});
-
-function setPhotosWidth(width: number) {
-  const clamped = clampPhotosWidth(width);
-  photosWidth.value = clamped;
-  savePhotosWidth(clamped);
+function setSettingsWidth(width: number) {
+  const clamped = clampSettingsWidth(width);
+  settingsWidth.value = clamped;
+  saveSettingsWidth(clamped);
 }
 
 let isDraggingDivider = false;
 let dividerStartX = 0;
-let dividerStartWidth = DEFAULT_PHOTOS_WIDTH;
+let dividerStartWidth = DEFAULT_SETTINGS_WIDTH;
 
 function onDividerPointerDown(e: PointerEvent) {
   isDraggingDivider = true;
   dividerStartX = e.clientX;
-  dividerStartWidth = photosWidth.value;
+  dividerStartWidth = settingsWidth.value;
   try {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   } catch {
@@ -173,7 +161,8 @@ function onDividerPointerDown(e: PointerEvent) {
 function onDividerPointerMove(e: PointerEvent) {
   if (!isDraggingDivider) return;
   const delta = e.clientX - dividerStartX;
-  setPhotosWidth(dividerStartWidth + delta);
+  // Settings column is on the right: dragging left (negative delta) widens it, dragging right narrows it
+  setSettingsWidth(dividerStartWidth - delta);
 }
 
 function onDividerPointerUp(e: PointerEvent) {
@@ -190,17 +179,17 @@ function onDividerPointerUp(e: PointerEvent) {
 function onDividerKeyDown(e: KeyboardEvent) {
   if (e.key === 'ArrowLeft') {
     e.preventDefault();
-    setPhotosWidth(photosWidth.value - 40);
+    setSettingsWidth(settingsWidth.value + 40);
   } else if (e.key === 'ArrowRight') {
     e.preventDefault();
-    setPhotosWidth(photosWidth.value + 40);
+    setSettingsWidth(settingsWidth.value - 40);
   }
 }
 
 function onWindowPointerMove(e: PointerEvent) {
   if (!isDraggingDivider) return;
   const delta = e.clientX - dividerStartX;
-  setPhotosWidth(dividerStartWidth + delta);
+  setSettingsWidth(dividerStartWidth - delta);
 }
 
 function onWindowPointerUp() {
@@ -215,36 +204,21 @@ function onWindowKeyDown(e: KeyboardEvent) {
   }
 }
 
-function updatePreviewTop() {
-  if (!previewDisplayEl.value || !workspaceEl.value) return;
-  const rect = previewDisplayEl.value.getBoundingClientRect();
-  const pageEl = workspaceEl.value.closest('.develop-page');
-  const bottomPadding = pageEl
-    ? parseFloat(window.getComputedStyle(pageEl).paddingBottom) || 16
-    : 16;
-  const statusEl = document.querySelector('.statusbar');
-  const statusH = statusEl ? statusEl.getBoundingClientRect().height : 40;
-  const top = Math.round(rect.top + bottomPadding + statusH);
-  workspaceEl.value.style.setProperty('--preview-top', `${top}px`);
-}
-
 function onWindowResize() {
-  updatePreviewTop();
-  const clamped = clampPhotosWidth(photosWidth.value);
-  if (clamped !== photosWidth.value) {
-    photosWidth.value = clamped;
-    savePhotosWidth(clamped);
+  const clamped = clampSettingsWidth(settingsWidth.value);
+  if (clamped !== settingsWidth.value) {
+    settingsWidth.value = clamped;
+    saveSettingsWidth(clamped);
   }
 }
 
 watch(photos, () => {
   if (photos.value.length > 0) {
     nextTick(() => {
-      updatePreviewTop();
-      const clamped = clampPhotosWidth(photosWidth.value);
-      if (clamped !== photosWidth.value) {
-        photosWidth.value = clamped;
-        savePhotosWidth(clamped);
+      const clamped = clampSettingsWidth(settingsWidth.value);
+      if (clamped !== settingsWidth.value) {
+        settingsWidth.value = clamped;
+        saveSettingsWidth(clamped);
       }
     });
   }
@@ -637,9 +611,16 @@ async function loadFolder() {
 // Actions: Selection
 // ---------------------------------------------------------------------------
 
-function handlePhotoClick(name: string, event: MouseEvent) {
-  if (event.metaKey || event.ctrlKey) {
-    // Toggle
+
+const filmstripItems = computed<FilmstripItem[]>(() => {
+  return photos.value.map((name) => ({
+    name,
+    caption: lookDisplayName(moduleAssignments.value[name]?.look),
+  }));
+});
+
+function handleSelect(name: string, modifiers: { meta: boolean; shift: boolean }) {
+  if (modifiers.meta) {
     const next = new Set(selection.value);
     if (next.has(name)) {
       next.delete(name);
@@ -647,8 +628,7 @@ function handlePhotoClick(name: string, event: MouseEvent) {
       next.add(name);
     }
     selection.value = Array.from(next);
-  } else if (event.shiftKey && lastClicked.value && photos.value.includes(lastClicked.value)) {
-    // Range select
+  } else if (modifiers.shift && lastClicked.value && photos.value.includes(lastClicked.value)) {
     const idx1 = photos.value.indexOf(lastClicked.value);
     const idx2 = photos.value.indexOf(name);
     const [start, end] = idx1 < idx2 ? [idx1, idx2] : [idx2, idx1];
@@ -657,12 +637,19 @@ function handlePhotoClick(name: string, event: MouseEvent) {
     for (const item of range) next.add(item);
     selection.value = Array.from(next);
   } else {
-    // Single select
     selection.value = [name];
   }
   lastClicked.value = name;
   triggerPreview();
 }
+
+function handleActivate(name: string) {
+  selection.value = [name];
+  lastClicked.value = name;
+  triggerPreview();
+}
+
+
 
 function selectAll() {
   selection.value = [...photos.value];
@@ -1007,11 +994,10 @@ onMounted(async () => {
   window.addEventListener('pointerup', onWindowPointerUp);
 
   nextTick(() => {
-    updatePreviewTop();
-    const clamped = clampPhotosWidth(photosWidth.value);
-    if (clamped !== photosWidth.value) {
-      photosWidth.value = clamped;
-      savePhotosWidth(clamped);
+    const clamped = clampSettingsWidth(settingsWidth.value);
+    if (clamped !== settingsWidth.value) {
+      settingsWidth.value = clamped;
+      saveSettingsWidth(clamped);
     }
   });
 
@@ -1052,108 +1038,49 @@ onMounted(async () => {
 
 <template>
   <div class="develop-page">
-    <header class="page-head">
-      <h1>Develop</h1>
-      <p class="muted">
-        Open a folder of RAW photographs, assign film simulation looks, and develop to JPEG or 16-bit ProPhoto TIFF.
-      </p>
+
+    <!-- Top bar (one row): RAW folder field, photograph count, Select all button -->
+    <header class="top-bar">
+      <div class="top-bar__folder">
+        <PathField
+          v-model="folder"
+          label="RAW folder"
+          placeholder="/path/to/raw/photos"
+          :roots="roots"
+          :roots-error="rootsError"
+          :list="listRoots"
+          :disabled="isDeveloping || isPlanning"
+          :overlay="true"
+          data-testid="develop-folder-input"
+        />
+        <div v-if="folderError" class="error-line" role="alert">
+          {{ folderError }}
+        </div>
+        <div v-else-if="!isFolderLoading && folder.trim() && photos.length === 0" class="muted-note">
+          No RAW files found in this folder.
+        </div>
+      </div>
+      <div v-if="photos.length > 0" class="top-bar__actions">
+        <span class="mono photo-count">{{ photos.length }} photographs</span>
+        <button
+          type="button"
+          class="secondary select-all-btn"
+          data-testid="select-all-button"
+          :disabled="isDeveloping"
+          @click="selectAll"
+        >
+          Select all
+        </button>
+      </div>
     </header>
 
-    <!-- Folder selection -->
-    <section class="section-box">
-      <PathField
-        v-model="folder"
-        label="RAW folder"
-        placeholder="/path/to/raw/photos"
-        :roots="roots"
-        :roots-error="rootsError"
-        :list="listRoots"
-        :disabled="isDeveloping || isPlanning"
-        :overlay="true"
-        data-testid="develop-folder-input"
-      />
-      <div v-if="folderError" class="error-line" role="alert">
-        {{ folderError }}
-      </div>
-      <div v-else-if="!isFolderLoading && folder.trim() && photos.length === 0" class="muted-note">
-        No RAW files found in this folder.
-      </div>
-    </section>
-
-    <!-- Main workspace: Photographs Grid + Divider + Preview & Controls -->
+    <!-- Main workspace: Preview + Divider + Controls & Filmstrip below preview -->
     <div
       v-if="photos.length > 0"
       ref="workspaceEl"
       class="workspace"
-      :style="{ '--photos-width': `${photosWidth}px` }"
+      :style="{ '--settings-width': `${settingsWidth}px` }"
     >
-      <!-- Left: Photographs grid -->
-      <section class="photos-panel">
-        <header class="panel-head">
-          <span class="mono">{{ photos.length }} photographs</span>
-          <button
-            type="button"
-            class="secondary select-all-btn"
-            data-testid="select-all-button"
-            :disabled="isDeveloping"
-            @click="selectAll"
-          >
-            Select all
-          </button>
-        </header>
-
-        <div class="thumbnail-grid" data-testid="thumbnail-grid">
-          <div
-            v-for="name in photos"
-            :key="name"
-            class="thumbnail-card"
-            :class="{ active: selection.includes(name), 'is-last-clicked': lastClicked === name }"
-            :data-filename="name"
-            data-testid="thumbnail-item"
-            @click="handlePhotoClick(name, $event)"
-          >
-            <div class="thumb-container">
-              <img
-                v-if="thumbnailUrls[name]"
-                :src="thumbnailUrls[name]"
-                :alt="name"
-                class="thumb-img"
-              />
-              <div v-else-if="thumbnailErrors[name]" class="thumb-error mono">
-                <span>{{ name }}</span>
-              </div>
-              <div v-else class="thumb-placeholder">
-                <span class="cursor">_</span>
-              </div>
-            </div>
-            <div class="thumb-meta">
-              <span class="thumb-name mono" :title="name">{{ name }}</span>
-              <span class="thumb-look mono">
-                {{ lookDisplayName(moduleAssignments[name]?.look) }}
-              </span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Divider -->
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize photographs panel"
-        tabindex="0"
-        data-testid="develop-divider"
-        class="develop-divider"
-        :aria-valuenow="photosWidth"
-        aria-valuemin="200"
-        :aria-valuemax="maxPhotosWidth"
-        @pointerdown="onDividerPointerDown"
-        @pointermove="onDividerPointerMove"
-        @pointerup="onDividerPointerUp"
-        @pointercancel="onDividerPointerUp"
-        @keydown="onDividerKeyDown"
-      />
-
       <!-- Preview panel -->
       <section class="preview-panel">
         <div class="preview-box" data-testid="preview-container">
@@ -1194,6 +1121,38 @@ onMounted(async () => {
           </div>
         </div>
       </section>
+
+      <!-- Divider -->
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize settings panel"
+        tabindex="0"
+        data-testid="develop-settings-divider"
+        class="develop-settings-divider"
+        :aria-valuenow="settingsWidth"
+        :aria-valuemin="MIN_SETTINGS_WIDTH"
+        :aria-valuemax="MAX_SETTINGS_WIDTH"
+        @pointerdown="onDividerPointerDown"
+        @pointermove="onDividerPointerMove"
+        @pointerup="onDividerPointerUp"
+        @pointercancel="onDividerPointerUp"
+        @keydown="onDividerKeyDown"
+      />
+
+      <!-- Bottom filmstrip (under preview + divider) -->
+      <div class="workspace-filmstrip">
+        <Filmstrip
+          :items="filmstripItems"
+          :thumbnail-urls="thumbnailUrls"
+          :thumbnail-errors="thumbnailErrors"
+          :selection="selection"
+          :active="lastClicked"
+          @select="handleSelect"
+          @activate="handleActivate"
+          @select-all="selectAll"
+        />
+      </div>
 
       <!-- Right: Adjustments and controls -->
       <aside class="controls-panel">
@@ -1637,194 +1596,69 @@ onMounted(async () => {
 <style scoped>
 .develop-page {
   display: grid;
-  gap: var(--space-4);
-  padding: var(--space-4);
-  margin: 0 auto;
-}
-
-.page-head {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.page-head h1 {
-  font-family: var(--font-label);
-  font-size: 20px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text);
-  margin: 0;
-}
-
-.section-box {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.workspace {
-  display: grid;
-  grid-template-columns: var(--photos-width, 280px) 12px minmax(0, 1fr) 360px;
-  column-gap: 0;
-  row-gap: var(--space-4);
-  align-items: start;
-}
-
-.photos-panel {
-  display: grid;
-  align-content: start;
+  grid-template-rows: auto 1fr;
   gap: var(--space-3);
-  border: var(--border-hair);
-  padding: var(--space-3);
-  background: var(--bg-surface);
-  overflow-y: auto;
-  max-height: calc(100vh - var(--preview-top, 240px));
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-.panel-head {
+.top-bar {
   display: flex;
+  align-items: flex-end;
   justify-content: space-between;
+  gap: var(--space-4);
+  flex-shrink: 0;
+}
+
+.top-bar__folder {
+  flex: 1;
+  max-width: 560px;
+}
+
+.top-bar__actions {
+  display: flex;
   align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.photo-count {
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
 .select-all-btn {
   min-height: 40px;
+  height: 40px;
   padding: 0 var(--space-3);
   font-family: var(--font-label);
   border-radius: 2px;
-}
-
-.thumbnail-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: var(--space-2);
-}
-
-.develop-divider {
-  width: 12px;
-  cursor: col-resize;
-  align-self: stretch;
-  display: flex;
-  justify-content: center;
-  align-items: stretch;
-  user-select: none;
-  touch-action: none;
-  outline: none;
-}
-
-.develop-divider::after {
-  content: '';
-  width: 1px;
-  height: 100%;
-  background: var(--grid);
-  transition: background var(--dur-fast) var(--ease);
-}
-
-.develop-divider:hover::after,
-.develop-divider:focus::after,
-.develop-divider:focus-visible::after {
-  background: var(--accent);
-}
-
-.preview-panel {
-  position: sticky;
-  top: var(--space-4);
-  min-width: 0;
-}
-
-.thumbnail-card {
-  display: grid;
-  gap: var(--space-1);
-  padding: var(--space-2);
-  border: var(--border-hair);
-  background: var(--bg);
-  cursor: pointer;
-  border-radius: 2px;
-  min-height: 140px;
-}
-
-.thumbnail-card.active {
-  border-color: var(--accent);
-  background: var(--bg-surface);
-}
-
-.thumbnail-card.is-last-clicked {
-  outline: 1px solid var(--accent);
-}
-
-.thumb-container {
-  width: 100%;
-  aspect-ratio: 3 / 2;
-  background: var(--bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-
-.thumb-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.thumb-error {
-  padding: var(--space-1);
-  font-size: 11px;
-  color: var(--text-muted);
-  text-align: center;
-  word-break: break-all;
-}
-
-.thumb-placeholder {
-  color: var(--text-muted);
-}
-
-.thumb-meta {
-  display: grid;
-  gap: 2px;
-  font-size: 11px;
-}
-
-.thumb-name {
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.thumb-look {
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.controls-panel {
-  display: flex;
-  flex-direction: column;
-  margin-left: var(--space-4);
-  max-height: calc(100vh - var(--preview-top, 240px));
-  height: calc(100vh - var(--preview-top, 240px));
-  min-height: 0;
   box-sizing: border-box;
 }
 
-.controls-settings {
-  flex: 1;
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 12px var(--settings-width, 360px);
+  grid-template-rows: 1fr 132px;
+  column-gap: 0;
+  row-gap: var(--space-3);
+  align-items: stretch;
   min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding-right: var(--space-1);
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-.controls-footer {
-  flex-shrink: 0;
-  margin-top: auto;
-  background: var(--bg-surface);
-  position: relative;
-  z-index: calc(var(--z-status) + 1); /* above the details drawer */
+.preview-panel {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .preview-box {
@@ -1832,7 +1666,11 @@ onMounted(async () => {
   padding: var(--space-3);
   background: var(--bg-surface);
   display: grid;
+  grid-template-rows: auto 1fr;
   gap: var(--space-2);
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .preview-header {
@@ -1841,6 +1679,7 @@ onMounted(async () => {
   align-items: center;
   font-size: 12px;
   min-height: 40px;
+  flex-shrink: 0;
 }
 
 .preview-header-actions {
@@ -1871,20 +1710,89 @@ onMounted(async () => {
 
 .preview-display {
   width: 100%;
-  height: calc(100vh - var(--preview-top, 240px));
-  min-height: 360px;
+  min-height: 0;
+  height: 100%;
   background: var(--bg);
   display: flex;
   align-items: center;
   justify-content: center;
   border: var(--border-hair);
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .preview-img {
+  max-width: 100%;
+  max-height: 100%;
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.develop-settings-divider {
+  grid-column: 2;
+  grid-row: 1;
+  width: 12px;
+  cursor: col-resize;
+  align-self: stretch;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  user-select: none;
+  touch-action: none;
+  outline: none;
+}
+
+.develop-settings-divider::after {
+  content: ;
+  width: 1px;
+  height: 100%;
+  background: var(--grid);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.develop-settings-divider:hover::after,
+.develop-settings-divider:focus::after,
+.develop-settings-divider:focus-visible::after {
+  background: var(--accent);
+}
+
+.workspace-filmstrip {
+  grid-column: 1 / 3;
+  grid-row: 2;
+  height: 132px;
+  min-height: 132px;
+  max-height: 132px;
+  min-width: 0;
+}
+
+.controls-panel {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.controls-settings {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-right: var(--space-1);
+}
+
+.controls-footer {
+  flex-shrink: 0;
+  margin-top: auto;
+  background: var(--bg-surface);
+  position: relative;
+  z-index: calc(var(--z-status) + 1); /* above the details drawer */
 }
 
 .preview-empty,
@@ -1929,43 +1837,64 @@ onMounted(async () => {
   color: var(--text-muted);
 }
 
-.look-select {
+.control-hint {
+  font-size: 11px;
+}
+
+.look-select,
+.grain-select {
   min-height: 40px;
-  padding: var(--space-2);
+  padding: 0 var(--space-2);
   background: var(--bg);
   color: var(--text);
   border: var(--border-hair);
   border-radius: 2px;
   font-family: var(--font-mono);
-  font-size: 13px;
-}
-
-.lut-row {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.lut-path {
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
-.film-credit-line {
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.4;
-  margin-top: 4px;
-}
-
-.box-title {
   font-size: 12px;
-  color: var(--text-muted);
-  text-transform: uppercase;
 }
 
-.format-toggle {
-  display: grid;
+.slider-val {
+  color: var(--text);
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
   gap: var(--space-2);
+  font-size: 12px;
+  cursor: pointer;
+  min-height: 40px;
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.save-lut-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.save-lut-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.save-lut-feedback {
+  font-size: 11px;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.format-options {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
 }
 
 .format-option {
@@ -1980,20 +1909,47 @@ onMounted(async () => {
 .quality-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.quality-row label {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 60px;
+}
+
+.quality-slider {
+  flex: 1;
+}
+
+.scale-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
   gap: var(--space-2);
 }
 
-.quality-input {
+.scale-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.scale-input {
   min-height: 40px;
-  width: 80px;
-  padding: var(--space-1) var(--space-2);
+  height: 40px;
+  padding: 0 var(--space-2);
   background: var(--bg);
   color: var(--text);
   border: var(--border-hair);
   border-radius: 2px;
-  font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 13px;
+  width: 100px;
+  box-sizing: border-box;
+}
+
+.scale-unit {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .destination-note {
@@ -2001,108 +1957,17 @@ onMounted(async () => {
   word-break: break-all;
 }
 
-.action-buttons {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2);
-}
-
-.dry-run-btn,
-.run-btn {
-  min-height: 40px;
-  padding: var(--space-2);
-  font-family: var(--font-label);
-  font-size: 13px;
-  letter-spacing: 0.05em;
-  border-radius: 2px;
-}
-
-.gate-explanation {
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-
-.review-section {
-  display: grid;
-  gap: var(--space-3);
-  border: var(--border-hair);
-  padding: var(--space-4);
-  background: var(--bg-surface);
-}
-
-.review-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.review-head h2 {
-  font-family: var(--font-label);
-  font-size: 16px;
-  margin: 0;
-}
-
-.badge {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 2px 8px;
-  background: var(--bg);
-  border: var(--border-hair);
-  border-radius: 2px;
-}
-
-.rule-box {
-  background: var(--bg);
-  border: var(--border-hair);
-  padding: var(--space-3);
-  display: grid;
-  gap: var(--space-1);
-}
-
-.rule-line {
-  margin: 0;
-  font-size: 13px;
-}
-
-.skipped-section {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.skipped-section h3 {
-  font-size: 13px;
-  margin: 0;
-}
-
-.skipped-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 4px;
-  max-height: 160px;
-  overflow-y: auto;
-}
-
-.skipped-row {
-  font-size: 12px;
-  display: flex;
-  gap: var(--space-2);
-}
-
-.skipped-file {
+.destination-note code {
   color: var(--text);
 }
 
-.skipped-reason {
-  color: var(--text-muted);
+.actions-box {
+  gap: var(--space-2);
 }
 
-.scope-toggle {
+.scope-options {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
 .scope-option {
@@ -2121,29 +1986,27 @@ onMounted(async () => {
   font-size: 12px;
 }
 
-.cursor {
-  animation: blink 1s step-start infinite;
+.error-banner {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--danger);
+  background: rgba(255, 75, 75, 0.05);
 }
 
-@keyframes blink {
-  50% {
-    opacity: 0;
-  }
+.muted-note {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: var(--space-2) 0;
 }
 
 .preview-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
-  background: var(--bg);
-  z-index: var(--z-lightbox);
+  inset: 0;
+  z-index: var(--z-modal);
+  background: rgba(0, 0, 0, 0.9);
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
 }
 
 .preview-overlay-img {
@@ -2166,18 +2029,119 @@ onMounted(async () => {
   z-index: 1;
 }
 
-@media (max-width: 1099.98px) {
-  .workspace {
-    grid-template-columns: minmax(0, 1fr) 360px;
-  }
+.button-row {
+  display: flex;
+  gap: var(--space-3);
+}
 
-  .photos-panel {
-    grid-column: 1 / -1;
-    max-height: 280px;
-  }
+.dry-run-btn,
+.run-btn {
+  flex: 1;
+  min-height: 40px;
+  height: 40px;
+  font-family: var(--font-label);
+  border-radius: 2px;
+  font-size: 13px;
+}
 
-  .develop-divider {
-    display: none;
-  }
+.gate-explanation {
+  font-size: 12px;
+  color: var(--accent);
+  padding: var(--space-2);
+  background: var(--bg);
+  border: var(--border-hair);
+}
+
+.gate-explanation p {
+  margin: 0;
+}
+
+.review-section {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-hair);
+  background: var(--bg-surface);
+}
+
+.review-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.review-head h2 {
+  font-family: var(--font-label);
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 2px var(--space-2);
+  background: var(--accent);
+  color: var(--bg);
+  border-radius: 2px;
+  font-family: var(--font-label);
+}
+
+.rule-box {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--bg);
+  border: var(--border-hair);
+  font-size: 12px;
+}
+
+.rule-line {
+  margin: 0;
+}
+
+.rule-line code {
+  color: var(--text);
+}
+
+.skipped-section {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.skipped-section h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+  color: var(--accent);
+}
+
+.skipped-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.skipped-row {
+  display: flex;
+  gap: var(--space-2);
+  padding: 2px 0;
+}
+
+.skipped-file {
+  color: var(--text);
+}
+
+.skipped-reason {
+  color: var(--text-muted);
+}
+
+.job-section {
+  display: grid;
+  gap: var(--space-2);
 }
 </style>

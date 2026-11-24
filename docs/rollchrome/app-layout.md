@@ -57,6 +57,8 @@
 
 ## The steps, in order
 
+**All eight are done and merged (2026-11-24).** Each brief's Review says what was checked and what the architect fixed.
+
 | Step | What | Replaces |
 |---|---|---|
 | UI-4 | Split `Edit.vue` into section files (with agy now) | — |

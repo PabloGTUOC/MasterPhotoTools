@@ -1,6 +1,6 @@
 # `UI-3` · Every look, and RAW files, in Edit
 
-> **Status:** briefed
+> **Status:** approved
 > **Plan:** [`docs/rollchrome/app-layout.md`](../rollchrome/app-layout.md), step UI-3. **Branch:** `ui-3`, cut from
 > `main` after UI-7 is merged.
 

@@ -1,6 +1,6 @@
 # `UI-6` · The status strip
 
-> **Status:** briefed
+> **Status:** approved
 > **Plan:** [`docs/rollchrome/app-layout.md`](../rollchrome/app-layout.md), step UI-6. **Branch:** `ui-6`, cut from
 > `main` after UI-2 is merged.
 

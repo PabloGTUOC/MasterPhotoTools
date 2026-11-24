@@ -1,6 +1,6 @@
 # `UI-5` · Batch in the application's frame
 
-> **Status:** briefed
+> **Status:** approved
 > **Plan:** [`docs/rollchrome/app-layout.md`](../rollchrome/app-layout.md), step UI-5. **Branch:** `ui-5`, cut from
 > `main` after UI-8 is merged.
 

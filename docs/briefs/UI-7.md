@@ -1,6 +1,6 @@
 # `UI-7` · Develop with a filmstrip
 
-> **Status:** briefed
+> **Status:** approved
 > **Plan:** [`docs/rollchrome/app-layout.md`](../rollchrome/app-layout.md), step UI-7. **Branch:** `ui-7`, cut from
 > `main` after UI-6 is merged.
 

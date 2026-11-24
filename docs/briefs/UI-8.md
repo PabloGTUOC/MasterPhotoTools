@@ -1,6 +1,6 @@
 # `UI-8` · Edit opens a folder
 
-> **Status:** briefed
+> **Status:** approved
 > **Plan:** [`docs/rollchrome/app-layout.md`](../rollchrome/app-layout.md), step UI-8. **Branch:** `ui-8`, cut from
 > `main` after UI-3 is merged.
 

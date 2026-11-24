@@ -1,6 +1,6 @@
 # `UI-9` · Edit says when a RAW's lens went uncorrected; looks named in one place
 
-> **Status:** briefed
+> **Status:** approved
 > **Plan:** [`docs/rollchrome/app-layout.md`](../rollchrome/app-layout.md), follow-up to UI-3. **Branch:** `ui-9`, cut
 > from `main` after this brief.
 
@@ -293,3 +293,23 @@ Exit: 0
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved.**
+
+Checked on `ui-9` at 6888967:
+
+- **Gates re-run by the reviewer: 34 of 34 pass.** `cargo test --workspace` 1220 (5 ignored); `rollchrome-core`
+  534; `rollchrome-core --features film` 557 (3 ignored); `rollchrome-desktop` 30; `phototools-core` 546,
+  `phototools-desktop` 26, `rollchrome-cli` 8 unchanged. `check:edit-folder` 38 assertions; every other front-end
+  check passes. The five new tests are the ones briefed; no test was changed or removed (G7).
+- **Acceptance greps:** no `_uncorrected` or "Known gap" left in `develop.rs`; no `"Builtin - "` or
+  `"(spektrafilm)"` in `LutPicker.vue`; the builtin name is built only in `builtin_lut_file_name`, the film name only
+  in `film_lut_file_name`, and `film_lut`'s `TITLE` derives from it.
+- **Diff read in full.** The warning uses Develop's words; `decode_image` is a wrapper with the reason for dropping
+  warnings written beside it, and none of its callers changed. The notice uses tokens (`--accent-warm`,
+  `--radius-pill` = 2px) and clears at the start of every open. The three stand-ins list the names once and their
+  `ensureLookLut` returns them. No new dependency, nothing outside the named files besides `CLAUDE.md`'s counts.
+
+Not verified: a real RAW with an unknown lens on the Mac. The handmade DNG proves the path; the wording on screen
+for a real camera's reason is untested.
+

@@ -169,3 +169,21 @@ None.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved.**
+
+**Checked.**
+- **Gates.** I re-ran the full gate list on `3d26bf4`, plus `check:edit-layout`, `check:strip`, `check:edit-folder` and
+  `check:batch-layout`: 34 of 34 rc=0, with workspace 1215 (5 ignored).
+- **Diff.** I read the diff of `BulkLut.vue` and `check-batch-layout.mjs`.
+  - Every CSS variable is a defined token, except `--settings-width`, which the screen sets inline.
+  - No raw colours or z-index values.
+  - The drawer inset follows Develop's pattern: a `ResizeObserver` on the right column, reset to 0 on unmount.
+  - `check-bulk-lut.mjs` is unchanged (G7).
+- **Screenshots.** At 1024 and 1920 they show two columns, the drawer beside the right column, Dry run and Grade on
+  screen, and nothing scrolling.
+
+**Fixed by the architect.** The Batch stand-in (`bulk-lut-harness/stub-api.ts`) named looks
+`Builtin - builtin:<id>.cube`, not as the library does. Since UI-3, `check:strip`'s "first LUT" is a camera look, so
+the picker showed an empty selection in every Batch screenshot. It now uses `Builtin - <Maker> <Name>.cube` and
+`<Name> (spektrafilm).cube`; `check:strip`, `check:bulk-lut` and `check:batch-layout` pass.

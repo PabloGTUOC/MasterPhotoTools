@@ -92,6 +92,7 @@ const activePhotoName = ref<string | null>(null);
 const thumbnailUrls = ref<Record<string, string>>({});
 const thumbnailErrors = ref<Record<string, string>>({});
 let thumbnailToken = 0;
+const folderError = ref<string | null>(null);
 
 const filmstripItems = computed<FilmstripItem[]>(() => {
   return folderEntries.value.map((entry) => ({
@@ -110,6 +111,7 @@ async function loadEditFolder(folderPath: string) {
   }
   thumbnailUrls.value = {};
   thumbnailErrors.value = {};
+  folderError.value = null;
   const currentToken = ++thumbnailToken;
 
   try {
@@ -144,7 +146,8 @@ async function loadEditFolder(folderPath: string) {
   } catch (err: unknown) {
     if (currentToken !== thumbnailToken) return;
     folderEntries.value = [];
-    error.value = `Couldn't list ${folderPath}: ${err instanceof Error ? err.message : String(err)}`;
+    // Shown in the filmstrip's place, not as the screen's error: the photograph itself may have opened.
+    folderError.value = `Couldn't list ${folderPath}: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 
@@ -4231,8 +4234,9 @@ function resetDetail() {
 watch(sourcePath, (newPath) => {
   // openImage sets the field itself (a click on the filmstrip, a folder's first photograph), so a change
   // it made is not a request to open the photograph again: for a RAW that would be a second development.
-  // A folder is opened on Enter or from the picker, by handlePathSubmit, not on every keystroke.
-  if (newPath && newPath !== pathOpenedByOpenImage && isPhotoPath(newPath)) {
+  // A folder (no dot) is opened on Enter or from the picker, by handlePathSubmit. The test stays "has a
+  // dot" rather than isPhotoPath: check:viewing relies on a typed path re-opening, which clears the mask.
+  if (newPath && newPath !== pathOpenedByOpenImage && newPath.includes('.')) {
     openImage(newPath);
   }
 });
@@ -4734,7 +4738,9 @@ provide(EDIT_CONTEXT, {
           </button>
         </div>
 
+        <p v-if="folderError" class="folder-error" data-testid="edit-folder-error">{{ folderError }}</p>
         <Filmstrip
+          v-else
           :items="filmstripItems"
           :thumbnail-urls="thumbnailUrls"
           :thumbnail-errors="thumbnailErrors"
@@ -6221,7 +6227,7 @@ provide(EDIT_CONTEXT, {
   display: grid;
   gap: var(--space-2);
   padding: var(--space-2);
-  background: var(--bg-surface);
+  background: var(--bg-panel);
   border: var(--border-hair);
 }
 
@@ -6277,4 +6283,12 @@ provide(EDIT_CONTEXT, {
   padding: var(--space-1) 0;
 }
 
+.folder-error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border: var(--border-hair);
+}
 </style>

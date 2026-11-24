@@ -1694,7 +1694,7 @@ onMounted(async () => {
 .preview-box {
   border: var(--border-hair);
   padding: var(--space-3);
-  background: var(--bg-surface);
+  background: var(--bg-panel);
   display: grid;
   grid-template-rows: auto 1fr;
   gap: var(--space-2);
@@ -1820,7 +1820,7 @@ onMounted(async () => {
 .controls-footer {
   flex-shrink: 0;
   margin-top: auto;
-  background: var(--bg-surface);
+  background: var(--bg-panel);
   position: relative;
   z-index: calc(var(--z-status) + 1); /* above the details drawer */
 }
@@ -1841,7 +1841,7 @@ onMounted(async () => {
 .actions-box {
   border: var(--border-hair);
   padding: var(--space-3);
-  background: var(--bg-surface);
+  background: var(--bg-panel);
   display: grid;
   gap: var(--space-3);
 }
@@ -2091,7 +2091,7 @@ onMounted(async () => {
   gap: var(--space-3);
   padding: var(--space-3);
   border: var(--border-hair);
-  background: var(--bg-surface);
+  background: var(--bg-panel);
 }
 
 .review-head {

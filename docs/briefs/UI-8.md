@@ -239,3 +239,40 @@ None. All automated assertions pass and layout proofs have been generated.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved**, after three fixes by the architect.
+
+**Checked.**
+- **Gates.** I re-ran the full gate list on `83c3606`, and on `c5bbf1b` after the fixes: 33 of 33 rc=0. The counts are
+  workspace 1215 (5 ignored), rollchrome-core 531, with `film` 553 (3 ignored), and `check:edit-folder` 32
+  assertions.
+- **Core.** `editable_names` filters by extension using `RAW_EXTENSIONS`, uses `sidecar_path` for `edited`, sorts by
+  byte order and refuses a non-directory. `edit_thumbnail` sends a RAW through `develop_folder::thumbnail`. The four
+  tests are present.
+- **Desktop.** Both commands resolve the folder through `resolve_input` (G6) and reject a `name` with separators or
+  `..`. The thumbnail runs on `spawn_blocking`.
+- **Edit.** `flushPendingSave` saves a pending debounced edit, or waits for one in flight, before another photograph
+  opens. Thumbnails load two at a time, and the latest folder wins.
+- **No existing check changed (G7)**, other than the assertion added below.
+
+**Fixed by the architect:**
+1. **Every filmstrip click opened the photograph twice.** `openImage` now sets the path field, and the field's
+   watcher then opened it again: a second full development for a RAW, and a reset of anything changed in between.
+   - The watcher now skips the path `openImage` set.
+   - `check:edit-folder` asserts one `openPreview` per click. It failed with 2 before the fix.
+   - **The watcher keeps its "has a dot" test rather than `isPhotoPath`.** I first tried `isPhotoPath`, and
+     `check:viewing` failed. Its check 8 types "z" into the field, and the re-open of `landscape.jpgz` that
+     follows is what clears the brush mask check 7 left selected, which check 12 needs.
+2. **A `console.log('DEBUG handleKeyDown: …')` on every keypress**, removed.
+3. **G10.** A folder that could not be listed was swallowed. It is now reported in the filmstrip's place
+   (`edit-folder-error`), not as the screen's error, since the photograph itself may have opened.
+
+**Fixed in passing.** `--bg-surface` was never a token, and had not been since RP-1. The filmstrip, four Develop
+panels and one Edit panel rendered transparent: Edit's filmstrip showed the grey canvas through it. All seven now
+use `--bg-panel`.
+
+**Noted.**
+- **Undeclared change.** `PathField` (`frontend/shared`) gained an optional `choose` event. It is additive and
+  harmless, but the Report says "Deviations: None".
+- **Duplicated list.** `EDITABLE_EXTENSIONS` in `Edit.vue` repeats `RAW_EXTENSIONS`, now with a comment to keep the
+  two in step.

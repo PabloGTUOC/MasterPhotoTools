@@ -267,6 +267,33 @@ const isDeveloping = ref(moduleIsDeveloping.value);
 
 const strip = inject(STATUS_STRIP, null);
 
+// The drawer opens beside the settings column, not under it: the column's action footer sits above
+// the drawer so Run stays usable, and a full-width drawer would show its text through the footer.
+const controlsPanelRef = ref<HTMLElement | null>(null);
+let insetObserver: ResizeObserver | null = null;
+function updateStripInset() {
+  if (!strip || !controlsPanelRef.value) return;
+  const container = document.getElementById('status-strip-details')?.parentElement;
+  if (!container) return;
+  const inset = container.getBoundingClientRect().right - controlsPanelRef.value.getBoundingClientRect().left;
+  strip.detailsInsetRight = Math.max(0, Math.round(inset));
+}
+// The panel exists only once a folder is open, so the observer follows the element. Its left edge moves
+// when the window or the settings divider changes the layout.
+watch(controlsPanelRef, (panel) => {
+  insetObserver?.disconnect();
+  insetObserver = null;
+  if (!strip) return;
+  if (!panel || typeof ResizeObserver === 'undefined') {
+    strip.detailsInsetRight = 0;
+    return;
+  }
+  insetObserver = new ResizeObserver(updateStripInset);
+  insetObserver.observe(panel);
+  insetObserver.observe(document.documentElement);
+  updateStripInset();
+});
+
 const isJobRunning = computed(() => Boolean(isDeveloping.value && jobId.value));
 const hasDetails = computed(() => Boolean(reviewedPlan.value || planError.value || isJobRunning.value));
 watch(
@@ -971,6 +998,9 @@ function handleJobDone() {
 // ---------------------------------------------------------------------------
 
 onBeforeUnmount(() => {
+  insetObserver?.disconnect();
+  insetObserver = null;
+  if (strip) strip.detailsInsetRight = 0;
   window.removeEventListener('resize', onWindowResize);
   window.removeEventListener('keydown', onWindowKeyDown);
   window.removeEventListener('pointermove', onWindowPointerMove);
@@ -1155,7 +1185,7 @@ onMounted(async () => {
       </div>
 
       <!-- Right: Adjustments and controls -->
-      <aside class="controls-panel">
+      <aside ref="controlsPanelRef" class="controls-panel">
         <div class="controls-settings">
           <!-- Adjustments for selection -->
         <div class="adjustments-box" :class="{ disabled: selection.length === 0 }">

@@ -232,7 +232,7 @@ const bar = () => {
   min-width: 40px;
   height: 4px;
   background: var(--bg-panel);
-  border: 1px solid var(--border-hair);
+  border: var(--border-hair);
   position: relative;
   overflow: hidden;
 }

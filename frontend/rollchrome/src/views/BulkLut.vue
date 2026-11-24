@@ -790,7 +790,7 @@ onMounted(() => {
   display: grid;
   gap: var(--space-3);
   position: relative;
-  z-index: 101;
+  z-index: calc(var(--z-status) + 1); /* above the details drawer */
 }
 
 .source-label {

@@ -1824,7 +1824,7 @@ onMounted(async () => {
   margin-top: auto;
   background: var(--bg-surface);
   position: relative;
-  z-index: 101;
+  z-index: calc(var(--z-status) + 1); /* above the details drawer */
 }
 
 .preview-box {

@@ -249,3 +249,26 @@ None.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved**, with three small fixes made by the architect on the branch.
+
+**Checked.** I re-ran the whole gate list on `fced546`, plus `check:edit-layout` and `check:strip`: 32 of 32
+returned rc=0, with the Rust counts unchanged. I read the diff of `App.vue`, `statusStrip.ts`, `Develop.vue`,
+`BulkLut.vue`, `Edit.vue`, `JobProgress.vue` and `check-strip.mjs`. No existing check script changed (G7).
+
+**Fixed by the architect:**
+1. `.controls-footer` (Develop) and `.actions-section` (Batch) had a raw `z-index: 101`. It is needed, because it
+   keeps Run above the drawer, but the design language allows no raw values. It is now
+   `calc(var(--z-status) + 1)`.
+2. The compact bar had `border: 1px solid var(--border-hair)`. `--border-hair` is already a full shorthand, so
+   the declaration was invalid and the bar had no border. It is now `border: var(--border-hair)`.
+3. After both fixes, typecheck, `check:strip`, `check:develop` (34/34), `check:bulk-lut` and `check:shell` were
+   re-run, and all passed.
+
+**Noted.**
+- **Undeclared change.** `JobProgress`'s watcher now holds a per-watch `AbortController` and ignores events
+  from a superseded watch. That goes beyond the brief and the Report does not list it as a deviation. It is
+  a defensible race guard now that two instances can watch one job. PhotoTools' front ends pass unchanged,
+  so it stays.
+- **Two subscriptions.** The Report's answer is that each instance opens its own `watchJob` subscription. That
+  is one extra SSE stream per running job, not a polled request, and no check counts it, so it is accepted.

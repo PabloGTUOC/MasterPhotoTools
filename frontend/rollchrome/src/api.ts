@@ -852,6 +852,7 @@ export interface OpenPreviewResult {
   settle_height: number;
   orientation: number;
   read_only: boolean;
+  warnings?: string[];
 }
 
 /** Format selection and format-specific parameters for export (RP-9). */
@@ -942,6 +943,8 @@ export interface BuiltinLookInfo {
   maker: string;
   /** A film stock balanced for tungsten light (DV-6). */
   tungsten?: boolean;
+  /** The file name ensure_look_lut gives this look in the LUT library. */
+  library_file_name: string;
 }
 
 /** How a saved film LUT treats colour balance (DV-6). */

@@ -513,3 +513,21 @@ fn ensure_look_lut_writes_into_lut_library() {
     assert_eq!(dto.name, dto2.name);
     assert_eq!(dto.sha256, dto2.sha256);
 }
+
+#[test]
+fn open_preview_carries_no_warnings_for_a_jpeg() {
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = rollchrome_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let img_path = f.root.join("fixture.jpg");
+    image::RgbImage::new(60, 40).save(&img_path).unwrap();
+
+    let open_res = rollchrome_desktop::commands::edit::open_preview_impl(
+        &state,
+        img_path.to_string_lossy().to_string(),
+    )
+    .unwrap();
+
+    assert!(open_res.warnings.is_empty());
+}

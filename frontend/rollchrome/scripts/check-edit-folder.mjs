@@ -14,6 +14,7 @@
  * 3. Focus the strip and press ArrowLeft: second.jpg opens.
  * 4. Fill the field with /Volumes/Photos/second.jpg: the same three cards, second.jpg active.
  * 5. Throughout, the stand-in saw at most 2 concurrent thumbnail calls, and .content's scrollHeight <= clientHeight + 1.
+ * 6. Fill the field with /Volumes/Photos/lensless.RW2: warning is visible without error; fill /Volumes/Photos/sample.jpg: warning is gone.
  *
  * Prints "N assertions passed" and writes layout-proof/edit-folder-<width>.png.
  */
@@ -302,6 +303,38 @@ try {
     // Write screenshot
     await page.screenshot({ path: join(OUT, `edit-folder-${size.width}.png`) });
     console.log(`Wrote screenshot to layout-proof/edit-folder-${size.width}.png`);
+
+    // 6. Fill the field with /Volumes/Photos/lensless.RW2: warning is visible without error; then /Volumes/Photos/sample.jpg: warning is gone
+    await field.fill('/Volumes/Photos/lensless.RW2');
+    await field.press('Enter');
+
+    const warningLoc = page.locator('[data-testid="edit-open-warning"]');
+    await warningLoc.waitFor({ state: 'visible', timeout: 10000 });
+    const warningText = (await warningLoc.textContent()) ?? '';
+    assert(
+      warningText.includes('developed without lens correction'),
+      `[${size.width}×${size.height}] [data-testid="edit-open-warning"] is visible and contains "developed without lens correction"`
+    );
+
+    const errorCount = await page.locator('[data-testid="edit-error"]').count();
+    assert(
+      errorCount === 0,
+      `[${size.width}×${size.height}] [data-testid="edit-error"] is absent`
+    );
+
+    await field.fill('/Volumes/Photos/sample.jpg');
+    await field.press('Enter');
+
+    await page.waitForFunction(() => {
+      const el = document.querySelector('[data-testid="edit-open-warning"]');
+      return !el;
+    }, { timeout: 10000 });
+
+    const warningGoneCount = await page.locator('[data-testid="edit-open-warning"]').count();
+    assert(
+      warningGoneCount === 0,
+      `[${size.width}×${size.height}] Warning is gone after opening sample.jpg`
+    );
   }
 
   if (failures.length > 0) {

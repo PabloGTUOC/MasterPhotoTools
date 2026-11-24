@@ -256,6 +256,9 @@ export class StubDesktopApiClient {
 
   async openPreview(path: string): Promise<OpenPreviewResult> {
     stubState.openPreviewCalls.push(path);
+    const warnings = path.toLowerCase().endsWith('.rw2')
+      ? ['developed without lens correction: the lens is not in the database']
+      : [];
     return {
       session_id: 'stub_session_1',
       source_sha256: 'stub_source_sha256_e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
@@ -267,6 +270,7 @@ export class StubDesktopApiClient {
       settle_height: SETTLE_HEIGHT,
       orientation: stubState.orientation,
       read_only: stubState.readOnly,
+      warnings,
     };
   }
 
@@ -921,7 +925,7 @@ export class StubDesktopApiClient {
     stubState.ensureLookLutCalls.push(lookId);
     if (lookId.startsWith('builtin:')) {
       const builtin = BUILTIN_LOOKS.find((b) => b.id === lookId);
-      const name = builtin ? `Builtin - ${builtin.maker} ${builtin.name}.cube` : `${lookId}.cube`;
+      const name = builtin ? builtin.library_file_name : `${lookId}.cube`;
       return {
         name,
         sha256: `sha_${lookId.replace(/[^a-zA-Z0-9]/g, '_')}`,
@@ -929,9 +933,7 @@ export class StubDesktopApiClient {
     }
     if (lookId.startsWith('film:')) {
       const film = FILM_LOOKS.find((f) => f.id === lookId);
-      const name = film
-        ? (film.tungsten ? `${film.name} neutral (spektrafilm).cube` : `${film.name} (spektrafilm).cube`)
-        : `${lookId}.cube`;
+      const name = film ? film.library_file_name : `${lookId}.cube`;
       return {
         name,
         sha256: `sha_${lookId.replace(/[^a-zA-Z0-9]/g, '_')}`,
@@ -945,39 +947,39 @@ export class StubDesktopApiClient {
 }
 
 const BUILTIN_LOOKS: BuiltinLookInfo[] = [
-  { id: 'builtin:fujifilm-classic-chrome', name: 'Classic Chrome', maker: 'Fujifilm' },
-  { id: 'builtin:fujifilm-eterna', name: 'Eterna', maker: 'Fujifilm' },
-  { id: 'builtin:fujifilm-pro-neg-high', name: 'Pro Neg High', maker: 'Fujifilm' },
-  { id: 'builtin:fujifilm-pro-neg-std', name: 'Pro Neg Std', maker: 'Fujifilm' },
-  { id: 'builtin:fujifilm-provia', name: 'Provia', maker: 'Fujifilm' },
-  { id: 'builtin:ricoh-bleach-bypass', name: 'Bleach Bypass', maker: 'Ricoh' },
-  { id: 'builtin:ricoh-negative-film', name: 'Negative Film', maker: 'Ricoh' },
-  { id: 'builtin:ricoh-positive-film', name: 'Positive Film', maker: 'Ricoh' },
-  { id: 'builtin:ricoh-retro', name: 'Retro', maker: 'Ricoh' },
-  { id: 'builtin:ricoh-standard', name: 'Standard', maker: 'Ricoh' },
-  { id: 'builtin:ricoh-vivid', name: 'Vivid', maker: 'Ricoh' },
-  { id: 'builtin:ricoh-cross-processing', name: 'Cross Processing', maker: 'Ricoh' },
+  { id: 'builtin:fujifilm-classic-chrome', name: 'Classic Chrome', maker: 'Fujifilm', library_file_name: 'Builtin - Fujifilm Classic Chrome.cube' },
+  { id: 'builtin:fujifilm-eterna', name: 'Eterna', maker: 'Fujifilm', library_file_name: 'Builtin - Fujifilm Eterna.cube' },
+  { id: 'builtin:fujifilm-pro-neg-high', name: 'Pro Neg High', maker: 'Fujifilm', library_file_name: 'Builtin - Fujifilm Pro Neg High.cube' },
+  { id: 'builtin:fujifilm-pro-neg-std', name: 'Pro Neg Std', maker: 'Fujifilm', library_file_name: 'Builtin - Fujifilm Pro Neg Std.cube' },
+  { id: 'builtin:fujifilm-provia', name: 'Provia', maker: 'Fujifilm', library_file_name: 'Builtin - Fujifilm Provia.cube' },
+  { id: 'builtin:ricoh-bleach-bypass', name: 'Bleach Bypass', maker: 'Ricoh', library_file_name: 'Builtin - Ricoh Bleach Bypass.cube' },
+  { id: 'builtin:ricoh-negative-film', name: 'Negative Film', maker: 'Ricoh', library_file_name: 'Builtin - Ricoh Negative Film.cube' },
+  { id: 'builtin:ricoh-positive-film', name: 'Positive Film', maker: 'Ricoh', library_file_name: 'Builtin - Ricoh Positive Film.cube' },
+  { id: 'builtin:ricoh-retro', name: 'Retro', maker: 'Ricoh', library_file_name: 'Builtin - Ricoh Retro.cube' },
+  { id: 'builtin:ricoh-standard', name: 'Standard', maker: 'Ricoh', library_file_name: 'Builtin - Ricoh Standard.cube' },
+  { id: 'builtin:ricoh-vivid', name: 'Vivid', maker: 'Ricoh', library_file_name: 'Builtin - Ricoh Vivid.cube' },
+  { id: 'builtin:ricoh-cross-processing', name: 'Cross Processing', maker: 'Ricoh', library_file_name: 'Builtin - Ricoh Cross Processing.cube' },
 ];
 
 const FILM_LOOKS: BuiltinLookInfo[] = [
-  { id: 'film:kodak_portra_160', name: 'Kodak Portra 160', maker: 'Kodak' },
-  { id: 'film:kodak_portra_400', name: 'Kodak Portra 400', maker: 'Kodak' },
-  { id: 'film:kodak_portra_800', name: 'Kodak Portra 800', maker: 'Kodak' },
-  { id: 'film:kodak_ektar_100', name: 'Kodak Ektar 100', maker: 'Kodak' },
-  { id: 'film:kodak_gold_200', name: 'Kodak Gold 200', maker: 'Kodak' },
-  { id: 'film:kodak_ultramax_400', name: 'Kodak Ultramax 400', maker: 'Kodak' },
-  { id: 'film:kodak_ektachrome_100', name: 'Kodak Ektachrome 100', maker: 'Kodak' },
-  { id: 'film:kodak_kodachrome_64', name: 'Kodak Kodachrome 64', maker: 'Kodak' },
-  { id: 'film:kodak_vision3_50d', name: 'Kodak Vision3 50D', maker: 'Kodak' },
-  { id: 'film:kodak_vision3_200t', name: 'Kodak Vision3 200T', maker: 'Kodak', tungsten: true },
-  { id: 'film:kodak_vision3_250d', name: 'Kodak Vision3 250D', maker: 'Kodak' },
-  { id: 'film:kodak_vision3_500t', name: 'Kodak Vision3 500T', maker: 'Kodak', tungsten: true },
-  { id: 'film:kodak_verita_200d', name: 'Kodak Verita 200D', maker: 'Kodak' },
-  { id: 'film:fujifilm_c200', name: 'Fujifilm C200', maker: 'Fujifilm' },
-  { id: 'film:fujifilm_pro_400h', name: 'Fujifilm Pro 400H', maker: 'Fujifilm' },
-  { id: 'film:fujifilm_xtra_400', name: 'Fujifilm X-Tra 400', maker: 'Fujifilm' },
-  { id: 'film:fujifilm_provia_100f', name: 'Fujifilm Provia 100F', maker: 'Fujifilm' },
-  { id: 'film:fujifilm_velvia_100', name: 'Fujifilm Velvia 100', maker: 'Fujifilm' },
+  { id: 'film:kodak_portra_160', name: 'Kodak Portra 160', maker: 'Kodak', library_file_name: 'Kodak Portra 160 (spektrafilm).cube' },
+  { id: 'film:kodak_portra_400', name: 'Kodak Portra 400', maker: 'Kodak', library_file_name: 'Kodak Portra 400 (spektrafilm).cube' },
+  { id: 'film:kodak_portra_800', name: 'Kodak Portra 800', maker: 'Kodak', library_file_name: 'Kodak Portra 800 (spektrafilm).cube' },
+  { id: 'film:kodak_ektar_100', name: 'Kodak Ektar 100', maker: 'Kodak', library_file_name: 'Kodak Ektar 100 (spektrafilm).cube' },
+  { id: 'film:kodak_gold_200', name: 'Kodak Gold 200', maker: 'Kodak', library_file_name: 'Kodak Gold 200 (spektrafilm).cube' },
+  { id: 'film:kodak_ultramax_400', name: 'Kodak Ultramax 400', maker: 'Kodak', library_file_name: 'Kodak Ultramax 400 (spektrafilm).cube' },
+  { id: 'film:kodak_ektachrome_100', name: 'Kodak Ektachrome 100', maker: 'Kodak', library_file_name: 'Kodak Ektachrome 100 (spektrafilm).cube' },
+  { id: 'film:kodak_kodachrome_64', name: 'Kodak Kodachrome 64', maker: 'Kodak', library_file_name: 'Kodak Kodachrome 64 (spektrafilm).cube' },
+  { id: 'film:kodak_vision3_50d', name: 'Kodak Vision3 50D', maker: 'Kodak', library_file_name: 'Kodak Vision3 50D (spektrafilm).cube' },
+  { id: 'film:kodak_vision3_200t', name: 'Kodak Vision3 200T', maker: 'Kodak', tungsten: true, library_file_name: 'Kodak Vision3 200T neutral (spektrafilm).cube' },
+  { id: 'film:kodak_vision3_250d', name: 'Kodak Vision3 250D', maker: 'Kodak', library_file_name: 'Kodak Vision3 250D (spektrafilm).cube' },
+  { id: 'film:kodak_vision3_500t', name: 'Kodak Vision3 500T', maker: 'Kodak', tungsten: true, library_file_name: 'Kodak Vision3 500T neutral (spektrafilm).cube' },
+  { id: 'film:kodak_verita_200d', name: 'Kodak Verita 200D', maker: 'Kodak', library_file_name: 'Kodak Verita 200D (spektrafilm).cube' },
+  { id: 'film:fujifilm_c200', name: 'Fujifilm C200', maker: 'Fujifilm', library_file_name: 'Fujifilm C200 (spektrafilm).cube' },
+  { id: 'film:fujifilm_pro_400h', name: 'Fujifilm Pro 400H', maker: 'Fujifilm', library_file_name: 'Fujifilm Pro 400H (spektrafilm).cube' },
+  { id: 'film:fujifilm_xtra_400', name: 'Fujifilm X-Tra 400', maker: 'Fujifilm', library_file_name: 'Fujifilm X-Tra 400 (spektrafilm).cube' },
+  { id: 'film:fujifilm_provia_100f', name: 'Fujifilm Provia 100F', maker: 'Fujifilm', library_file_name: 'Fujifilm Provia 100F (spektrafilm).cube' },
+  { id: 'film:fujifilm_velvia_100', name: 'Fujifilm Velvia 100', maker: 'Fujifilm', library_file_name: 'Fujifilm Velvia 100 (spektrafilm).cube' },
 ];
 
 export const api = new StubDesktopApiClient();

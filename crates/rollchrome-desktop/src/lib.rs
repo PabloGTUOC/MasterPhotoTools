@@ -35,6 +35,7 @@ pub struct PreviewSessionInfo {
     pub orientation: u32,
     pub read_only: bool,
     pub source_sha256: String,
+    pub warnings: Vec<String>,
 }
 
 /// A currently active interactive preview session and its token.
@@ -111,6 +112,7 @@ impl AppState {
             NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed)
         );
         let session_source_sha256 = session.source_sha256.clone();
+        let session_warnings = session.warnings.clone();
         let mut slot = self
             .active_preview
             .lock()
@@ -129,6 +131,7 @@ impl AppState {
             orientation,
             read_only,
             source_sha256: session_source_sha256,
+            warnings: session_warnings,
         })
     }
 

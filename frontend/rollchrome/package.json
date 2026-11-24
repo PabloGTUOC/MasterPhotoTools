@@ -25,6 +25,7 @@
     "check:people": "node scripts/check-people.mjs",
     "check:shell": "node scripts/check-shell.mjs",
     "check:edit-layout": "node scripts/check-edit-layout.mjs",
+    "check:edit-folder": "node scripts/check-edit-folder.mjs",
     "check:strip": "node scripts/check-strip.mjs"
   },
   "dependencies": {

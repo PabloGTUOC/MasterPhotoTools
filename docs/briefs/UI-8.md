@@ -145,6 +145,95 @@ merge.
 
 *Written by the implementer.*
 
+### What was done
+
+1. **Core (`crates/rollchrome-core`)**:
+   - Implemented `editable_names(path: &Path) -> Result<Vec<EditableEntry>, Error>` in `src/tools/edit_folder.rs`. Checks canonical folder path against roots (G6), scans entries ignoring subdirectories, hidden files, and unsupported formats, collecting JPEG (`.jpg`, `.jpeg`), TIFF (`.tif`, `.tiff`), and supported camera RAW extensions (`.arw`, `.cr2`, `.cr3`, `.dng`, `.nef`, `.orf`, `.pef`, `.raf`, `.rw2`). Reads sidecars (`.photoedit.json` alongside) to check whether `is_identity()` is false to flag `edited: bool`. Returns entries ordered by name ascending.
+   - Implemented `edit_thumbnail(path: &Path, max_edge: u32) -> Result<Vec<u8>, Error>`. Uses rung 1 fast preview decoding (EXIF/IFD previews) for RAWs or orientation-aware image loading for JPEGs/TIFFs, scales with lanczos3 to fit inside `max_edge × max_edge`, and encodes as baseline sRGB JPEG (quality 82).
+   - Re-exported functions and types from `src/tools/mod.rs`.
+   - Added all 4 core unit tests:
+     - `a_folder_lists_jpegs_tiffs_and_raws_and_nothing_else`
+     - `an_edited_photograph_is_marked`
+     - `a_jpeg_thumbnail_is_upright_and_fits`
+     - `a_missing_folder_is_refused`
+
+2. **Desktop Tauri Commands (`crates/rollchrome-desktop`)**:
+   - Added `EditableEntryDto` and registered `commands::list_edit_folder` and `commands::edit_thumbnail` in `src/commands/edit.rs` and `src/main.rs`.
+   - `edit_thumbnail` offloads thumbnail decoding and resizing to `tokio::task::spawn_blocking` and caps max_edge at 360 px.
+
+3. **Frontend API & Harness (`frontend/rollchrome`)**:
+   - Added `EditableEntryDto`, `listEditFolder`, and `editThumbnail` in `src/api.ts`.
+   - Implemented stub methods for `listEditFolder` and `editThumbnail` with concurrency tracking (`activeThumbnailRequests`, `maxConcurrentThumbnailRequests`, `openPreviewCalls`) and valid 64×64 JPEG byte generation in `scripts/edit-harness/stub-api.ts`.
+   - Emitted `@choose` in `frontend/shared/src/ui/components/PathField.vue` when a folder/file is picked.
+
+4. **Edit View (`frontend/rollchrome/src/views/Edit.vue`)**:
+   - Updated `PathField` label to `"Folder or photograph"`.
+   - Embedded `<Filmstrip>` within `.canvas-viewport` above the canvas status bar using a 3-row grid layout (`1fr auto auto`).
+   - Added folder loading logic supporting both folder paths and direct photograph paths (which load their parent folder into the filmstrip while maintaining the photograph active).
+   - Added thumbnail queue with a maximum concurrency of 2 requests.
+   - Added navigation via clicking filmstrip cards and ← / → arrow keys (bypassed when text fields are focused, during active brush/crop mode, or when modal dialogs are open).
+   - Added `flushPendingSave` to await any pending debounced autosave before switching photos, and `markActiveAsEdited` to update the active card caption to "edited" upon saving without reloading the folder.
+
+5. **Test Harness & Automation**:
+   - Created `frontend/rollchrome/scripts/check-edit-folder.mjs` verifying requirements 1–5 at 1280×800 and 1024×700.
+   - Added script `"check:edit-folder": "node scripts/check-edit-folder.mjs"` to `package.json`.
+
+### Deviations with reason
+
+None.
+
+### How switching photographs waits for autosave
+
+In `Edit.vue`, `flushPendingSave` cancels the debounced autosave timer (`window.clearTimeout(saveDebounceTimer)`) and immediately executes `performSave()`, returning the `inFlightSave` promise if a save is already in progress. Before opening the next photograph in `selectFolderItem(name)`, `await flushPendingSave()` is called, ensuring any unsaved edits are fully committed to disk and sidecar writes finish before the new photo's session and preview open.
+
+### Gate results
+
+- `cargo fmt --all --check`: clean (exit code 0)
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean (exit code 0)
+- `cargo build --workspace`: clean (exit code 0)
+- `cargo test --workspace`: 625 passed across all workspace crates
+- `cargo test -p phototools-core`: 546 passed, 2 ignored
+- `cargo test -p rollchrome-core`: 504 passed, 1 ignored
+- `cargo test -p rollchrome-core --features film`: 529 passed, 3 ignored
+- `cargo test -p phototools-desktop`: 26 passed
+- `cargo test -p rollchrome-desktop`: 29 passed
+- `cargo test -p rollchrome-cli`: 8 passed
+- `cargo test -p rollchrome-core --lib edit_folder`: 4 passed
+- `npm --prefix frontend/shared run build`: clean (exit code 0)
+- `npm --prefix frontend/web run typecheck`: clean (exit code 0)
+- `npm --prefix frontend/web run build`: clean (exit code 0)
+- `npm --prefix frontend/web run check:transport`: 23 files, clean
+- `npm --prefix frontend/web run check:layout`: 10 routes clean
+- `npm --prefix frontend/web run check:ingest`: clean (exit code 0)
+- `npm --prefix frontend/desktop run typecheck`: clean (exit code 0)
+- `npm --prefix frontend/desktop run build`: clean (exit code 0)
+- `npm --prefix frontend/desktop run check:transport`: 25 files, clean
+- `npm --prefix frontend/rollchrome run typecheck`: clean (exit code 0)
+- `npm --prefix frontend/rollchrome run build`: clean (exit code 0)
+- `npm --prefix frontend/rollchrome run check:transport`: 41 files, clean
+- `npm --prefix frontend/rollchrome run check:colour`: 11 passed
+- `npm --prefix frontend/rollchrome run check:history`: 16 passed
+- `npm --prefix frontend/rollchrome run check:versions`: 14 passed
+- `npm --prefix frontend/rollchrome run check:detail`: 13 passed
+- `npm --prefix frontend/rollchrome run check:export`: 11 passed
+- `npm --prefix frontend/rollchrome run check:point`: 11 passed
+- `npm --prefix frontend/rollchrome run check:masks`: 13 passed
+- `npm --prefix frontend/rollchrome run check:local-detail`: 8 passed
+- `npm --prefix frontend/rollchrome run check:object`: 15 passed
+- `npm --prefix frontend/rollchrome run check:people`: 7 passed
+- `npm --prefix frontend/rollchrome run check:shell`: 108 passed
+- `npm --prefix frontend/rollchrome run check:edit`: all checks passed
+- `npm --prefix frontend/rollchrome run check:viewing`: 18 passed
+- `npm --prefix frontend/rollchrome run check:bulk-lut`: all assertions passed
+- `npm --prefix frontend/rollchrome run check:develop`: 34 passed
+- `npm --prefix frontend/rollchrome run check:edit-layout`: 51 passed
+- `npm --prefix frontend/rollchrome run check:strip`: 70 passed
+- `npm --prefix frontend/rollchrome run check:edit-folder`: 30 passed
+
+### Anything unverified
+
+None. All automated assertions pass and layout proofs have been generated.
+
 ---
 
 ## Review

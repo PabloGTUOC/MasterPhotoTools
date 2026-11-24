@@ -498,3 +498,80 @@ pub fn ensure_look_lut_impl(state: &AppState, look_id: String) -> CommandResult<
         sha256: lut_ref.sha256,
     })
 }
+
+fn validate_filename(name: &str) -> Result<(), phototools_core::error::Error> {
+    if name.is_empty()
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains(std::path::MAIN_SEPARATOR)
+    {
+        return Err(phototools_core::error::Error::Refused(format!(
+            "filename '{name}' contains path separators or '..'"
+        )));
+    }
+    Ok(())
+}
+
+/// An entry in an editable folder (UI-8).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditableEntryDto {
+    pub name: String,
+    pub edited: bool,
+}
+
+impl From<rollchrome_core::tools::EditableEntry> for EditableEntryDto {
+    fn from(e: rollchrome_core::tools::EditableEntry) -> Self {
+        Self {
+            name: e.name,
+            edited: e.edited,
+        }
+    }
+}
+
+/// Lists editable images in a folder (JPEGs, TIFFs, RAWs) with edit status (UI-8).
+#[tauri::command]
+pub fn list_edit_folder(
+    folder: String,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<EditableEntryDto>> {
+    list_edit_folder_impl(&state, folder)
+}
+
+pub fn list_edit_folder_impl(
+    state: &AppState,
+    folder: String,
+) -> CommandResult<Vec<EditableEntryDto>> {
+    let config = state.config();
+    let resolved = resolve_input(&config, &folder)?;
+    let entries = rollchrome_core::tools::editable_names(&resolved).map_err(describe)?;
+    Ok(entries.into_iter().map(EditableEntryDto::from).collect())
+}
+
+/// Generates an upright thumbnail JPEG for an image in an edit folder (UI-8).
+#[tauri::command]
+pub async fn edit_thumbnail(
+    folder: String,
+    name: String,
+    app: tauri::AppHandle,
+) -> Result<tauri::ipc::Response, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        edit_thumbnail_impl(&state, folder, name)
+    })
+    .await
+    .map_err(|e| format!("thumbnail generation panicked: {e}"))?
+    .map(tauri::ipc::Response::new)
+}
+
+pub fn edit_thumbnail_impl(
+    state: &AppState,
+    folder: String,
+    name: String,
+) -> Result<Vec<u8>, String> {
+    validate_filename(&name).map_err(describe)?;
+    let config = state.config();
+    let resolved = resolve_input(&config, &folder)?;
+    let path = resolved.join(name);
+    rollchrome_core::tools::edit_thumbnail(&path, 360).map_err(describe)
+}

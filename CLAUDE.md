@@ -173,6 +173,7 @@ npm --prefix frontend/rollchrome run check:shell    # UI-1 the whole app: no pag
 npm --prefix frontend/rollchrome run check:edit-layout # UI-2 Edit: nothing clipped, Export always visible, panel resizable
 npm --prefix frontend/rollchrome run check:strip      # UI-6 results in the status strip, nothing scrolls after a dry run
 npm --prefix frontend/rollchrome run check:edit-folder # UI-8 Edit opens a folder: filmstrip, one open per click, at most 2 thumbnails
+npm --prefix frontend/rollchrome run check:batch-layout # UI-5 Batch in two columns: actions always visible, drawer beside them
 ```
 
 `check:layout` and `check:ingest` drive Chromium and write screenshots to

@@ -137,7 +137,7 @@ export class StubDesktopApiClient {
 
   async listFilmLooks(): Promise<BuiltinLookInfo[]> {
     return [
-      { id: 'film:kodak_portra_400', name: 'Kodak Portra 400', maker: 'Kodak', library_file_name: 'Kodak Portra 400 (spektrafilm).cube' },
+      { id: 'film:kodak_portra_400', name: 'Kodak Portra 400', maker: 'Kodak', library_file_name: 'Kodak Portra 400 (spektrafilm v2).cube' },
     ];
   }
 

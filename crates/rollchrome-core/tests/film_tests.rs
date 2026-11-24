@@ -1257,3 +1257,35 @@ fn tungsten_stocks_are_flagged() {
         .collect();
     assert_eq!(tungsten, vec!["kodak_vision3_200t", "kodak_vision3_500t"]);
 }
+
+#[test]
+fn edits_film_lut_keeps_the_colour_the_srgb_lut_lost() {
+    use rollchrome_core::media::edit::lut::Lut;
+    use rollchrome_core::media::film::{edit_film_lut, film_lut, LutBalance};
+    let (_t, data) = test_data_dir();
+    let srgb = film_lut("kodak_ektar_100", LutBalance::AsFilm, &data).unwrap();
+    let edit = edit_film_lut("kodak_ektar_100", &data).unwrap();
+    assert_eq!(edit.file_name, "Kodak Ektar 100 (spektrafilm v2).cube");
+    assert!(edit
+        .cube
+        .lines()
+        .nth(1)
+        .unwrap()
+        .contains("Rollchrome's neutral rendering"));
+    let srgb = Lut::from_bytes("srgb.cube", srgb.cube.as_bytes()).unwrap();
+    let edit = Lut::from_bytes("edit.cube", edit.cube.as_bytes()).unwrap();
+
+    // A warm, saturated colour as the neutral renders one (the yellow rug of the owner's P1100528).
+    // Fed sRGB as scene light, the film flattened it below the neutral itself; Edit's LUT, fed scene
+    // light as Develop is, keeps it.
+    let input = [0.75f32, 0.55, 0.25];
+    let chroma = |p: [f32; 3]| {
+        p.iter().cloned().fold(f32::MIN, f32::max) - p.iter().cloned().fold(f32::MAX, f32::min)
+    };
+    let c_srgb = chroma(srgb.sample(input));
+    let c_edit = chroma(edit.sample(input));
+    assert!(
+        c_edit > 1.2 * c_srgb,
+        "Edit's LUT chroma {c_edit} is not well above the sRGB LUT's {c_srgb}"
+    );
+}

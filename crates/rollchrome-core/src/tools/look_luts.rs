@@ -167,13 +167,7 @@ pub fn ensure_look_lut(
     } else if let Some(stock) = look_id.strip_prefix("film:") {
         #[cfg(feature = "film")]
         {
-            use crate::media::film::{edit_balance, film_lut, FILM_STOCKS};
-            let info = FILM_STOCKS
-                .iter()
-                .find(|s| s.id == stock)
-                .ok_or_else(|| Error::Refused(format!("unknown film stock: '{stock}'")))?;
-            let balance = edit_balance(info.tungsten);
-            let lut_data = film_lut(stock, balance, film_data_dir)?;
+            let lut_data = crate::media::film::edit_film_lut(stock, film_data_dir)?;
             let file_name = lut_data.file_name;
             let dest_path = library_dir.join(&file_name);
             if dest_path.exists() {
@@ -387,7 +381,7 @@ mod tests {
             ensure_look_lut("film:kodak_portra_400", &lib_dir, &film_dir).expect("ensure film LUT");
         let dest_file = lib_dir.join(&lut_ref.name);
         assert!(dest_file.exists());
-        assert_eq!(lut_ref.name, "Kodak Portra 400 (spektrafilm).cube");
+        assert_eq!(lut_ref.name, "Kodak Portra 400 (spektrafilm v2).cube");
 
         let parsed = Lut::from_file(&dest_file).expect("parse film LUT");
         assert_eq!(parsed.sha256, lut_ref.sha256);
@@ -398,7 +392,7 @@ mod tests {
             .expect("ensure tungsten film LUT");
         assert_eq!(
             tungsten_ref.name,
-            "Kodak Vision3 500T neutral (spektrafilm).cube"
+            "Kodak Vision3 500T neutral (spektrafilm v2).cube"
         );
         assert!(lib_dir.join(&tungsten_ref.name).exists());
     }

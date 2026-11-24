@@ -59,6 +59,10 @@ nom-exif = "3.6.2"
 name = "auto_mask"
 required-features = ["segment"]
 
+[[example]]
+name = "fit_film_lut"
+required-features = ["film"]
+
 [[test]]
 name = "film_tests"
 required-features = ["film"]

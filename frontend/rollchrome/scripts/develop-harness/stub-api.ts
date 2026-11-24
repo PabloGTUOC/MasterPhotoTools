@@ -115,25 +115,25 @@ const BUILTIN_LOOKS: BuiltinLookInfo[] = [
 
 const FILM_LOOKS: BuiltinLookInfo[] = [
   // 13 Kodak
-  { id: 'film:kodak_portra_160', name: 'Kodak Portra 160', maker: 'Kodak', library_file_name: 'Kodak Portra 160 (spektrafilm).cube' },
-  { id: 'film:kodak_portra_400', name: 'Kodak Portra 400', maker: 'Kodak', library_file_name: 'Kodak Portra 400 (spektrafilm).cube' },
-  { id: 'film:kodak_portra_800', name: 'Kodak Portra 800', maker: 'Kodak', library_file_name: 'Kodak Portra 800 (spektrafilm).cube' },
-  { id: 'film:kodak_ektar_100', name: 'Kodak Ektar 100', maker: 'Kodak', library_file_name: 'Kodak Ektar 100 (spektrafilm).cube' },
-  { id: 'film:kodak_gold_200', name: 'Kodak Gold 200', maker: 'Kodak', library_file_name: 'Kodak Gold 200 (spektrafilm).cube' },
-  { id: 'film:kodak_ultramax_400', name: 'Kodak Ultramax 400', maker: 'Kodak', library_file_name: 'Kodak Ultramax 400 (spektrafilm).cube' },
-  { id: 'film:kodak_ektachrome_100', name: 'Kodak Ektachrome 100', maker: 'Kodak', library_file_name: 'Kodak Ektachrome 100 (spektrafilm).cube' },
-  { id: 'film:kodak_kodachrome_64', name: 'Kodak Kodachrome 64', maker: 'Kodak', library_file_name: 'Kodak Kodachrome 64 (spektrafilm).cube' },
-  { id: 'film:kodak_vision3_50d', name: 'Kodak Vision3 50D', maker: 'Kodak', library_file_name: 'Kodak Vision3 50D (spektrafilm).cube' },
-  { id: 'film:kodak_vision3_200t', name: 'Kodak Vision3 200T', maker: 'Kodak', tungsten: true, library_file_name: 'Kodak Vision3 200T neutral (spektrafilm).cube' },
-  { id: 'film:kodak_vision3_250d', name: 'Kodak Vision3 250D', maker: 'Kodak', library_file_name: 'Kodak Vision3 250D (spektrafilm).cube' },
-  { id: 'film:kodak_vision3_500t', name: 'Kodak Vision3 500T', maker: 'Kodak', tungsten: true, library_file_name: 'Kodak Vision3 500T neutral (spektrafilm).cube' },
-  { id: 'film:kodak_verita_200d', name: 'Kodak Verita 200D', maker: 'Kodak', library_file_name: 'Kodak Verita 200D (spektrafilm).cube' },
+  { id: 'film:kodak_portra_160', name: 'Kodak Portra 160', maker: 'Kodak', library_file_name: 'Kodak Portra 160 (spektrafilm v2).cube' },
+  { id: 'film:kodak_portra_400', name: 'Kodak Portra 400', maker: 'Kodak', library_file_name: 'Kodak Portra 400 (spektrafilm v2).cube' },
+  { id: 'film:kodak_portra_800', name: 'Kodak Portra 800', maker: 'Kodak', library_file_name: 'Kodak Portra 800 (spektrafilm v2).cube' },
+  { id: 'film:kodak_ektar_100', name: 'Kodak Ektar 100', maker: 'Kodak', library_file_name: 'Kodak Ektar 100 (spektrafilm v2).cube' },
+  { id: 'film:kodak_gold_200', name: 'Kodak Gold 200', maker: 'Kodak', library_file_name: 'Kodak Gold 200 (spektrafilm v2).cube' },
+  { id: 'film:kodak_ultramax_400', name: 'Kodak Ultramax 400', maker: 'Kodak', library_file_name: 'Kodak Ultramax 400 (spektrafilm v2).cube' },
+  { id: 'film:kodak_ektachrome_100', name: 'Kodak Ektachrome 100', maker: 'Kodak', library_file_name: 'Kodak Ektachrome 100 (spektrafilm v2).cube' },
+  { id: 'film:kodak_kodachrome_64', name: 'Kodak Kodachrome 64', maker: 'Kodak', library_file_name: 'Kodak Kodachrome 64 (spektrafilm v2).cube' },
+  { id: 'film:kodak_vision3_50d', name: 'Kodak Vision3 50D', maker: 'Kodak', library_file_name: 'Kodak Vision3 50D (spektrafilm v2).cube' },
+  { id: 'film:kodak_vision3_200t', name: 'Kodak Vision3 200T', maker: 'Kodak', tungsten: true, library_file_name: 'Kodak Vision3 200T neutral (spektrafilm v2).cube' },
+  { id: 'film:kodak_vision3_250d', name: 'Kodak Vision3 250D', maker: 'Kodak', library_file_name: 'Kodak Vision3 250D (spektrafilm v2).cube' },
+  { id: 'film:kodak_vision3_500t', name: 'Kodak Vision3 500T', maker: 'Kodak', tungsten: true, library_file_name: 'Kodak Vision3 500T neutral (spektrafilm v2).cube' },
+  { id: 'film:kodak_verita_200d', name: 'Kodak Verita 200D', maker: 'Kodak', library_file_name: 'Kodak Verita 200D (spektrafilm v2).cube' },
   // 5 Fujifilm
-  { id: 'film:fujifilm_c200', name: 'Fujifilm C200', maker: 'Fujifilm', library_file_name: 'Fujifilm C200 (spektrafilm).cube' },
-  { id: 'film:fujifilm_pro_400h', name: 'Fujifilm Pro 400H', maker: 'Fujifilm', library_file_name: 'Fujifilm Pro 400H (spektrafilm).cube' },
-  { id: 'film:fujifilm_xtra_400', name: 'Fujifilm X-Tra 400', maker: 'Fujifilm', library_file_name: 'Fujifilm X-Tra 400 (spektrafilm).cube' },
-  { id: 'film:fujifilm_provia_100f', name: 'Fujifilm Provia 100F', maker: 'Fujifilm', library_file_name: 'Fujifilm Provia 100F (spektrafilm).cube' },
-  { id: 'film:fujifilm_velvia_100', name: 'Fujifilm Velvia 100', maker: 'Fujifilm', library_file_name: 'Fujifilm Velvia 100 (spektrafilm).cube' },
+  { id: 'film:fujifilm_c200', name: 'Fujifilm C200', maker: 'Fujifilm', library_file_name: 'Fujifilm C200 (spektrafilm v2).cube' },
+  { id: 'film:fujifilm_pro_400h', name: 'Fujifilm Pro 400H', maker: 'Fujifilm', library_file_name: 'Fujifilm Pro 400H (spektrafilm v2).cube' },
+  { id: 'film:fujifilm_xtra_400', name: 'Fujifilm X-Tra 400', maker: 'Fujifilm', library_file_name: 'Fujifilm X-Tra 400 (spektrafilm v2).cube' },
+  { id: 'film:fujifilm_provia_100f', name: 'Fujifilm Provia 100F', maker: 'Fujifilm', library_file_name: 'Fujifilm Provia 100F (spektrafilm v2).cube' },
+  { id: 'film:fujifilm_velvia_100', name: 'Fujifilm Velvia 100', maker: 'Fujifilm', library_file_name: 'Fujifilm Velvia 100 (spektrafilm v2).cube' },
 ];
 
 export class StubDesktopApiClient {

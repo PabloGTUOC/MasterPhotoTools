@@ -89,6 +89,29 @@ pub fn standard_tone(v: f32) -> f32 {
     y.exp2()
 }
 
+/// The input that [`standard_tone`] maps to `t`, for `t` in 0..=1: the curve is monotonic, so bisection.
+///
+/// Edit's film LUTs undo the neutral's curve with it, so the film is exposed to scene light as in
+/// Develop rather than to a picture that already has a tone curve.
+pub fn standard_tone_inverse(t: f32) -> f32 {
+    if t.is_nan() || t <= 0.0 {
+        return 0.0;
+    }
+    if t >= 1.0 {
+        return 1.0;
+    }
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..40 {
+        let mid = 0.5 * (lo + hi);
+        if standard_tone(mid) < t {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
+}
+
 /// ROMM (ProPhoto RGB) transfer function encoding linear float to gamma-space [0.0, 1.0].
 ///
 /// - For v < 1/512: 16.0 * v
@@ -124,6 +147,20 @@ pub fn prophoto_decode(y: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_standard_tone_inverse_undoes_the_curve() {
+        for i in 1..200 {
+            let v = i as f32 / 200.0;
+            let back = standard_tone_inverse(standard_tone(v));
+            assert!(
+                (back - v).abs() < 1e-4 * v.max(0.01),
+                "{v} came back as {back}"
+            );
+        }
+        assert_eq!(standard_tone_inverse(0.0), 0.0);
+        assert_eq!(standard_tone_inverse(1.0), 1.0);
+    }
 
     #[test]
     fn the_base_tone_is_pinned() {

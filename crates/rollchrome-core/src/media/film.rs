@@ -212,7 +212,7 @@ pub fn film_look_list() -> Vec<BuiltinLookInfo> {
             name: s.name.to_string(),
             maker: s.maker.to_string(),
             tungsten: s.tungsten,
-            library_file_name: film_lut_file_name(s.name, edit_balance(s.tungsten)),
+            library_file_name: edit_film_lut_file_name(s.name, edit_balance(s.tungsten)),
         })
         .collect()
 }
@@ -604,6 +604,38 @@ pub enum LutBalance {
     NeutralGrey,
 }
 
+/// What a film LUT is built to be fed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LutInput {
+    /// Any editor's sRGB (DV-6): decoded and handed to the film as it is, with the DIR couplers off.
+    Srgb,
+    /// Rollchrome's neutral rendering, which is what Edit applies a look to. Fed the plain sRGB
+    /// way, the film was exposed to a picture that already had the neutral's tone curve and came out
+    /// flatter and less saturated than the neutral itself, nothing like Develop's render of the same
+    /// RAW. So the neutral's curve is undone first and the film sees scene light in ProPhoto as in
+    /// Develop, with the DIR couplers on as in Develop (a LUT holds their colour, not their edges), at
+    /// a fixed exposure where Develop meters each photograph.
+    NeutralRendering { exposure_ev: f32 },
+}
+
+/// The exposure Edit's film LUTs are built at, in place of Develop's metering: fitted so that Edit's
+/// look on a RAW matches Develop's film render of it (`examples/fit_film_lut.rs`). On the owner's five
+/// LX100 RW2s of 2026-11-22, +0.75 EV puts Ektar 100, Portra 400 and Velvia 100 within 0.01 EV of
+/// Develop on average (each photograph within 0.2 EV: Develop meters each one, a LUT cannot), with
+/// 98–99% of Develop's colourfulness, where the sRGB-in LUT had 63–74% and −0.26 EV.
+pub const EDIT_FILM_EXPOSURE_EV: f32 = 0.75;
+
+/// The file name `ensure_look_lut` gives a film simulation in Edit's LUT library. Different from
+/// [`film_lut_file_name`] (the LUT for other editors) because the two are built for different input,
+/// and from the first Edit LUTs, so photographs already edited with those keep them.
+pub fn edit_film_lut_file_name(name: &str, balance: LutBalance) -> String {
+    let tag = match balance {
+        LutBalance::NeutralGrey => "neutral (spektrafilm v2)",
+        LutBalance::AsFilm => "(spektrafilm v2)",
+    };
+    format!("{name} {tag}.cube")
+}
+
 /// A film stock as a `.cube` LUT for other editors (DV-6).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FilmLut {
@@ -647,6 +679,7 @@ fn lut_pipeline(
     y_shift: f32,
     m_shift: f32,
     data_path: &Path,
+    input: LutInput,
 ) -> Result<(spektrafilm_core::pipeline::Pipeline, String), Error> {
     let film = spektrafilm_core::profile::load_profile_by_name(data_path, stock.id)
         .map_err(|e| Error::Internal(format!("loading film profile {}: {e}", stock.id)))?;
@@ -675,10 +708,19 @@ fn lut_pipeline(
     params.camera.auto_exposure = false;
     params.enlarger.y_filter_shift = y_shift;
     params.enlarger.m_filter_shift = m_shift;
+    if let LutInput::NeutralRendering { .. } = input {
+        params.io.input_color_space = "ProPhoto RGB".to_string();
+        params.film_render.dir_couplers.active = true;
+    }
 
-    let pipeline =
+    let mut pipeline =
         spektrafilm_core::pipeline::Pipeline::new_with_spectral(film, print, params, data_path)
             .map_err(|e| Error::Internal(format!("calibrating {}: {e}", stock.id)))?;
+    // After building, as `render_film` does: the build calibrates the print exposure, which
+    // cancels an exposure set before it.
+    if let LutInput::NeutralRendering { exposure_ev } = input {
+        pipeline.params.camera.exposure_compensation_ev = exposure_ev;
+    }
     Ok((pipeline, print_stock))
 }
 
@@ -690,16 +732,32 @@ fn lut_sample(
     pipeline: &spektrafilm_core::pipeline::Pipeline,
     backend: &dyn spektrafilm_gpu::ComputeBackend,
     srgb: [f64; 3],
+    input: LutInput,
 ) -> [f64; 3] {
-    let input = spektrafilm_math::image::ImageBuf::from_data(
-        1,
-        1,
-        vec![
-            srgb_decode(srgb[0]),
-            srgb_decode(srgb[1]),
-            srgb_decode(srgb[2]),
-        ],
-    );
+    let linear = [
+        srgb_decode(srgb[0]),
+        srgb_decode(srgb[1]),
+        srgb_decode(srgb[2]),
+    ];
+    let data = match input {
+        LutInput::Srgb => linear.to_vec(),
+        LutInput::NeutralRendering { .. } => {
+            // Back through the neutral's last steps: sRGB to linear ProPhoto, then its tone curve.
+            let m = crate::media::develop::colour::srgb_to_prophoto_matrix();
+            let pp = crate::media::develop::colour::mul_3x3_vec(
+                m,
+                [linear[0] as f32, linear[1] as f32, linear[2] as f32],
+            );
+            pp.iter()
+                .map(|&v| {
+                    f64::from(crate::media::develop::tone::standard_tone_inverse(
+                        v.clamp(0.0, 1.0),
+                    ))
+                })
+                .collect()
+        }
+    };
+    let input = spektrafilm_math::image::ImageBuf::from_data(1, 1, data);
     let out = pipeline.process(input, backend);
     [out.data[0], out.data[1], out.data[2]]
 }
@@ -707,17 +765,22 @@ fn lut_sample(
 /// The enlarger filter shifts that print 18% grey neutral for `stock`, by Newton's method on
 /// `(r − g, b − g)` with a Jacobian from central differences.
 #[cfg(feature = "film")]
-fn neutral_shifts(stock: &FilmStockInfo, data_path: &Path) -> Result<(f32, f32), Error> {
+fn neutral_shifts(
+    stock: &FilmStockInfo,
+    data_path: &Path,
+    input: LutInput,
+) -> Result<(f32, f32), Error> {
     let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let grey = [NEUTRAL_PROBE; 3];
     let cast = |y: f32, m: f32| -> Result<[f64; 2], Error> {
-        let (pipeline, _) = lut_pipeline(stock, y, m, data_path)?;
-        let o = lut_sample(&pipeline, &backend, grey);
+        let (pipeline, _) = lut_pipeline(stock, y, m, data_path, input)?;
+        let o = lut_sample(&pipeline, &backend, grey, input);
         Ok([o[0] - o[1], o[2] - o[1]])
     };
     const STEP: f32 = 2.0;
+    const MAX_STEP: f64 = 40.0;
     let (mut y, mut m) = (0.0f32, 0.0f32);
-    for _ in 0..12 {
+    for _ in 0..20 {
         let d = cast(y, m)?;
         if d[0].abs() < 0.002 && d[1].abs() < 0.002 {
             return Ok((y, m));
@@ -737,8 +800,11 @@ fn neutral_shifts(stock: &FilmStockInfo, data_path: &Path) -> Result<(f32, f32),
         }
         let dy = (j[1][1] * d[0] - j[0][1] * d[1]) / det;
         let dm = (-j[1][0] * d[0] + j[0][0] * d[1]) / det;
-        y -= dy as f32;
-        m -= dm as f32;
+        // A full Newton step from no filter overshoots for Edit's input (Vision3 500T jumped to
+        // y −163 and out of range), so a step is limited to MAX_STEP on its larger axis.
+        let scale = (MAX_STEP / dy.abs().max(dm.abs())).min(1.0);
+        y -= (dy * scale) as f32;
+        m -= (dm * scale) as f32;
         if !y.is_finite() || !m.is_finite() || y.abs() > 200.0 || m.abs() > 200.0 {
             break;
         }
@@ -749,11 +815,39 @@ fn neutral_shifts(stock: &FilmStockInfo, data_path: &Path) -> Result<(f32, f32),
     )))
 }
 
-/// A film stock as a 33-point `.cube` LUT with sRGB in and sRGB out (DV-6).
+/// A film stock as a 33-point `.cube` LUT with sRGB in and sRGB out (DV-6), for other editors.
 ///
 /// Deterministic: sampled on the CPU backend, so the same stock and balance give the same bytes.
 #[cfg(feature = "film")]
 pub fn film_lut(stock: &str, balance: LutBalance, data_dir: &Path) -> Result<FilmLut, Error> {
+    film_lut_with(stock, balance, data_dir, LutInput::Srgb)
+}
+
+/// A film stock as the LUT Edit applies to its neutral rendering, at Edit's balance for the stock.
+#[cfg(feature = "film")]
+pub fn edit_film_lut(stock: &str, data_dir: &Path) -> Result<FilmLut, Error> {
+    let info = FILM_STOCKS
+        .iter()
+        .find(|s| s.id == stock)
+        .ok_or_else(|| Error::Refused(format!("unknown film stock: '{stock}'")))?;
+    film_lut_with(
+        stock,
+        edit_balance(info.tungsten),
+        data_dir,
+        LutInput::NeutralRendering {
+            exposure_ev: EDIT_FILM_EXPOSURE_EV,
+        },
+    )
+}
+
+/// A film stock as a 33-point `.cube` LUT built for `input`.
+#[cfg(feature = "film")]
+pub fn film_lut_with(
+    stock: &str,
+    balance: LutBalance,
+    data_dir: &Path,
+    input: LutInput,
+) -> Result<FilmLut, Error> {
     use rayon::prelude::*;
 
     let info = FILM_STOCKS
@@ -765,9 +859,9 @@ pub fn film_lut(stock: &str, balance: LutBalance, data_dir: &Path) -> Result<Fil
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let (y_shift, m_shift) = match balance {
             LutBalance::AsFilm => (0.0, 0.0),
-            LutBalance::NeutralGrey => neutral_shifts(info, &data_path)?,
+            LutBalance::NeutralGrey => neutral_shifts(info, &data_path, input)?,
         };
-        let (pipeline, print_stock) = lut_pipeline(info, y_shift, m_shift, &data_path)?;
+        let (pipeline, print_stock) = lut_pipeline(info, y_shift, m_shift, &data_path, input)?;
         let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
 
         let n = FILM_LUT_SIZE;
@@ -780,13 +874,27 @@ pub fn film_lut(stock: &str, balance: LutBalance, data_dir: &Path) -> Result<Fil
                     &pipeline,
                     &backend,
                     [level(i % n), level((i / n) % n), level(i / (n * n))],
+                    input,
                 );
                 let c = |v: f64| v.clamp(0.0, 1.0);
                 format!("{:.6} {:.6} {:.6}", c(o[0]), c(o[1]), c(o[2]))
             })
             .collect();
 
-        let file_name = film_lut_file_name(info.name, balance);
+        let (file_name, input_line, effects_line) = match input {
+            LutInput::Srgb => (
+                film_lut_file_name(info.name, balance),
+                "sRGB (gamma-encoded)".to_string(),
+                "No grain, halation, DIR couplers or auto exposure.",
+            ),
+            LutInput::NeutralRendering { exposure_ev } => (
+                edit_film_lut_file_name(info.name, balance),
+                format!(
+                    "Rollchrome's neutral rendering (sRGB), its tone curve undone; exposure {exposure_ev:+.2} EV"
+                ),
+                "No grain, halation or auto exposure; the DIR couplers' colour, not their edges.",
+            ),
+        };
         let title = file_name.strip_suffix(".cube").unwrap_or(&file_name);
         let printed = if info.is_slide {
             "scanned".to_string()
@@ -795,8 +903,8 @@ pub fn film_lut(stock: &str, balance: LutBalance, data_dir: &Path) -> Result<Fil
         };
         let mut cube = format!(
             "# Created by Rollchrome with spektrafilm (GPL-3.0); film data CC BY-SA 4.0, spektrafilm by Andrea Volpato\n\
-             # Input: sRGB (gamma-encoded). Output: sRGB. {id} {printed}.\n\
-             # No grain, halation, DIR couplers or auto exposure. Enlarger Y/M shift {y_shift:.1} {m_shift:.1}.\n\
+             # Input: {input_line}. Output: sRGB. {id} {printed}.\n\
+             # {effects_line} Enlarger Y/M shift {y_shift:.1} {m_shift:.1}.\n\
              TITLE \"{title}\"\n\
              LUT_3D_SIZE {n}\n\
              DOMAIN_MIN 0.0 0.0 0.0\n\
@@ -824,6 +932,27 @@ pub fn film_lut(stock: &str, balance: LutBalance, data_dir: &Path) -> Result<Fil
 /// Fallback stub when the film feature is disabled.
 #[cfg(not(feature = "film"))]
 pub fn film_lut(_stock: &str, _balance: LutBalance, _data_dir: &Path) -> Result<FilmLut, Error> {
+    Err(Error::Refused(
+        "film simulation is not built into this program".to_string(),
+    ))
+}
+
+/// Fallback stub when the film feature is disabled.
+#[cfg(not(feature = "film"))]
+pub fn edit_film_lut(_stock: &str, _data_dir: &Path) -> Result<FilmLut, Error> {
+    Err(Error::Refused(
+        "film simulation is not built into this program".to_string(),
+    ))
+}
+
+/// Fallback stub when the film feature is disabled.
+#[cfg(not(feature = "film"))]
+pub fn film_lut_with(
+    _stock: &str,
+    _balance: LutBalance,
+    _data_dir: &Path,
+    _input: LutInput,
+) -> Result<FilmLut, Error> {
     Err(Error::Refused(
         "film simulation is not built into this program".to_string(),
     ))

@@ -13,6 +13,7 @@ const props = withDefaults(
   defineProps<{
     jobId: string | null;
     canCancel?: boolean;
+    compact?: boolean;
     /**
      * Show the time per item and an estimate of the time left, from the job's own progress
      * (DV-8). Names the items, e.g. "photograph"; omitted, nothing is shown.
@@ -21,6 +22,7 @@ const props = withDefaults(
   }>(),
   {
     canCancel: false,
+    compact: false,
     timingItem: undefined,
   },
 );
@@ -61,12 +63,14 @@ watch(
     latestAt.value = null;
     if (!id) return;
 
-    controller = new AbortController();
+    const currentController = new AbortController();
+    controller = currentController;
     watching.value = true;
     try {
       await api.watchJob(
         id,
         (next) => {
+          if (controller !== currentController) return;
           event.value = next;
           const now = Date.now();
           if (firstAt.value === null) firstAt.value = now;
@@ -75,14 +79,17 @@ watch(
             emit('done');
           }
         },
-        controller.signal,
+        currentController.signal,
       );
     } catch (e) {
+      if (controller !== currentController) return;
       if ((e as Error).name !== 'AbortError') {
         failure.value = e instanceof Error ? e.message : String(e);
       }
     } finally {
-      watching.value = false;
+      if (controller === currentController) {
+        watching.value = false;
+      }
     }
   },
   { immediate: true },
@@ -140,7 +147,35 @@ const bar = () => {
 </script>
 
 <template>
-  <section v-if="jobId" class="job" aria-live="polite">
+  <div v-if="jobId && compact" class="job-compact" aria-live="polite">
+    <span class="job-state" :data-state="event?.state ?? 'pending'">
+      // {{ event?.state ?? 'starting' }}
+    </span>
+    <div
+      class="compact-bar"
+      role="progressbar"
+      :aria-valuenow="percent() ?? 0"
+      aria-valuemin="0"
+      aria-valuemax="100"
+    >
+      <div class="compact-bar__fill" :style="{ width: `${percent() ?? 0}%` }" />
+    </div>
+    <span v-if="event && event.total > 0" class="compact-count mono">
+      {{ event.progress }} / {{ event.total }}
+    </span>
+    <span v-if="timing" class="compact-timing muted" data-testid="job-timing">{{ timing }}</span>
+    <span v-if="failure" class="error compact-error">{{ failure }}</span>
+    <button
+      v-if="canCancel && isRunning"
+      type="button"
+      class="ghost danger compact-cancel"
+      @click="emit('cancel')"
+    >
+      Cancel
+    </button>
+  </div>
+
+  <section v-else-if="jobId" class="job" aria-live="polite">
     <header class="job-head">
       <span class="job-state" :data-state="event?.state ?? 'pending'">
         // {{ event?.state ?? 'starting' }}
@@ -182,6 +217,58 @@ const bar = () => {
 </template>
 
 <style scoped>
+.job-compact {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
+  max-height: 28px;
+  box-sizing: border-box;
+}
+
+.compact-bar {
+  flex: 1;
+  min-width: 40px;
+  height: 4px;
+  background: var(--bg-panel);
+  border: var(--border-hair);
+  position: relative;
+  overflow: hidden;
+}
+
+.compact-bar__fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--dur-fast) var(--ease);
+}
+
+.compact-count {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.compact-timing {
+  font-family: var(--font-body);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.compact-cancel {
+  min-height: 40px;
+  height: 40px;
+  padding: 0 var(--space-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.compact-error {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .job {
   display: grid;
   gap: var(--space-2);

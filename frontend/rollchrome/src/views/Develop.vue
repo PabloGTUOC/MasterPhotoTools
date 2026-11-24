@@ -18,7 +18,7 @@
  *   Any change invalidates the dry run. Skipped items listed with reasons. JobProgress with cancel.
  * - State persistence: Module-level state preserves folder, assignments, and selection across tab switches.
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { BrowserEntry } from '@phototools/shared';
 import type {
   BuiltinLookInfo,
@@ -34,6 +34,7 @@ import AdjustmentSlider from '../components/AdjustmentSlider.vue';
 import JobProgress from '@ui/components/JobProgress.vue';
 import PathField from '@ui/components/PathField.vue';
 import { useRoots } from '@ui/useRoots';
+import { STATUS_STRIP } from '../statusStrip';
 
 // ---------------------------------------------------------------------------
 // Module-level state: survives tab switching / view unmounting (RP-1)
@@ -221,7 +222,9 @@ function updatePreviewTop() {
   const bottomPadding = pageEl
     ? parseFloat(window.getComputedStyle(pageEl).paddingBottom) || 16
     : 16;
-  const top = Math.round(rect.top + bottomPadding);
+  const statusEl = document.querySelector('.statusbar');
+  const statusH = statusEl ? statusEl.getBoundingClientRect().height : 40;
+  const top = Math.round(rect.top + bottomPadding + statusH);
   workspaceEl.value.style.setProperty('--preview-top', `${top}px`);
 }
 
@@ -287,6 +290,34 @@ const planError = ref<string | null>(null);
 // Job execution (RP-1 review item 4)
 const jobId = ref<string | null>(moduleJobId.value);
 const isDeveloping = ref(moduleIsDeveloping.value);
+
+const strip = inject(STATUS_STRIP, null);
+
+const isJobRunning = computed(() => Boolean(isDeveloping.value && jobId.value));
+const hasDetails = computed(() => Boolean(reviewedPlan.value || planError.value || isJobRunning.value));
+watch(
+  hasDetails,
+  (val) => {
+    if (strip) {
+      strip.hasDetails = val;
+      if (!val) {
+        strip.detailsOpen = false;
+      }
+    }
+  },
+  { immediate: true },
+);
+
+const statusLineText = computed(() => {
+  if (isJobRunning.value) return null;
+  if (planError.value) return 'Dry run failed';
+  if (reviewedPlan.value) {
+    const toDev = reviewedPlan.value.actions.length;
+    const skipped = reviewedPlan.value.skipped.length;
+    return `Dry run · ${toDev} to develop · ${skipped} skipped`;
+  }
+  return null;
+});
 
 watch(jobId, (id) => {
   moduleJobId.value = id;
@@ -903,6 +934,7 @@ async function runDryRun() {
       itemsJson: currentItemsJson.value,
       formatJson: currentFormatJson.value,
     };
+    if (strip) strip.detailsOpen = true;
   } catch (err: unknown) {
     reviewedPlan.value = null;
     reviewed.value = null;
@@ -915,6 +947,7 @@ async function runDryRun() {
 async function runDevelop() {
   if (!canRun.value) return;
   isDeveloping.value = true;
+  jobId.value = null;
   planError.value = null;
 
   try {
@@ -926,6 +959,7 @@ async function runDevelop() {
       currentOutput.value,
     );
     jobId.value = id;
+    if (strip) strip.detailsOpen = true;
   } catch (err: unknown) {
     isDeveloping.value = false;
     planError.value = err instanceof Error ? err.message : String(err);
@@ -1163,7 +1197,8 @@ onMounted(async () => {
 
       <!-- Right: Adjustments and controls -->
       <aside class="controls-panel">
-        <!-- Adjustments for selection -->
+        <div class="controls-settings">
+          <!-- Adjustments for selection -->
         <div class="adjustments-box" :class="{ disabled: selection.length === 0 }">
           <div class="selection-summary mono">
             Selection: {{ selection.length }} of {{ photos.length }} selected
@@ -1432,74 +1467,75 @@ onMounted(async () => {
             Destination: <code>{{ outputDestination }}</code>
           </div>
         </div>
+      </div>
 
-        <!-- Run and Dry-run action buttons -->
-        <div class="actions-box">
-          <div class="scope-toggle" role="radiogroup" aria-label="Develop scope">
-            <label class="scope-option">
-              <input
-                v-model="scope"
-                type="radio"
-                value="all"
-                :disabled="isDeveloping"
-                data-testid="scope-all"
-              />
-              <span>All photographs ({{ photos.length }})</span>
-            </label>
-            <label class="scope-option">
-              <input
-                v-model="scope"
-                type="radio"
-                value="selected"
-                :disabled="isDeveloping"
-                data-testid="scope-selected"
-              />
-              <span>Selected only ({{ selection.length }})</span>
-            </label>
-          </div>
-
-          <div class="action-buttons">
-            <button
-              type="button"
-              class="secondary dry-run-btn"
-              data-testid="dry-run-button"
-              :disabled="!canPlan"
-              @click="runDryRun"
-            >
-              <template v-if="isPlanning">
-                Planning<span class="cursor">_</span>
-              </template>
-              <template v-else>
-                Dry run
-              </template>
-            </button>
-
-            <button
-              type="button"
-              class="primary run-btn"
-              data-testid="run-button"
-              :disabled="!canRun"
-              @click="runDevelop"
-            >
-              <template v-if="isDeveloping && !jobId">
-                Starting<span class="cursor">_</span>
-              </template>
-              <template v-else>
-                Develop
-              </template>
-            </button>
-          </div>
-
-          <div
-            v-if="lockReasons.length"
-            class="gate-explanation"
-            data-testid="gate-explanation"
-            role="status"
-          >
-            <p v-for="reason in lockReasons" :key="reason">{{ reason }}</p>
-          </div>
+      <!-- Run and Dry-run action buttons -->
+      <footer class="actions-box controls-footer">
+        <div class="scope-toggle" role="radiogroup" aria-label="Develop scope">
+          <label class="scope-option">
+            <input
+              v-model="scope"
+              type="radio"
+              value="all"
+              :disabled="isDeveloping"
+              data-testid="scope-all"
+            />
+            <span>All photographs ({{ photos.length }})</span>
+          </label>
+          <label class="scope-option">
+            <input
+              v-model="scope"
+              type="radio"
+              value="selected"
+              :disabled="isDeveloping"
+              data-testid="scope-selected"
+            />
+            <span>Selected only ({{ selection.length }})</span>
+          </label>
         </div>
-      </aside>
+
+        <div class="action-buttons">
+          <button
+            type="button"
+            class="secondary dry-run-btn"
+            data-testid="dry-run-button"
+            :disabled="!canPlan"
+            @click="runDryRun"
+          >
+            <template v-if="isPlanning">
+              Planning<span class="cursor">_</span>
+            </template>
+            <template v-else>
+              Dry run
+            </template>
+          </button>
+
+          <button
+            type="button"
+            class="primary run-btn"
+            data-testid="run-button"
+            :disabled="!canRun"
+            @click="runDevelop"
+          >
+            <template v-if="isDeveloping && !jobId">
+              Starting<span class="cursor">_</span>
+            </template>
+            <template v-else>
+              Develop
+            </template>
+          </button>
+        </div>
+
+        <div
+          v-if="lockReasons.length"
+          class="gate-explanation"
+          data-testid="gate-explanation"
+          role="status"
+        >
+          <p v-for="reason in lockReasons" :key="reason">{{ reason }}</p>
+        </div>
+      </footer>
+    </aside>
     </div>
 
     <!-- Enlarge overlay (DV-17) -->
@@ -1524,57 +1560,77 @@ onMounted(async () => {
       />
     </div>
 
-    <!-- Review plan details -->
-    <section v-if="reviewedPlan" class="review-section" data-testid="review-section">
-      <header class="review-head">
-        <h2>Review summary</h2>
-        <span class="badge">{{ reviewedPlan.actions.length }} to develop</span>
-      </header>
+    <Teleport defer to="#status-strip-line" :disabled="!strip">
+      <span v-if="strip && (statusLineText || isJobRunning)" data-testid="status-line">
+        <template v-if="isJobRunning">
+          <JobProgress
+            compact
+            :job-id="jobId"
+            :can-cancel="true"
+            timing-item="photograph"
+            @cancel="handleCancelJob"
+            @done="handleJobDone"
+          />
+        </template>
+        <template v-else>
+          {{ statusLineText }}
+        </template>
+      </span>
+    </Teleport>
 
-      <div class="rule-box">
-        <p class="rule-line">
-          Format:
-          <strong>
-            {{ reviewedPlan.format.kind === 'tiff' ? '16-bit TIFF (ProPhoto RGB)' : `JPEG quality ${reviewedPlan.format.quality}` }}
-          </strong>
-          into <code>{{ outputDestination }}</code>
-        </p>
-        <p class="rule-line muted">
-          Existing files are never overwritten. Metadata and EXIF orientation are preserved on all outputs.
-        </p>
+    <Teleport defer to="#status-strip-details" :disabled="!strip">
+      <!-- Review plan details -->
+      <section v-if="reviewedPlan" class="review-section" data-testid="review-section">
+        <header class="review-head">
+          <h2>Review summary</h2>
+          <span class="badge">{{ reviewedPlan.actions.length }} to develop</span>
+        </header>
+
+        <div class="rule-box">
+          <p class="rule-line">
+            Format:
+            <strong>
+              {{ reviewedPlan.format.kind === 'tiff' ? '16-bit TIFF (ProPhoto RGB)' : `JPEG quality ${reviewedPlan.format.quality}` }}
+            </strong>
+            into <code>{{ outputDestination }}</code>
+          </p>
+          <p class="rule-line muted">
+            Existing files are never overwritten. Metadata and EXIF orientation are preserved on all outputs.
+          </p>
+        </div>
+
+        <div v-if="reviewedPlan.skipped.length" class="skipped-section" data-testid="skipped-section">
+          <h3>Skipped items ({{ reviewedPlan.skipped.length }})</h3>
+          <ul class="skipped-list">
+            <li
+              v-for="skip in reviewedPlan.skipped"
+              :key="skip.file"
+              class="skipped-row mono"
+              data-testid="skipped-item"
+            >
+              <span class="skipped-file">{{ skip.file }}</span>
+              <span class="skipped-reason">— {{ skip.reason }}</span>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Errors and feedback -->
+      <div v-if="planError" class="error-banner" role="alert">
+        {{ planError }}
       </div>
 
-      <div v-if="reviewedPlan.skipped.length" class="skipped-section" data-testid="skipped-section">
-        <h3>Skipped items ({{ reviewedPlan.skipped.length }})</h3>
-        <ul class="skipped-list">
-          <li
-            v-for="skip in reviewedPlan.skipped"
-            :key="skip.file"
-            class="skipped-row mono"
-            data-testid="skipped-item"
-          >
-            <span class="skipped-file">{{ skip.file }}</span>
-            <span class="skipped-reason">— {{ skip.reason }}</span>
-          </li>
-        </ul>
-      </div>
-    </section>
-
-    <!-- Errors and feedback -->
-    <div v-if="planError" class="error-banner" role="alert">
-      {{ planError }}
-    </div>
-
-    <!-- Active Job Progress with Cancel -->
-    <section v-if="jobId" class="job-section" data-testid="job-section">
-      <JobProgress
-        :job-id="jobId"
-        :can-cancel="true"
-        timing-item="photograph"
-        @cancel="handleCancelJob"
-        @done="handleJobDone"
-      />
-    </section>
+      <!-- Active Job Progress with Cancel -->
+      <section v-if="jobId" class="job-section" data-testid="job-section">
+        <JobProgress
+          :job-id="jobId"
+          :can-cancel="true"
+          timing-item="photograph"
+          @cancel="handleCancelJob"
+          @done="handleJobDone"
+        />
+      </section>
+    </Teleport>
   </div>
 </template>
 
@@ -1744,9 +1800,31 @@ onMounted(async () => {
 }
 
 .controls-panel {
-  display: grid;
-  gap: var(--space-3);
+  display: flex;
+  flex-direction: column;
   margin-left: var(--space-4);
+  max-height: calc(100vh - var(--preview-top, 240px));
+  height: calc(100vh - var(--preview-top, 240px));
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.controls-settings {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-right: var(--space-1);
+}
+
+.controls-footer {
+  flex-shrink: 0;
+  margin-top: auto;
+  background: var(--bg-surface);
+  position: relative;
+  z-index: calc(var(--z-status) + 1); /* above the details drawer */
 }
 
 .preview-box {

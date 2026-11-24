@@ -19,7 +19,7 @@
  * - Job execution: Followed with JobProgress with cancellation support. Written, skipped,
  *   failed, and metadata skipped counts are reported; refusals from core are shown verbatim.
  */
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, inject, nextTick, onMounted, ref, watch } from 'vue';
 import type { BrowserEntry } from '@phototools/shared';
 import type {
   AdjustmentRecipe,
@@ -33,6 +33,7 @@ import type { LutItem } from '../components/LutPicker.vue';
 import PathField from '@ui/components/PathField.vue';
 import PathListField from '@ui/components/PathListField.vue';
 import { useRoots } from '@ui/useRoots';
+import { STATUS_STRIP } from '../statusStrip';
 
 interface SampleFramePreview {
   path: string;
@@ -90,6 +91,34 @@ const sampleCanvasRefs = new Map<number, HTMLCanvasElement>();
 
 // Active job state
 const jobId = ref<string | null>(null);
+
+const strip = inject(STATUS_STRIP, null);
+
+const isJobRunning = computed(() => Boolean(isGrading.value && jobId.value));
+const hasDetails = computed(() => Boolean(reviewedPlan.value || failure.value || isJobRunning.value));
+watch(
+  hasDetails,
+  (val) => {
+    if (strip) {
+      strip.hasDetails = val;
+      if (!val) {
+        strip.detailsOpen = false;
+      }
+    }
+  },
+  { immediate: true },
+);
+
+const statusLineText = computed(() => {
+  if (isJobRunning.value) return null;
+  if (failure.value) return 'Dry run failed';
+  if (reviewedPlan.value) {
+    const toGrade = reviewedPlan.value.actions_count;
+    const skipped = reviewedPlan.value.skipped.length;
+    return `Dry run · ${toGrade} to grade · ${skipped} skipped`;
+  }
+  return null;
+});
 
 const parsedInputs = computed(() =>
   inputsText.value
@@ -366,6 +395,7 @@ async function runDryRun() {
         }
       }
     }
+    if (strip) strip.detailsOpen = true;
   } catch (err: unknown) {
     failure.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -401,6 +431,7 @@ async function runBulkLut() {
             r.recursive,
           );
     jobId.value = id;
+    if (strip) strip.detailsOpen = true;
   } catch (err: unknown) {
     failure.value = err instanceof Error ? err.message : String(err);
     isGrading.value = false;
@@ -445,7 +476,8 @@ onMounted(() => {
     </header>
 
     <div class="form-container">
-      <div class="inputs-section">
+      <div class="form-settings">
+        <div class="inputs-section">
         <PathListField
           v-model="inputsText"
           label="Source photographs (JPEG or TIFF)"
@@ -545,8 +577,9 @@ onMounted(() => {
           :overlay="true"
         />
       </div>
+    </div>
 
-      <div class="actions-section">
+    <div class="actions-section">
         <div class="button-row">
           <button
             type="button"
@@ -590,100 +623,123 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- Review Plan & Sample Previews -->
-    <section v-if="reviewedPlan" class="review-section" data-testid="review-section">
-      <header class="review-head">
-        <h2>Review summary</h2>
-        <span class="badge">{{ reviewedPlan.actions_count }} to grade</span>
-      </header>
-      <p v-if="reviewed?.source === 'preset'" class="rule-line" data-testid="review-preset">
-        Preset: <strong>{{ reviewed.presetName }}</strong>. If it is changed before the run, the run
-        is refused and asks for another dry run.
-      </p>
+    <Teleport defer to="#status-strip-line" :disabled="!strip">
+      <span v-if="strip && (statusLineText || isJobRunning)" data-testid="status-line">
+        <template v-if="isJobRunning">
+          <JobProgress
+            compact
+            :job-id="jobId"
+            :can-cancel="true"
+            @cancel="handleCancelJob"
+            @done="handleJobDone"
+          />
+        </template>
+        <template v-else>
+          {{ statusLineText }}
+        </template>
+      </span>
+    </Teleport>
 
-      <div class="rule-box">
-        <p class="rule-line">
-          Output naming:
-          <code>&lt;filename&gt;{{ reviewed?.source === 'preset' ? '_edit' : '_lut' }}.&lt;ext&gt;</code>
-          in destination folder.
+    <Teleport defer to="#status-strip-details" :disabled="!strip">
+      <!-- Review Plan & Sample Previews -->
+      <section v-if="reviewedPlan" class="review-section" data-testid="review-section">
+        <header class="review-head">
+          <h2>Review summary</h2>
+          <span class="badge">{{ reviewedPlan.actions_count }} to grade</span>
+        </header>
+        <p v-if="reviewed?.source === 'preset'" class="rule-line" data-testid="review-preset">
+          Preset: <strong>{{ reviewed.presetName }}</strong>. If it is changed before the run, the run
+          is refused and asks for another dry run.
         </p>
-        <p class="rule-line muted">
-          Existing files are never overwritten. Metadata and EXIF orientation are preserved on all outputs.
-        </p>
-      </div>
 
-      <!-- Skipped Items -->
-      <div v-if="reviewedPlan.skipped.length" class="skipped-box" data-testid="skipped-box">
-        <h3 class="box-title">Skipped items ({{ reviewedPlan.skipped.length }})</h3>
-        <ul class="skipped-list">
-          <li v-for="skip in reviewedPlan.skipped" :key="skip.file" class="skipped-row">
-            <span class="skipped-file mono">{{ fileName(skip.file) }}</span>
-            <span class="skipped-reason muted">— {{ skip.reason }}</span>
-          </li>
-        </ul>
-      </div>
+        <div class="rule-box">
+          <p class="rule-line">
+            Output naming:
+            <code>&lt;filename&gt;{{ reviewed?.source === 'preset' ? '_edit' : '_lut' }}.&lt;ext&gt;</code>
+            in destination folder.
+          </p>
+          <p class="rule-line muted">
+            Existing files are never overwritten. Metadata and EXIF orientation are preserved on all outputs.
+          </p>
+        </div>
 
-      <!-- Sample Frames Strip -->
-      <div v-if="reviewedPlan.sample_frames.length" class="samples-box" data-testid="samples-box">
-        <h3 class="box-title">Sample frame preview strip</h3>
-        <p v-if="isGeneratingPreviews" class="muted">
-          Rendering sample previews sequentially<span class="cursor">_</span>
-        </p>
-        <div class="sample-strip" data-testid="sample-strip">
-          <div
-            v-for="(sample, idx) in samplePreviews"
-            :key="sample.path"
-            class="sample-card"
-            :class="{ 'sample-card--error': !!sample.error }"
-            data-testid="sample-frame"
-          >
-            <div class="sample-canvas-surround">
-              <canvas
-                v-if="!sample.error && sample.pixels"
-                :ref="(el) => setSampleCanvas(el as HTMLCanvasElement | null, idx)"
-                class="sample-canvas"
-                :width="sample.width"
-                :height="sample.height"
-              ></canvas>
-              <div v-else class="sample-error-display" data-testid="sample-error">
-                <span class="sample-error-icon">✕</span>
-                <span class="sample-error-text">{{ sample.error }}</span>
+        <!-- Skipped Items -->
+        <div v-if="reviewedPlan.skipped.length" class="skipped-box" data-testid="skipped-box">
+          <h3 class="box-title">Skipped items ({{ reviewedPlan.skipped.length }})</h3>
+          <ul class="skipped-list">
+            <li v-for="skip in reviewedPlan.skipped" :key="skip.file" class="skipped-row">
+              <span class="skipped-file mono">{{ fileName(skip.file) }}</span>
+              <span class="skipped-reason muted">— {{ skip.reason }}</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Sample Frames Strip -->
+        <div v-if="reviewedPlan.sample_frames.length" class="samples-box" data-testid="samples-box">
+          <h3 class="box-title">Sample frame preview strip</h3>
+          <p v-if="isGeneratingPreviews" class="muted">
+            Rendering sample previews sequentially<span class="cursor">_</span>
+          </p>
+          <div class="sample-strip" data-testid="sample-strip">
+            <div
+              v-for="(sample, idx) in samplePreviews"
+              :key="sample.path"
+              class="sample-card"
+              :class="{ 'sample-card--error': !!sample.error }"
+              data-testid="sample-frame"
+            >
+              <div class="sample-canvas-surround">
+                <canvas
+                  v-if="!sample.error && sample.pixels"
+                  :ref="(el) => setSampleCanvas(el as HTMLCanvasElement | null, idx)"
+                  class="sample-canvas"
+                  :width="sample.width"
+                  :height="sample.height"
+                ></canvas>
+                <div v-else class="sample-error-display" data-testid="sample-error">
+                  <span class="sample-error-icon">✕</span>
+                  <span class="sample-error-text">{{ sample.error }}</span>
+                </div>
               </div>
+              <span class="sample-filename mono" :title="sample.path">{{ fileName(sample.path) }}</span>
             </div>
-            <span class="sample-filename mono" :title="sample.path">{{ fileName(sample.path) }}</span>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- Error / Refusal from Core -->
-    <p v-if="failure" class="error" data-testid="refusal-message" role="alert">
-      {{ failure }}
-    </p>
+      <!-- Error / Refusal from Core -->
+      <p v-if="failure" class="error" data-testid="refusal-message" role="alert">
+        {{ failure }}
+      </p>
 
-    <!-- Job Progress with Cancel -->
-    <section v-if="jobId" class="job-section">
-      <JobProgress
-        :job-id="jobId"
-        :can-cancel="true"
-        @cancel="handleCancelJob"
-        @done="handleJobDone"
-      />
-    </section>
+      <!-- Job Progress with Cancel -->
+      <section v-if="jobId" class="job-section">
+        <JobProgress
+          :job-id="jobId"
+          :can-cancel="true"
+          @cancel="handleCancelJob"
+          @done="handleJobDone"
+        />
+      </section>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
 .bulk-lut-page {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-4);
   max-width: 900px;
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .page-head {
   display: grid;
   gap: var(--space-1);
+  flex-shrink: 0;
 }
 
 .page-head h1 {
@@ -696,22 +752,45 @@ onMounted(() => {
 }
 
 .form-container {
-  display: grid;
-  gap: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  max-height: calc(100vh - 180px);
   border: var(--border-hair);
   border-radius: var(--radius-none);
   background: var(--bg-panel);
+  box-sizing: border-box;
+}
+
+.form-settings {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: var(--space-4);
+  display: grid;
+  gap: var(--space-4);
 }
 
 .inputs-section,
 .source-section,
 .preset-section,
 .lut-section,
-.destination-section,
-.actions-section {
+.destination-section {
   display: grid;
   gap: var(--space-3);
+}
+
+.actions-section {
+  flex-shrink: 0;
+  margin-top: auto;
+  border-top: var(--border-hair);
+  padding: var(--space-4);
+  background: var(--bg-panel);
+  display: grid;
+  gap: var(--space-3);
+  position: relative;
+  z-index: calc(var(--z-status) + 1); /* above the details drawer */
 }
 
 .source-label {

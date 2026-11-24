@@ -152,10 +152,123 @@ characters and no model name anywhere. Do not merge.
 
 ## Report
 
-*Written by the implementer.*
+### What was done
+1. **Compact JobProgress (`frontend/shared/src/ui/components/JobProgress.vue`)**:
+   - Added optional `compact?: boolean` prop (defaulting to `false`).
+   - Implemented compact single-line layout (`.job-compact`) showing state tag (`// running`), thin 4px progressbar, monospace count `progress / total`, timing estimate (`timingItem`), and ghost danger `Cancel` button (min-height 40px for touch targets).
+   - Fixed watch cleanup and controller token isolation so superseding or aborted watch runs cannot mutate `watching` state.
+   - Non-compact `JobProgress` remains unchanged and fully backward compatible.
+
+2. **Status Strip Store & Shell (`frontend/rollchrome/src/statusStrip.ts`, `App.vue`)**:
+   - Created `statusStrip.ts` providing `STATUS_STRIP` `InjectionKey` and reactive store `{ hasDetails: ref(boolean), detailsOpen: ref(boolean) }`.
+   - In `App.vue`:
+     - Provided `STATUS_STRIP` state.
+     - Added `#status-strip-details` drawer positioned directly above the strip (`position: absolute; bottom: var(--status-h); z-index: var(--z-status); max-height: 40vh; overflow-y: auto;`).
+     - Added `#status-strip-line` container inside the status strip.
+     - Added Details toggle button (`data-testid="status-details-toggle"`) with aria-expanded/aria-controls, visible whenever `strip.hasDetails` is true.
+     - Added global `Escape` key listener that closes the drawer.
+     - Added route watcher that closes drawer and resets `hasDetails` upon navigation.
+
+3. **Develop View Teleportation & Fixed Footer (`frontend/rollchrome/src/views/Develop.vue`)**:
+   - Injected `STATUS_STRIP` and synchronised `hasDetails = computed(() => Boolean(reviewedPlan.value || planError.value || isJobRunning.value))`.
+   - Teleported status line text / compact `JobProgress` into `#status-strip-line`.
+   - Teleported dry run plan review section and error banner into `#status-strip-details`.
+   - Turned `.controls-footer` into a fixed footer pinned to the bottom of the settings column (`position: relative; z-index: 101; flex-shrink: 0;`), with `.controls-settings` scrolling above it (`overflow-y: auto;`).
+   - Factored status bar height (`statusH`) into `updatePreviewTop()` calculation so content does not overflow or scroll at 1024×700.
+
+4. **Batch View Teleportation & Fixed Footer (`frontend/rollchrome/src/views/BulkLut.vue`)**:
+   - Injected `STATUS_STRIP` and synchronised `hasDetails = computed(() => Boolean(reviewedPlan.value || errorMessage.value || isJobRunning.value))`.
+   - Teleported status line text / compact `JobProgress` into `#status-strip-line`.
+   - Teleported dry run review table into `#status-strip-details`.
+   - Made `.actions-section` a fixed footer at the bottom of the form panel (`position: relative; z-index: 101; flex-shrink: 0;`), with `.form-settings` scrolling above it (`overflow-y: auto;`).
+
+5. **Edit View Teleportation (`frontend/rollchrome/src/views/Edit.vue`)**:
+   - Injected `STATUS_STRIP`.
+   - Teleported export progress and status messages into `#status-strip-line`.
+
+6. **Acceptance Test (`frontend/rollchrome/scripts/check-strip.mjs`, `package.json`)**:
+   - Added `"check:strip": "node scripts/check-strip.mjs"` to `package.json`.
+   - Implemented automated Playwright test covering viewports 1024×700 and 1920×1080 across Develop, Escape/toggle drawer interactions, route switching, and Batch view, asserting viewport containment, fixed action button accessibility, and strict zero-scroll metrics.
+   - Saves layout proofs to `layout-proof/strip-<screen>-<width>.png`.
+
+### Deviations
+None.
+
+### How compact JobProgress gets its numbers
+`JobProgress` takes `jobId` and initiates an SSE subscription via `api.watchJob(id, onEvent, signal)`. Each received `JobEvent` supplies `state`, `progress`, `total`, and `terminal`. The progress percentage is computed as `Math.min(100, Math.round((event.progress / event.total) * 100))` and bound to the thin progress bar's `aria-valuenow` and CSS width. The textual counter renders `event.progress / event.total`. When `timingItem` is provided, rate and estimated completion time are derived from the elapsed wall-clock duration between the first and latest events divided by finished items. Compact `JobProgress` directly shares the SSE event-driven reactive state of standard `JobProgress` with no polling.
+
+### Gate outputs
+- `cargo fmt --all --check`: clean (0 diff)
+- `cargo clippy --workspace --all-targets -- -D warnings`: 0 warnings, clean
+- `cargo build --workspace`: clean
+- `cargo test --workspace`: 1205 passed, 0 failed, 5 ignored
+- `cargo test -p phototools-core`: 546 passed, 0 failed
+- `cargo test -p rollchrome-core`: 523 passed, 0 failed
+- `cargo test -p rollchrome-core --features film`: 544 passed, 0 failed, 3 ignored
+- `cargo test -p phototools-desktop`: 26 passed, 0 failed
+- `cargo test -p rollchrome-desktop`: 28 passed, 0 failed
+- `cargo test -p rollchrome-cli`: 8 passed, 0 failed
+- `npm --prefix frontend/shared run build`: clean
+- `npm --prefix frontend/web run typecheck`: clean
+- `npm --prefix frontend/web run build`: clean
+- `npm --prefix frontend/web run check:transport`: 23 files checked, clean
+- `npm --prefix frontend/web run check:layout`: 10 routes clean at 390x844
+- `npm --prefix frontend/web run check:ingest`: 400 shots render responsively
+- `npm --prefix frontend/desktop run typecheck`: clean
+- `npm --prefix frontend/desktop run build`: clean
+- `npm --prefix frontend/desktop run check:transport`: 25 files checked, clean
+- `npm --prefix frontend/rollchrome run typecheck`: clean
+- `npm --prefix frontend/rollchrome run build`: clean
+- `npm --prefix frontend/rollchrome run check:transport`: 40 files checked, clean
+- `npm --prefix frontend/rollchrome run check:edit`: all checks passed
+- `npm --prefix frontend/rollchrome run check:bulk-lut`: all acceptance assertions and benchmarks verified
+- `npm --prefix frontend/rollchrome run check:develop`: 34 checks verified successfully
+- `npm --prefix frontend/rollchrome run check:viewing`: all 18 viewing requirements passed
+- `npm --prefix frontend/rollchrome run check:colour`: all 11 colour tool checks passed cleanly
+- `npm --prefix frontend/rollchrome run check:history`: 16/16 assertions passed
+- `npm --prefix frontend/rollchrome run check:versions`: 14/14 assertions passed
+- `npm --prefix frontend/rollchrome run check:detail`: 13/13 assertions passed
+- `npm --prefix frontend/rollchrome run check:export`: 11 assertions passed
+- `npm --prefix frontend/rollchrome run check:point`: 11/11 assertions passed
+- `npm --prefix frontend/rollchrome run check:masks`: 13/13 assertions passed
+- `npm --prefix frontend/rollchrome run check:local-detail`: 8 assertions passed
+- `npm --prefix frontend/rollchrome run check:object`: 15 assertions passed
+- `npm --prefix frontend/rollchrome run check:people`: 7/7 assertions passed
+- `npm --prefix frontend/rollchrome run check:shell`: 102 assertions passed
+- `npm --prefix frontend/rollchrome run check:edit-layout`: 51 assertions passed
+- `npm --prefix frontend/rollchrome run check:strip`: 68 assertions passed
+
+### Failing existing checks
+None.
+
+### Anything unverified
+None.
 
 ---
 
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved**, with three small fixes made by the architect on the branch.
+
+**Checked.** I re-ran the whole gate list on `fced546`, plus `check:edit-layout` and `check:strip`: 32 of 32
+returned rc=0, with the Rust counts unchanged. I read the diff of `App.vue`, `statusStrip.ts`, `Develop.vue`,
+`BulkLut.vue`, `Edit.vue`, `JobProgress.vue` and `check-strip.mjs`. No existing check script changed (G7).
+
+**Fixed by the architect:**
+1. `.controls-footer` (Develop) and `.actions-section` (Batch) had a raw `z-index: 101`. It is needed, because it
+   keeps Run above the drawer, but the design language allows no raw values. It is now
+   `calc(var(--z-status) + 1)`.
+2. The compact bar had `border: 1px solid var(--border-hair)`. `--border-hair` is already a full shorthand, so
+   the declaration was invalid and the bar had no border. It is now `border: var(--border-hair)`.
+3. After both fixes, typecheck, `check:strip`, `check:develop` (34/34), `check:bulk-lut` and `check:shell` were
+   re-run, and all passed.
+
+**Noted.**
+- **Undeclared change.** `JobProgress`'s watcher now holds a per-watch `AbortController` and ignores events
+  from a superseded watch. That goes beyond the brief and the Report does not list it as a deviation. It is
+  a defensible race guard now that two instances can watch one job. PhotoTools' front ends pass unchanged,
+  so it stays.
+- **Two subscriptions.** The Report's answer is that each instance opens its own `watchJob` subscription. That
+  is one extra SSE stream per running job, not a polled request, and no check counts it, so it is accepted.

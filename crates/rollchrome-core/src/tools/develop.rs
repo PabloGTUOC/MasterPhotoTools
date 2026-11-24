@@ -40,6 +40,21 @@ pub const DEFAULT_LENS_CORRECTION: bool = true;
 pub fn develop_for_edit(
     raw: &[u8],
 ) -> Result<(image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, Vec<String>), Error> {
+    let cal = match crate::media::lens::lens_info(raw) {
+        Some(ref info) => crate::media::develop::neutral::calibration_for(&info.make, &info.model),
+        None => crate::media::develop::neutral::NeutralCalibration::default(),
+    };
+    develop_for_edit_with(raw, &cal)
+}
+
+/// `develop_for_edit` with the camera's neutral calibration given rather than looked up, so that a
+/// calibration can be fitted against a reference rendering through exactly the path Develop exports by
+/// (`examples/fit_neutral.rs`).
+#[allow(clippy::type_complexity)]
+pub fn develop_for_edit_with(
+    raw: &[u8],
+    cal: &crate::media::develop::neutral::NeutralCalibration,
+) -> Result<(image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, Vec<String>), Error> {
     let mut linear = develop_linear(raw, &DevelopOptions { exposure_ev: 0.0 })?;
     let mut warnings = Vec::new();
     if DEFAULT_LENS_CORRECTION {
@@ -74,12 +89,7 @@ pub fn develop_for_edit(
     };
 
     let mut pixels = denoised;
-    let lens_info = crate::media::lens::lens_info(raw);
-    let cal = match lens_info {
-        Some(ref info) => crate::media::develop::neutral::calibration_for(&info.make, &info.model),
-        None => crate::media::develop::neutral::NeutralCalibration::default(),
-    };
-    crate::media::develop::neutral::apply_neutral(&mut pixels, &cal);
+    crate::media::develop::neutral::apply_neutral(&mut pixels, cal);
     let mut developed = linear_to_developed_with(
         linear.width,
         linear.height,

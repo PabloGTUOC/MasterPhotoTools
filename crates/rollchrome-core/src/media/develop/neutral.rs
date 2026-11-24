@@ -31,7 +31,7 @@ const XZ1_COLOUR_MATRIX: [[f32; 3]; 3] = [
 
 /// Returns the neutral calibration for a given camera make and model.
 ///
-/// Each value was fitted to Apple's rendering; Nikon and Fujifilm from one file each
+/// Each value was fitted to Apple's rendering; the LX100 from five files, Nikon and Fujifilm from one file each
 /// (a D610 NEF, the X-Pro2 chart RAF), so they are provisional until the owner's D60 and
 /// X100VI files are measured; Fujifilm's dynamic-range modes are not handled.
 pub fn calibration_for(make: &str, model: &str) -> NeutralCalibration {
@@ -62,9 +62,26 @@ pub fn calibration_for(make: &str, model: &str) -> NeutralCalibration {
             exposure_ev: 1.2,
             colour: None,
         }
+    } else if make_lower.contains("panasonic") && is_lx100(model) {
+        // Fitted to Apple's rendering (`sips`) of the owner's five LX100 RW2s from 2026-11-22: +0.2 EV
+        // brings the mean to within 0.01 EV (each file within 0.11). Its colour is within 1% per
+        // channel of Apple's without a matrix. Only the LX100: another Panasonic's baseline is unknown.
+        NeutralCalibration {
+            exposure_ev: 0.2,
+            colour: None,
+        }
     } else {
         NeutralCalibration::default()
     }
+}
+
+/// The LX100 reports itself as `DMC-LX100`; the match ignores case, spaces and hyphens.
+fn is_lx100(model: &str) -> bool {
+    let norm: String = model
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .collect();
+    norm.eq_ignore_ascii_case("DMCLX100") || norm.eq_ignore_ascii_case("LX100")
 }
 
 /// Applies exposure adjustment and colour correction matrix to linear ProPhoto pixels.
@@ -119,6 +136,20 @@ mod tests {
         let fuji = calibration_for("FUJIFILM", "X-Pro2");
         assert_eq!(fuji.exposure_ev, 1.2);
         assert_eq!(fuji.colour, None);
+    }
+
+    #[test]
+    fn the_lx100_gets_its_exposure_and_no_colour() {
+        for model in ["DMC-LX100", "dmc-lx100", "LX100"] {
+            let cal = calibration_for("Panasonic", model);
+            assert_eq!(cal.exposure_ev, 0.2, "model {model}");
+            assert_eq!(cal.colour, None, "model {model}");
+        }
+        assert_eq!(
+            calibration_for("Panasonic", "DC-LX100M2"),
+            NeutralCalibration::default(),
+            "another Panasonic keeps the default until it is measured"
+        );
     }
 
     #[test]

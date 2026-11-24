@@ -42,6 +42,12 @@ the very bottom. The owner wants every screen to behave like a desktop applicati
     groups.
   - Its body scrolls on its own above the **fixed action footer** UI-6 gave it: Dry run, Grade, and the
     notice `gate-explanation`, which is now always in view.
+- **The details drawer opens beside the right column, never under its footer.** Since the UI-6 follow-up,
+  the status strip's store has `detailsInsetRight`, and Develop sets it from its settings column with a
+  `ResizeObserver` (`controlsPanelRef`, `updateStripInset` in `Develop.vue`). Batch does the same for its
+  right column, and resets it to 0 on unmount.
+  - `check:batch-layout` asserts it: after a dry run, the drawer's right edge is at or left of the right
+    column's left edge (±1).
 - **The page head** shrinks to one line: the title and the one-sentence description, side by side.
 - **Nothing is appended below.** Results are in the status strip since UI-6.
 - **Every `data-testid`, every control and every behaviour stays.** Only where they sit changes.

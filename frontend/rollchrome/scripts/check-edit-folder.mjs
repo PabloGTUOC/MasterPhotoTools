@@ -10,7 +10,7 @@
  *    - Three cards, in order, inside the viewport, in one row.
  *    - sample.jpg is active and opened: the stand-in's openPreview was called with /Volumes/Photos/sample.jpg.
  *    - second.jpg's card shows "edited".
- * 2. Click third.tif: openPreview was called with its path, and its card is is-last-clicked.
+ * 2. Click third.tif: openPreview was called with its path, once, and its card is is-last-clicked.
  * 3. Focus the strip and press ArrowLeft: second.jpg opens.
  * 4. Fill the field with /Volumes/Photos/second.jpg: the same three cards, second.jpg active.
  * 5. Throughout, the stand-in saw at most 2 concurrent thumbnail calls, and .content's scrollHeight <= clientHeight + 1.
@@ -218,6 +218,17 @@ try {
     assert(
       thirdCardState.lastClicked,
       `[${size.width}×${size.height}] third.tif card has is-last-clicked after click`
+    );
+
+    // A click opens the photograph once. Opening sets the path field, and the field's watcher must not
+    // open it a second time: for a RAW that is a second full development (UI-8 review).
+    await page.waitForTimeout(300);
+    const thirdOpens = await page.evaluate(
+      () => (window.__STUB__?.openPreviewCalls ?? []).filter((p) => p === '/Volumes/Photos/third.tif').length
+    );
+    assert(
+      thirdOpens === 1,
+      `[${size.width}×${size.height}] Clicking third.tif opened it ${thirdOpens} times, expected once`
     );
 
     // 3. Focus the strip and press ArrowLeft: second.jpg opens

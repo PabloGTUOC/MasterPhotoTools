@@ -144,6 +144,7 @@ async function loadEditFolder(folderPath: string) {
   } catch (err: unknown) {
     if (currentToken !== thumbnailToken) return;
     folderEntries.value = [];
+    error.value = `Couldn't list ${folderPath}: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 
@@ -1841,6 +1842,8 @@ function deriveLabel(before: AdjustmentRecipe | null, after: AdjustmentRecipe): 
 }
 
 let inFlightSave: Promise<void> | null = null;
+/** The path openImage last put in the field, so the field's watcher does not open it again. */
+let pathOpenedByOpenImage: string | null = null;
 
 function markActiveAsEdited(targetPath: string) {
   const name = targetPath.split('/').pop();
@@ -2276,7 +2279,6 @@ function textIsInPlay(): boolean {
 }
 
 function handleKeyDown(e: KeyboardEvent) {
-  console.log('DEBUG handleKeyDown:', e.key, 'painting:', painting.value, 'selectedMaskId:', selectedMaskId.value, 'activeElement:', document.activeElement?.tagName, document.activeElement?.className);
   if (e.key === 'Alt') altHeld.value = true;
   if (e.code === 'Space' && !textIsInPlay() && !e.repeat) {
     spaceHeld.value = true;
@@ -2690,6 +2692,7 @@ function pasteSettings() {
   replaceLook(copied.recipe, `Pasted settings from ${copied.from}. Crop, rotation and masks kept.`, 'Paste settings');
 }
 
+// JPEG and TIFF, and phototools-core's media::raw::RAW_EXTENSIONS: keep the two in step.
 const EDITABLE_EXTENSIONS = ['jpg', 'jpeg', 'tif', 'tiff', 'dng', 'nef', 'arw', 'cr2', 'raf', 'orf', 'rw2'];
 
 function isPhotoPath(path: string): boolean {
@@ -2744,6 +2747,7 @@ async function openImage(path: string) {
   autosaveDisabled.value = false;
 
   const trimmed = path.trim();
+  pathOpenedByOpenImage = trimmed;
   sourcePath.value = trimmed;
   const name = trimmed.split('/').pop() ?? '';
   activePhotoName.value = name;
@@ -4225,7 +4229,10 @@ function resetDetail() {
 }
 
 watch(sourcePath, (newPath) => {
-  if (newPath && newPath.includes('.')) {
+  // openImage sets the field itself (a click on the filmstrip, a folder's first photograph), so a change
+  // it made is not a request to open the photograph again: for a RAW that would be a second development.
+  // A folder is opened on Enter or from the picker, by handlePathSubmit, not on every keystroke.
+  if (newPath && newPath !== pathOpenedByOpenImage && isPhotoPath(newPath)) {
     openImage(newPath);
   }
 });

@@ -171,6 +171,7 @@ npm --prefix frontend/rollchrome run check:object   # RP-11c object mask accepta
 npm --prefix frontend/rollchrome run check:people   # RP-11d people mask acceptance, measured in a browser
 npm --prefix frontend/rollchrome run check:shell    # UI-1 the whole app: no page scroll, navigation fixed, at 1024–1920
 npm --prefix frontend/rollchrome run check:edit-layout # UI-2 Edit: nothing clipped, Export always visible, panel resizable
+npm --prefix frontend/rollchrome run check:strip      # UI-6 results in the status strip, nothing scrolls after a dry run
 ```
 
 `check:layout` and `check:ingest` drive Chromium and write screenshots to

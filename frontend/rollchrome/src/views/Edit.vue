@@ -4276,7 +4276,7 @@ provide(EDIT_CONTEXT, {
         :roots-error="rootsError"
         :list="listRoots"
         placeholder="/path/to/image.jpg"
-        :selectable="['jpg', 'jpeg', 'tif', 'tiff']"
+        :selectable="['jpg', 'jpeg', 'tif', 'tiff', 'dng', 'nef', 'arw', 'cr2', 'raf', 'orf', 'rw2']"
         :overlay="true"
       />
 

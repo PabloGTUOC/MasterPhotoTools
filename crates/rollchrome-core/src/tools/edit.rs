@@ -874,13 +874,6 @@ where
         ));
     }
 
-    // Refuse RAW source: RAW files are developed in Develop tab only
-    if phototools_core::media::raw::is_raw(source) {
-        return Err(Error::Refused(
-            "RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes.".into(),
-        ));
-    }
-
     // 2. Validate LUT presence: a recipe that requests a LUT must have it provided and matched
     validate_lut(recipe, lut)?;
 
@@ -940,7 +933,7 @@ where
     let is_default_options = options == &ExportOptions::default();
 
     // Identity recipe on already-encoded image with default options: byte copy without re-encoding
-    if identity && is_default_options {
+    if identity && is_default_options && !phototools_core::media::raw::is_raw(source) {
         let mut src_file = File::open(source)?;
         std::fs::create_dir_all(out_dir)?;
 

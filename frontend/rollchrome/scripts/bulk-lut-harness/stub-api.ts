@@ -4,11 +4,13 @@
 import type {
   AdjustmentRecipe,
   BrowserEntry,
+  BuiltinLookInfo,
   BulkLutPlanSummary,
   Job,
   JobEvent,
   LutEntry,
   LutLibraryList,
+  LutRef,
   OpenPreviewResult,
   PreviewStage,
 } from '../../src/api';
@@ -123,6 +125,26 @@ export class StubDesktopApiClient {
       name: 'Custom.cube',
       sha256: 'fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321',
       format: 'Cube',
+    };
+  }
+
+  async listBuiltinLooks(): Promise<BuiltinLookInfo[]> {
+    return [
+      { id: 'builtin:fujifilm-classic-chrome', name: 'Classic Chrome', maker: 'Fujifilm' },
+      { id: 'builtin:fujifilm-eterna', name: 'Eterna', maker: 'Fujifilm' },
+    ];
+  }
+
+  async listFilmLooks(): Promise<BuiltinLookInfo[]> {
+    return [
+      { id: 'film:kodak_portra_400', name: 'Kodak Portra 400', maker: 'Kodak' },
+    ];
+  }
+
+  async ensureLookLut(lookId: string): Promise<LutRef> {
+    return {
+      name: `Builtin - ${lookId}.cube`,
+      sha256: `sha_${lookId.replace(/[^a-zA-Z0-9]/g, '_')}`,
     };
   }
 

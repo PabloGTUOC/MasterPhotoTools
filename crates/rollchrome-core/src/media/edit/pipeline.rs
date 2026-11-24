@@ -1150,15 +1150,18 @@ pub fn apply_recipe_with_orientation(
 
 /// Decodes an image from disk for Edit and Batch.
 ///
-/// Only JPEGs and TIFFs (8-bit and 16-bit) are accepted.
-/// RAW files are refused (developed only in the Develop tab).
-/// Any format other than JPEG or TIFF is refused.
+/// JPEGs, TIFFs (8-bit and 16-bit), and RAW files are accepted.
+/// RAW files are developed via `develop_for_edit` into 16-bit sRGB.
+/// Any format other than JPEG, TIFF, or RAW is refused.
 pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
     if phototools_core::media::raw::is_raw(path) {
-        return Err(Error::Refused(
-            "RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes."
-                .to_string(),
-        ));
+        let raw_bytes = std::fs::read(path)?;
+        let rgb16 = crate::tools::develop::develop_for_edit(&raw_bytes)?;
+        return Ok(ImageBuffer::Rgb16 {
+            width: rgb16.width(),
+            height: rgb16.height(),
+            data: rgb16.into_raw(),
+        });
     }
 
     use image::ImageDecoder;
@@ -1223,6 +1226,11 @@ pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
         )),
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::duplicate_mod, dead_code)]
+#[path = "../../../tests/support/dng.rs"]
+mod test_dng;
 
 #[cfg(test)]
 mod tests {
@@ -1675,72 +1683,34 @@ mod tests {
     }
 
     #[test]
-    fn a_raw_file_is_refused_for_editing_and_points_at_develop() {
+    fn a_raw_file_decodes_for_edit_as_sixteen_bit_srgb() {
+        use super::test_dng::DngBuilder;
         use crate::media::edit::PreviewSession;
-        // Synthesise a minimal TIFF-based RAW file carrying an embedded JPEG preview
+
         let temp = tempfile::tempdir().unwrap();
-        let raw_path = temp.path().join("test_shot.nef");
+        let raw_path = temp.path().join("test_shot.dng");
 
         let w = 64u32;
         let h = 48u32;
-        let mut jpeg_bytes = Vec::new();
-        let preview_img = image::RgbImage::from_pixel(w, h, image::Rgb([180, 120, 60]));
-        let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
-        preview_img
-            .write_to(&mut cursor, image::ImageFormat::Jpeg)
-            .unwrap();
+        let builder = DngBuilder::new_bayer(w, h);
+        let raw_pixels = vec![2000u16; (w * h) as usize];
+        let dng_bytes = builder.build(&raw_pixels);
+        std::fs::write(&raw_path, &dng_bytes).unwrap();
 
-        let mut tiff = Vec::new();
-        tiff.extend_from_slice(b"II");
-        tiff.extend_from_slice(&42u16.to_le_bytes());
-        tiff.extend_from_slice(&8u32.to_le_bytes()); // IFD0 offset
+        let decoded = decode_image(&raw_path).expect("RAW file must decode for edit");
+        let ImageBuffer::Rgb16 {
+            width,
+            height,
+            data,
+        } = decoded
+        else {
+            panic!("expected ImageBuffer::Rgb16, got {decoded:?}");
+        };
+        assert_eq!((width, height), (w, h));
+        assert_eq!(data.len(), (w * h * 3) as usize);
 
-        let num_entries = 4u16;
-        let ifd_len = 2 + 12 * (num_entries as usize) + 4;
-        let jpeg_offset = (8 + ifd_len) as u32;
-
-        tiff.extend_from_slice(&num_entries.to_le_bytes());
-        // Tag 0x0100 (ImageWidth), LONG (4), count 1, value w
-        tiff.extend_from_slice(&0x0100u16.to_le_bytes());
-        tiff.extend_from_slice(&4u16.to_le_bytes());
-        tiff.extend_from_slice(&1u32.to_le_bytes());
-        tiff.extend_from_slice(&w.to_le_bytes());
-
-        // Tag 0x0101 (ImageLength), LONG (4), count 1, value h
-        tiff.extend_from_slice(&0x0101u16.to_le_bytes());
-        tiff.extend_from_slice(&4u16.to_le_bytes());
-        tiff.extend_from_slice(&1u32.to_le_bytes());
-        tiff.extend_from_slice(&h.to_le_bytes());
-
-        // Tag 0x0201 (JPEGInterchangeFormat), LONG (4), count 1, offset jpeg_offset
-        tiff.extend_from_slice(&0x0201u16.to_le_bytes());
-        tiff.extend_from_slice(&4u16.to_le_bytes());
-        tiff.extend_from_slice(&1u32.to_le_bytes());
-        tiff.extend_from_slice(&jpeg_offset.to_le_bytes());
-
-        // Tag 0x0202 (JPEGInterchangeFormatLength), LONG (4), count 1, length
-        tiff.extend_from_slice(&0x0202u16.to_le_bytes());
-        tiff.extend_from_slice(&4u16.to_le_bytes());
-        tiff.extend_from_slice(&1u32.to_le_bytes());
-        tiff.extend_from_slice(&(jpeg_bytes.len() as u32).to_le_bytes());
-
-        // Next IFD = 0
-        tiff.extend_from_slice(&0u32.to_le_bytes());
-        tiff.extend_from_slice(&jpeg_bytes);
-
-        std::fs::write(&raw_path, &tiff).unwrap();
-
-        let expected_msg =
-            "RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes.";
-        match decode_image(&raw_path) {
-            Err(Error::Refused(msg)) => assert_eq!(msg, expected_msg),
-            other => panic!("expected Error::Refused, got {other:?}"),
-        }
-        match PreviewSession::open(&raw_path) {
-            Err(Error::Refused(msg)) => assert_eq!(msg, expected_msg),
-            Err(e) => panic!("expected Error::Refused, got {e:?}"),
-            Ok(_) => panic!("expected Error::Refused, got Ok"),
-        }
+        let session = PreviewSession::open(&raw_path).expect("PreviewSession must open RAW file");
+        assert_eq!(session.full_dimensions(), (w, h));
     }
 
     #[test]

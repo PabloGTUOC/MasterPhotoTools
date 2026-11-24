@@ -24,6 +24,73 @@ use crate::media::develop::{
 };
 use crate::media::film::{render_film, FilmBackend, FilmOutput, Grain};
 
+/// Default noise reduction value Develop gives a new photograph (`developState.ts`).
+pub const DEFAULT_NOISE_REDUCTION: f32 = 25.0;
+
+/// Default capture sharpening value Develop gives a new photograph (`developState.ts`).
+pub const DEFAULT_CAPTURE_SHARPENING: f32 = 50.0;
+
+/// Default lens correction setting Develop gives a new photograph (`developState.ts`).
+pub const DEFAULT_LENS_CORRECTION: bool = true;
+
+/// The neutral development exactly as Develop exports it with default settings
+/// (DEFAULT_NOISE_REDUCTION, DEFAULT_CAPTURE_SHARPENING, DEFAULT_LENS_CORRECTION),
+/// in sensor orientation, converted to 16-bit sRGB.
+pub fn develop_for_edit(
+    raw: &[u8],
+) -> Result<image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, Error> {
+    let mut linear = develop_linear(raw, &DevelopOptions { exposure_ev: 0.0 })?;
+    if DEFAULT_LENS_CORRECTION {
+        // A lens the database does not know is not a failure: the photograph develops uncorrected, as
+        // Develop does, where the same result becomes a warning on the job. Edit opens a photograph
+        // through `decode_image`, which has no warning to carry it in, so it is dropped here on purpose.
+        // Known gap: Edit does not say when a RAW's lens was left uncorrected.
+        let _uncorrected = correct_lens(&mut linear, raw).err();
+    }
+    crate::media::develop::frame::apply_camera_geometry(&mut linear, raw);
+    let level = noise_level(&linear.pixels, linear.width, linear.height);
+    let effective_nr = effective_noise_reduction(DEFAULT_NOISE_REDUCTION, level);
+    let denoised = reduce_noise(
+        linear.width,
+        linear.height,
+        &linear.pixels,
+        effective_nr,
+        1.0,
+    );
+    let denoised = if DEFAULT_CAPTURE_SHARPENING > 0.0 {
+        crate::media::develop::sharpen::capture_sharpen(
+            linear.width,
+            linear.height,
+            &denoised,
+            DEFAULT_CAPTURE_SHARPENING,
+            crate::media::develop::sharpen::sigma_for(matches!(
+                linear.demosaic,
+                crate::media::develop::Demosaic::XTrans
+            )),
+        )
+    } else {
+        denoised
+    };
+
+    let mut pixels = denoised;
+    let lens_info = crate::media::lens::lens_info(raw);
+    let cal = match lens_info {
+        Some(ref info) => crate::media::develop::neutral::calibration_for(&info.make, &info.model),
+        None => crate::media::develop::neutral::NeutralCalibration::default(),
+    };
+    crate::media::develop::neutral::apply_neutral(&mut pixels, &cal);
+    let mut developed = linear_to_developed_with(
+        linear.width,
+        linear.height,
+        &pixels,
+        linear.orientation,
+        linear.demosaic,
+        ToneCurve::Standard,
+    )?;
+    output_sharpen(&mut developed.image);
+    Ok(crate::media::develop::prophoto_to_srgb16(&developed))
+}
+
 /// A single file in the folder presented for development.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevelopItem {

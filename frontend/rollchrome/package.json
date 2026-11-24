@@ -24,7 +24,8 @@
     "check:object": "node scripts/check-object.mjs",
     "check:people": "node scripts/check-people.mjs",
     "check:shell": "node scripts/check-shell.mjs",
-    "check:edit-layout": "node scripts/check-edit-layout.mjs"
+    "check:edit-layout": "node scripts/check-edit-layout.mjs",
+    "check:strip": "node scripts/check-strip.mjs"
   },
   "dependencies": {
     "@phototools/shared": "file:../shared",

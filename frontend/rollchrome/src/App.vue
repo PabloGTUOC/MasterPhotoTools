@@ -6,13 +6,36 @@
  * non-destructive editing and batch grading, calling `rollchrome-core` and
  * `phototools-core` on this Mac. No server probe and no sync.
  */
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, provide, reactive, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
+import { STATUS_STRIP, type StatusStripState } from './statusStrip';
 
 const links = [
   { to: '/', label: 'Develop', abbr: 'DEV', step: '01' },
   { to: '/edit', label: 'Edit', abbr: 'EDT', step: '02' },
   { to: '/batch', label: 'Batch', abbr: 'BAT', step: '03' },
 ];
+
+const statusStrip = reactive<StatusStripState>({
+  hasDetails: false,
+  detailsOpen: false,
+});
+provide(STATUS_STRIP, statusStrip);
+
+const route = useRoute();
+watch(
+  () => route.path,
+  () => {
+    statusStrip.hasDetails = false;
+    statusStrip.detailsOpen = false;
+  },
+);
+
+function onKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && statusStrip.detailsOpen) {
+    statusStrip.detailsOpen = false;
+  }
+}
 
 /** The status bar's live clock (§5.8). */
 const clock = ref('');
@@ -24,8 +47,12 @@ function tick() {
 onMounted(() => {
   tick();
   ticking = window.setInterval(tick, 1000);
+  window.addEventListener('keydown', onKeyDown);
 });
-onUnmounted(() => window.clearInterval(ticking));
+onUnmounted(() => {
+  window.clearInterval(ticking);
+  window.removeEventListener('keydown', onKeyDown);
+});
 </script>
 
 <template>
@@ -57,9 +84,32 @@ onUnmounted(() => window.clearInterval(ticking));
         <RouterView />
       </main>
 
-      <footer class="statusbar">
-        <span class="statusbar__mid">ROLLCHROME v0.1.0</span>
-        <span class="statusbar__right">{{ clock }}</span>
+      <div
+        v-show="statusStrip.detailsOpen"
+        id="status-strip-details"
+        class="status-strip__details"
+        data-testid="status-details"
+      ></div>
+
+      <footer
+        class="statusbar status-strip"
+        :class="{ 'status-strip--expanded': statusStrip.hasDetails }"
+      >
+        <div id="status-strip-line" class="status-strip__line"></div>
+        <div class="status-strip__right">
+          <button
+            v-if="statusStrip.hasDetails"
+            type="button"
+            class="secondary status-details-toggle"
+            data-testid="status-details-toggle"
+            :aria-expanded="statusStrip.detailsOpen"
+            @click="statusStrip.detailsOpen = !statusStrip.detailsOpen"
+          >
+            Details
+          </button>
+          <span class="statusbar__mid">ROLLCHROME v0.1.0</span>
+          <span class="statusbar__right">{{ clock }}</span>
+        </div>
       </footer>
     </div>
   </div>
@@ -166,6 +216,7 @@ nav {
 /* --- main column --------------------------------------------------------- */
 
 .main {
+  position: relative;
   display: grid;
   grid-template-rows: 1fr auto;
   height: 100vh;
@@ -182,7 +233,7 @@ nav {
   flex-direction: column;
 }
 
-/* --- status bar (§5.8) ---------------------------------------------------- */
+/* --- status bar / status strip (§5.8) ------------------------------------- */
 
 .statusbar {
   display: flex;
@@ -198,6 +249,50 @@ nav {
   letter-spacing: 0.1em;
   color: var(--text-muted);
   white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.status-strip--expanded {
+  min-height: 40px;
+}
+
+.status-strip__line {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+}
+
+.status-strip__right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.status-details-toggle {
+  min-height: 40px;
+  height: 40px;
+  padding: 0 var(--space-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.status-strip__details {
+  position: absolute;
+  bottom: 40px;
+  left: 0;
+  right: 0;
+  width: 100%;
+  max-height: 40vh;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border-top: var(--border-hair);
+  z-index: var(--z-status);
+  box-sizing: border-box;
 }
 </style>
 

@@ -11,7 +11,7 @@
  * - Sidecar safety: Unreadable sidecars disable autosave to avoid overwriting existing edits.
  * - Full export: `exportEditedImage` with collision protection and destination validation.
  */
-import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
+import { computed, inject, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
 import { EDIT_CONTEXT } from './edit/context';
 import BasicSection from './edit/BasicSection.vue';
 import PresenceSection from './edit/PresenceSection.vue';
@@ -26,6 +26,7 @@ import EffectsSection from './edit/EffectsSection.vue';
 import HistorySection from './edit/HistorySection.vue';
 import SnapshotsSection from './edit/SnapshotsSection.vue';
 import VersionsSection from './edit/VersionsSection.vue';
+import { STATUS_STRIP } from '../statusStrip';
 import type {
   AdjustmentRecipe,
   AutoTarget,
@@ -81,6 +82,24 @@ const error = ref<string | null>(null);
 const saveStatus = ref<string>('');
 const exportStatus = ref<string | null>(null);
 const exportError = ref<string | null>(null);
+
+const strip = inject(STATUS_STRIP, null);
+
+const exportStatusLine = computed(() => {
+  if (isExportingAll.value && exportAllProgressText.value) {
+    return exportAllProgressText.value;
+  }
+  if (exportStatus.value) {
+    return `Exported to: ${exportStatus.value}`;
+  }
+  if (exportAllSummary.value) {
+    return exportAllSummary.value;
+  }
+  if (exportError.value) {
+    return `Export failed: ${exportError.value}`;
+  }
+  return null;
+});
 const isBefore = ref(false);
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
@@ -5329,6 +5348,12 @@ provide(EDIT_CONTEXT, {
         ×
       </button>
     </div>
+
+    <Teleport defer to="#status-strip-line" :disabled="!strip">
+      <span v-if="strip && exportStatusLine" data-testid="status-line">
+        {{ exportStatusLine }}
+      </span>
+    </Teleport>
   </div>
 </template>
 

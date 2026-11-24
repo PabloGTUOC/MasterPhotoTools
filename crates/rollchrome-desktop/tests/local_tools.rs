@@ -482,3 +482,34 @@ fn an_object_mask_without_its_model_or_for_a_closed_session_is_refused() {
     .unwrap_err();
     assert!(err.contains("closed or replaced"), "got: {err}");
 }
+
+#[test]
+fn ensure_look_lut_writes_into_lut_library() {
+    let f = fixture();
+    let ledger = Ledger::open(&f.config.database).unwrap();
+    let state = rollchrome_desktop::AppState::new(f.config.clone(), ledger, Arc::new(NoEvents));
+
+    let dto = rollchrome_desktop::commands::edit::ensure_look_lut_impl(
+        &state,
+        "builtin:fujifilm-classic-chrome".to_string(),
+    )
+    .expect("ensure look lut");
+
+    assert_eq!(dto.name, "Builtin - Fujifilm Classic Chrome.cube");
+    assert!(!dto.sha256.is_empty());
+
+    let lut_dir = rollchrome_core::config::lut_dir(&f.config);
+    let target = lut_dir.join(&dto.name);
+    assert!(target.exists());
+    let text = std::fs::read_to_string(&target).unwrap();
+    assert!(text.contains("LUT_3D_SIZE 33"));
+
+    // Second call returns same dto without rewriting
+    let dto2 = rollchrome_desktop::commands::edit::ensure_look_lut_impl(
+        &state,
+        "builtin:fujifilm-classic-chrome".to_string(),
+    )
+    .expect("second ensure look lut");
+    assert_eq!(dto.name, dto2.name);
+    assert_eq!(dto.sha256, dto2.sha256);
+}

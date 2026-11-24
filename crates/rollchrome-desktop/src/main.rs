@@ -92,6 +92,7 @@ fn main() {
             commands::auto_tone,
             commands::list_luts,
             commands::import_lut,
+            commands::ensure_look_lut,
             commands::list_presets,
             commands::load_preset,
             commands::save_preset,

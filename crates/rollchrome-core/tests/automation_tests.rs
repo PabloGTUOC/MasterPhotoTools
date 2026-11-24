@@ -547,22 +547,22 @@ fn export_uses_the_photographs_sidecar() {
 }
 
 #[test]
-fn export_refuses_raw() {
+fn export_accepts_raw() {
     let f = TestFixture::new();
     let auto = Automation::new(f.config.clone());
 
     let raw = f.write_dng(&f.root, "DSCF0001.dng", 2500);
     let out_dir = f.root.join("exports");
 
-    let err = auto
+    let res = auto
         .export(&ExportRequest {
             path: raw.to_string_lossy().to_string(),
             out_dir: out_dir.to_string_lossy().to_string(),
             options: ExportOptions::default(),
         })
-        .unwrap_err();
-    assert!(matches!(err, Error::Refused(_)));
-    assert!(!out_dir.exists());
+        .expect("export of RAW should succeed");
+    assert!(out_dir.exists());
+    assert!(Path::new(&res.path).exists());
 }
 
 #[test]

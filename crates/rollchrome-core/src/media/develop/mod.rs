@@ -573,3 +573,8 @@ pub fn develop(raw: &[u8], options: &DevelopOptions) -> Result<Developed, Error>
 pub fn prophoto_to_srgb8(developed: &Developed) -> image::RgbImage {
     render::render_srgb8_image(developed, None)
 }
+
+/// Converts a 16-bit ProPhoto RGB image into 16-bit sRGB in sensor orientation for editing.
+pub fn prophoto_to_srgb16(developed: &Developed) -> image::ImageBuffer<image::Rgb<u16>, Vec<u16>> {
+    render::render_srgb16_image(developed)
+}

@@ -395,13 +395,6 @@ impl Automation {
         let resolved_path = self.resolve_input(&r.path)?;
         let resolved_out = self.resolve_output(&r.out_dir)?;
 
-        if phototools_core::media::raw::is_raw(&resolved_path) {
-            return Err(Error::Refused(
-                "RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes."
-                    .to_string(),
-            ));
-        }
-
         let recipe = load_recipe_for_image(&resolved_path)?.unwrap_or_default();
         let lut_dir = crate::config::lut_dir(&self.config);
         let lut_opt = match &recipe.lut {

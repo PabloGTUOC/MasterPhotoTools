@@ -114,6 +114,38 @@ pub fn prophoto_icc_profile() -> Result<Vec<u8>, Error> {
         .map_err(|e| Error::Internal(format!("Failed to encode ICC profile: {e:?}")))
 }
 
+#[inline]
+pub(crate) fn prophoto_pixel_to_srgb_f32(pixel: &[u16; 3], m: [[f32; 3]; 3]) -> [f32; 3] {
+    let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
+    let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
+    let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
+
+    let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
+    [
+        linear_to_srgb(srgb_lin[0]),
+        linear_to_srgb(srgb_lin[1]),
+        linear_to_srgb(srgb_lin[2]),
+    ]
+}
+
+pub(crate) fn render_srgb16_image(
+    developed: &Developed,
+) -> image::ImageBuffer<image::Rgb<u16>, Vec<u16>> {
+    let w = developed.image.width();
+    let h = developed.image.height();
+    let m = colour::prophoto_to_srgb_matrix();
+    let raw_u16 = developed.image.as_raw();
+    let u16_data: Vec<u16> = super::par_map_rgb(raw_u16.as_chunks::<3>().0, |pixel| {
+        let s = prophoto_pixel_to_srgb_f32(pixel, m);
+        [
+            (s[0] * 65535.0).round().clamp(0.0, 65535.0) as u16,
+            (s[1] * 65535.0).round().clamp(0.0, 65535.0) as u16,
+            (s[2] * 65535.0).round().clamp(0.0, 65535.0) as u16,
+        ]
+    });
+    image::ImageBuffer::from_raw(w, h, u16_data).unwrap_or_else(|| image::ImageBuffer::new(w, h))
+}
+
 /// Renders a developed image to sRGB 8-bit image buffer, optionally applying a Look.
 ///
 /// Shared between JPEG rendering, `prophoto_to_srgb8`, and unit tests.
@@ -126,17 +158,7 @@ pub(crate) fn render_srgb8_image(developed: &Developed, look: Option<&Look>) -> 
     let u8_data: Vec<u8> = super::par_map_rgb(raw_u16.as_chunks::<3>().0, |pixel| {
         match look {
             None => {
-                let r_lin = tone::prophoto_decode(pixel[0] as f32 / 65535.0);
-                let g_lin = tone::prophoto_decode(pixel[1] as f32 / 65535.0);
-                let b_lin = tone::prophoto_decode(pixel[2] as f32 / 65535.0);
-
-                let srgb_lin = colour::mul_3x3_vec(m, [r_lin, g_lin, b_lin]);
-                let s = [
-                    linear_to_srgb(srgb_lin[0]),
-                    linear_to_srgb(srgb_lin[1]),
-                    linear_to_srgb(srgb_lin[2]),
-                ];
-
+                let s = prophoto_pixel_to_srgb_f32(pixel, m);
                 [
                     (s[0] * 255.0).round().clamp(0.0, 255.0) as u8,
                     (s[1] * 255.0).round().clamp(0.0, 255.0) as u8,

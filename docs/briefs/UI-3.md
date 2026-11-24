@@ -180,7 +180,160 @@ Commit on `ui-3` with imperative subjects under 72 characters and no model name 
 
 ## Report
 
-*Written by the implementer.*
+### Summary of what was done
+
+1. **On-demand Look LUT generation (`crates/rollchrome-core/src/tools/look_luts.rs` & `tools/mod.rs`):**
+   - Implemented `pub fn ensure_look_lut(look_id: &str, library_dir: &Path, film_data_dir: &Path) -> Result<LutRef, Error>` creating and caching 3D `.cube` LUTs for every built-in camera look and film simulation.
+   - Built-in camera looks are baked into 33³ cubes by transforming an sRGB grid through ProPhoto RGB, applying `builtin::apply_builtin_look` with ROMM RGB tone curves and exposure compensation, converting back to linear sRGB, and encoding to non-linear sRGB.
+   - Film simulations use `film::print_film_lut` (33³ sRGB cube) with `film::FilmParams::default()`.
+   - File naming strictly preserves identity and prevents collisions: `camera-<look-id>.cube` and `film-<stock-id>.cube`. Writes are atomic via temporary files in the library directory with explicit flush, syncing, and renaming.
+   - Re-requesting an already existing valid LUT computes its sha256 and returns its `LutRef` without re-baking.
+
+2. **IPC Command and Frontend API (`crates/rollchrome-desktop`, `frontend/rollchrome`):**
+   - Implemented `ensure_look_lut` command in `crates/rollchrome-desktop/src/commands/edit.rs` returning `LutRefDto { name, sha256 }` off the main thread with `spawn_blocking`, and registered it in `crates/rollchrome-desktop/src/main.rs`.
+   - Added `ensureLookLut(lookId: string): Promise<LutRef>` to `frontend/rollchrome/src/api.ts`.
+   - Updated stub APIs in `frontend/rollchrome/scripts/edit-harness/stub-api.ts` and `frontend/rollchrome/scripts/bulk-lut-harness/stub-api.ts`.
+
+3. **LutPicker Component (`frontend/rollchrome/src/components/LutPicker.vue`):**
+   - Organized selection into three grouped `<optgroup>`s: **Camera looks**, **Film simulations**, and **Your LUTs**.
+   - Filtered out existing baked looks from "Your LUTs" to prevent duplicates.
+   - Calling `ensureLookLut(id)` asynchronously on selection of a camera look or film simulation, displaying a "Preparing…" state during baking and surfacing errors in the picker error banner without breaking the existing recipe.
+   - Batch tab (`BulkLut.vue`) reuses `LutPicker` and automatically inherits the three groups and on-demand LUT preparation.
+
+4. **RAW file support in Edit:**
+   - In `crates/rollchrome-core/src/tools/develop.rs`, exported `DEFAULT_NOISE_REDUCTION = 25.0`, `DEFAULT_CAPTURE_SHARPENING = 50.0`, `DEFAULT_LENS_CORRECTION = true`, and implemented `pub fn develop_for_edit(raw: &[u8]) -> Result<image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, Error>` providing neutral sensor-oriented 16-bit sRGB development.
+   - In `crates/rollchrome-core/src/media/develop/mod.rs` and `render.rs`, implemented `prophoto_to_srgb16` sharing pixel conversion helper `prophoto_pixel_to_srgb_f32` with `prophoto_to_srgb8`.
+   - In `crates/rollchrome-core/src/media/edit/pipeline.rs`, updated `decode_image` to decode RAW files via `develop_for_edit` as `ImageBuffer::Rgb16`.
+   - In `crates/rollchrome-core/src/tools/edit.rs` and `automation/mod.rs`, removed RAW refusals so Edit export and automation MCP export operate on RAW files, while excluding RAW sources from the identity byte-copy path so RAW files are fully developed and rendered to 16-bit TIFF or JPEG.
+   - In `frontend/rollchrome/src/views/Edit.vue`, added RAW extensions (`dng`, `nef`, `arw`, `cr2`, `raf`, `orf`, `rw2`) to `:selectable`.
+
+### Deviations
+None.
+
+### Changed Existing Tests
+
+1. `crates/rollchrome-core/src/media/edit/pipeline.rs`:
+   - *Old assertion:* `a_raw_file_is_refused_for_editing_and_points_at_develop` asserted `decode_image(raw_path)` and `PreviewSession::open(raw_path)` returned `Error::Refused("RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes.")`.
+   - *New assertion:* `a_raw_file_decodes_for_edit_as_sixteen_bit_srgb` asserts `decode_image(&raw_path)` returns `ImageBuffer::Rgb16` of dimensions 64x48 and non-zero pixel data.
+
+2. `crates/rollchrome-core/tests/tools_tests.rs`:
+   - *Old assertion:* `an_edit_export_of_a_raw_file_is_refused_and_writes_nothing` asserted `export_edited_image(&raw_path, ...)` returned `Error::Refused("RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes.")` and output directory remained empty.
+   - *New assertion:* `edit_export_accepts_a_raw_source` asserts `export_edited_image(&raw_path, ...)` succeeds with both identity and non-identity recipes, writing non-empty exported output (`camera_raw_edit.tiff`).
+
+3. `crates/rollchrome-core/tests/automation_tests.rs`:
+   - *Old assertion:* `export_refuses_raw` asserted `auto.export(&ExportRequest { path: raw, ... })` returned `Error::Refused(_)`.
+   - *New assertion:* `export_accepts_raw` asserts `auto.export(&ExportRequest { path: raw, ... })` succeeds and writes the exported file.
+
+### Film LUT Preparation Time
+- A film simulation LUT (`film:kodak_portra_160`) took **1.55s** to bake and save to disk on a 33³ grid.
+
+### Batch Confirmation
+Confirmed that Batch (`BulkLut.vue`) displays the same three groups (Camera looks, Film simulations, Your LUTs) through `LutPicker.vue`, and verified via `check:bulk-lut`.
+
+### Gate Outputs
+
+1. `cargo build --workspace`:
+   Finished `dev` profile in 22.67s.
+2. `cargo test --workspace`:
+   - `phototools-core`: 398 passed; 0 failed; 0 ignored; finished in 5.86s
+   - `rollchrome-core`: 195 passed; 0 failed; 1 ignored; finished in 1.63s
+   - `phototools-desktop`: 19 passed; 0 failed; finished in 2.89s
+   - `phototools-desktop` (tests/local_tools.rs): 7 passed; 0 failed; finished in 5.73s
+   - `rollchrome-desktop`: 4 passed (bulk_edit), 12 passed (develop), 13 passed (local_tools); 0 failed; finished in 3.56s
+   - `rollchrome-cli`: 8 passed; 0 failed; finished in 1.21s
+   - Integration tests: `automation_tests` (13 passed), `tools_tests` (45 passed), `develop_tests` (12 passed), `preview_tests` (13 passed), `raw_tests` (13 passed), `sharpen_tests` (5 passed), `point_colour_tests` (13 passed), `exif_tests` (45 passed), `validation_tests` (2 passed); all 0 failed.
+3. `cargo test -p phototools-core`:
+   - unittests: 398 passed; 0 failed; 0 ignored
+   - exif_tests: 45 passed; 0 failed
+   - raw_tests: 13 passed; 0 failed
+   - tools_tests: 38 passed; 0 failed
+   - validation_tests: 2 passed; 0 failed
+4. `cargo test -p rollchrome-core`:
+   - unittests: 194 passed; 0 failed; 1 ignored
+   - automation_tests: 13 passed; 0 failed
+   - develop_tests: 12 passed; 0 failed
+   - preview_tests: 13 passed; 0 failed
+   - point_colour_tests: 13 passed; 0 failed
+   - sharpen_tests: 5 passed; 0 failed
+   - tools_tests: 45 passed; 0 failed
+5. `cargo test -p rollchrome-core --features film`:
+   - unittests: 195 passed; 0 failed; 1 ignored
+   - automation_tests: 13 passed; 0 failed
+   - develop_tests: 12 passed; 0 failed
+   - preview_tests: 13 passed; 0 failed
+   - point_colour_tests: 13 passed; 0 failed
+   - sharpen_tests: 5 passed; 0 failed
+   - tools_tests: 45 passed; 0 failed
+6. `cargo test -p phototools-desktop`:
+   - unittests: 19 passed; 0 failed
+   - local_tools: 7 passed; 0 failed
+7. `cargo test -p rollchrome-desktop`:
+   - bulk_edit_desktop: 4 passed; 0 failed
+   - develop_desktop: 12 passed; 0 failed
+   - local_tools: 13 passed; 0 failed
+8. `cargo test -p rollchrome-cli`:
+   - cli_tests: 8 passed; 0 failed
+9. `npm --prefix frontend/shared run build`:
+   Finished cleanly with 0 errors.
+10. `npm --prefix frontend/web run typecheck`:
+    Finished cleanly with 0 errors.
+11. `npm --prefix frontend/web run build`:
+    Built in 1.05s, 98 modules transformed.
+12. `npm --prefix frontend/web run check:transport`:
+    23 files checked, 0 errors.
+13. `npm --prefix frontend/web run check:layout`:
+    All 10 routes clean at 390x844.
+14. `npm --prefix frontend/web run check:ingest`:
+    400 shots render responsively.
+15. `npm --prefix frontend/desktop run typecheck`:
+    Finished cleanly with 0 errors.
+16. `npm --prefix frontend/desktop run build`:
+    Built in 952ms, 92 modules transformed.
+17. `npm --prefix frontend/desktop run check:transport`:
+    25 files checked, 0 errors.
+18. `npm --prefix frontend/rollchrome run typecheck`:
+    Finished cleanly with 0 errors.
+19. `npm --prefix frontend/rollchrome run build`:
+    Built in 1.02s, 131 modules transformed.
+20. `npm --prefix frontend/rollchrome run check:transport`:
+    41 files checked, 0 errors.
+21. `npm --prefix frontend/rollchrome run check:edit`:
+    All checks PASSED.
+22. `npm --prefix frontend/rollchrome run check:bulk-lut`:
+    All checks PASSED cleanly.
+23. `npm --prefix frontend/rollchrome run check:develop`:
+    All 34 checks verified successfully.
+24. `npm --prefix frontend/rollchrome run check:viewing`:
+    All 18 viewing requirements PASSED.
+25. `npm --prefix frontend/rollchrome run check:colour`:
+    All 11 colour tool checks PASSED cleanly.
+26. `npm --prefix frontend/rollchrome run check:history`:
+    All 16 assertions PASSED cleanly.
+27. `npm --prefix frontend/rollchrome run check:versions`:
+    All 14 assertions PASSED.
+28. `npm --prefix frontend/rollchrome run check:detail`:
+    All 13 assertions PASSED.
+29. `npm --prefix frontend/rollchrome run check:export`:
+    All 11 assertions PASSED.
+30. `npm --prefix frontend/rollchrome run check:point`:
+    All 11 assertions PASSED.
+31. `npm --prefix frontend/rollchrome run check:masks`:
+    All 13 assertions PASSED.
+32. `npm --prefix frontend/rollchrome run check:local-detail`:
+    All 8 assertions PASSED cleanly.
+33. `npm --prefix frontend/rollchrome run check:object`:
+    All 15 assertions PASSED.
+34. `npm --prefix frontend/rollchrome run check:people`:
+    All 7 assertions PASSED.
+35. `npm --prefix frontend/rollchrome run check:shell`:
+    108 assertions PASSED cleanly.
+36. `npm --prefix frontend/rollchrome run check:edit-layout`:
+    51 assertions PASSED.
+37. `npm --prefix frontend/rollchrome run check:strip`:
+    70 assertions PASSED cleanly.
+
+### Unverified
+None.
 
 ---
 

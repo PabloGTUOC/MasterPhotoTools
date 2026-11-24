@@ -3,6 +3,11 @@
 #[path = "../../core/tests/fixtures/mod.rs"]
 mod fixtures;
 
+#[cfg(test)]
+#[allow(clippy::duplicate_mod)]
+#[path = "support/mod.rs"]
+mod support;
+
 use chrono::NaiveDateTime;
 use fixtures::{tag, Fixtures, TiffValue};
 use phototools_core::jobs::InMemoryProgress;
@@ -1237,55 +1242,53 @@ fn a_recipe_with_only_round_two_adjustments_is_rendered_not_byte_copied() {
 }
 
 #[test]
-fn an_edit_export_of_a_raw_file_is_refused_and_writes_nothing() {
+fn edit_export_accepts_a_raw_source() {
     use rollchrome_core::media::edit::AdjustmentRecipe;
     use rollchrome_core::tools::edit::export_edited_image;
+    use support::dng::DngBuilder;
 
     let f = Fixtures::new();
-    let raw_path = f.path().join("camera_raw.nef");
-    fs::write(&raw_path, b"dummy raw data").unwrap();
+    let raw_path = f.path().join("camera_raw.dng");
+    let dng_bytes = DngBuilder::new_bayer(64, 48).build(&vec![2000u16; 64 * 48]);
+    fs::write(&raw_path, &dng_bytes).unwrap();
 
     let out_dir = f.path().join("out");
     fs::create_dir_all(&out_dir).unwrap();
 
-    // 1. Identity recipe
+    // 1. Identity recipe on RAW source
     let identity_recipe = AdjustmentRecipe::default();
-    let err = export_edited_image(&raw_path, &identity_recipe, None, &out_dir).unwrap_err();
-    match err {
-        phototools_core::error::Error::Refused(msg) => {
-            assert_eq!(
-                msg,
-                "RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes."
-            );
-        }
-        other => panic!("expected Error::Refused, got {other:?}"),
-    }
-    assert_eq!(
-        fs::read_dir(&out_dir).unwrap().count(),
-        0,
-        "out_dir must remain empty after refused RAW export"
+    let res = export_edited_image(&raw_path, &identity_recipe, None, &out_dir);
+    assert!(
+        res.is_ok(),
+        "exporting RAW with identity recipe must succeed: {res:?}"
     );
+    let out_tiff = out_dir.join("camera_raw_edit.tiff");
+    assert!(
+        out_tiff.exists(),
+        "exported file must exist at {}",
+        out_tiff.display()
+    );
+    assert!(fs::metadata(&out_tiff).unwrap().len() > 0);
 
-    // 2. Non-identity recipe
+    // 2. Non-identity recipe on RAW source
+    let out_dir2 = f.path().join("out2");
+    fs::create_dir_all(&out_dir2).unwrap();
     let non_identity_recipe = AdjustmentRecipe {
         exposure: 0.5,
         ..Default::default()
     };
-    let err = export_edited_image(&raw_path, &non_identity_recipe, None, &out_dir).unwrap_err();
-    match err {
-        phototools_core::error::Error::Refused(msg) => {
-            assert_eq!(
-                msg,
-                "RAW files are developed in the Develop tab. Open the JPEG or TIFF it writes."
-            );
-        }
-        other => panic!("expected Error::Refused, got {other:?}"),
-    }
-    assert_eq!(
-        fs::read_dir(&out_dir).unwrap().count(),
-        0,
-        "out_dir must remain empty after refused RAW export"
+    let res2 = export_edited_image(&raw_path, &non_identity_recipe, None, &out_dir2);
+    assert!(
+        res2.is_ok(),
+        "exporting RAW with non-identity recipe must succeed: {res2:?}"
     );
+    let out_tiff2 = out_dir2.join("camera_raw_edit.tiff");
+    assert!(
+        out_tiff2.exists(),
+        "exported file must exist at {}",
+        out_tiff2.display()
+    );
+    assert!(fs::metadata(&out_tiff2).unwrap().len() > 0);
 }
 
 #[test]

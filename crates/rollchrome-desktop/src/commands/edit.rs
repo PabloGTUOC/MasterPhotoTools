@@ -467,3 +467,34 @@ pub fn import_lut_impl(state: &AppState, path: String) -> CommandResult<LutEntry
     let lut_dir = rollchrome_core::config::lut_dir(&config);
     core_import_lut(&lut_dir, &resolved).map_err(describe)
 }
+
+/// Result of ensuring a look LUT in the managed library.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LutRefDto {
+    pub name: String,
+    pub sha256: String,
+}
+
+/// Ensures a camera look or film simulation exists in the LUT library as an sRGB .cube (UI-3).
+#[tauri::command]
+pub async fn ensure_look_lut(look_id: String, app: tauri::AppHandle) -> CommandResult<LutRefDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        ensure_look_lut_impl(&state, look_id)
+    })
+    .await
+    .map_err(|e| format!("ensuring look LUT panicked: {e}"))?
+}
+
+pub fn ensure_look_lut_impl(state: &AppState, look_id: String) -> CommandResult<LutRefDto> {
+    let config = state.config();
+    let library_dir = rollchrome_core::config::lut_dir(&config);
+    let film_data_dir = rollchrome_core::config::film_data_dir(&config);
+    let lut_ref =
+        rollchrome_core::tools::look_luts::ensure_look_lut(&look_id, &library_dir, &film_data_dir)
+            .map_err(describe)?;
+    Ok(LutRefDto {
+        name: lut_ref.name,
+        sha256: lut_ref.sha256,
+    })
+}

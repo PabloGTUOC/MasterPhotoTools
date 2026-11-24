@@ -312,6 +312,11 @@ export class RollchromeClient {
     return invoke<LutEntry>('import_lut', { path });
   }
 
+  /** Ensures a camera look or film simulation exists in the LUT library as an sRGB .cube (UI-3). */
+  ensureLookLut(lookId: string): Promise<LutRef> {
+    return invoke<LutRef>('ensure_look_lut', { lookId });
+  }
+
   /** Presets live in the application's own folder, so names, not paths, cross over (ED-17). */
   listPresets(): Promise<PresetList> {
     return invoke<PresetList>('list_presets');

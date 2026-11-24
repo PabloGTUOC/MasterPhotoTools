@@ -340,3 +340,45 @@ None.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved**, after one correction by the architect that changed the baked cube's size.
+
+**Checked.**
+- **Gates.** I re-ran the full gate list on `5cddf30`, and again after the fixes on `005efe6`: 32 of 32 rc=0. The counts
+  are workspace 1211 (5 ignored), phototools-core 546, rollchrome-core 527, with `film` 549 (3 ignored),
+  rollchrome-desktop 29, rollchrome-cli 8.
+- **Changed tests.** Only the three RAW-refusal tests changed, which is what the brief allows:
+  `a_raw_file_is_refused_for_editing_and_points_at_develop`, `export_refuses_raw` and
+  `an_edit_export_of_a_raw_file_is_refused_and_writes_nothing`. The four new tests are present.
+- **`render.rs`.** The pixel maths is unchanged; the neutral path was moved into `prophoto_pixel_to_srgb_f32`
+  and is now shared by the 8- and 16-bit renders.
+- **`develop_for_edit`.** It follows `develop_one`'s neutral steps in the same order: lens, camera geometry,
+  noise level, noise reduction, capture sharpening, neutral calibration, Standard curve, output sharpening.
+- **`LutPicker`.** It shows three groups, de-duplicated by file name, with "Preparing…", and an error that leaves
+  the recipe as it was.
+
+**Fixed by the architect** (`005efe6`):
+1. **The bake test could not fail.** `a_baked_builtin_look_matches_develop_on_the_grid` compared the cube with
+   `transform_srgb_through_prophoto_look`, the function that baked it, at the cube's own grid points. It could only
+   catch a file written or parsed wrongly.
+   - A new test, `a_baked_builtin_look_matches_develops_renderer_between_grid_points`, compares against
+     `render_srgb8_image` with the look, at 64 colours between grid points.
+   - **It found a 6.6 code-value error at 33³.** The look's LUT is gridded in ProPhoto-encoded values, and
+     resampling it onto an sRGB grid loses detail between points. The neutral round trip (0.5) and the helper
+     against the renderer (0.49) showed the maths itself was right.
+   - **Camera looks are now baked at 65³:** 0.68 code values, within the brief's 1/255. The size assertions in
+     the builtin test and in `ensure_look_lut_writes_into_lut_library` follow. Film stocks stay at 33³: they are
+     printed directly in the sRGB domain, with no resampling.
+2. **G10.**
+   - `develop_for_edit` dropped a lens-correction failure with `let _ =`. That is now a documented, deliberate drop:
+     the photograph develops uncorrected, as in Develop, but `decode_image` has no warning to carry.
+     **Known gap: Edit does not say when a RAW's lens was left uncorrected.**
+   - `LutPicker` swallowed a failure to list the looks. It now shows it in the picker's error area.
+
+**Noted.**
+- **Missing from the Report.** It omits the time a film LUT takes to prepare, which the brief asked for. "Unverified:
+  None" is not true: no real RAW file (`.RW2`, `.ORF`, `.RAF`, `.NEF`) has been opened in Edit, only the synthetic
+  DNG. That is for the owner on the Mac.
+- **Fragile naming.** `LutPicker` re-derives the library file names (`Builtin - <Maker> <Name>.cube`,
+  `<Name> (spektrafilm).cube`) to de-duplicate. If the core's naming changes, the groups would show duplicates
+  rather than fail. Acceptable for now; the clean form would be the listing commands returning the file name.

@@ -108,6 +108,8 @@ fn main() {
             commands::list_develop_folder,
             commands::develop_thumbnail,
             commands::preview_develop,
+            commands::list_edit_folder,
+            commands::edit_thumbnail,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Rollchrome desktop application");

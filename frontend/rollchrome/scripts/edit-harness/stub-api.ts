@@ -11,6 +11,7 @@ import type {
   BrowserEntry,
   BuiltinLookInfo,
   Detail,
+  EditableEntryDto,
   ExportOptions,
   ExportResult,
   LutEntry,
@@ -71,6 +72,11 @@ export interface StubState {
   overlappingExportsDetected: boolean;
   refuseTemplate: boolean;
   ensureLookLutCalls: string[];
+  openPreviewCalls: string[];
+  activeThumbnailRequests: number;
+  maxConcurrentThumbnailRequests: number;
+  thumbnailRequests: string[];
+  thumbnailDelayMs: number;
 }
 
 const stubState: StubState = {
@@ -115,6 +121,11 @@ const stubState: StubState = {
   overlappingExportsDetected: false,
   refuseTemplate: false,
   ensureLookLutCalls: [],
+  openPreviewCalls: [],
+  activeThumbnailRequests: 0,
+  maxConcurrentThumbnailRequests: 0,
+  thumbnailRequests: [],
+  thumbnailDelayMs: 20,
 };
 
 interface StubHistogram {
@@ -186,6 +197,11 @@ if (typeof window !== 'undefined') {
   window.__EditHistory__ = EditHistory;
 }
 
+// Valid 64x64 JPEG image (small generated JPEG)
+const VALID_JPEG_64_B64 =
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCABAAEADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDPooor7g+JCiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKAP//Z';
+const VALID_JPEG_64_BYTES = Uint8Array.from(atob(VALID_JPEG_64_B64), (c) => c.charCodeAt(0));
+
 // Reusable frame buffers to avoid GC pressure during rapid benchmark scrubs
 const DRAG_WIDTH = 1280;
 const DRAG_HEIGHT = 854;
@@ -239,6 +255,7 @@ export class StubDesktopApiClient {
   }
 
   async openPreview(path: string): Promise<OpenPreviewResult> {
+    stubState.openPreviewCalls.push(path);
     return {
       session_id: 'stub_session_1',
       source_sha256: 'stub_source_sha256_e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
@@ -251,6 +268,33 @@ export class StubDesktopApiClient {
       orientation: stubState.orientation,
       read_only: stubState.readOnly,
     };
+  }
+
+  async listEditFolder(folder: string): Promise<EditableEntryDto[]> {
+    if (folder.includes('/Volumes/Photos')) {
+      return [
+        { name: 'sample.jpg', edited: false },
+        { name: 'second.jpg', edited: true },
+        { name: 'third.tif', edited: false },
+      ];
+    }
+    return [];
+  }
+
+  async editThumbnail(_folder: string, name: string): Promise<Uint8Array> {
+    stubState.activeThumbnailRequests++;
+    stubState.thumbnailRequests.push(name);
+    if (stubState.activeThumbnailRequests > stubState.maxConcurrentThumbnailRequests) {
+      stubState.maxConcurrentThumbnailRequests = stubState.activeThumbnailRequests;
+    }
+
+    const delay = stubState.thumbnailDelayMs;
+    if (delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    stubState.activeThumbnailRequests--;
+    return VALID_JPEG_64_BYTES;
   }
 
   async renderPreview(

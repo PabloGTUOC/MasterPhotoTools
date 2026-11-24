@@ -355,8 +355,17 @@ export class RollchromeClient {
     return invoke<string[]>('list_develop_folder', { folder });
   }
 
+  listEditFolder(folder: string): Promise<EditableEntryDto[]> {
+    return invoke<EditableEntryDto[]>('list_edit_folder', { folder });
+  }
+
   async developThumbnail(folder: string, name: string): Promise<Uint8Array> {
     const res = await invoke<ArrayBuffer | Uint8Array>('develop_thumbnail', { folder, name });
+    return res instanceof Uint8Array ? res : new Uint8Array(res);
+  }
+
+  async editThumbnail(folder: string, name: string): Promise<Uint8Array> {
+    const res = await invoke<ArrayBuffer | Uint8Array>('edit_thumbnail', { folder, name });
     return res instanceof Uint8Array ? res : new Uint8Array(res);
   }
 
@@ -400,6 +409,12 @@ export class RollchromeClient {
   ): Promise<string> {
     return invoke<string>('apply_develop', { folder, items, format, output });
   }
+}
+
+/** An editable entry in a folder (UI-8). */
+export interface EditableEntryDto {
+  name: string;
+  edited: boolean;
 }
 
 /** Counts of the frame on screen, made by `core` from the pixels it sent (ED-15). */

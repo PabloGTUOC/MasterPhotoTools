@@ -56,11 +56,13 @@ import type {
   LookEffects,
   Snapshot,
   Version,
+  EditableEntryDto,
 } from '@host/api';
 import { desktop } from '@host/api';
 import AdjustmentSlider from '../components/AdjustmentSlider.vue';
 import CollapsibleSection from '../components/CollapsibleSection.vue';
 import CropOverlay from '../components/CropOverlay.vue';
+import Filmstrip, { type FilmstripItem } from '../components/Filmstrip.vue';
 import Histogram, { type HistogramMode } from '../components/Histogram.vue';
 import MaskOverlay, { type OverlayMask } from '../components/MaskOverlay.vue';
 import PresetBar from '../components/PresetBar.vue';
@@ -82,6 +84,72 @@ const error = ref<string | null>(null);
 const saveStatus = ref<string>('');
 const exportStatus = ref<string | null>(null);
 const exportError = ref<string | null>(null);
+
+// Folder & filmstrip (UI-8)
+const currentFolder = ref<string | null>(null);
+const folderEntries = ref<EditableEntryDto[]>([]);
+const activePhotoName = ref<string | null>(null);
+const thumbnailUrls = ref<Record<string, string>>({});
+const thumbnailErrors = ref<Record<string, string>>({});
+let thumbnailToken = 0;
+const folderError = ref<string | null>(null);
+
+const filmstripItems = computed<FilmstripItem[]>(() => {
+  return folderEntries.value.map((entry) => ({
+    name: entry.name,
+    caption: entry.edited ? 'edited' : undefined,
+  }));
+});
+
+const filmstripSelection = computed<string[]>(() => {
+  return activePhotoName.value ? [activePhotoName.value] : [];
+});
+
+async function loadEditFolder(folderPath: string) {
+  for (const u of Object.values(thumbnailUrls.value)) {
+    URL.revokeObjectURL(u);
+  }
+  thumbnailUrls.value = {};
+  thumbnailErrors.value = {};
+  folderError.value = null;
+  const currentToken = ++thumbnailToken;
+
+  try {
+    const entries = await desktop.listEditFolder(folderPath);
+    if (currentToken !== thumbnailToken) return;
+    folderEntries.value = entries;
+
+    // Load thumbnails at most 2 at a time, latest folder wins
+    const names = entries.map((e) => e.name);
+    let nextIndex = 0;
+    async function worker() {
+      while (nextIndex < names.length) {
+        if (currentToken !== thumbnailToken) return;
+        const idx = nextIndex++;
+        const name = names[idx];
+        try {
+          const bytes = await desktop.editThumbnail(folderPath, name);
+          if (currentToken !== thumbnailToken) return;
+          const blob = new Blob([bytes], { type: 'image/jpeg' });
+          thumbnailUrls.value[name] = URL.createObjectURL(blob);
+        } catch (err: unknown) {
+          if (currentToken !== thumbnailToken) return;
+          thumbnailErrors.value[name] = err instanceof Error ? err.message : String(err);
+        }
+      }
+    }
+
+    const workerCount = Math.min(2, names.length);
+    for (let w = 0; w < workerCount; w++) {
+      worker();
+    }
+  } catch (err: unknown) {
+    if (currentToken !== thumbnailToken) return;
+    folderEntries.value = [];
+    // Shown in the filmstrip's place, not as the screen's error: the photograph itself may have opened.
+    folderError.value = `Couldn't list ${folderPath}: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
 
 const strip = inject(STATUS_STRIP, null);
 
@@ -1776,6 +1844,49 @@ function deriveLabel(before: AdjustmentRecipe | null, after: AdjustmentRecipe): 
   return 'Several settings';
 }
 
+let inFlightSave: Promise<void> | null = null;
+/** The path openImage last put in the field, so the field's watcher does not open it again. */
+let pathOpenedByOpenImage: string | null = null;
+
+function markActiveAsEdited(targetPath: string) {
+  const name = targetPath.split('/').pop();
+  if (name) {
+    const entry = folderEntries.value.find((e) => e.name === name);
+    if (entry) {
+      entry.edited = true;
+    }
+  }
+}
+
+async function performSave(targetPath: string, recipeToSave: AdjustmentRecipe): Promise<void> {
+  if (isReadOnly.value || autosaveDisabled.value || !targetPath || !sessionId.value) {
+    return;
+  }
+  saveStatus.value = 'Saving…';
+  const savePromise = desktop.saveRecipe(targetPath, cleanRecipeForSave(recipeToSave));
+  inFlightSave = savePromise.then(() => {}).catch(() => {});
+  try {
+    await savePromise;
+    saveStatus.value = 'Saved';
+    markActiveAsEdited(targetPath);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    saveStatus.value = `Couldn't save: ${msg}`;
+  } finally {
+    inFlightSave = null;
+  }
+}
+
+async function flushPendingSave(): Promise<void> {
+  if (saveDebounceTimer !== undefined) {
+    window.clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = undefined;
+    await performSave(sourcePath.value, recipe.value);
+  } else if (inFlightSave) {
+    await inFlightSave;
+  }
+}
+
 function triggerSaveWithoutHistory() {
   if (isReadOnly.value) {
     saveStatus.value = 'Read-only: card media';
@@ -1787,20 +1898,15 @@ function triggerSaveWithoutHistory() {
   }
   if (!sourcePath.value || !sessionId.value) return;
 
-  if (saveDebounceTimer) {
+  if (saveDebounceTimer !== undefined) {
     window.clearTimeout(saveDebounceTimer);
   }
 
   saveStatus.value = 'Saving…';
+  const pathToSave = sourcePath.value;
   saveDebounceTimer = window.setTimeout(async () => {
     saveDebounceTimer = undefined;
-    try {
-      await desktop.saveRecipe(sourcePath.value, cleanRecipeForSave(recipe.value));
-      saveStatus.value = 'Saved';
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      saveStatus.value = `Couldn't save: ${msg}`;
-    }
+    await performSave(pathToSave, recipe.value);
   }, 300);
 }
 
@@ -2589,8 +2695,46 @@ function pasteSettings() {
   replaceLook(copied.recipe, `Pasted settings from ${copied.from}. Crop, rotation and masks kept.`, 'Paste settings');
 }
 
+// JPEG and TIFF, and phototools-core's media::raw::RAW_EXTENSIONS: keep the two in step.
+const EDITABLE_EXTENSIONS = ['jpg', 'jpeg', 'tif', 'tiff', 'dng', 'nef', 'arw', 'cr2', 'raf', 'orf', 'rw2'];
+
+function isPhotoPath(path: string): boolean {
+  const parts = path.split('/');
+  const fileName = parts.pop() || '';
+  const dot = fileName.lastIndexOf('.');
+  if (dot < 0) return false;
+  const ext = fileName.slice(dot + 1).toLowerCase();
+  return EDITABLE_EXTENSIONS.includes(ext);
+}
+
+async function handlePathSubmit(rawPath?: string) {
+  const input = (typeof rawPath === 'string' ? rawPath : sourcePath.value).trim();
+  if (!input) return;
+
+  if (isPhotoPath(input)) {
+    await openImage(input);
+  } else {
+    await flushPendingSave();
+    const folder = input.endsWith('/') && input.length > 1 ? input.slice(0, -1) : input;
+    currentFolder.value = folder;
+    await loadEditFolder(folder);
+    if (folderEntries.value.length > 0) {
+      const firstPhoto = folderEntries.value[0].name;
+      const firstPath = `${folder}/${firstPhoto}`;
+      await openImage(firstPath);
+    }
+  }
+}
+
+async function openPhotographFromStrip(name: string) {
+  if (!currentFolder.value) return;
+  const fullPath = `${currentFolder.value}/${name}`;
+  await openImage(fullPath);
+}
+
 async function openImage(path: string) {
   if (!path.trim()) return;
+  await flushPendingSave();
   // Undo belongs to the photograph it was offered on.
   dismissNotice();
   exitEyedropper();
@@ -2605,13 +2749,27 @@ async function openImage(path: string) {
   exportError.value = null;
   autosaveDisabled.value = false;
 
+  const trimmed = path.trim();
+  pathOpenedByOpenImage = trimmed;
+  sourcePath.value = trimmed;
+  const name = trimmed.split('/').pop() ?? '';
+  activePhotoName.value = name;
+
+  const parts = trimmed.split('/');
+  parts.pop();
+  const folder = parts.join('/') || '/';
+  if (folder !== currentFolder.value) {
+    currentFolder.value = folder;
+    loadEditFolder(folder);
+  }
+
   if (sessionId.value) {
     await desktop.closePreview(sessionId.value).catch(() => {});
     sessionId.value = null;
   }
 
   try {
-    const info: OpenPreviewResult = await desktop.openPreview(path.trim());
+    const info: OpenPreviewResult = await desktop.openPreview(trimmed);
     sessionId.value = info.session_id;
     orientation.value = info.orientation;
     deliveredOrientation.value = info.orientation;
@@ -4074,7 +4232,11 @@ function resetDetail() {
 }
 
 watch(sourcePath, (newPath) => {
-  if (newPath) {
+  // openImage sets the field itself (a click on the filmstrip, a folder's first photograph), so a change
+  // it made is not a request to open the photograph again: for a RAW that would be a second development.
+  // A folder (no dot) is opened on Enter or from the picker, by handlePathSubmit. The test stays "has a
+  // dot" rather than isPhotoPath: check:viewing relies on a typed path re-opening, which clears the mask.
+  if (newPath && newPath !== pathOpenedByOpenImage && newPath.includes('.')) {
     openImage(newPath);
   }
 });
@@ -4122,6 +4284,12 @@ onUnmounted(() => {
       });
     }
   }
+
+  thumbnailToken++;
+  for (const u of Object.values(thumbnailUrls.value)) {
+    URL.revokeObjectURL(u);
+  }
+  thumbnailUrls.value = {};
 
   if (sessionId.value) {
     desktop.closePreview(sessionId.value).catch(() => {});
@@ -4271,13 +4439,15 @@ provide(EDIT_CONTEXT, {
     <div class="edit-screen__toolbar">
       <PathField
         v-model="sourcePath"
-        label="Photograph to edit"
+        label="Folder or photograph"
         :roots="roots"
         :roots-error="rootsError"
         :list="listRoots"
         placeholder="/path/to/image.jpg"
         :selectable="['jpg', 'jpeg', 'tif', 'tiff', 'dng', 'nef', 'arw', 'cr2', 'raf', 'orf', 'rw2']"
         :overlay="true"
+        @choose="handlePathSubmit"
+        @keydown.enter="handlePathSubmit()"
       />
 
       <div v-if="loading" class="edit-screen__loading" data-testid="edit-loading">
@@ -4567,6 +4737,18 @@ provide(EDIT_CONTEXT, {
             Highlights
           </button>
         </div>
+
+        <p v-if="folderError" class="folder-error" data-testid="edit-folder-error">{{ folderError }}</p>
+        <Filmstrip
+          v-else
+          :items="filmstripItems"
+          :thumbnail-urls="thumbnailUrls"
+          :thumbnail-errors="thumbnailErrors"
+          :selection="filmstripSelection"
+          :active="activePhotoName"
+          @select="(name) => openPhotographFromStrip(name)"
+          @activate="(name) => openPhotographFromStrip(name)"
+        />
       </div>
 
       <!-- Resizable divider (UI-2) -->
@@ -5466,7 +5648,7 @@ provide(EDIT_CONTEXT, {
 
 .canvas-viewport {
   display: grid;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: 1fr auto auto;
   background: var(--canvas-surround);
   border: var(--border-hair);
   min-height: 0;
@@ -6045,7 +6227,7 @@ provide(EDIT_CONTEXT, {
   display: grid;
   gap: var(--space-2);
   padding: var(--space-2);
-  background: var(--bg-surface);
+  background: var(--bg-panel);
   border: var(--border-hair);
 }
 
@@ -6101,4 +6283,12 @@ provide(EDIT_CONTEXT, {
   padding: var(--space-1) 0;
 }
 
+.folder-error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border: var(--border-hair);
+}
 </style>

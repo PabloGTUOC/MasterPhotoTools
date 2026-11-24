@@ -4,6 +4,7 @@ pub mod bulk_edit;
 pub mod develop;
 pub mod develop_folder;
 pub mod edit;
+pub mod edit_folder;
 pub mod look_luts;
 pub mod lut;
 pub mod lut_library;
@@ -23,6 +24,7 @@ pub use edit::{
     save_recipe_with_resolver, sidecar_path, ExportFormat, ExportOptions, ExportResize,
     ExportResult, MetadataPolicy, OutputSharpening, CURRENT_RECIPE_VERSION, SIDECAR_EXTENSION,
 };
+pub use edit_folder::{edit_thumbnail, editable_names, EditableEntry};
 pub use look_luts::ensure_look_lut;
 pub use lut::{
     sample_frames, BulkLutAction, BulkLutParams, BulkLutSummary, BulkLutTool,

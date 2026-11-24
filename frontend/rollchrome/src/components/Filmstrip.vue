@@ -167,7 +167,7 @@ function onKeyDown(e: KeyboardEvent) {
   max-height: 132px;
   box-sizing: border-box;
   padding: var(--space-2);
-  background: var(--bg-surface);
+  background: var(--bg-panel);
   border: var(--border-hair);
   overflow-x: auto;
   overflow-y: hidden;
@@ -196,7 +196,7 @@ function onKeyDown(e: KeyboardEvent) {
 
 .thumbnail-card.active {
   border-color: var(--accent);
-  background: var(--bg-surface);
+  background: var(--bg-panel);
 }
 
 .thumbnail-card.is-last-clicked {

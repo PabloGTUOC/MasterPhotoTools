@@ -60,7 +60,10 @@ const props = withDefaults(
   },
 );
 
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
+const emit = defineEmits<{
+  'update:modelValue': [value: string];
+  choose: [value: string];
+}>();
 
 const picking = ref(false);
 const fieldRef = ref<HTMLElement | null>(null);
@@ -106,9 +109,14 @@ function choose(path: string) {
     // With no name and no fallback the field is left alone rather than being
     // filled with a directory: a picker must not hand a tool a path it cannot
     // write to.
-    if (name) emit('update:modelValue', `${path}/${name}`);
+    if (name) {
+      const full = `${path}/${name}`;
+      emit('update:modelValue', full);
+      emit('choose', full);
+    }
   } else {
     emit('update:modelValue', path);
+    emit('choose', path);
   }
   picking.value = false;
 }

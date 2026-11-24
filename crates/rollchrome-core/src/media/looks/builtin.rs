@@ -124,6 +124,14 @@ pub struct BuiltinLookInfo {
     /// default when saving it as a LUT. Always false for a camera look.
     #[serde(default)]
     pub tungsten: bool,
+    /// The file name `ensure_look_lut` gives this look in the LUT library.
+    #[serde(default)]
+    pub library_file_name: String,
+}
+
+/// The file name `ensure_look_lut` gives a camera look in the LUT library.
+pub fn builtin_lut_file_name(maker: &str, display_name: &str) -> String {
+    format!("Builtin - {maker} {display_name}.cube")
 }
 
 /// Lists all shipped built-in looks formatted for the UI picker and develop items.
@@ -135,6 +143,7 @@ pub fn builtin_look_list() -> Vec<BuiltinLookInfo> {
             id: format!("builtin:{}", l.id),
             name: l.display_name.to_string(),
             maker: l.maker.to_string(),
+            library_file_name: builtin_lut_file_name(l.maker, l.display_name),
         })
         .collect()
 }

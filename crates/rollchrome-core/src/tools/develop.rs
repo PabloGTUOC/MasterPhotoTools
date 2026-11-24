@@ -35,17 +35,18 @@ pub const DEFAULT_LENS_CORRECTION: bool = true;
 
 /// The neutral development exactly as Develop exports it with default settings
 /// (DEFAULT_NOISE_REDUCTION, DEFAULT_CAPTURE_SHARPENING, DEFAULT_LENS_CORRECTION),
-/// in sensor orientation, converted to 16-bit sRGB.
+/// in sensor orientation, converted to 16-bit sRGB, along with any development warnings.
+#[allow(clippy::type_complexity)]
 pub fn develop_for_edit(
     raw: &[u8],
-) -> Result<image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, Error> {
+) -> Result<(image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, Vec<String>), Error> {
     let mut linear = develop_linear(raw, &DevelopOptions { exposure_ev: 0.0 })?;
+    let mut warnings = Vec::new();
     if DEFAULT_LENS_CORRECTION {
-        // A lens the database does not know is not a failure: the photograph develops uncorrected, as
-        // Develop does, where the same result becomes a warning on the job. Edit opens a photograph
-        // through `decode_image`, which has no warning to carry it in, so it is dropped here on purpose.
-        // Known gap: Edit does not say when a RAW's lens was left uncorrected.
-        let _uncorrected = correct_lens(&mut linear, raw).err();
+        // A lens the database does not know is a warning and not an error: the photograph develops uncorrected.
+        if let Err(reason) = correct_lens(&mut linear, raw) {
+            warnings.push(format!("developed without lens correction: {reason}"));
+        }
     }
     crate::media::develop::frame::apply_camera_geometry(&mut linear, raw);
     let level = noise_level(&linear.pixels, linear.width, linear.height);
@@ -88,7 +89,10 @@ pub fn develop_for_edit(
         ToneCurve::Standard,
     )?;
     output_sharpen(&mut developed.image);
-    Ok(crate::media::develop::prophoto_to_srgb16(&developed))
+    Ok((
+        crate::media::develop::prophoto_to_srgb16(&developed),
+        warnings,
+    ))
 }
 
 /// A single file in the folder presented for development.
@@ -1672,5 +1676,19 @@ mod tests {
 
         // LUT resolution was cached, called exactly once for "vanished_lut"
         assert_eq!(store.look_call_count.borrow().get("vanished_lut"), Some(&1));
+    }
+
+    #[test]
+    fn a_raw_whose_lens_cannot_be_corrected_opens_in_edit_with_a_warning() {
+        let raw = make_test_dng(24, 24);
+        let (image, warnings) = develop_for_edit(&raw).expect("develop_for_edit succeeded");
+        assert_eq!(image.width(), 24);
+        assert_eq!(image.height(), 24);
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].starts_with("developed without lens correction: "),
+            "expected lens warning, got {:?}",
+            warnings[0]
+        );
     }
 }

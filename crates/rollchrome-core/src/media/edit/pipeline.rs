@@ -1148,20 +1148,23 @@ pub fn apply_recipe_with_orientation(
     }
 }
 
-/// Decodes an image from disk for Edit and Batch.
+/// Decodes an image from disk for Edit and Batch, returning any development warnings.
 ///
 /// JPEGs, TIFFs (8-bit and 16-bit), and RAW files are accepted.
-/// RAW files are developed via `develop_for_edit` into 16-bit sRGB.
+/// RAW files are developed via `develop_for_edit` into 16-bit sRGB with warnings.
 /// Any format other than JPEG, TIFF, or RAW is refused.
-pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
+pub fn decode_image_with_warnings(path: &Path) -> Result<(ImageBuffer, Vec<String>), Error> {
     if phototools_core::media::raw::is_raw(path) {
         let raw_bytes = std::fs::read(path)?;
-        let rgb16 = crate::tools::develop::develop_for_edit(&raw_bytes)?;
-        return Ok(ImageBuffer::Rgb16 {
-            width: rgb16.width(),
-            height: rgb16.height(),
-            data: rgb16.into_raw(),
-        });
+        let (rgb16, warnings) = crate::tools::develop::develop_for_edit(&raw_bytes)?;
+        return Ok((
+            ImageBuffer::Rgb16 {
+                width: rgb16.width(),
+                height: rgb16.height(),
+                data: rgb16.into_raw(),
+            },
+            warnings,
+        ));
     }
 
     use image::ImageDecoder;
@@ -1197,7 +1200,8 @@ pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
                 Error::Internal(format!("failed to decode {}: {e}", path.display()))
             })?;
             let buffer = ImageBuffer::from(dyn_img);
-            super::icc::to_srgb(buffer, icc.as_deref())
+            let srgb = super::icc::to_srgb(buffer, icc.as_deref())?;
+            Ok((srgb, Vec::new()))
         }
         Some(image::ImageFormat::Jpeg) => {
             let mut decoder = reader.into_decoder().map_err(|e| {
@@ -1219,12 +1223,22 @@ pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
                 Error::Internal(format!("failed to decode {}: {e}", path.display()))
             })?;
             let buffer = ImageBuffer::from(dyn_img);
-            super::icc::to_srgb(buffer, icc.as_deref())
+            let srgb = super::icc::to_srgb(buffer, icc.as_deref())?;
+            Ok((srgb, Vec::new()))
         }
         _ => Err(Error::Refused(
             "Edit and Batch take JPEG or TIFF.".to_string(),
         )),
     }
+}
+
+/// Decodes an image from disk for callers that do not need warnings.
+///
+/// Dropping warnings here is acceptable because its callers (export, batch,
+/// full-stage decode, masks) re-decode a photograph that Edit has already opened
+/// and warned about.
+pub fn decode_image(path: &Path) -> Result<ImageBuffer, Error> {
+    decode_image_with_warnings(path).map(|(buf, _)| buf)
 }
 
 #[cfg(test)]
@@ -1865,5 +1879,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_jpeg_opens_with_no_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let jpeg_path = dir.path().join("test.jpg");
+        image::RgbImage::new(32, 24).save(&jpeg_path).unwrap();
+
+        let (buf, warnings) =
+            decode_image_with_warnings(&jpeg_path).expect("decode_image_with_warnings succeeds");
+        assert_eq!(buf.width(), 32);
+        assert_eq!(buf.height(), 24);
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got {:?}",
+            warnings
+        );
     }
 }

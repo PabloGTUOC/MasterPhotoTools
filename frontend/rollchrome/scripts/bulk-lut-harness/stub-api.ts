@@ -130,27 +130,27 @@ export class StubDesktopApiClient {
 
   async listBuiltinLooks(): Promise<BuiltinLookInfo[]> {
     return [
-      { id: 'builtin:fujifilm-classic-chrome', name: 'Classic Chrome', maker: 'Fujifilm' },
-      { id: 'builtin:fujifilm-eterna', name: 'Eterna', maker: 'Fujifilm' },
+      { id: 'builtin:fujifilm-classic-chrome', name: 'Classic Chrome', maker: 'Fujifilm', library_file_name: 'Builtin - Fujifilm Classic Chrome.cube' },
+      { id: 'builtin:fujifilm-eterna', name: 'Eterna', maker: 'Fujifilm', library_file_name: 'Builtin - Fujifilm Eterna.cube' },
     ];
   }
 
   async listFilmLooks(): Promise<BuiltinLookInfo[]> {
     return [
-      { id: 'film:kodak_portra_400', name: 'Kodak Portra 400', maker: 'Kodak' },
+      { id: 'film:kodak_portra_400', name: 'Kodak Portra 400', maker: 'Kodak', library_file_name: 'Kodak Portra 400 (spektrafilm).cube' },
     ];
   }
 
   async ensureLookLut(lookId: string): Promise<LutRef> {
-    // The library's own naming (look_luts.rs), so the picker recognises the look it just chose.
     const builtin = (await this.listBuiltinLooks()).find((l) => l.id === lookId);
+    if (builtin) {
+      return { name: builtin.library_file_name, sha256: `sha_${lookId.replace(/[^a-zA-Z0-9]/g, '_')}` };
+    }
     const film = (await this.listFilmLooks()).find((l) => l.id === lookId);
-    const name = builtin
-      ? `Builtin - ${builtin.maker} ${builtin.name}.cube`
-      : film
-        ? `${film.name} (spektrafilm).cube`
-        : `${lookId}.cube`;
-    return { name, sha256: `sha_${lookId.replace(/[^a-zA-Z0-9]/g, '_')}` };
+    if (film) {
+      return { name: film.library_file_name, sha256: `sha_${lookId.replace(/[^a-zA-Z0-9]/g, '_')}` };
+    }
+    return { name: `${lookId}.cube`, sha256: `sha_${lookId.replace(/[^a-zA-Z0-9]/g, '_')}` };
   }
 
   async planBulkLut(

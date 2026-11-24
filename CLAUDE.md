@@ -128,12 +128,12 @@ From the build plan. They apply to any change, not only to the phases already bu
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # 1215 passing (5 ignored)
+cargo test --workspace          # 1220 passing (5 ignored)
 cargo test -p phototools-core   # 546 passing — G2
-cargo test -p rollchrome-core   # 531 passing — G2
-cargo test -p rollchrome-core --features film # 553 passing (3 ignored)
+cargo test -p rollchrome-core   # 534 passing — G2
+cargo test -p rollchrome-core --features film # 557 passing (3 ignored)
 cargo test -p phototools-desktop   # 26 passing
-cargo test -p rollchrome-desktop   # 29 passing
+cargo test -p rollchrome-desktop   # 30 passing
 cargo test -p rollchrome-cli       # 8 passing
 ```
 
@@ -172,7 +172,7 @@ npm --prefix frontend/rollchrome run check:people   # RP-11d people mask accepta
 npm --prefix frontend/rollchrome run check:shell    # UI-1 the whole app: no page scroll, navigation fixed, at 1024–1920
 npm --prefix frontend/rollchrome run check:edit-layout # UI-2 Edit: nothing clipped, Export always visible, panel resizable
 npm --prefix frontend/rollchrome run check:strip      # UI-6 results in the status strip, nothing scrolls after a dry run
-npm --prefix frontend/rollchrome run check:edit-folder # UI-8 Edit opens a folder: filmstrip, one open per click, at most 2 thumbnails
+npm --prefix frontend/rollchrome run check:edit-folder # UI-8/UI-9 Edit opens a folder: filmstrip, lens warning (38 assertions)
 npm --prefix frontend/rollchrome run check:batch-layout # UI-5 Batch in two columns: actions always visible, drawer beside them
 ```
 

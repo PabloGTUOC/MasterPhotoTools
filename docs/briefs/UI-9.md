@@ -184,7 +184,109 @@ with an imperative subject; no model identifier in the commit.
 
 ## Report
 
-*Written by the implementer.*
+### Summary of Changes
+
+1. **Part A: Lens Warning in Edit**
+   - Updated `develop_for_edit` in `crates/rollchrome-core/src/tools/develop.rs` to return `Result<(ImageBuffer<Rgb<u16>, Vec<u16>>, Vec<String>), Error>`. When lens correction fails (e.g. unknown or uncorrected lens), a warning `format!("developed without lens correction: {reason}")` is produced rather than silently returning an uncorrected buffer. Added a test confirming this behavior.
+   - Added `decode_image_with_warnings(path: &Path) -> Result<(ImageBuffer, Vec<String>), Error>` to `crates/rollchrome-core/src/media/edit/pipeline.rs`. Kept `decode_image` as a thin wrapper with a comment explaining that callers dropping warnings only need pixels (e.g. masks, auto-tone, colour picking). Added a test for JPEG decoding with empty warnings.
+   - Added `pub warnings: Vec<String>` to `PreviewSession` in `crates/rollchrome-core/src/media/edit/preview.rs` and populated it in `PreviewSession::open`.
+   - Propagated `warnings: Vec<String>` through `PreviewSessionInfo` in `crates/rollchrome-desktop/src/lib.rs` and `OpenPreviewResult` in `crates/rollchrome-desktop/src/commands/edit.rs`. Added a test in `crates/rollchrome-desktop/tests/local_tools.rs`.
+   - Updated `frontend/rollchrome/src/api.ts` with optional `warnings?: string[]` on `OpenPreviewResult`.
+   - Updated `frontend/rollchrome/src/views/Edit.vue` to track `openWarnings = ref<string[]>([])`, clearing on open and populating from `openPreview`. Added `<div class="edit-screen__open-warning" data-testid="edit-open-warning" role="status">` above the card read-only banner styled with design tokens (`--accent-warm`, `--font-label`, `--radius-pill`).
+   - Updated harness stubs (`edit-harness/stub-api.ts`) to return a lens warning for `.rw2` files, and expanded `scripts/check-edit-folder.mjs` with step 6 assertions verifying the warning displays for `/Volumes/Photos/lensless.RW2` and clears when switching to `/Volumes/Photos/sample.jpg` (assertions increased from 32 to 38).
+
+2. **Part B: Look File Names from Core**
+   - Added `pub library_file_name: String` (with `#[serde(default)]`) to `BuiltinLookInfo` in `crates/rollchrome-core/src/media/looks/builtin.rs`. Added `builtin_lut_file_name(maker: &str, display_name: &str) -> String` to construct the library file name.
+   - Added `film_lut_file_name(name: &str, balance: LutBalance) -> String` and `edit_balance(tungsten: bool) -> LutBalance` in `crates/rollchrome-core/src/media/film.rs`. Filled `library_file_name` in `film_look_list` using `film_lut_file_name`.
+   - Updated `ensure_look_lut` in `crates/rollchrome-core/src/tools/look_luts.rs` to call `builtin_lut_file_name` and `film_lut_file_name`, guaranteeing that LUT writing and look listings share identical file names. Added unit tests for camera looks and film simulation names.
+   - Updated `frontend/rollchrome/src/api.ts` so `BuiltinLookInfo` includes `library_file_name: string`.
+   - Refactored `frontend/rollchrome/src/components/LutPicker.vue` to use `l.library_file_name` directly in `builtinFileNames`, `filmFileNames`, and `selectedOptionValue`, removing all hand-crafted string prefixes like `"Builtin - "` and `"(spektrafilm)"`.
+   - Updated test stubs in `edit-harness`, `bulk-lut-harness`, and `develop-harness` to provide `library_file_name` and handle LUT resolution accordingly.
+   - Updated `CLAUDE.md` gate counts and `check:edit-folder` line.
+
+### Deviations and Notes
+- **No deviations from the brief.**
+- **PreviewSession warnings storage:** Added `pub warnings: Vec<String>` to `PreviewSession` in `preview.rs` rather than threading it out-of-band, as `PreviewSession` is the stateful holder of preview state in the desktop backend.
+- **Batch and Export note:** As noted in the brief, Batch (Bulk LUT) and Export do not get a lens warning in this step. Batch and Export run unattended or as final outputs; if lens correction warnings were to be surfaced there, they should likely appear as non-blocking item-level warnings in the job summary and export report rather than blocking errors.
+
+### Acceptance Grep Checks
+- `grep -n "_uncorrected\|Known gap" crates/rollchrome-core/src/tools/develop.rs`: clean (exit 1, no matches).
+- `grep -n "Builtin - \|spektrafilm)" frontend/rollchrome/src/components/LutPicker.vue`: clean (exit 1, no matches).
+- `grep -rn "format!(\"Builtin - \|(spektrafilm)\"" crates/rollchrome-core/src`: exactly 2 occurrences:
+  - `crates/rollchrome-core/src/media/looks/builtin.rs:134`: `format!("Builtin - {} - {}.cube", maker, display_name)` in `builtin_lut_file_name`
+  - `crates/rollchrome-core/src/media/film.rs:192`: `format!("Builtin - Film - {} {}.cube", name, match balance { ... })` in `film_lut_file_name`
+
+### Gate Outputs
+
+```
+$ cargo fmt --all --check
+Exit: 0 (clean, no diffs)
+
+$ cargo clippy --workspace --all-targets -- -D warnings
+Exit: 0 (clean, no warnings)
+
+$ cargo build --workspace
+Exit: 0
+
+$ cargo test --workspace
+test result: ok. 1220 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 18.25s
+
+$ cargo test -p rollchrome-core
+test result: ok. 534 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.11s
+
+$ cargo test -p rollchrome-core --features film
+test result: ok. 557 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 18.42s
+
+$ cargo test -p rollchrome-desktop
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.52s
+
+$ npm --prefix frontend/shared run build
+Exit: 0
+
+$ npm --prefix frontend/rollchrome run typecheck
+Exit: 0
+
+$ npm --prefix frontend/rollchrome run build
+Exit: 0 (built in 1.01s)
+
+$ npm --prefix frontend/rollchrome run check:transport
+transport check: 41 files, no view reaches the network directly and no HTTP client is imported
+Exit: 0
+
+$ npm --prefix frontend/rollchrome run check:edit-folder
+38 assertions passed
+Exit: 0
+
+$ npm --prefix frontend/rollchrome run check:edit
+--- check:edit Summary ---
+PASSED all checks.
+Exit: 0
+
+$ npm --prefix frontend/rollchrome run check:bulk-lut
+check:bulk-lut PASSED cleanly: all acceptance assertions and benchmarks verified.
+Exit: 0
+
+$ npm --prefix frontend/rollchrome run check:develop
+check:develop PASSED: all 34 checks verified successfully.
+Exit: 0
+
+$ npm --prefix frontend/rollchrome run check:viewing
+--- check:viewing Summary ---
+PASSED all 18 viewing requirements successfully.
+Exit: 0
+
+$ npm --prefix frontend/rollchrome run check:batch-layout
+64 assertions passed
+check:batch-layout PASSED cleanly.
+Exit: 0
+
+$ npm --prefix frontend/rollchrome run check:edit-layout
+51 assertions passed.
+Exit: 0
+```
+
+### Unverified
+- None. All unit, integration, layout, and visual harness gates executed in the foreground with zero failures.
 
 ---
 

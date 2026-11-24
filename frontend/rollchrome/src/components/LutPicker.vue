@@ -79,15 +79,11 @@ onMounted(async () => {
 });
 
 const builtinFileNames = computed(() => {
-  return new Set(builtinLooks.value.map((l) => `Builtin - ${l.maker} ${l.name}.cube`));
+  return new Set(builtinLooks.value.map((l) => l.library_file_name));
 });
 
 const filmFileNames = computed(() => {
-  return new Set(
-    filmLooks.value.map((l) =>
-      l.tungsten ? `${l.name} neutral (spektrafilm).cube` : `${l.name} (spektrafilm).cube`,
-    ),
-  );
+  return new Set(filmLooks.value.map((l) => l.library_file_name));
 });
 
 const yourLuts = computed(() => {
@@ -103,17 +99,14 @@ const selectedOptionValue = computed(() => {
 
   // Check camera looks
   const builtin = builtinLooks.value.find(
-    (l) => `Builtin - ${l.maker} ${l.name}.cube` === currentName,
+    (l) => l.library_file_name === currentName,
   );
   if (builtin) return builtin.id;
 
   // Check film looks
-  const film = filmLooks.value.find((l) => {
-    const fn = l.tungsten
-      ? `${l.name} neutral (spektrafilm).cube`
-      : `${l.name} (spektrafilm).cube`;
-    return fn === currentName;
-  });
+  const film = filmLooks.value.find(
+    (l) => l.library_file_name === currentName,
+  );
   if (film) return film.id;
 
   // Check library LUTs by sha256 or name

@@ -145,7 +145,8 @@ pub fn ensure_look_lut(
             .ok_or_else(|| {
                 Error::Refused(format!("the built-in look '{builtin_id}' does not exist"))
             })?;
-        let file_name = format!("Builtin - {} {}.cube", entry.maker, entry.display_name);
+        let file_name =
+            crate::media::looks::builtin::builtin_lut_file_name(entry.maker, entry.display_name);
         let dest_path = library_dir.join(&file_name);
         if dest_path.exists() {
             let lut = Lut::from_file(&dest_path)?;
@@ -155,8 +156,8 @@ pub fn ensure_look_lut(
             });
         }
         let look = crate::media::looks::builtin::builtin_look(builtin_id)?;
-        let title = format!("Builtin - {} {}", entry.maker, entry.display_name);
-        let cube_text = bake_builtin_look_cube(&look, &title);
+        let title = file_name.strip_suffix(".cube").unwrap_or(&file_name);
+        let cube_text = bake_builtin_look_cube(&look, title);
         atomic_write_lut(library_dir, &dest_path, cube_text.as_bytes())?;
         let lut = Lut::from_file(&dest_path)?;
         Ok(LutRef {
@@ -166,16 +167,12 @@ pub fn ensure_look_lut(
     } else if let Some(stock) = look_id.strip_prefix("film:") {
         #[cfg(feature = "film")]
         {
-            use crate::media::film::{film_lut, LutBalance, FILM_STOCKS};
+            use crate::media::film::{edit_balance, film_lut, FILM_STOCKS};
             let info = FILM_STOCKS
                 .iter()
                 .find(|s| s.id == stock)
                 .ok_or_else(|| Error::Refused(format!("unknown film stock: '{stock}'")))?;
-            let balance = if info.tungsten {
-                LutBalance::NeutralGrey
-            } else {
-                LutBalance::AsFilm
-            };
+            let balance = edit_balance(info.tungsten);
             let lut_data = film_lut(stock, balance, film_data_dir)?;
             let file_name = lut_data.file_name;
             let dest_path = library_dir.join(&file_name);
@@ -430,6 +427,39 @@ mod tests {
         match ensure_look_lut("custom.cube", &lib_dir, &film_dir) {
             Err(Error::Refused(msg)) => assert!(msg.contains("unknown look id")),
             other => panic!("expected Refused for custom look id, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_camera_look_is_written_under_its_listed_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let lib_dir = temp.path().join("luts");
+        let film_dir = temp.path().join("film");
+
+        for entry in crate::media::looks::builtin::builtin_look_list() {
+            let lut_ref =
+                ensure_look_lut(&entry.id, &lib_dir, &film_dir).expect("ensure camera look LUT");
+            assert_eq!(lut_ref.name, entry.library_file_name);
+            assert!(lib_dir.join(&lut_ref.name).exists());
+        }
+    }
+
+    #[cfg(feature = "film")]
+    #[test]
+    fn a_film_simulation_is_written_under_its_listed_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let lib_dir = temp.path().join("luts");
+        let film_dir = temp.path().join("film");
+
+        let film_looks = crate::media::film::film_look_list();
+        for id in ["film:kodak_portra_400", "film:kodak_vision3_500t"] {
+            let entry = film_looks
+                .iter()
+                .find(|l| l.id == id)
+                .unwrap_or_else(|| panic!("expected to find {id} in film_look_list"));
+            let lut_ref = ensure_look_lut(id, &lib_dir, &film_dir).expect("ensure film LUT");
+            assert_eq!(lut_ref.name, entry.library_file_name);
+            assert!(lib_dir.join(&lut_ref.name).exists());
         }
     }
 }

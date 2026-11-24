@@ -81,6 +81,7 @@ const isReadOnly = ref(false);
 const autosaveDisabled = ref(false);
 const loading = ref(false);
 const error = ref<string | null>(null);
+const openWarnings = ref<string[]>([]);
 const saveStatus = ref<string>('');
 const exportStatus = ref<string | null>(null);
 const exportError = ref<string | null>(null);
@@ -2744,6 +2745,7 @@ async function openImage(path: string) {
   autoDownload.value = null;
   loading.value = true;
   error.value = null;
+  openWarnings.value = [];
   saveStatus.value = '';
   exportStatus.value = null;
   exportError.value = null;
@@ -2770,6 +2772,9 @@ async function openImage(path: string) {
 
   try {
     const info: OpenPreviewResult = await desktop.openPreview(trimmed);
+    if (info.warnings && info.warnings.length > 0) {
+      openWarnings.value = info.warnings;
+    }
     sessionId.value = info.session_id;
     orientation.value = info.orientation;
     deliveredOrientation.value = info.orientation;
@@ -4458,6 +4463,21 @@ provide(EDIT_CONTEXT, {
         {{ error }}
       </div>
 
+      <div
+        v-if="openWarnings.length > 0"
+        class="edit-screen__open-warning"
+        data-testid="edit-open-warning"
+        role="status"
+      >
+        <div
+          v-for="(warning, idx) in openWarnings"
+          :key="idx"
+          class="edit-screen__open-warning-line"
+        >
+          {{ warning }}
+        </div>
+      </div>
+
       <!-- Card Read-Only Banner (G5) -->
       <div v-if="isReadOnly" class="edit-screen__card-banner" data-testid="card-readonly-banner">
         Card media is read-only (G5). Copy files to a working folder to save edits.
@@ -5598,6 +5618,20 @@ provide(EDIT_CONTEXT, {
 .edit-screen__error {
   padding: var(--space-2);
   border: 1px solid var(--danger);
+}
+
+.edit-screen__open-warning {
+  font-family: var(--font-label);
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  padding: var(--space-2);
+  border: 1px solid var(--accent-warm);
+  color: var(--accent-warm);
+  border-radius: var(--radius-pill);
+}
+
+.edit-screen__open-warning-line {
+  line-height: 1.4;
 }
 
 .edit-screen__card-banner {

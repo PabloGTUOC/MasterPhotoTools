@@ -229,6 +229,7 @@ pub struct PreviewSession {
     pub orientation: u32,
     pub source_sha256: String,
     pub source_long_edge: u32,
+    pub warnings: Vec<String>,
     cached_geom: Mutex<Option<CachedGeometry>>,
     pub geom_recompute_count: AtomicUsize,
     cached_detail_drag: Mutex<Option<(super::detail::Detail, Arc<LinearBuffer>)>>,
@@ -306,7 +307,7 @@ impl PreviewSession {
         let orientation = phototools_core::media::meta::read_meta(path)
             .map(|m| m.orientation as u32)
             .unwrap_or(1);
-        let image = super::pipeline::decode_image(path)?;
+        let (image, warnings) = super::pipeline::decode_image_with_warnings(path)?;
         let full_dimensions = fit_full_edge(image.width(), image.height(), FULL_MAX_EDGE);
         let source_long_edge = image.width().max(image.height()).max(1);
         let drag_buf = downscale_image_buffer(&image, DRAG_MAX_EDGE)?;
@@ -326,6 +327,7 @@ impl PreviewSession {
             orientation: if orientation == 0 { 1 } else { orientation },
             source_sha256,
             source_long_edge,
+            warnings,
             cached_geom: Mutex::new(None),
             geom_recompute_count: AtomicUsize::new(0),
             cached_detail_drag: Mutex::new(None),
@@ -376,6 +378,7 @@ impl PreviewSession {
             orientation: if orientation == 0 { 1 } else { orientation },
             source_sha256: String::new(),
             source_long_edge,
+            warnings: Vec::new(),
             cached_geom: Mutex::new(None),
             geom_recompute_count: AtomicUsize::new(0),
             cached_detail_drag: Mutex::new(None),

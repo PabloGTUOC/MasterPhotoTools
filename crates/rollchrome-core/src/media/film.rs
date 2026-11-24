@@ -185,6 +185,24 @@ pub static FILM_STOCKS: &[FilmStockInfo] = &[
     },
 ];
 
+/// The file name `ensure_look_lut` and `film_lut` give a film simulation in the LUT library.
+pub fn film_lut_file_name(name: &str, balance: LutBalance) -> String {
+    let tag = match balance {
+        LutBalance::NeutralGrey => "neutral (spektrafilm)",
+        LutBalance::AsFilm => "(spektrafilm)",
+    };
+    format!("{name} {tag}.cube")
+}
+
+/// Edit's balance rule: tungsten stocks use NeutralGrey, all others AsFilm.
+pub fn edit_balance(tungsten: bool) -> LutBalance {
+    if tungsten {
+        LutBalance::NeutralGrey
+    } else {
+        LutBalance::AsFilm
+    }
+}
+
 /// Lists all supported film stocks as BuiltinLookInfo items.
 pub fn film_look_list() -> Vec<BuiltinLookInfo> {
     FILM_STOCKS
@@ -194,6 +212,7 @@ pub fn film_look_list() -> Vec<BuiltinLookInfo> {
             name: s.name.to_string(),
             maker: s.maker.to_string(),
             tungsten: s.tungsten,
+            library_file_name: film_lut_file_name(s.name, edit_balance(s.tungsten)),
         })
         .collect()
 }
@@ -767,12 +786,8 @@ pub fn film_lut(stock: &str, balance: LutBalance, data_dir: &Path) -> Result<Fil
             })
             .collect();
 
-        let neutral = balance == LutBalance::NeutralGrey;
-        let title = if neutral {
-            format!("{} neutral (spektrafilm)", info.name)
-        } else {
-            format!("{} (spektrafilm)", info.name)
-        };
+        let file_name = film_lut_file_name(info.name, balance);
+        let title = file_name.strip_suffix(".cube").unwrap_or(&file_name);
         let printed = if info.is_slide {
             "scanned".to_string()
         } else {
@@ -793,7 +808,7 @@ pub fn film_lut(stock: &str, balance: LutBalance, data_dir: &Path) -> Result<Fil
             cube.push('\n');
         }
         Ok(FilmLut {
-            file_name: format!("{title}.cube"),
+            file_name,
             cube,
             y_shift,
             m_shift,

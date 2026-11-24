@@ -70,8 +70,11 @@ onMounted(async () => {
     ]);
     builtinLooks.value = builtins;
     filmLooks.value = films;
-  } catch {
-    // If loading looks fails, the picker falls back to library LUTs only
+  } catch (err: unknown) {
+    // The library still works without them, so the picker stays usable, but says why the groups are missing.
+    ensureError.value = `Camera looks and film simulations could not be listed: ${
+      err instanceof Error ? err.message : String(err)
+    }`;
   }
 });
 

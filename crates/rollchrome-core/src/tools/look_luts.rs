@@ -83,13 +83,17 @@ pub(crate) fn transform_srgb_through_prophoto_look(
     ]
 }
 
-/// Bakes a 33³ sRGB-domain `.cube` representation of a ProPhoto built-in look.
+/// Bakes a 65³ sRGB-domain `.cube` representation of a ProPhoto built-in look.
+///
+/// 65 points, not 33: the look's own LUT is gridded in ProPhoto-encoded values, so resampling it onto an
+/// sRGB grid loses detail between the points. At 33 the baked cube missed Develop's renderer by up to 6.6
+/// code values between grid points; at 65 by 0.7, within Develop's own 8-bit rounding.
 pub(crate) fn bake_builtin_look_cube(
     look: &crate::media::develop::render::Look,
     title: &str,
 ) -> String {
     use rayon::prelude::*;
-    let n = 33usize;
+    let n = 65usize;
     let m_srgb_to_pro = crate::media::develop::colour::srgb_to_prophoto_matrix();
     let m_pro_to_srgb = crate::media::develop::colour::prophoto_to_srgb_matrix();
 
@@ -219,7 +223,7 @@ mod tests {
 
         let parsed = Lut::from_file(&dest_file).expect("parse baked LUT");
         assert_eq!(parsed.sha256, lut_ref1.sha256);
-        assert_eq!(parsed.size, 33);
+        assert_eq!(parsed.size, 65);
 
         let mtime_before = std::fs::metadata(&dest_file).unwrap().modified().unwrap();
 
@@ -235,6 +239,67 @@ mod tests {
         assert_eq!(
             mtime_before, mtime_after,
             "existing LUT file must not be rewritten"
+        );
+    }
+
+    /// The grid test above compares the bake with the function that made it, at the cube's own grid points,
+    /// so it can only catch a file that was written or read wrongly. This one compares against Develop's
+    /// renderer itself, `render_srgb8_image` with the look, at 64 colours that fall between grid points,
+    /// where the baked cube has to interpolate.
+    #[test]
+    fn a_baked_builtin_look_matches_develops_renderer_between_grid_points() {
+        use crate::media::develop::{render::render_srgb8_image, Demosaic, Developed};
+        let temp = tempfile::tempdir().expect("tempdir");
+        let lib_dir = temp.path().join("luts");
+        std::fs::create_dir_all(&lib_dir).expect("lib dir");
+        let look_id = "fujifilm-classic-chrome";
+        let lut_ref = ensure_look_lut(
+            &format!("builtin:{look_id}"),
+            &lib_dir,
+            &temp.path().join("film"),
+        )
+        .expect("ensure look LUT");
+        let baked = Lut::from_file(&lib_dir.join(&lut_ref.name)).expect("load baked lut");
+        let look = crate::media::looks::builtin::builtin_look(look_id).expect("builtin look");
+
+        // Off the 65-point grid (spacing 1/64): 0.1 is 6.4 steps, 0.37 is 23.68, and so on.
+        let levels = [0.1f32, 0.37, 0.61, 0.88];
+        let m = crate::media::develop::colour::srgb_to_prophoto_matrix();
+        let mut colours = Vec::new();
+        let mut pixels = Vec::new();
+        for &r in &levels {
+            for &g in &levels {
+                for &b in &levels {
+                    let lin = [r, g, b].map(crate::media::develop::render::srgb_to_linear);
+                    let pro = crate::media::develop::colour::mul_3x3_vec(m, lin);
+                    for v in pro {
+                        let enc = crate::media::develop::tone::prophoto_encode(v.max(0.0));
+                        pixels.push((enc * 65535.0).round().clamp(0.0, 65535.0) as u16);
+                    }
+                    colours.push([r, g, b]);
+                }
+            }
+        }
+        let developed = Developed {
+            image: image::ImageBuffer::from_raw(colours.len() as u32, 1, pixels).expect("buffer"),
+            orientation: 1,
+            demosaic: Demosaic::Bayer,
+        };
+        let rendered = render_srgb8_image(&developed, Some(&look));
+
+        let mut worst = 0.0f32;
+        for (i, srgb) in colours.iter().enumerate() {
+            let develop = rendered.get_pixel(i as u32, 0).0.map(|v| v as f32 / 255.0);
+            let edit = baked.sample(*srgb);
+            for c in 0..3 {
+                worst = worst.max((edit[c] - develop[c]).abs());
+            }
+        }
+        // The brief's 1/255, Develop's own 8-bit rounding included (measured 0.68 at 65 points).
+        assert!(
+            worst <= 1.0 / 255.0,
+            "the baked cube differs from Develop's renderer by {} code values",
+            worst * 255.0
         );
     }
 
@@ -254,12 +319,12 @@ mod tests {
         let m_srgb_to_pro = crate::media::develop::colour::srgb_to_prophoto_matrix();
         let m_pro_to_srgb = crate::media::develop::colour::prophoto_to_srgb_matrix();
 
-        // Test 64 sRGB colours on the 33³ grid (4x4x4 grid at indices [0, 8, 16, 32])
-        let grid_indices = [0usize, 8, 16, 32];
+        // Test 64 sRGB colours on the 65³ grid (4x4x4 grid at indices [0, 16, 32, 64])
+        let grid_indices = [0usize, 16, 32, 64];
         for &r_i in &grid_indices {
             for &g_i in &grid_indices {
                 for &b_i in &grid_indices {
-                    let srgb_in = [r_i as f32 / 32.0, g_i as f32 / 32.0, b_i as f32 / 32.0];
+                    let srgb_in = [r_i as f32 / 64.0, g_i as f32 / 64.0, b_i as f32 / 64.0];
 
                     // Direct transform as render.rs applies it
                     let develop_expected = transform_srgb_through_prophoto_look(

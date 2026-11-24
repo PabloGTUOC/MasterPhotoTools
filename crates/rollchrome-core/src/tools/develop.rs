@@ -41,7 +41,11 @@ pub fn develop_for_edit(
 ) -> Result<image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, Error> {
     let mut linear = develop_linear(raw, &DevelopOptions { exposure_ev: 0.0 })?;
     if DEFAULT_LENS_CORRECTION {
-        let _ = correct_lens(&mut linear, raw);
+        // A lens the database does not know is not a failure: the photograph develops uncorrected, as
+        // Develop does, where the same result becomes a warning on the job. Edit opens a photograph
+        // through `decode_image`, which has no warning to carry it in, so it is dropped here on purpose.
+        // Known gap: Edit does not say when a RAW's lens was left uncorrected.
+        let _uncorrected = correct_lens(&mut linear, raw).err();
     }
     crate::media::develop::frame::apply_camera_geometry(&mut linear, raw);
     let level = noise_level(&linear.pixels, linear.width, linear.height);

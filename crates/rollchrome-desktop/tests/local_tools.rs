@@ -502,7 +502,7 @@ fn ensure_look_lut_writes_into_lut_library() {
     let target = lut_dir.join(&dto.name);
     assert!(target.exists());
     let text = std::fs::read_to_string(&target).unwrap();
-    assert!(text.contains("LUT_3D_SIZE 33"));
+    assert!(text.contains("LUT_3D_SIZE 65"));
 
     // Second call returns same dto without rewriting
     let dto2 = rollchrome_desktop::commands::edit::ensure_look_lut_impl(

@@ -422,3 +422,23 @@ None. Every requirement and gate passed cleanly.
 ## Review
 
 *Written by the architect, after re-running the gates on the branch.*
+
+**Approved.**
+
+**Checked.** I re-ran the full gate list on `adc94a5`, plus `check:edit-layout` and `check:strip`: 32 of 32
+returned rc=0. I read the diff of `Filmstrip.vue`, `Develop.vue`, `check-develop.mjs` and `check-shell.mjs`.
+- Check 33 is rewritten exactly as the brief specifies, with its header line.
+- The other 33 checks are byte-for-byte unchanged (G7).
+- `check:shell` only gains the two assertions the brief asked for.
+- DV-17's photos panel, `develop-divider`, `--photos-width`, its storage key and the stacked layout below 1100 px
+  are all gone.
+- The component is transport-free, uses tokens, and has no new raw values.
+- The screenshots at 1024, 1280 and 1920 show the preview, the filmstrip and the settings with nothing scrolling.
+
+**Noted.**
+- **Undeclared deviation.** The active card is brought into view by setting the strip's `scrollLeft` rather than by
+  `scrollIntoView({ inline: 'nearest' })`. That is the better choice, because `scrollIntoView` can also scroll
+  ancestors, and `.content` must never scroll. It stays, but it should have been listed under Deviations.
+- **Found in UI-6, not in this step.** At 1024 px, with the details drawer open, the settings column's action
+  footer, which sits above the drawer by design, overlaps the drawer's content, so the review text shows through
+  the buttons. That is a gap in UI-6's brief. The architect fixes it separately.

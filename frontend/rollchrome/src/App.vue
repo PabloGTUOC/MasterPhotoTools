@@ -19,6 +19,7 @@ const links = [
 const statusStrip = reactive<StatusStripState>({
   hasDetails: false,
   detailsOpen: false,
+  detailsInsetRight: 0,
 });
 provide(STATUS_STRIP, statusStrip);
 
@@ -28,6 +29,7 @@ watch(
   () => {
     statusStrip.hasDetails = false;
     statusStrip.detailsOpen = false;
+    statusStrip.detailsInsetRight = 0;
   },
 );
 
@@ -89,6 +91,7 @@ onUnmounted(() => {
         id="status-strip-details"
         class="status-strip__details"
         data-testid="status-details"
+        :style="{ right: `${statusStrip.detailsInsetRight}px` }"
       ></div>
 
       <footer
@@ -286,7 +289,6 @@ nav {
   bottom: 40px;
   left: 0;
   right: 0;
-  width: 100%;
   max-height: 40vh;
   overflow-y: auto;
   background: var(--bg-elevated);

@@ -9,6 +9,7 @@
  *    - status-line reads "Dry run · … to develop", and lies inside viewport.
  *    - The drawer is open and review-section is inside it, inside viewport.
  *    - run-button is inside viewport and enabled.
+ *    - The drawer ends at the settings column's left edge, not under its action footer.
  *    - .content scrollTop is 0.
  *    - Click run-button: compact progress with Cancel button inside viewport.
  * 2. Escape closes the drawer. The toggle reopens it.
@@ -215,6 +216,13 @@ try {
     assert(
       isInsideViewport(runBox, size),
       `[Develop ${size.width}×${size.height}] run-button (${JSON.stringify(runBox)}) not inside viewport`
+    );
+
+    // The drawer opens beside the settings column, never under its action footer (UI-6 follow-up)
+    const panelBox = await page.locator('.controls-panel').boundingBox();
+    assert(
+      drawerBox && panelBox && drawerBox.x + drawerBox.width <= panelBox.x + 1,
+      `[Develop ${size.width}×${size.height}] Drawer (right ${drawerBox && drawerBox.x + drawerBox.width}) overlaps the settings column (left ${panelBox?.x})`
     );
 
     // .content scrollTop is still 0

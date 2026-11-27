@@ -460,7 +460,7 @@ fn get_or_build_pipeline(
     // Ensure film data files are present in the directory
     let data_path = ensure_film_data(data_dir)?;
 
-    let film = spektrafilm_core::profile::load_profile_by_name(&data_path, stock_info.id)
+    let mut film = spektrafilm_core::profile::load_profile_by_name(&data_path, stock_info.id)
         .map_err(|e| Error::Internal(format!("loading film profile {}: {e}", stock_info.id)))?;
 
     let print_stock = if stock_info.is_slide {
@@ -474,11 +474,12 @@ fn get_or_build_pipeline(
         )));
     };
 
-    let print = spektrafilm_core::profile::load_profile_by_name(&data_path, &print_stock)
+    let mut print = spektrafilm_core::profile::load_profile_by_name(&data_path, &print_stock)
         .map_err(|e| Error::Internal(format!("loading print profile {print_stock}: {e}")))?;
 
     let mut params = spektrafilm_core::params::RuntimeParams::default();
     params.io.scan_film = stock_info.is_slide;
+    prepare_slide(stock_info, &mut film, &mut print, &mut params);
     params.io.input_color_space = "ProPhoto RGB".to_string();
     params.io.input_cctf_decoding = false;
 
@@ -527,6 +528,68 @@ fn get_or_build_pipeline(
     }
 
     Ok(pipeline)
+}
+
+/// What Rollchrome changes about how spektrafilm scans a slide film, found on the owner's five LX100
+/// RW2s of 2026-11-22 against the neutral and against a grey wedge (`examples/film_grey_wedge.rs`).
+/// The engine's defaults scan a slide as it would any film, and every slide came out flat and warm.
+///
+/// A slide has no print, so nothing balances it: a negative is printed through the enlarger filter
+/// that makes grey neutral, a slide is only scanned. Real slide films render a grey card grey under
+/// the daylight they are balanced for; the profiles rendered mid-grey warm, red over blue by 0.006
+/// (Provia) to 0.025 (Kodachrome) in sRGB, and Ektachrome's skin and floors went orange. Each film
+/// is therefore shot through the colour-correction filter that makes mid-grey neutral, as a slide
+/// photographer would, applied as a shift of the layer's log sensitivity (red, blue; green is the
+/// reference), solved by Newton's method on the wedge's middle step.
+#[cfg(feature = "film")]
+const SLIDE_FILTERS: [(&str, [f64; 2]); 4] = [
+    ("kodak_ektachrome_100", [-0.0126, 0.0149]),
+    ("kodak_kodachrome_64", [-0.0130, 0.0250]),
+    ("fujifilm_provia_100f", [-0.0067, 0.0750]),
+    ("fujifilm_velvia_100", [-0.0092, 0.0075]),
+];
+
+/// Prepares a slide film's profile and scan (see [`SLIDE_FILTERS`]); does nothing to a negative.
+///
+/// - The scanner's white correction is on: off, the clear film was never scanned as white and the
+///   highlights stopped at 0.72–0.78, which is most of why the slides looked flat. It rescales
+///   luminance only, so it adds no cast; the black correction changed nothing measurable.
+/// - Provia 100F's blue-sensitive layer takes the green layer's curve. In the profile it reached a
+///   density of 2.08 with a contrast of 1.06, against 2.54 and 1.36 for green; on Fujifilm's
+///   datasheet (as digitised by PoLUT) the three layers match, 3.3 and about 1.55. The weak layer
+///   squeezed yellow–blue and left Provia with 0.82 of the neutral's colour.
+/// - The filter is applied to the film only: it is in front of the camera, not the scanner.
+///
+/// Public so the tests can build spektrafilm's own reference scan with the same preparation.
+#[cfg(feature = "film")]
+pub fn prepare_slide(
+    stock: &FilmStockInfo,
+    film: &mut spektrafilm_core::profile::Profile,
+    print: &mut spektrafilm_core::profile::Profile,
+    params: &mut spektrafilm_core::params::RuntimeParams,
+) {
+    if !stock.is_slide {
+        return;
+    }
+    params.scanner.white_correction = true;
+    if stock.id == "fujifilm_provia_100f" {
+        // The print is the same stock for a slide, and the scan reads its curves as well.
+        for profile in [&mut *film, &mut *print] {
+            for row in profile.data.density_curves.iter_mut() {
+                if row.len() == 3 {
+                    row[2] = row[1];
+                }
+            }
+        }
+    }
+    if let Some((_, [red, blue])) = SLIDE_FILTERS.iter().find(|(id, _)| *id == stock.id) {
+        for row in film.data.log_sensitivity.iter_mut() {
+            if row.len() == 3 {
+                row[0] += red;
+                row[2] += blue;
+            }
+        }
+    }
 }
 
 /// Renders a linear ProPhoto RGB image through the film simulation engine (DV-4).
@@ -627,11 +690,12 @@ pub const EDIT_FILM_EXPOSURE_EV: f32 = 0.75;
 
 /// The file name `ensure_look_lut` gives a film simulation in Edit's LUT library. Different from
 /// [`film_lut_file_name`] (the LUT for other editors) because the two are built for different input,
-/// and from the first Edit LUTs, so photographs already edited with those keep them.
+/// and from earlier Edit LUTs, so photographs already edited with those keep them: v2 built them for
+/// the neutral, v3 changed how slides are scanned (`prepare_slide`).
 pub fn edit_film_lut_file_name(name: &str, balance: LutBalance) -> String {
     let tag = match balance {
-        LutBalance::NeutralGrey => "neutral (spektrafilm v2)",
-        LutBalance::AsFilm => "(spektrafilm v2)",
+        LutBalance::NeutralGrey => "neutral (spektrafilm v3)",
+        LutBalance::AsFilm => "(spektrafilm v3)",
     };
     format!("{name} {tag}.cube")
 }
@@ -681,7 +745,7 @@ fn lut_pipeline(
     data_path: &Path,
     input: LutInput,
 ) -> Result<(spektrafilm_core::pipeline::Pipeline, String), Error> {
-    let film = spektrafilm_core::profile::load_profile_by_name(data_path, stock.id)
+    let mut film = spektrafilm_core::profile::load_profile_by_name(data_path, stock.id)
         .map_err(|e| Error::Internal(format!("loading film profile {}: {e}", stock.id)))?;
     let print_stock = if stock.is_slide {
         stock.id.to_string()
@@ -693,7 +757,7 @@ fn lut_pipeline(
             stock.id
         )));
     };
-    let print = spektrafilm_core::profile::load_profile_by_name(data_path, &print_stock)
+    let mut print = spektrafilm_core::profile::load_profile_by_name(data_path, &print_stock)
         .map_err(|e| Error::Internal(format!("loading print profile {print_stock}: {e}")))?;
 
     let mut params = spektrafilm_core::params::RuntimeParams::default();
@@ -708,6 +772,7 @@ fn lut_pipeline(
     params.camera.auto_exposure = false;
     params.enlarger.y_filter_shift = y_shift;
     params.enlarger.m_filter_shift = m_shift;
+    prepare_slide(stock, &mut film, &mut print, &mut params);
     if let LutInput::NeutralRendering { .. } = input {
         params.io.input_color_space = "ProPhoto RGB".to_string();
         params.film_render.dir_couplers.active = true;

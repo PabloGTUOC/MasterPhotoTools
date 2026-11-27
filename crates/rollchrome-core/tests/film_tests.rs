@@ -364,7 +364,9 @@ fn slides_are_scanned_without_paper() {
 
         // The claim, not a proxy: the render is the engine's own scan of the film, and is not
         // what printing the film on paper would give. Both references are built here directly
-        // from spektrafilm, with the settings the brief fixes, on the deterministic CPU backend.
+        // from spektrafilm, with the settings the brief fixes and Rollchrome's slide preparation
+        // (`prepare_slide`: the scanner's white correction, the grey filter), on the deterministic
+        // CPU backend.
         let scanned = engine_reference(&data_dir, stock, true, &linear, width, height);
         let printed = engine_reference(&data_dir, stock, false, &linear, width, height);
         assert_eq!(
@@ -374,6 +376,53 @@ fn slides_are_scanned_without_paper() {
         assert_ne!(
             rendered, printed,
             "{stock} must not be printed: the two paths must differ for this test to mean anything"
+        );
+    }
+}
+
+/// A slide has no print to balance it, so each is shot through the filter that makes mid-grey
+/// neutral (`SLIDE_FILTERS`). Before it, Kodachrome rendered mid-grey with red 0.025 over blue.
+#[test]
+fn every_slide_film_renders_mid_grey_grey() {
+    let (_temp, data_dir) = test_data_dir();
+    // A wedge two stops either side of mid-grey, as `examples/film_grey_wedge.rs` measures it.
+    let (width, height) = (96usize, 32usize);
+    let levels = [0.045f32, 0.18, 0.72];
+    let linear: Vec<[f32; 3]> = (0..width * height)
+        .map(|i| [levels[(i % width) / 32]; 3])
+        .collect();
+    for stock in [
+        "kodak_ektachrome_100",
+        "kodak_kodachrome_64",
+        "fujifilm_provia_100f",
+        "fujifilm_velvia_100",
+    ] {
+        let out = render_film(
+            &linear,
+            width as u32,
+            height as u32,
+            stock,
+            Grain::Off,
+            0.0,
+            FilmOutput::Srgb,
+            FilmBackend::Cpu,
+            &data_dir,
+        )
+        .expect("render");
+        let mut sum = [0.0f64; 3];
+        let mut n = 0.0;
+        for y in 8..24 {
+            for x in 40..56 {
+                for c in 0..3 {
+                    sum[c] += f64::from(out[y * width + x][c]);
+                }
+                n += 1.0;
+            }
+        }
+        let [r, g, b] = sum.map(|v| v / n);
+        assert!(
+            (r - g).abs() < 0.003 && (b - g).abs() < 0.003,
+            "{stock} renders mid-grey as {r:.4} {g:.4} {b:.4}"
         );
     }
 }
@@ -388,12 +437,17 @@ fn engine_reference(
     width: usize,
     height: usize,
 ) -> Vec<[f32; 3]> {
-    let film =
+    let mut film =
         spektrafilm_core::profile::load_profile_by_name(data_dir, stock).expect("film profile");
-    let print =
+    let mut print =
         spektrafilm_core::profile::load_profile_by_name(data_dir, stock).expect("print profile");
     let mut params = spektrafilm_core::params::RuntimeParams::default();
     params.io.scan_film = scan_film;
+    let info = rollchrome_core::media::film::FILM_STOCKS
+        .iter()
+        .find(|s| s.id == stock)
+        .expect("a known stock");
+    rollchrome_core::media::film::prepare_slide(info, &mut film, &mut print, &mut params);
     params.io.input_color_space = "ProPhoto RGB".to_string();
     params.io.input_cctf_decoding = false;
     params.io.output_color_space = "sRGB".to_string();
@@ -1265,7 +1319,7 @@ fn edits_film_lut_keeps_the_colour_the_srgb_lut_lost() {
     let (_t, data) = test_data_dir();
     let srgb = film_lut("kodak_ektar_100", LutBalance::AsFilm, &data).unwrap();
     let edit = edit_film_lut("kodak_ektar_100", &data).unwrap();
-    assert_eq!(edit.file_name, "Kodak Ektar 100 (spektrafilm v2).cube");
+    assert_eq!(edit.file_name, "Kodak Ektar 100 (spektrafilm v3).cube");
     assert!(edit
         .cube
         .lines()

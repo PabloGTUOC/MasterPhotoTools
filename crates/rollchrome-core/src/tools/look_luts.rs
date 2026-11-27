@@ -381,7 +381,7 @@ mod tests {
             ensure_look_lut("film:kodak_portra_400", &lib_dir, &film_dir).expect("ensure film LUT");
         let dest_file = lib_dir.join(&lut_ref.name);
         assert!(dest_file.exists());
-        assert_eq!(lut_ref.name, "Kodak Portra 400 (spektrafilm v2).cube");
+        assert_eq!(lut_ref.name, "Kodak Portra 400 (spektrafilm v3).cube");
 
         let parsed = Lut::from_file(&dest_file).expect("parse film LUT");
         assert_eq!(parsed.sha256, lut_ref.sha256);
@@ -392,7 +392,7 @@ mod tests {
             .expect("ensure tungsten film LUT");
         assert_eq!(
             tungsten_ref.name,
-            "Kodak Vision3 500T neutral (spektrafilm v2).cube"
+            "Kodak Vision3 500T neutral (spektrafilm v3).cube"
         );
         assert!(lib_dir.join(&tungsten_ref.name).exists());
     }
